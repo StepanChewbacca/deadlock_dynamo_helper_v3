@@ -1,0 +1,18 @@
+{
+  "operation": "BOUNDED_BEHAVIORAL_V51_SWEEP",
+  "maxRows": 50000,
+  "supportProbability": 0.01,
+  "propensityFloor": 0.01,
+  "auditThresholdsLowered": false,
+  "observedActionInjected": false,
+  "rebuildReplay": false,
+  "rebuildDatasetV6": false,
+  "fullValueTrainingAuthorized": false,
+  "productionRankingChanged": false,
+  "passiveShadowActivated": false,
+  "randomizedCanaryAuthorized": false,
+  "preserveReplay": true,
+  "preserveDatasetV6": true,
+  "preserveBehavioralBaseline": true,
+  "notes": "Run three isolated 50k-row Behavioral screening configurations in ephemeral containers. Do not mutate the main training container or any existing COMPLETE artifact."
+}
