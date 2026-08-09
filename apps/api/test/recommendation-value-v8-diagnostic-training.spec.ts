@@ -6,6 +6,7 @@ import type { RecommendationBehavioralV5PropensityRow } from '../src/deadlock-li
 import {
   RECOMMENDATION_BEHAVIORAL_V5_FEATURE_VERSION,
   RECOMMENDATION_BEHAVIORAL_V5_MODEL_VERSION,
+  RECOMMENDATION_BEHAVIORAL_V5_SCHEMA_VERSION,
 } from '../src/deadlock-live/recommendation-behavioral-v5';
 import type {
   RecommendationDatasetV6CandidateFeatures,
@@ -439,7 +440,7 @@ async function writeBehavioralArtifact(
       'utf8',
     ),
     writeJson(join(directory, 'manifest.json'), {
-      schemaVersion: 1,
+      schemaVersion: RECOMMENDATION_BEHAVIORAL_V5_SCHEMA_VERSION,
       modelVersion: RECOMMENDATION_BEHAVIORAL_V5_MODEL_VERSION,
       featureVersion: RECOMMENDATION_BEHAVIORAL_V5_FEATURE_VERSION,
       generatedAt: '2026-08-11T00:00:00.000Z',
@@ -464,13 +465,13 @@ async function writeBehavioralArtifact(
       trainingArtifactEligible: true,
     }),
     writeJson(join(directory, 'audit.json'), {
-      schemaVersion: 1,
+      schemaVersion: RECOMMENDATION_BEHAVIORAL_V5_SCHEMA_VERSION,
       modelVersion: RECOMMENDATION_BEHAVIORAL_V5_MODEL_VERSION,
       passed: true,
       trainingArtifactEligible: true,
     }),
     writeJson(join(directory, 'evaluation.json'), {
-      schemaVersion: 1,
+      schemaVersion: RECOMMENDATION_BEHAVIORAL_V5_SCHEMA_VERSION,
       releaseGate: { passed: true },
     }),
   ]);
@@ -486,7 +487,7 @@ function propensityRow(
       ? recommendationValueV8FoldId(row.matchId, foldCount)
       : undefined;
   return {
-    schemaVersion: 1,
+    schemaVersion: RECOMMENDATION_BEHAVIORAL_V5_SCHEMA_VERSION,
     modelVersion: RECOMMENDATION_BEHAVIORAL_V5_MODEL_VERSION,
     featureVersion: RECOMMENDATION_BEHAVIORAL_V5_FEATURE_VERSION,
     decisionId: row.decisionId,
@@ -499,8 +500,10 @@ function propensityRow(
     observedActionKey: row.observedActionKey,
     observedActionRawProbability: 0.5,
     observedActionProbability: 0.5,
+    probabilityContract: 'RAW_SOFTMAX_WITHIN_DECISION',
     supported: true,
     propensityFloor: 0.01,
+    propensityFloorApplied: false,
     candidates: row.candidates.map((candidate, index) => ({
       actionKey: candidate.actionKey,
       itemId: candidate.itemId,
