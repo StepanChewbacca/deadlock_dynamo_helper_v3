@@ -170,9 +170,11 @@ function propensity(
   value: RecommendationProDecisionDatasetV6Row,
 ): RecommendationBehavioralV5PropensityRow {
   return {
-    schemaVersion: 1,
-    modelVersion: 'RECOMMENDATION_BEHAVIORAL_V5_HASHED_CONDITIONAL_CHOICE_1',
-    featureVersion: 'RECOMMENDATION_BEHAVIORAL_V5_FEATURES_2_FUTURE_TIMELINE_FALLBACK',
+    schemaVersion: 2,
+    modelVersion:
+      'RECOMMENDATION_BEHAVIORAL_V5_1_HASHED_CONDITIONAL_CHOICE_2_RAW_PROPENSITY',
+    featureVersion:
+      'RECOMMENDATION_BEHAVIORAL_V5_1_FEATURES_3_RAW_PROPENSITY_CONTRACT',
     decisionId: value.decisionId,
     matchId: value.matchId,
     split: value.split,
@@ -181,8 +183,10 @@ function propensity(
     observedActionKey: value.observedActionKey,
     observedActionRawProbability: 0.5,
     observedActionProbability: 0.5,
+    probabilityContract: 'RAW_SOFTMAX_WITHIN_DECISION',
     supported: true,
     propensityFloor: 0.01,
+    propensityFloorApplied: false,
     candidates: [
       candidatePropensity('BUY:100', 100, 1),
       candidatePropensity('BUY:200', 200, 2),

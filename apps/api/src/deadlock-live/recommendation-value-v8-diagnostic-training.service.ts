@@ -999,8 +999,17 @@ function validatePropensityJoins(
       propensity.sourceDatasetSha256 !== datasetSha256 ||
       propensity.trainingMatchExcluded !== true ||
       propensity.observedActionKey !== row.observedActionKey ||
+      propensity.probabilityContract !== 'RAW_SOFTMAX_WITHIN_DECISION' ||
+      propensity.propensityFloorApplied !== false ||
+      !Number.isFinite(propensity.observedActionRawProbability) ||
+      propensity.observedActionRawProbability <= 0 ||
       !Number.isFinite(propensity.observedActionProbability) ||
-      propensity.observedActionProbability <= 0
+      propensity.observedActionProbability <= 0 ||
+      Math.abs(
+        propensity.observedActionProbability -
+          propensity.observedActionRawProbability,
+      ) > 1e-12 ||
+      !isRawSoftmaxCandidateDistribution(propensity)
     ) {
       throw new Error(`Invalid Behavioral V5 propensity join ${row.decisionId}.`);
     }
@@ -1020,6 +1029,28 @@ function validatePropensityJoins(
       );
     }
   }
+}
+
+function isRawSoftmaxCandidateDistribution(
+  propensity: RecommendationBehavioralV5PropensityRow,
+): boolean {
+  if (propensity.candidates.length < 2) {
+    return false;
+  }
+  let total = 0;
+  for (const candidate of propensity.candidates) {
+    if (
+      !Number.isFinite(candidate.rawProbability) ||
+      candidate.rawProbability <= 0 ||
+      !Number.isFinite(candidate.probability) ||
+      candidate.probability <= 0 ||
+      Math.abs(candidate.probability - candidate.rawProbability) > 1e-12
+    ) {
+      return false;
+    }
+    total += candidate.probability;
+  }
+  return Math.abs(total - 1) <= 1e-9;
 }
 
 function datasetRow(

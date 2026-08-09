@@ -16,15 +16,14 @@ import {
   openMaybeGzipNdjsonReadStream,
 } from './gzip-ndjson';
 import {
-  clipRecommendationBehavioralV5Probabilities,
   createRecommendationBehavioralV5Model,
   predictRecommendationBehavioralV5,
   recommendationBehavioralV5FoldId,
+  stabilizeRecommendationBehavioralV5ObservedProbability,
   RECOMMENDATION_BEHAVIORAL_V5_FEATURE_VERSION,
   RECOMMENDATION_BEHAVIORAL_V5_MODEL_VERSION,
   RECOMMENDATION_BEHAVIORAL_V5_SCHEMA_VERSION,
   trainRecommendationBehavioralV5Decision,
-  type RecommendationBehavioralV5CandidateProbability,
   type RecommendationBehavioralV5Model,
   type RecommendationBehavioralV5Prediction,
 } from './recommendation-behavioral-v5';
@@ -121,8 +120,10 @@ export interface RecommendationBehavioralV5PropensityRow {
   observedActionKey: string;
   observedActionRawProbability: number;
   observedActionProbability: number;
+  probabilityContract: 'RAW_SOFTMAX_WITHIN_DECISION';
   supported: boolean;
   propensityFloor: number;
+  propensityFloorApplied: false;
   candidates: Array<{
     actionKey: string;
     itemId: number;
@@ -168,9 +169,8 @@ interface MetricsState {
   supportedDecisionCount: number;
   top1Count: number;
   rawLogLossSum: number;
-  stabilizedLogLossSum: number;
+  floorClippedObservedLogLossSum: number;
   rawBrierSum: number;
-  stabilizedBrierSum: number;
   entropySum: number;
   observedRawProbabilitySum: number;
   observedProbabilitySum: number;
@@ -216,21 +216,15 @@ class BehavioralV5EvaluationAccumulator {
   observe(
     row: RecommendationProDecisionDatasetV6Row,
     rawPrediction: RecommendationBehavioralV5Prediction,
-    stabilizedCandidates: readonly RecommendationBehavioralV5CandidateProbability[],
+    floorClippedObservedProbability: number,
   ): void {
-    const stabilizedObserved = stabilizedCandidates.find(
-      (candidate) => candidate.actionKey === row.observedActionKey,
-    );
-    if (!stabilizedObserved) {
-      throw new Error('Behavioral V5 stabilized probabilities lost the observed action.');
-    }
     const supported =
       rawPrediction.observedActionProbability >= this.supportProbability;
     this.observeMetrics(
       this.bySplit.get(row.split) as MetricsState,
       row,
       rawPrediction,
-      stabilizedCandidates,
+      floorClippedObservedProbability,
       supported,
     );
     if (row.split !== 'FUTURE_TEST') {
@@ -238,26 +232,21 @@ class BehavioralV5EvaluationAccumulator {
         this.selection,
         row,
         rawPrediction,
-        stabilizedCandidates,
+        floorClippedObservedProbability,
         supported,
       );
       this.selectionDecisionCount += 1;
       this.observeGroups(row, rawPrediction, supported);
       for (const floor of this.probabilityFloors) {
-        const candidates = clipRecommendationBehavioralV5Probabilities(
-          rawPrediction.candidates,
-          floor,
-        );
-        const observed = candidates.find(
-          (candidate) => candidate.actionKey === row.observedActionKey,
-        );
-        if (!observed) {
-          throw new Error('Behavioral V5 floor sensitivity lost the observed action.');
-        }
+        const observedProbability =
+          stabilizeRecommendationBehavioralV5ObservedProbability(
+            rawPrediction.observedActionProbability,
+            floor,
+          );
         this.floorLogLossSum.set(
           floor,
           (this.floorLogLossSum.get(floor) ?? 0) -
-            Math.log(Math.max(observed.probability, 1e-15)),
+            Math.log(Math.max(observedProbability, 1e-15)),
         );
       }
     }
@@ -317,7 +306,7 @@ class BehavioralV5EvaluationAccumulator {
     state: MetricsState,
     row: RecommendationProDecisionDatasetV6Row,
     rawPrediction: RecommendationBehavioralV5Prediction,
-    stabilizedCandidates: readonly RecommendationBehavioralV5CandidateProbability[],
+    floorClippedObservedProbability: number,
     supported: boolean,
   ): void {
     const rawByAction = new Map(
@@ -326,13 +315,6 @@ class BehavioralV5EvaluationAccumulator {
         candidate.probability,
       ]),
     );
-    const stabilizedByAction = new Map(
-      stabilizedCandidates.map((candidate) => [
-        candidate.actionKey,
-        candidate.probability,
-      ]),
-    );
-    const stabilizedObserved = stabilizedByAction.get(row.observedActionKey) ?? 0;
     state.decisionCount += 1;
     state.candidateCount += row.candidates.length;
     state.coveredDecisionCount += rawByAction.has(row.observedActionKey) ? 1 : 0;
@@ -341,12 +323,12 @@ class BehavioralV5EvaluationAccumulator {
     state.rawLogLossSum += -Math.log(
       Math.max(rawPrediction.observedActionProbability, 1e-15),
     );
-    state.stabilizedLogLossSum += -Math.log(
-      Math.max(stabilizedObserved, 1e-15),
+    state.floorClippedObservedLogLossSum += -Math.log(
+      Math.max(floorClippedObservedProbability, 1e-15),
     );
     state.entropySum += rawPrediction.entropy;
     state.observedRawProbabilitySum += rawPrediction.observedActionProbability;
-    state.observedProbabilitySum += stabilizedObserved;
+    state.observedProbabilitySum += rawPrediction.observedActionProbability;
     state.minimumObservedRawProbability = Math.min(
       state.minimumObservedRawProbability,
       rawPrediction.observedActionProbability,
@@ -358,11 +340,8 @@ class BehavioralV5EvaluationAccumulator {
 
     for (const candidate of row.candidates) {
       const rawProbability = rawByAction.get(candidate.actionKey) ?? 0;
-      const stabilizedProbability =
-        stabilizedByAction.get(candidate.actionKey) ?? 0;
       const label = candidate.actionKey === row.observedActionKey ? 1 : 0;
       state.rawBrierSum += (rawProbability - label) ** 2;
-      state.stabilizedBrierSum += (stabilizedProbability - label) ** 2;
       state.extremeCandidateProbabilityCount +=
         rawProbability <= EXTREME_PROBABILITY_EPSILON ||
         rawProbability >= 1 - EXTREME_PROBABILITY_EPSILON
@@ -708,27 +687,18 @@ export class RecommendationBehavioralV5TrainingService implements OnModuleInit {
                 ? finalModel
                 : foldModels[foldId].model;
             const rawPrediction = predictRecommendationBehavioralV5(model, row);
-            const stabilizedCandidates =
-              clipRecommendationBehavioralV5Probabilities(
-                rawPrediction.candidates,
-                options.propensityFloor,
-              );
-            const observedStabilized = stabilizedCandidates.find(
-              (candidate) => candidate.actionKey === row.observedActionKey,
-            );
-            if (!observedStabilized) {
+            if (rawPrediction.observedActionProbability <= 0) {
               throw new Error('Behavioral V5 prediction lost the observed action.');
             }
+            const floorClippedObservedProbability =
+              stabilizeRecommendationBehavioralV5ObservedProbability(
+                rawPrediction.observedActionProbability,
+                options.propensityFloor,
+              );
             evaluationAccumulator.observe(
               row,
               rawPrediction,
-              stabilizedCandidates,
-            );
-            const stabilizedByAction = new Map(
-              stabilizedCandidates.map((candidate) => [
-                candidate.actionKey,
-                candidate,
-              ]),
+              floorClippedObservedProbability,
             );
             const propensityRow: RecommendationBehavioralV5PropensityRow = {
               schemaVersion: RECOMMENDATION_BEHAVIORAL_V5_SCHEMA_VERSION,
@@ -746,21 +716,21 @@ export class RecommendationBehavioralV5TrainingService implements OnModuleInit {
               observedActionKey: row.observedActionKey,
               observedActionRawProbability:
                 rawPrediction.observedActionProbability,
-              observedActionProbability: observedStabilized.probability,
+              observedActionProbability:
+                rawPrediction.observedActionProbability,
+              probabilityContract: 'RAW_SOFTMAX_WITHIN_DECISION',
               supported:
                 rawPrediction.observedActionProbability >=
                 options.supportProbability,
               propensityFloor: options.propensityFloor,
+              propensityFloorApplied: false,
               candidates: rawPrediction.candidates.map((candidate) => ({
                 actionKey: candidate.actionKey,
                 itemId: candidate.itemId,
                 score: candidate.score,
                 rawProbability: candidate.probability,
-                probability:
-                  stabilizedByAction.get(candidate.actionKey)?.probability ?? 0,
-                rank:
-                  stabilizedByAction.get(candidate.actionKey)?.rank ??
-                  candidate.rank,
+                probability: candidate.probability,
+                rank: candidate.rank,
               })),
               modelArtifactSha256,
               sourceDatasetSha256: source.sha256,
@@ -858,6 +828,11 @@ export class RecommendationBehavioralV5TrainingService implements OnModuleInit {
         schemaVersion: RECOMMENDATION_BEHAVIORAL_V5_SCHEMA_VERSION,
         modelVersion: RECOMMENDATION_BEHAVIORAL_V5_MODEL_VERSION,
         generatedAt,
+        propensityContract: {
+          output: 'RAW_SOFTMAX_WITHIN_DECISION',
+          candidateProbabilityFloorApplied: false,
+          floorSensitivity: 'OBSERVED_PROPENSITY_CLIP_ONLY',
+        },
         metrics,
         candidateCoverage,
         releaseGate,
@@ -950,6 +925,8 @@ export class RecommendationBehavioralV5TrainingService implements OnModuleInit {
           rowCount: predictionRowCount,
           oofPredictionCount,
           fullTrainPredictionCount,
+          probabilityContract: 'RAW_SOFTMAX_WITHIN_DECISION',
+          propensityFloorApplied: false,
           sha256: await hashFile(this.paths.propensities),
         },
         releaseGate,
@@ -979,6 +956,10 @@ export class RecommendationBehavioralV5TrainingService implements OnModuleInit {
           input: 'STATE_PLUS_CANDIDATE',
           target: 'OBSERVED_ACTION_WITHIN_CANDIDATE_SET',
           normalization: 'SOFTMAX_WITHIN_DECISION',
+          propensityOutput: 'RAW_SOFTMAX_WITHIN_DECISION',
+          candidateProbabilityFloorApplied: false,
+          ipsClippingApplied: false,
+          probabilityFloorSensitivity: 'OBSERVED_PROPENSITY_CLIP_ONLY',
           crossFittingUnit: 'MATCH',
           trainSplitOnly: true,
           outcomeFieldsUsed: false,
@@ -1246,9 +1227,8 @@ function emptyMetricsState(): MetricsState {
     supportedDecisionCount: 0,
     top1Count: 0,
     rawLogLossSum: 0,
-    stabilizedLogLossSum: 0,
+    floorClippedObservedLogLossSum: 0,
     rawBrierSum: 0,
-    stabilizedBrierSum: 0,
     entropySum: 0,
     observedRawProbabilitySum: 0,
     observedProbabilitySum: 0,
@@ -1291,15 +1271,11 @@ function finalizeMetrics(state: MetricsState) {
     ),
     top1Rate: divide(state.top1Count, state.decisionCount),
     rawLogLoss: divide(state.rawLogLossSum, state.decisionCount),
-    stabilizedLogLoss: divide(
-      state.stabilizedLogLossSum,
+    floorClippedObservedLogLoss: divide(
+      state.floorClippedObservedLogLossSum,
       state.decisionCount,
     ),
     rawBrierScore: divide(state.rawBrierSum, state.decisionCount),
-    stabilizedBrierScore: divide(
-      state.stabilizedBrierSum,
-      state.decisionCount,
-    ),
     meanEntropy: divide(state.entropySum, state.decisionCount),
     meanObservedRawProbability: divide(
       state.observedRawProbabilitySum,

@@ -151,8 +151,17 @@ describe('Recommendation Behavioral V5 training', () => {
         predictionSource: 'CROSS_FITTED_OOF',
         trainingMatchExcluded: true,
         foldId: recommendationBehavioralV5FoldId(value.matchId, foldCount),
+        probabilityContract: 'RAW_SOFTMAX_WITHIN_DECISION',
+        propensityFloorApplied: false,
       });
       expect(value.observedActionProbability).toBeGreaterThan(0);
+      expect(value.observedActionProbability).toBeCloseTo(
+        value.observedActionRawProbability,
+        15,
+      );
+      for (const candidate of value.candidates) {
+        expect(candidate.probability).toBeCloseTo(candidate.rawProbability, 15);
+      }
       expect(
         value.candidates.reduce(
           (sum, candidate) => sum + candidate.probability,
@@ -215,11 +224,19 @@ describe('Recommendation Behavioral V5 training', () => {
       },
     });
     expect(service.getManifest()).toMatchObject({
-      modelVersion: 'RECOMMENDATION_BEHAVIORAL_V5_HASHED_CONDITIONAL_CHOICE_1',
+      schemaVersion: 2,
+      modelVersion:
+        'RECOMMENDATION_BEHAVIORAL_V5_1_HASHED_CONDITIONAL_CHOICE_2_RAW_PROPENSITY',
+      featureVersion:
+        'RECOMMENDATION_BEHAVIORAL_V5_1_FEATURES_3_RAW_PROPENSITY_CONTRACT',
       trainingContract: {
         input: 'STATE_PLUS_CANDIDATE',
         target: 'OBSERVED_ACTION_WITHIN_CANDIDATE_SET',
         normalization: 'SOFTMAX_WITHIN_DECISION',
+        propensityOutput: 'RAW_SOFTMAX_WITHIN_DECISION',
+        candidateProbabilityFloorApplied: false,
+        ipsClippingApplied: false,
+        probabilityFloorSensitivity: 'OBSERVED_PROPENSITY_CLIP_ONLY',
         crossFittingUnit: 'MATCH',
         trainSplitOnly: true,
         outcomeFieldsUsed: false,
@@ -231,6 +248,11 @@ describe('Recommendation Behavioral V5 training', () => {
       trainingArtifactEligible: true,
     });
     expect(service.getEvaluation()).toMatchObject({
+      propensityContract: {
+        output: 'RAW_SOFTMAX_WITHIN_DECISION',
+        candidateProbabilityFloorApplied: false,
+        floorSensitivity: 'OBSERVED_PROPENSITY_CLIP_ONLY',
+      },
       futureTestPolicy: {
         reported: true,
         usedForTraining: false,
