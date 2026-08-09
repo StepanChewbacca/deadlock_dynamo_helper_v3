@@ -16,6 +16,7 @@ import { createInterface } from 'node:readline';
 import { openMaybeGzipNdjsonReadStream } from './gzip-ndjson';
 import type { RecommendationBehavioralV5PropensityRow } from './recommendation-behavioral-v5-training.service';
 import {
+  RECOMMENDATION_BEHAVIORAL_V5_FEATURE_VERSION,
   RECOMMENDATION_BEHAVIORAL_V5_MODEL_VERSION,
   RECOMMENDATION_BEHAVIORAL_V5_SCHEMA_VERSION,
 } from './recommendation-behavioral-v5';
@@ -866,6 +867,7 @@ async function loadBehavioral(
   if (
     manifest.schemaVersion !== RECOMMENDATION_BEHAVIORAL_V5_SCHEMA_VERSION ||
     manifest.modelVersion !== RECOMMENDATION_BEHAVIORAL_V5_MODEL_VERSION ||
+    manifest.featureVersion !== RECOMMENDATION_BEHAVIORAL_V5_FEATURE_VERSION ||
     manifest.auditPassed !== true ||
     manifest.releaseGatePassed !== true ||
     manifest.trainingArtifactEligible !== true ||
@@ -1082,6 +1084,7 @@ function propensityRow(
     !isRecord(value) ||
     value.schemaVersion !== RECOMMENDATION_BEHAVIORAL_V5_SCHEMA_VERSION ||
     value.modelVersion !== RECOMMENDATION_BEHAVIORAL_V5_MODEL_VERSION ||
+    value.featureVersion !== RECOMMENDATION_BEHAVIORAL_V5_FEATURE_VERSION ||
     typeof value.decisionId !== 'string' ||
     typeof value.matchId !== 'string' ||
     !['TRAIN', 'TUNING', 'FUTURE_TEST'].includes(String(value.split)) ||
