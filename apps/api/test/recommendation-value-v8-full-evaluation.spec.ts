@@ -172,7 +172,7 @@ function propensity(
   return {
     schemaVersion: 1,
     modelVersion: 'RECOMMENDATION_BEHAVIORAL_V5_HASHED_CONDITIONAL_CHOICE_1',
-    featureVersion: 'RECOMMENDATION_BEHAVIORAL_V5_FEATURES_1',
+    featureVersion: 'RECOMMENDATION_BEHAVIORAL_V5_FEATURES_2_FUTURE_TIMELINE_FALLBACK',
     decisionId: value.decisionId,
     matchId: value.matchId,
     split: value.split,
