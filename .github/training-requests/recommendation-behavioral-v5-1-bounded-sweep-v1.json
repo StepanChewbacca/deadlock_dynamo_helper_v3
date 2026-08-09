@@ -24,5 +24,10 @@
     "replayDatasetSha256": "5ce49aaff5f08934c7c94abcbae88a19061de3c17c669e1f7f0db293d779c3e6",
     "datasetV6Sha256": "e8b11e26df37ff1e17b334eda18ea2141cfb7fa78f0a34eaf95d448c22962235",
     "behavioralV2PropensitySha256": "31e6c7369ac68c5a161d50f5ca6b9052683b876b4f37fdddac78ddabebdcab12"
+  },
+  "retry": {
+    "attempt": 2,
+    "previousWorkflowRunId": 31328887541,
+    "reason": "SELF_HOSTED_NODE_PATH_FIXED"
   }
 }
