@@ -169,6 +169,34 @@ async function runBehavioralV5(datasetManifest) {
     '/deadlock/analysis/recommendation-behavioral-v5-training/evaluation',
   );
   assertTrue(audit.passed, 'Behavioral V5 audit failed.');
+  assertTrue(
+    audit.trainingArtifactEligible,
+    'Behavioral V5 audit is not training-artifact eligible.',
+  );
+  assertTrue(
+    manifest.auditPassed,
+    'Behavioral V5 manifest audit flag is false.',
+  );
+  assertTrue(
+    manifest.releaseGatePassed,
+    'Behavioral V5 manifest release gate failed.',
+  );
+  assertTrue(
+    manifest.trainingArtifactEligible,
+    'Behavioral V5 manifest is not training-artifact eligible.',
+  );
+  assertTrue(
+    evaluation?.releaseGate?.passed,
+    'Behavioral V5 evaluation release gate failed.',
+  );
+  assertTrue(
+    status.releaseGatePassed,
+    'Behavioral V5 status release gate failed.',
+  );
+  assertTrue(
+    status.trainingArtifactEligible,
+    'Behavioral V5 status is not training-artifact eligible.',
+  );
   return { status, manifest, audit, evaluation };
 }
 
@@ -275,7 +303,12 @@ function loadConfig() {
     trainingWindowEnd: requiredString('TRAINING_WINDOW_END'),
     tuningStart: requiredString('TUNING_START'),
     futureTestStart: requiredString('FUTURE_TEST_START'),
-    diagnosticMaxRows: optionalInteger('DIAGNOSTIC_MAX_ROWS', 10000),
+    diagnosticMaxRows: optionalIntegerInRange(
+      'DIAGNOSTIC_MAX_ROWS',
+      10000,
+      100,
+      50000,
+    ),
     pollIntervalMs: optionalInteger('PIPELINE_POLL_INTERVAL_MS', 5000),
     pipelineTimeoutMs: optionalInteger(
       'PIPELINE_TIMEOUT_MS',
@@ -469,6 +502,14 @@ function optionalInteger(name, fallback) {
   const value = Number(raw);
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${name} must be a positive integer.`);
+  }
+  return value;
+}
+
+function optionalIntegerInRange(name, fallback, minimum, maximum) {
+  const value = optionalInteger(name, fallback);
+  if (value === undefined || value < minimum || value > maximum) {
+    throw new Error(`${name} must be between ${minimum} and ${maximum}.`);
   }
   return value;
 }
