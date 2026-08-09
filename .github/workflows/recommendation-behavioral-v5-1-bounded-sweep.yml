@@ -1,0 +1,206 @@
+name: Recommendation Behavioral V5.1 Bounded Sweep
+
+on:
+  pull_request:
+    paths:
+      - '.github/training-requests/recommendation-behavioral-v5-1-bounded-sweep-v1.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v5-1-bounded-sweep-v1
+  cancel-in-progress: false
+
+jobs:
+  bounded-sweep:
+    runs-on: self-hosted
+    timeout-minutes: 480
+    steps:
+      - name: Checkout requested implementation
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate authorization and immutable inputs
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/training-requests/recommendation-behavioral-v5-1-bounded-sweep-v1.json'
+          test -s "$request"
+          jq -e '
+            .operation == "RECOMMENDATION_BEHAVIORAL_V5_1_BOUNDED_SWEEP" and
+            .boundedSweepAuthorized == true and
+            .fullTrainingAuthorized == false and
+            .valueV8TrainingAuthorized == false and
+            .productionRankingChanged == false and
+            .passiveShadowActivated == false and
+            .randomizedCanaryAuthorized == false and
+            .auditThresholdsLowered == false and
+            .futureTestAllowed == false and
+            .sourceDirectory == "recommendation-pro-decision-dataset-v6-terminal-5000-v2" and
+            .sample.modulo == 16 and
+            .sample.remainder == 0
+          ' "$request"
+
+          node --check scripts/run-recommendation-behavioral-v5-1-bounded-sweep.mjs
+
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          source_name="$(jq -r '.sourceDirectory' "$request")"
+          source="$storage/$source_name"
+          expected_sha="$(jq -r '.expectedDatasetSha256' "$request")"
+          [[ "$expected_sha" =~ ^[a-f0-9]{64}$ ]]
+
+          sudo test -s "$source/dataset.ndjson"
+          sudo test -s "$source/manifest.json"
+          sudo test -s "$source/audit.json"
+          source_manifest="$(sudo cat "$source/manifest.json")"
+          source_audit="$(sudo cat "$source/audit.json")"
+          jq -e '.auditPassed == true and .trainingArtifactEligible == true' <<<"$source_manifest"
+          jq -e '.passed == true and .trainingArtifactEligible == true' <<<"$source_audit"
+          manifest_sha="$(jq -r '.artifact.sha256' <<<"$source_manifest")"
+          test "$manifest_sha" = "$expected_sha"
+
+          available_kib="$(df -Pk "$storage" | awk 'NR==2 {print $4}')"
+          test "$available_kib" -ge $((12 * 1024 * 1024))
+
+          a='recommendation-behavioral-v5-1-sweep-a-v1'
+          b='recommendation-behavioral-v5-1-sweep-b-v1'
+          c='recommendation-behavioral-v5-1-sweep-c-v1'
+          summary='recommendation-behavioral-v5-1-sweep-v1'
+          for name in "$a" "$b" "$c" "$summary"; do
+            if sudo test -e "$storage/$name"; then
+              echo "Refusing destructive reuse of existing output: $storage/$name" >&2
+              exit 1
+            fi
+          done
+
+          {
+            echo "storage=$storage"
+            echo "source_name=$source_name"
+            echo "expected_sha=$expected_sha"
+            echo "a=$a"
+            echo "b=$b"
+            echo "c=$c"
+            echo "summary=$summary"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create immutable output directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          storage='${{ steps.preflight.outputs.storage }}'
+          for name in \
+            '${{ steps.preflight.outputs.a }}' \
+            '${{ steps.preflight.outputs.b }}' \
+            '${{ steps.preflight.outputs.c }}' \
+            '${{ steps.preflight.outputs.summary }}'; do
+            sudo mkdir "$storage/$name"
+          done
+
+      - name: Build isolated Behavioral V5.1 image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo docker build \
+            --label deadlock.recommendation.operation=behavioral-v5-1-bounded-sweep \
+            --label deadlock.recommendation.git-sha="$GITHUB_SHA" \
+            -t "deadlock-behavioral-v5-1-bounded-sweep:$GITHUB_RUN_ID" \
+            .
+
+      - name: Run precommitted A/B/C bounded sweep
+        shell: bash
+        run: |
+          set -euo pipefail
+          storage='${{ steps.preflight.outputs.storage }}'
+          source_name='${{ steps.preflight.outputs.source_name }}'
+          expected_sha='${{ steps.preflight.outputs.expected_sha }}'
+          a='${{ steps.preflight.outputs.a }}'
+          b='${{ steps.preflight.outputs.b }}'
+          c='${{ steps.preflight.outputs.c }}'
+          summary='${{ steps.preflight.outputs.summary }}'
+          image="deadlock-behavioral-v5-1-bounded-sweep:$GITHUB_RUN_ID"
+
+          sudo docker run --rm \
+            --name "deadlock-behavioral-v5-1-sweep-$GITHUB_RUN_ID" \
+            --network none \
+            --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,size=256m \
+            -e NODE_OPTIONS=--max-old-space-size=6144 \
+            -e DEADLOCK_RECOMMENDATION_BEHAVIORAL_V5_SOURCE_DIR="/app/apps/api/storage/$source_name" \
+            -e EXPECTED_DATASET_SHA256="$expected_sha" \
+            -e BEHAVIORAL_SWEEP_SUMMARY_DIR="/app/apps/api/storage/$summary" \
+            -e BEHAVIORAL_SWEEP_MATCH_MODULO=16 \
+            -e BEHAVIORAL_SWEEP_MATCH_REMAINDER=0 \
+            -e BEHAVIORAL_SWEEP_A_DIR="/app/apps/api/storage/$a" \
+            -e BEHAVIORAL_SWEEP_B_DIR="/app/apps/api/storage/$b" \
+            -e BEHAVIORAL_SWEEP_C_DIR="/app/apps/api/storage/$c" \
+            -v "$storage/$source_name:/app/apps/api/storage/$source_name:ro" \
+            -v "$storage/$a:/app/apps/api/storage/$a:rw" \
+            -v "$storage/$b:/app/apps/api/storage/$b:rw" \
+            -v "$storage/$c:/app/apps/api/storage/$c:rw" \
+            -v "$storage/$summary:/app/apps/api/storage/$summary:rw" \
+            "$image" \
+            node /app/scripts/run-recommendation-behavioral-v5-1-bounded-sweep.mjs
+
+      - name: Verify bounded sweep evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          storage='${{ steps.preflight.outputs.storage }}'
+          summary='${{ steps.preflight.outputs.summary }}'
+          path="$storage/$summary/sweep-summary.json"
+          sudo test -s "$path"
+          value="$(sudo cat "$path")"
+          jq -e '
+            .operation == "RECOMMENDATION_BEHAVIORAL_V5_1_BOUNDED_SWEEP" and
+            .diagnosticSample.unit == "MATCH" and
+            .diagnosticSample.hash == "FNV1A_32" and
+            .diagnosticSample.modulo == 16 and
+            .diagnosticSample.remainder == 0 and
+            .diagnosticSample.futureTestEvaluated == false and
+            (.diagnosticSample.sha256 | test("^[a-f0-9]{64}$")) and
+            .fullTrainingAuthorized == false and
+            .valueV8TrainingAuthorized == false and
+            .passiveShadowAuthorized == false and
+            .randomizedCanaryAuthorized == false and
+            (.results | length == 3) and
+            ([.results[].auditPassed] | all) and
+            ([.results[].trainingArtifactEligible] | any) == false and
+            ([.results[].diagnosticSampleSha256] | unique | length == 1)
+          ' <<<"$value"
+          sudo cp "$path" "$RUNNER_TEMP/recommendation-behavioral-v5-1-sweep-summary.json"
+
+          {
+            echo "gitSha=$GITHUB_SHA"
+            echo "runId=$GITHUB_RUN_ID"
+            echo "sourceDatasetSha256=${{ steps.preflight.outputs.expected_sha }}"
+            echo "readOnlySource=true"
+            echo "fullTrainingAuthorized=false"
+            echo "valueV8TrainingAuthorized=false"
+            echo "productionRankingChanged=false"
+            echo "passiveShadowActivated=false"
+            echo "randomizedCanaryAuthorized=false"
+            echo '=== summary ==='
+            jq '.' <<<"$value"
+            echo '=== storage ==='
+            df -hT "$storage"
+          } | tee "$RUNNER_TEMP/recommendation-behavioral-v5-1-sweep-report.txt"
+
+      - name: Upload bounded sweep evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-behavioral-v5-1-bounded-sweep-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/recommendation-behavioral-v5-1-sweep-summary.json
+            ${{ runner.temp }}/recommendation-behavioral-v5-1-sweep-report.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Remove transient Docker image
+        if: always()
+        shell: bash
+        run: |
+          sudo docker image rm -f "deadlock-behavioral-v5-1-bounded-sweep:$GITHUB_RUN_ID" >/dev/null 2>&1 || true
