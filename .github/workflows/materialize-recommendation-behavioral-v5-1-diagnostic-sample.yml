@@ -1,0 +1,35 @@
+name: Materialize Behavioral V5.1 Diagnostic Sample
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/materialize-recommendation-behavioral-v5-1-diagnostic-sample.py'
+      - '.github/workflows/materialize-recommendation-behavioral-v5-1-diagnostic-sample.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+      - run: python3 scripts/materialize-recommendation-behavioral-v5-1-diagnostic-sample.py
+      - run: |
+          set -euo pipefail
+          git diff --check
+          grep -q "DIAGNOSTIC_SAMPLE_FILE_NAME = 'diagnostic-sample.ndjson.gz'" apps/api/src/deadlock-live/recommendation-behavioral-v5-training.service.ts
+          grep -q 'diagnosticSampleArtifact' apps/api/src/deadlock-live/recommendation-behavioral-v5-training.service.ts
+          grep -q 'iterationDatasetPath' apps/api/src/deadlock-live/recommendation-behavioral-v5-training.service.ts
+      - run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add apps/api/src/deadlock-live/recommendation-behavioral-v5-training.service.ts
+          git commit -m 'perf: materialize bounded Behavioral V5.1 sample'
+          git push origin HEAD:${GITHUB_HEAD_REF}
