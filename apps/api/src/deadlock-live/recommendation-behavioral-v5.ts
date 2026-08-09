@@ -3,11 +3,11 @@ import type {
   RecommendationProDecisionDatasetV6Row,
 } from './recommendation-pro-decision-dataset-v6';
 
-export const RECOMMENDATION_BEHAVIORAL_V5_SCHEMA_VERSION = 1;
+export const RECOMMENDATION_BEHAVIORAL_V5_SCHEMA_VERSION = 2;
 export const RECOMMENDATION_BEHAVIORAL_V5_MODEL_VERSION =
-  'RECOMMENDATION_BEHAVIORAL_V5_HASHED_CONDITIONAL_CHOICE_1' as const;
+  'RECOMMENDATION_BEHAVIORAL_V5_1_HASHED_CONDITIONAL_CHOICE_2_RAW_PROPENSITY' as const;
 export const RECOMMENDATION_BEHAVIORAL_V5_FEATURE_VERSION =
-  'RECOMMENDATION_BEHAVIORAL_V5_FEATURES_2_FUTURE_TIMELINE_FALLBACK' as const;
+  'RECOMMENDATION_BEHAVIORAL_V5_1_FEATURES_3_RAW_PROPENSITY_CONTRACT' as const;
 
 export interface RecommendationBehavioralV5Model {
   schemaVersion: typeof RECOMMENDATION_BEHAVIORAL_V5_SCHEMA_VERSION;
@@ -176,35 +176,17 @@ export function predictRecommendationBehavioralV5(
   };
 }
 
-export function clipRecommendationBehavioralV5Probabilities(
-  candidates: readonly RecommendationBehavioralV5CandidateProbability[],
+export function stabilizeRecommendationBehavioralV5ObservedProbability(
+  probability: number,
   floor: number,
-): RecommendationBehavioralV5CandidateProbability[] {
+): number {
+  if (!Number.isFinite(probability) || probability < 0 || probability > 1) {
+    throw new Error('Behavioral V5 observed probability must be in [0, 1].');
+  }
   if (!Number.isFinite(floor) || floor < 0 || floor >= 1) {
     throw new Error('Behavioral V5 probability floor must be in [0, 1).');
   }
-  if (candidates.length === 0) {
-    throw new Error('Behavioral V5 candidate probabilities are empty.');
-  }
-  const clipped = candidates.map((candidate) => ({
-    ...candidate,
-    probability: Math.max(candidate.probability, floor),
-  }));
-  const total = clipped.reduce(
-    (sum, candidate) => sum + candidate.probability,
-    0,
-  );
-  return clipped
-    .map((candidate) => ({
-      ...candidate,
-      probability: candidate.probability / total,
-    }))
-    .sort(
-      (left, right) =>
-        right.probability - left.probability ||
-        left.actionKey.localeCompare(right.actionKey),
-    )
-    .map((candidate, index) => ({ ...candidate, rank: index + 1 }));
+  return Math.max(probability, floor);
 }
 
 export function recommendationBehavioralV5FoldId(
