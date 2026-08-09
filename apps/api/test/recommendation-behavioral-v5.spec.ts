@@ -1,6 +1,7 @@
 import {
   createRecommendationBehavioralV5Model,
   predictRecommendationBehavioralV5,
+  recommendationBehavioralV5DiagnosticMatchSelected,
   recommendationBehavioralV5FeatureCount,
   recommendationBehavioralV5FoldId,
   stabilizeRecommendationBehavioralV5ObservedProbability,
@@ -9,6 +10,20 @@ import {
 import type { RecommendationProDecisionDatasetV6Row } from '../src/deadlock-live/recommendation-pro-decision-dataset-v6';
 
 describe('Recommendation Behavioral V5 core', () => {
+  it('selects bounded diagnostic samples deterministically at match level', () => {
+    const selected = recommendationBehavioralV5DiagnosticMatchSelected(
+      'match-1',
+      64,
+      0,
+    );
+    expect(
+      recommendationBehavioralV5DiagnosticMatchSelected('match-1', 64, 0),
+    ).toBe(selected);
+    expect(() =>
+      recommendationBehavioralV5DiagnosticMatchSelected('match-1', 64, 64),
+    ).toThrow('remainder');
+  });
+
   it('assigns a deterministic match-level fold', () => {
     expect(recommendationBehavioralV5FoldId('match-1', 5)).toBe(
       recommendationBehavioralV5FoldId('match-1', 5),
@@ -100,8 +115,8 @@ describe('Recommendation Behavioral V5 core', () => {
       1_024,
     );
 
-    expect(first).toBeGreaterThan(20);
-    expect(second).toBeGreaterThan(20);
+    expect(first).toBeGreaterThan(24);
+    expect(second).toBeGreaterThan(24);
   });
 });
 

@@ -18,6 +18,7 @@ import {
 import {
   createRecommendationBehavioralV5Model,
   predictRecommendationBehavioralV5,
+  recommendationBehavioralV5DiagnosticMatchSelected,
   recommendationBehavioralV5FoldId,
   stabilizeRecommendationBehavioralV5ObservedProbability,
   RECOMMENDATION_BEHAVIORAL_V5_FEATURE_VERSION,
@@ -59,6 +60,8 @@ export interface RecommendationBehavioralV5TrainingStartRequest {
   majorGroupMinDecisions?: number;
   expectedSourceSha256?: string;
   maxRows?: number;
+  diagnosticMatchModulo?: number;
+  diagnosticMatchRemainder?: number;
 }
 
 export interface RecommendationBehavioralV5TrainingOptions {
@@ -73,6 +76,8 @@ export interface RecommendationBehavioralV5TrainingOptions {
   majorGroupMinDecisions: number;
   expectedSourceSha256?: string;
   maxRows?: number;
+  diagnosticMatchModulo?: number;
+  diagnosticMatchRemainder?: number;
 }
 
 export interface RecommendationBehavioralV5TrainingStatus {
@@ -525,8 +530,8 @@ export class RecommendationBehavioralV5TrainingService implements OnModuleInit {
       if (summary.invalidRowCount > 0) {
         throw new Error('Recommendation Dataset V6 contains invalid rows.');
       }
-      const fullCorpus = options.maxRows === undefined;
-      if (fullCorpus && summary.scannedRowCount !== source.rowCount) {
+      const completeSourceScan = options.maxRows === undefined;
+      if (completeSourceScan && summary.scannedRowCount !== source.rowCount) {
         throw new Error(
           'Recommendation Dataset V6 row count does not match its manifest.',
         );
@@ -564,7 +569,7 @@ export class RecommendationBehavioralV5TrainingService implements OnModuleInit {
           };
           await eachSourceRow(
             source.datasetPath,
-            options.maxRows,
+            options,
             async (row) => {
               if (
                 row.split !== 'TRAIN' ||
@@ -611,7 +616,7 @@ export class RecommendationBehavioralV5TrainingService implements OnModuleInit {
         };
         await eachSourceRow(
           source.datasetPath,
-          options.maxRows,
+          options,
           async (row) => {
             if (row.split === 'TRAIN' && isBehavioralEligible(row)) {
               trainRecommendationBehavioralV5Decision(finalModel, row, options);
@@ -670,7 +675,7 @@ export class RecommendationBehavioralV5TrainingService implements OnModuleInit {
       try {
         await eachSourceRow(
           source.datasetPath,
-          options.maxRows,
+          options,
           async (row) => {
             if (!isBehavioralEligible(row)) {
               return;
@@ -873,12 +878,9 @@ export class RecommendationBehavioralV5TrainingService implements OnModuleInit {
       ) {
         structuralReasons.push('A cross-fitting model trained on its holdout fold.');
       }
-      const fullCorpusEligible = options.maxRows === undefined;
-      if (!fullCorpusEligible) {
-        structuralReasons.push(
-          'Diagnostic maxRows was used; artifact is not eligible for Value V8.',
-        );
-      }
+      const fullCorpusEligible =
+        options.maxRows === undefined &&
+        options.diagnosticMatchModulo === undefined;
       const auditPassed = structuralReasons.length === 0;
       const trainingArtifactEligible =
         auditPassed && releaseGate.passed && fullCorpusEligible;
@@ -933,6 +935,16 @@ export class RecommendationBehavioralV5TrainingService implements OnModuleInit {
         build: {
           fullCorpus: fullCorpusEligible,
           diagnosticMaxRows: options.maxRows,
+          diagnosticMatchSample:
+            options.diagnosticMatchModulo === undefined
+              ? undefined
+              : {
+                  unit: 'MATCH',
+                  hash: 'FNV1A_32',
+                  modulo: options.diagnosticMatchModulo,
+                  remainder: options.diagnosticMatchRemainder,
+                  futureTestEvaluated: false,
+                },
         },
         reasons: structuralReasons,
       };
@@ -1141,6 +1153,9 @@ async function scanSource(
       summary.invalidRowCount += 1;
       continue;
     }
+    if (!behavioralRowSelected(row, options)) {
+      continue;
+    }
     if (row.split !== 'FUTURE_TEST') {
       summary.selectionDecisionCount += 1;
       summary.candidateCoveredSelectionDecisionCount +=
@@ -1168,20 +1183,41 @@ async function scanSource(
 
 async function eachSourceRow(
   path: string,
-  maxRows: number | undefined,
+  options: RecommendationBehavioralV5TrainingOptions,
   callback: (row: RecommendationProDecisionDatasetV6Row) => Promise<void>,
 ): Promise<void> {
   let count = 0;
   for await (const value of ndjson(path)) {
-    if (maxRows !== undefined && count >= maxRows) {
+    if (options.maxRows !== undefined && count >= options.maxRows) {
       break;
     }
     count += 1;
-    await callback(sourceRow(value, count));
+    const row = sourceRow(value, count);
+    if (!behavioralRowSelected(row, options)) {
+      continue;
+    }
+    await callback(row);
     if (count % 10_000 === 0) {
       await tick();
     }
   }
+}
+
+function behavioralRowSelected(
+  row: RecommendationProDecisionDatasetV6Row,
+  options: RecommendationBehavioralV5TrainingOptions,
+): boolean {
+  if (options.diagnosticMatchModulo === undefined) {
+    return true;
+  }
+  if (row.split === 'FUTURE_TEST') {
+    return false;
+  }
+  return recommendationBehavioralV5DiagnosticMatchSelected(
+    row.matchId,
+    options.diagnosticMatchModulo,
+    options.diagnosticMatchRemainder ?? 0,
+  );
 }
 
 function sourceRow(
@@ -1319,6 +1355,37 @@ function economyBand(netWorth: number | undefined): string {
 function normalizeOptions(
   request: RecommendationBehavioralV5TrainingStartRequest,
 ): RecommendationBehavioralV5TrainingOptions {
+  const maxRows = optionalPositiveInteger(request.maxRows, 'maxRows');
+  const diagnosticMatchModulo = optionalPositiveInteger(
+    request.diagnosticMatchModulo,
+    'diagnosticMatchModulo',
+  );
+  let diagnosticMatchRemainder = optionalNonNegativeInteger(
+    request.diagnosticMatchRemainder,
+    'diagnosticMatchRemainder',
+  );
+  if (maxRows !== undefined && diagnosticMatchModulo !== undefined) {
+    throw new Error(
+      'Behavioral V5 maxRows and diagnostic match sampling are mutually exclusive.',
+    );
+  }
+  if (diagnosticMatchModulo !== undefined) {
+    if (diagnosticMatchModulo < 2 || diagnosticMatchModulo > 10_000) {
+      throw new Error(
+        'diagnosticMatchModulo must be between 2 and 10000.',
+      );
+    }
+    diagnosticMatchRemainder ??= 0;
+    if (diagnosticMatchRemainder >= diagnosticMatchModulo) {
+      throw new Error(
+        'diagnosticMatchRemainder must be smaller than diagnosticMatchModulo.',
+      );
+    }
+  } else if (diagnosticMatchRemainder !== undefined) {
+    throw new Error(
+      'diagnosticMatchRemainder requires diagnosticMatchModulo.',
+    );
+  }
   return {
     foldCount: boundedInteger(request.foldCount, 5, 2, 10, 'foldCount'),
     epochs: boundedInteger(request.epochs, 3, 1, 20, 'epochs'),
@@ -1363,7 +1430,9 @@ function normalizeOptions(
       request.expectedSourceSha256,
       'expectedSourceSha256',
     ),
-    maxRows: optionalPositiveInteger(request.maxRows, 'maxRows'),
+    maxRows,
+    diagnosticMatchModulo,
+    diagnosticMatchRemainder,
   };
 }
 
@@ -1452,6 +1521,19 @@ function optionalPositiveInteger(
   }
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${label} must be a positive safe integer.`);
+  }
+  return value;
+}
+
+function optionalNonNegativeInteger(
+  value: number | undefined,
+  label: string,
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative safe integer.`);
   }
   return value;
 }

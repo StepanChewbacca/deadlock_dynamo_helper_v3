@@ -174,7 +174,7 @@ function propensity(
     modelVersion:
       'RECOMMENDATION_BEHAVIORAL_V5_1_HASHED_CONDITIONAL_CHOICE_2_RAW_PROPENSITY',
     featureVersion:
-      'RECOMMENDATION_BEHAVIORAL_V5_1_FEATURES_3_RAW_PROPENSITY_CONTRACT',
+      'RECOMMENDATION_BEHAVIORAL_V5_1_FEATURES_4_CAPACITY_INTERACTIONS',
     decisionId: value.decisionId,
     matchId: value.matchId,
     split: value.split,

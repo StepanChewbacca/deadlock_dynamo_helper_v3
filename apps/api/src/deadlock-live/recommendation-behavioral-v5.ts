@@ -7,7 +7,7 @@ export const RECOMMENDATION_BEHAVIORAL_V5_SCHEMA_VERSION = 2;
 export const RECOMMENDATION_BEHAVIORAL_V5_MODEL_VERSION =
   'RECOMMENDATION_BEHAVIORAL_V5_1_HASHED_CONDITIONAL_CHOICE_2_RAW_PROPENSITY' as const;
 export const RECOMMENDATION_BEHAVIORAL_V5_FEATURE_VERSION =
-  'RECOMMENDATION_BEHAVIORAL_V5_1_FEATURES_3_RAW_PROPENSITY_CONTRACT' as const;
+  'RECOMMENDATION_BEHAVIORAL_V5_1_FEATURES_4_CAPACITY_INTERACTIONS' as const;
 
 export interface RecommendationBehavioralV5Model {
   schemaVersion: typeof RECOMMENDATION_BEHAVIORAL_V5_SCHEMA_VERSION;
@@ -189,6 +189,29 @@ export function stabilizeRecommendationBehavioralV5ObservedProbability(
   return Math.max(probability, floor);
 }
 
+export function recommendationBehavioralV5DiagnosticMatchSelected(
+  matchId: string,
+  modulo: number,
+  remainder: number,
+): boolean {
+  if (!matchId.trim()) {
+    throw new Error('Behavioral V5 matchId is required for diagnostic sampling.');
+  }
+  if (!Number.isSafeInteger(modulo) || modulo < 2 || modulo > 10_000) {
+    throw new Error('Behavioral V5 diagnostic sample modulo must be between 2 and 10000.');
+  }
+  if (
+    !Number.isSafeInteger(remainder) ||
+    remainder < 0 ||
+    remainder >= modulo
+  ) {
+    throw new Error(
+      'Behavioral V5 diagnostic sample remainder must be in [0, modulo).',
+    );
+  }
+  return fnv1a(matchId) % modulo === remainder;
+}
+
 export function recommendationBehavioralV5FoldId(
   matchId: string,
   foldCount: number,
@@ -228,6 +251,7 @@ function candidateFeatures(
   const heroId = row.state.heroId;
   const itemId = candidate.itemId;
   const timeBucket = Math.floor(row.state.gameTimeS / 300);
+  const economy = behavioralEconomyBand(row.state.netWorth);
 
   add('bias');
   add(
@@ -243,6 +267,10 @@ function candidateFeatures(
   add(`hero-item:${heroId}:${itemId}`);
   add(`phase-item:${row.state.phase}:${itemId}`);
   add(`time-item:${timeBucket}:${itemId}`);
+  add(`time-bucket-action:${timeBucket}:${candidate.actionKey}`);
+  add(`hero-time-bucket-item:${heroId}:${timeBucket}:${itemId}`);
+  add(`economy-band-item:${economy}:${itemId}`);
+  add(`economy-band-action:${economy}:${candidate.actionKey}`);
   add(`action-type:${candidate.actionType}`);
   add(`slot:${candidate.slotType ?? 'UNKNOWN'}`);
   add(`hero-slot:${heroId}:${candidate.slotType ?? 'UNKNOWN'}`);
@@ -380,6 +408,22 @@ function healthRatio(row: RecommendationProDecisionDatasetV6Row): number {
 
 function bounded(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
+}
+
+function behavioralEconomyBand(netWorth: number | undefined): string {
+  if (netWorth === undefined || !Number.isFinite(netWorth)) {
+    return 'UNKNOWN';
+  }
+  if (netWorth < 5_000) {
+    return 'LT_5000';
+  }
+  if (netWorth < 10_000) {
+    return '5000_9999';
+  }
+  if (netWorth < 20_000) {
+    return '10000_19999';
+  }
+  return 'GE_20000';
 }
 
 function fnv1a(value: string): number {
