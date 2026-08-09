@@ -1,0 +1,52 @@
+name: Apply Behavioral V5.1 Bounded Sweep Patch
+
+on:
+  push:
+    branches:
+      - agent/recommendation-behavioral-v5-1-bounded-sweep-1
+    paths:
+      - 'scripts/apply-recommendation-behavioral-v5-1-bounded-sweep-patch.py'
+      - '.github/workflows/apply-recommendation-behavioral-v5-1-bounded-sweep.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-recommendation-behavioral-v5-1-bounded-sweep
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Apply deterministic patch
+        run: python3 scripts/apply-recommendation-behavioral-v5-1-bounded-sweep-patch.py
+
+      - name: Validate patch
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -q 'diagnosticMatchModulo' apps/api/src/deadlock-live/recommendation-behavioral-v5-training.service.ts
+          grep -q 'futureTestEvaluated: false' apps/api/src/deadlock-live/recommendation-behavioral-v5-training.service.ts
+          grep -q 'hero-time-bucket-item' apps/api/src/deadlock-live/recommendation-behavioral-v5.ts
+          grep -q 'economy-band-action' apps/api/src/deadlock-live/recommendation-behavioral-v5.ts
+
+      - name: Commit patched sources
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            apps/api/src/deadlock-live/recommendation-behavioral-v5.ts \
+            apps/api/src/deadlock-live/recommendation-behavioral-v5-training.service.ts \
+            apps/api/test/recommendation-behavioral-v5.spec.ts \
+            apps/api/test/recommendation-value-v8-full-evaluation.spec.ts
+          git commit -m 'feat: add bounded Behavioral V5.1 sampling'
+          git push origin HEAD:${GITHUB_REF_NAME}
