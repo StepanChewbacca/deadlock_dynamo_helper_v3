@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
+  recommendationBehavioralV5DiagnosticMatchSelected,
   recommendationBehavioralV5FoldId,
   type RecommendationBehavioralV5Model,
 } from '../src/deadlock-live/recommendation-behavioral-v5';
@@ -264,6 +265,102 @@ describe('Recommendation Behavioral V5 training', () => {
     expect(status.trainingArtifactEligible).toBe(
       audit.trainingArtifactEligible,
     );
+
+    const sampledOutputDirectory = join(root, 'sampled-output');
+    process.env[OUTPUT_ENV] = sampledOutputDirectory;
+    const sampledService = new RecommendationBehavioralV5TrainingService();
+    await sampledService.onModuleInit();
+    await sampledService.start({
+      foldCount,
+      epochs: 1,
+      learningRate: 0.2,
+      l2: 0.0001,
+      hashDimension: 512,
+      propensityFloor: 0.01,
+      supportProbability: 0.0001,
+      majorGroupMinDecisions: 1_000,
+      expectedSourceSha256: datasetSha256,
+      diagnosticMatchModulo: 2,
+      diagnosticMatchRemainder: 0,
+    });
+    await sampledService.waitForIdle();
+
+    expect(sampledService.getStatus()).toMatchObject({
+      state: 'COMPLETE',
+      trainEligibleDecisionCount: trainMatchIds.length,
+      futureTestEligibleDecisionCount: 0,
+      trainingArtifactEligible: false,
+    });
+    const sampledRows = gunzipSync(
+      await readFile(join(sampledOutputDirectory, 'diagnostic-sample.ndjson.gz')),
+    )
+      .toString('utf8')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as RecommendationProDecisionDatasetV6Row);
+    expect(sampledRows.length).toBeGreaterThanOrEqual(trainMatchIds.length);
+    expect(sampledRows.every((value) => value.split !== 'FUTURE_TEST')).toBe(
+      true,
+    );
+    expect(
+      sampledRows.every((value) =>
+        recommendationBehavioralV5DiagnosticMatchSelected(
+          value.matchId,
+          2,
+          0,
+        ),
+      ),
+    ).toBe(true);
+
+    const sampledAudit = sampledService.getAudit() as {
+      passed: boolean;
+      trainingArtifactEligible: boolean;
+      build: {
+        fullCorpus: boolean;
+        diagnosticMatchSample: {
+          unit: string;
+          hash: string;
+          modulo: number;
+          remainder: number;
+          futureTestEvaluated: boolean;
+          artifact: {
+            fileName: string;
+            rowCount: number;
+            sha256: string;
+          };
+        };
+      };
+    };
+    expect(sampledAudit).toMatchObject({
+      passed: true,
+      trainingArtifactEligible: false,
+      build: {
+        fullCorpus: false,
+        diagnosticMatchSample: {
+          unit: 'MATCH',
+          hash: 'FNV1A_32',
+          modulo: 2,
+          remainder: 0,
+          futureTestEvaluated: false,
+          artifact: {
+            fileName: 'diagnostic-sample.ndjson.gz',
+            rowCount: sampledRows.length,
+          },
+        },
+      },
+    });
+    expect(sampledAudit.build.diagnosticMatchSample.artifact.sha256).toMatch(
+      /^[a-f0-9]{64}$/,
+    );
+    expect(sampledService.getEvaluation()).toMatchObject({
+      futureTestPolicy: {
+        reported: false,
+        usedForTraining: false,
+        usedForCalibration: false,
+        usedForReleaseGate: false,
+      },
+    });
   });
 });
 
@@ -271,6 +368,9 @@ function matchIdsCoveringEveryFold(foldCount: number): string[] {
   const result = new Map<number, string>();
   for (let index = 1; result.size < foldCount && index < 10_000; index += 1) {
     const matchId = `train-match-${index}`;
+    if (!recommendationBehavioralV5DiagnosticMatchSelected(matchId, 2, 0)) {
+      continue;
+    }
     const foldId = recommendationBehavioralV5FoldId(matchId, foldCount);
     if (!result.has(foldId)) {
       result.set(foldId, matchId);
