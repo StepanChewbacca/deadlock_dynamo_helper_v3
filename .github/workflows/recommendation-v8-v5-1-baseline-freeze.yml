@@ -1,0 +1,117 @@
+name: Recommendation V8 V5.1 Baseline Freeze
+
+on:
+  pull_request:
+    paths:
+      - '.github/training-requests/recommendation-v8-v5-1-baseline-freeze.json'
+      - '.github/workflows/recommendation-v8-v5-1-baseline-freeze.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-v8-v5-1-baseline-freeze
+  cancel-in-progress: true
+
+jobs:
+  freeze:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - name: Checkout baseline request
+        uses: actions/checkout@v4
+
+      - name: Capture immutable baseline evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/training-requests/recommendation-v8-v5-1-baseline-freeze.json'
+          jq -e '
+            .operation == "FREEZE_RECOMMENDATION_V8_V5_1_BASELINE" and
+            .readOnly == true and
+            .trainingAuthorized == false and
+            .fullValueTrainingAuthorized == false and
+            .productionRankingChanged == false and
+            .passiveShadowActivated == false and
+            .randomizedCanaryAuthorized == false and
+            .auditThresholdsLowered == false and
+            .observedActionInjected == false
+          ' "$request"
+
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          replay="$storage/$(jq -r '.replayDirectory' "$request")"
+          dataset="$storage/$(jq -r '.datasetDirectory' "$request")"
+          behavioral="$storage/$(jq -r '.behavioralDirectory' "$request")"
+          report="$RUNNER_TEMP/recommendation-v8-v5-1-baseline-freeze.txt"
+
+          for path in \
+            "$replay/dataset.ndjson" \
+            "$replay/audit.json" \
+            "$replay/manifest.json" \
+            "$dataset/dataset.ndjson" \
+            "$dataset/audit.json" \
+            "$dataset/manifest.json" \
+            "$behavioral/model.json" \
+            "$behavioral/propensities.ndjson" \
+            "$behavioral/evaluation.json" \
+            "$behavioral/audit.json" \
+            "$behavioral/manifest.json"; do
+            sudo test -s "$path"
+          done
+
+          replay_audit="$(sudo cat "$replay/audit.json")"
+          replay_manifest="$(sudo cat "$replay/manifest.json")"
+          dataset_audit="$(sudo cat "$dataset/audit.json")"
+          dataset_manifest="$(sudo cat "$dataset/manifest.json")"
+          behavioral_audit="$(sudo cat "$behavioral/audit.json")"
+          behavioral_manifest="$(sudo cat "$behavioral/manifest.json")"
+          behavioral_evaluation="$(sudo cat "$behavioral/evaluation.json")"
+
+          jq -e '.passed == true and .trainingArtifactEligible == true' <<<"$replay_audit"
+          jq -e '.auditPassed == true and .trainingArtifactEligible == true' <<<"$replay_manifest"
+          jq -e '.passed == true and .trainingArtifactEligible == true' <<<"$dataset_audit"
+          jq -e '.auditPassed == true and .trainingArtifactEligible == true' <<<"$dataset_manifest"
+          jq -e '.passed == true' <<<"$behavioral_audit"
+
+          {
+            echo "generatedAt=$(date --iso-8601=seconds)"
+            echo 'readOnly=true'
+            echo 'trainingStarted=false'
+            echo 'productionRankingChanged=false'
+            echo 'passiveShadowActivated=false'
+            echo 'randomizedCanaryAuthorized=false'
+            echo '=== artifact SHA-256 ==='
+            sudo sha256sum \
+              "$replay/dataset.ndjson" \
+              "$replay/audit.json" \
+              "$replay/manifest.json" \
+              "$dataset/dataset.ndjson" \
+              "$dataset/audit.json" \
+              "$dataset/manifest.json" \
+              "$behavioral/model.json" \
+              "$behavioral/propensities.ndjson" \
+              "$behavioral/evaluation.json" \
+              "$behavioral/audit.json" \
+              "$behavioral/manifest.json"
+            echo '=== replay gates ==='
+            jq '{passed,trainingArtifactEligible,reasons}' <<<"$replay_audit"
+            jq '{auditPassed,trainingArtifactEligible}' <<<"$replay_manifest"
+            echo '=== Dataset V6 gates ==='
+            jq '{passed,trainingArtifactEligible,reasons}' <<<"$dataset_audit"
+            jq '{auditPassed,trainingArtifactEligible}' <<<"$dataset_manifest"
+            echo '=== Behavioral V5 baseline gates ==='
+            jq '{passed,trainingArtifactEligible,build,releaseGate,reasons}' <<<"$behavioral_audit"
+            jq '{auditPassed,releaseGatePassed,trainingArtifactEligible,modelVersion,featureVersion}' <<<"$behavioral_manifest"
+            jq '{releaseGate,metrics:{selection:.metrics.selection,probabilityFloorSensitivity:.metrics.probabilityFloorSensitivity}}' <<<"$behavioral_evaluation"
+            echo '=== storage ==='
+            df -hT /
+          } | tee "$report"
+
+      - name: Upload baseline evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-v8-v5-1-baseline-freeze-${{ github.run_id }}
+          path: ${{ runner.temp }}/recommendation-v8-v5-1-baseline-freeze.txt
+          if-no-files-found: warn
+          retention-days: 30
