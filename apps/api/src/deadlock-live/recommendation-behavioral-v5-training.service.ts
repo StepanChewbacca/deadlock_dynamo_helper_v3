@@ -643,6 +643,15 @@ export class RecommendationBehavioralV5TrainingService implements OnModuleInit {
           trainSplitOnly: true,
           tuningUsedForTraining: false,
           futureTestUsedForTraining: false,
+          futureTestEvaluated: options.diagnosticMatchModulo === undefined,
+          diagnosticMatchSample:
+            options.diagnosticMatchModulo === undefined
+              ? undefined
+              : {
+                  hash: 'FNV1A_32',
+                  modulo: options.diagnosticMatchModulo,
+                  remainder: options.diagnosticMatchRemainder,
+                },
           outcomeFieldsUsed: false,
           crossFittingUnit: 'MATCH',
           foldAssignment: 'FNV1A_MATCH_ID_MOD_FOLD_COUNT',
@@ -842,7 +851,7 @@ export class RecommendationBehavioralV5TrainingService implements OnModuleInit {
         candidateCoverage,
         releaseGate,
         futureTestPolicy: {
-          reported: true,
+          reported: options.diagnosticMatchModulo === undefined,
           usedForTraining: false,
           usedForCalibration: false,
           usedForReleaseGate: false,

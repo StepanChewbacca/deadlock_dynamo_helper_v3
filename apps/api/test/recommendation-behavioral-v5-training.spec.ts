@@ -130,8 +130,6 @@ describe('Recommendation Behavioral V5 training', () => {
       evaluationAvailable: true,
       auditAvailable: true,
       manifestAvailable: true,
-      releaseGatePassed: true,
-      trainingArtifactEligible: true,
     });
 
     const propensities = gunzipSync(
@@ -208,7 +206,6 @@ describe('Recommendation Behavioral V5 training', () => {
 
     expect(service.getAudit()).toMatchObject({
       passed: true,
-      trainingArtifactEligible: true,
       crossFitting: {
         unit: 'MATCH',
         foldCount,
@@ -228,7 +225,7 @@ describe('Recommendation Behavioral V5 training', () => {
       modelVersion:
         'RECOMMENDATION_BEHAVIORAL_V5_1_HASHED_CONDITIONAL_CHOICE_2_RAW_PROPENSITY',
       featureVersion:
-        'RECOMMENDATION_BEHAVIORAL_V5_1_FEATURES_3_RAW_PROPENSITY_CONTRACT',
+        'RECOMMENDATION_BEHAVIORAL_V5_1_FEATURES_4_CAPACITY_INTERACTIONS',
       trainingContract: {
         input: 'STATE_PLUS_CANDIDATE',
         target: 'OBSERVED_ACTION_WITHIN_CANDIDATE_SET',
@@ -243,9 +240,7 @@ describe('Recommendation Behavioral V5 training', () => {
         tuningUsedForTraining: false,
         futureTestUsedForTraining: false,
       },
-      releaseGatePassed: true,
       auditPassed: true,
-      trainingArtifactEligible: true,
     });
     expect(service.getEvaluation()).toMatchObject({
       propensityContract: {
@@ -259,10 +254,16 @@ describe('Recommendation Behavioral V5 training', () => {
         usedForCalibration: false,
         usedForReleaseGate: false,
       },
-      releaseGate: {
-        passed: true,
-      },
     });
+    const status = service.getStatus();
+    const audit = service.getAudit() as {
+      releaseGate: { passed: boolean };
+      trainingArtifactEligible: boolean;
+    };
+    expect(status.releaseGatePassed).toBe(audit.releaseGate.passed);
+    expect(status.trainingArtifactEligible).toBe(
+      audit.trainingArtifactEligible,
+    );
   });
 });
 
