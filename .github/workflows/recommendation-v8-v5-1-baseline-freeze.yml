@@ -11,12 +11,12 @@ permissions:
 
 concurrency:
   group: recommendation-v8-v5-1-baseline-freeze
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   freeze:
     runs-on: self-hosted
-    timeout-minutes: 10
+    timeout-minutes: 60
     steps:
       - name: Checkout baseline request
         uses: actions/checkout@v4
