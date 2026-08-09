@@ -3,8 +3,8 @@ import { createServer, type Server } from 'node:http';
 import { resolve } from 'node:path';
 
 const runnerPath = resolve(
-  process.cwd(),
-  'scripts/run-recommendation-v8-diagnostic-only-pipeline.mjs',
+  __dirname,
+  '../../../scripts/run-recommendation-v8-diagnostic-only-pipeline.mjs',
 );
 
 const requiredEnv = {
