@@ -67,7 +67,7 @@ jobs:
           manifest_sha="$(jq -r '.artifact.sha256' <<<"$source_manifest")"
           test "$manifest_sha" = "$expected_sha"
 
-          available_kib="$(df -Pk "$storage" | awk 'NR==2 {print $4}')"
+          available_kib="$(sudo df -Pk "$storage" | awk 'NR==2 {print $4}')"
           test "$available_kib" -ge $((12 * 1024 * 1024))
 
           a='recommendation-behavioral-v5-1-sweep-a-v1'
@@ -190,7 +190,7 @@ jobs:
             echo '=== summary ==='
             jq '.' <<<"$value"
             echo '=== storage ==='
-            df -hT "$storage"
+            sudo df -hT "$storage"
           } | tee "$RUNNER_TEMP/recommendation-behavioral-v5-1-sweep-report.txt"
 
       - name: Upload bounded sweep evidence
