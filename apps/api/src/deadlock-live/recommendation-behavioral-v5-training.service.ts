@@ -1217,7 +1217,7 @@ async function scanSource(
         summary.ineligibleBySplit[row.split] += 1;
       }
     }
-    if (sampleWriter) {
+    if (sampleWriter && diagnosticSamplePath) {
       await sampleWriter.close();
       await rename(`${diagnosticSamplePath}.partial`, diagnosticSamplePath);
     }
