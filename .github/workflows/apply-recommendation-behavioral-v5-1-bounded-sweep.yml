@@ -1,9 +1,7 @@
 name: Apply Behavioral V5.1 Bounded Sweep Patch
 
 on:
-  push:
-    branches:
-      - agent/recommendation-behavioral-v5-1-bounded-sweep-1
+  pull_request:
     paths:
       - 'scripts/apply-recommendation-behavioral-v5-1-bounded-sweep-patch.py'
       - '.github/workflows/apply-recommendation-behavioral-v5-1-bounded-sweep.yml'
@@ -12,18 +10,19 @@ permissions:
   contents: write
 
 concurrency:
-  group: apply-recommendation-behavioral-v5-1-bounded-sweep
+  group: apply-recommendation-behavioral-v5-1-bounded-sweep-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
   apply:
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - name: Checkout branch
+      - name: Checkout head branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.head_ref }}
           fetch-depth: 0
 
       - name: Apply deterministic patch
@@ -49,6 +48,4 @@ jobs:
             apps/api/test/recommendation-behavioral-v5.spec.ts \
             apps/api/test/recommendation-value-v8-full-evaluation.spec.ts
           git commit -m 'feat: add bounded Behavioral V5.1 sampling'
-          git push origin HEAD:${GITHUB_REF_NAME}
-
-# workflow-trigger: 1
+          git push origin HEAD:${GITHUB_HEAD_REF}
