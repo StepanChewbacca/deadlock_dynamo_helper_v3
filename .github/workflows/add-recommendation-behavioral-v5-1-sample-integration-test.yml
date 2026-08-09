@@ -1,0 +1,34 @@
+name: Add Behavioral V5.1 Sample Integration Regression
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/add-recommendation-behavioral-v5-1-sample-integration-test.py'
+      - '.github/workflows/add-recommendation-behavioral-v5-1-sample-integration-test.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+      - run: python3 scripts/add-recommendation-behavioral-v5-1-sample-integration-test.py
+      - run: |
+          set -euo pipefail
+          git diff --check
+          grep -q "diagnostic-sample.ndjson.gz" apps/api/test/recommendation-behavioral-v5-training.spec.ts
+          grep -q "reported: false" apps/api/test/recommendation-behavioral-v5-training.spec.ts
+      - run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add apps/api/test/recommendation-behavioral-v5-training.spec.ts
+          git commit -m 'test: cover bounded Behavioral V5.1 sample artifact'
+          git push origin HEAD:${GITHUB_HEAD_REF}
