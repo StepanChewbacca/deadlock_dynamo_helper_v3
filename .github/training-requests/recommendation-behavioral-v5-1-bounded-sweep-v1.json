@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "operation": "RECOMMENDATION_BEHAVIORAL_V5_1_BOUNDED_SWEEP",
+  "boundedSweepAuthorized": true,
+  "fullTrainingAuthorized": false,
+  "valueV8TrainingAuthorized": false,
+  "productionRankingChanged": false,
+  "passiveShadowActivated": false,
+  "randomizedCanaryAuthorized": false,
+  "auditThresholdsLowered": false,
+  "futureTestAllowed": false,
+  "sourceDirectory": "recommendation-pro-decision-dataset-v6-terminal-5000-v2",
+  "expectedDatasetSha256": "e8b11e26df37ff1e17b334eda18ea2141cfb7fa78f0a34eaf95d448c22962235",
+  "sample": {
+    "unit": "MATCH",
+    "hash": "FNV1A_32",
+    "modulo": 16,
+    "remainder": 0
+  },
+  "baselineFreeze": {
+    "workflowRunId": 31327520192,
+    "artifactId": 9042278309,
+    "readOnly": true,
+    "replayDatasetSha256": "5ce49aaff5f08934c7c94abcbae88a19061de3c17c669e1f7f0db293d779c3e6",
+    "datasetV6Sha256": "e8b11e26df37ff1e17b334eda18ea2141cfb7fa78f0a34eaf95d448c22962235",
+    "behavioralV2PropensitySha256": "31e6c7369ac68c5a161d50f5ca6b9052683b876b4f37fdddac78ddabebdcab12"
+  }
+}
