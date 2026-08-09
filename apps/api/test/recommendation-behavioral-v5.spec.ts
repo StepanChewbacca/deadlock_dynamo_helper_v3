@@ -1,9 +1,9 @@
 import {
-  clipRecommendationBehavioralV5Probabilities,
   createRecommendationBehavioralV5Model,
   predictRecommendationBehavioralV5,
   recommendationBehavioralV5FeatureCount,
   recommendationBehavioralV5FoldId,
+  stabilizeRecommendationBehavioralV5ObservedProbability,
   trainRecommendationBehavioralV5Decision,
 } from '../src/deadlock-live/recommendation-behavioral-v5';
 import type { RecommendationProDecisionDatasetV6Row } from '../src/deadlock-live/recommendation-pro-decision-dataset-v6';
@@ -31,6 +31,45 @@ describe('Recommendation Behavioral V5 core', () => {
     expect(prediction.observedActionProbability).toBeCloseTo(0.5, 12);
     expect(prediction.maximumProbability).toBeCloseTo(0.5, 12);
   });
+
+  it.each([2, 50, 139, 200])(
+    'keeps %i-candidate softmax raw while clipping only the observed propensity',
+    (candidateCount) => {
+      const model = createRecommendationBehavioralV5Model(512);
+      const prediction = predictRecommendationBehavioralV5(
+        model,
+        rowWithCandidateCount(candidateCount),
+      );
+      const rawObservedProbability = 1 / candidateCount;
+      const clippedObservedProbability =
+        stabilizeRecommendationBehavioralV5ObservedProbability(
+          prediction.observedActionProbability,
+          0.02,
+        );
+
+      expect(prediction.candidates).toHaveLength(candidateCount);
+      expect(
+        prediction.candidates.reduce(
+          (sum, candidate) => sum + candidate.probability,
+          0,
+        ),
+      ).toBeCloseTo(1, 12);
+      expect(prediction.observedActionProbability).toBeCloseTo(
+        rawObservedProbability,
+        12,
+      );
+      expect(clippedObservedProbability).toBeCloseTo(
+        Math.max(rawObservedProbability, 0.02),
+        12,
+      );
+      expect(
+        prediction.candidates.reduce(
+          (sum, candidate) => sum + candidate.probability,
+          0,
+        ),
+      ).toBeCloseTo(1, 12);
+    },
+  );
 
   it('learns the observed candidate without using outcome fields', () => {
     const model = createRecommendationBehavioralV5Model(1_024);
@@ -64,24 +103,29 @@ describe('Recommendation Behavioral V5 core', () => {
     expect(first).toBeGreaterThan(20);
     expect(second).toBeGreaterThan(20);
   });
-
-  it('applies probability floors and renormalizes', () => {
-    const clipped = clipRecommendationBehavioralV5Probabilities(
-      [
-        { actionKey: 'A', itemId: 1, score: 10, probability: 0.999, rank: 1 },
-        { actionKey: 'B', itemId: 2, score: -10, probability: 0.001, rank: 2 },
-      ],
-      0.02,
-    );
-
-    expect(clipped.find((candidate) => candidate.actionKey === 'B')?.probability).toBeGreaterThanOrEqual(
-      0.019,
-    );
-    expect(
-      clipped.reduce((sum, candidate) => sum + candidate.probability, 0),
-    ).toBeCloseTo(1, 12);
-  });
 });
+
+function rowWithCandidateCount(
+  candidateCount: number,
+): RecommendationProDecisionDatasetV6Row {
+  const value = row();
+  const template = value.candidates[0];
+  value.candidates = Array.from({ length: candidateCount }, (_, index) => {
+    const itemId = 1002 + index;
+    return {
+      ...template,
+      actionKey: `BUY:${itemId}`,
+      itemId,
+      rank: index + 1,
+      generatorScore: 1 / candidateCount,
+      historicalCount: candidateCount,
+      historicalProbability: 1 / candidateCount,
+      predictedStateKey: `1001x1|${itemId}x1`,
+    };
+  });
+  value.observedActionKey = value.candidates[0].actionKey;
+  return value;
+}
 
 function row(): RecommendationProDecisionDatasetV6Row {
   return {
