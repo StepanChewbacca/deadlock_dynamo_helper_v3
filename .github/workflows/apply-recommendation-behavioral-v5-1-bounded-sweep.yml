@@ -25,6 +25,26 @@ jobs:
           ref: ${{ github.head_ref }}
           fetch-depth: 0
 
+      - name: Tighten patch import match
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/apply-recommendation-behavioral-v5-1-bounded-sweep-patch.py')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace(
+              '"""  predictRecommendationBehavioralV5,\\n  recommendationBehavioralV5FoldId,',
+              '"""  createRecommendationBehavioralV5Model,\\n  predictRecommendationBehavioralV5,\\n  recommendationBehavioralV5FoldId,',
+              1,
+          )
+          text = text.replace(
+              '"""  predictRecommendationBehavioralV5,\\n  recommendationBehavioralV5DiagnosticMatchSelected,',
+              '"""  createRecommendationBehavioralV5Model,\\n  predictRecommendationBehavioralV5,\\n  recommendationBehavioralV5DiagnosticMatchSelected,',
+              1,
+          )
+          path.write_text(text, encoding='utf-8')
+          PY
+
       - name: Apply deterministic patch
         run: python3 scripts/apply-recommendation-behavioral-v5-1-bounded-sweep-patch.py
 
@@ -40,6 +60,7 @@ jobs:
       - name: Commit patched sources
         run: |
           set -euo pipefail
+          git checkout -- scripts/apply-recommendation-behavioral-v5-1-bounded-sweep-patch.py
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add \
