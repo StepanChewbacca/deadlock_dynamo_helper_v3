@@ -1,0 +1,245 @@
+name: Recommendation V8 Behavioral V5.1 Bounded Sweep
+
+on:
+  pull_request:
+    paths:
+      - '.github/training-requests/recommendation-v8-behavioral-v51-bounded-sweep.json'
+      - '.github/workflows/recommendation-v8-behavioral-v51-bounded-sweep.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-v8-behavioral-v51-bounded-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: self-hosted
+    timeout-minutes: 300
+    steps:
+      - name: Checkout sweep request
+        uses: actions/checkout@v4
+
+      - name: Run isolated bounded Behavioral sweep
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          request='.github/training-requests/recommendation-v8-behavioral-v51-bounded-sweep.json'
+          jq -e '
+            .operation == "BOUNDED_BEHAVIORAL_V51_SWEEP" and
+            .maxRows == 50000 and
+            .supportProbability == 0.01 and
+            .propensityFloor == 0.01 and
+            .auditThresholdsLowered == false and
+            .observedActionInjected == false and
+            .rebuildReplay == false and
+            .rebuildDatasetV6 == false and
+            .fullValueTrainingAuthorized == false and
+            .productionRankingChanged == false and
+            .passiveShadowActivated == false and
+            .randomizedCanaryAuthorized == false
+          ' "$request"
+
+          source_container='deadlock-recommendation-v8-training'
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          replay="$storage/recommendation-historical-pro-replay-terminal-5000-v2"
+          dataset="$storage/recommendation-pro-decision-dataset-v6-terminal-5000-v2"
+          behavioral_baseline="$storage/recommendation-behavioral-v5-terminal-5000-v2"
+          evidence="$RUNNER_TEMP/recommendation-v8-behavioral-v51-sweep"
+          env_file="$RUNNER_TEMP/recommendation-v8-behavioral-v51.env"
+          mkdir -p "$evidence"
+
+          reserve_kb=12582912
+
+          check_disk() {
+            local available_kb
+            available_kb="$(df --output=avail -k / | tail -n 1 | tr -d ' ')"
+            if [ "$available_kb" -le "$reserve_kb" ]; then
+              echo "Disk reserve violated: available_kb=$available_kb reserve_kb=$reserve_kb" >&2
+              exit 1
+            fi
+          }
+
+          test "$(sudo docker inspect --format='{{.State.Running}}' "$source_container")" = 'true'
+          test "$(sudo docker inspect --format='{{.State.OOMKilled}}' "$source_container")" = 'false'
+
+          if sudo docker exec "$source_container" sh -lc "pgrep -f '[r]un-recommendation-v8-diagnostic-only-pipeline.mjs' >/dev/null"; then
+            echo 'Main bounded pipeline PID is alive; refusing to mutate or duplicate training.' >&2
+            exit 1
+          fi
+
+          check_disk
+
+          sudo test -s "$replay/audit.json"
+          sudo test -s "$replay/manifest.json"
+          sudo test -s "$dataset/audit.json"
+          sudo test -s "$dataset/manifest.json"
+          sudo test -s "$behavioral_baseline/audit.json"
+          sudo test -s "$behavioral_baseline/manifest.json"
+          sudo test -s "$behavioral_baseline/evaluation.json"
+
+          sudo jq -e '.passed == true and .trainingArtifactEligible == true' "$replay/audit.json"
+          sudo jq -e '.auditPassed == true and .trainingArtifactEligible == true' "$replay/manifest.json"
+          sudo jq -e '.passed == true and .trainingArtifactEligible == true' "$dataset/audit.json"
+          sudo jq -e '.auditPassed == true and .trainingArtifactEligible == true' "$dataset/manifest.json"
+          sudo jq -e '.passed == true' "$behavioral_baseline/audit.json"
+
+          dataset_sha="$(sudo jq -r '.artifact.sha256' "$dataset/manifest.json")"
+          test -n "$dataset_sha"
+          actual_dataset_sha="$(sudo sha256sum "$dataset/dataset.ndjson" | awk '{print $1}')"
+          test "$dataset_sha" = "$actual_dataset_sha"
+
+          sudo jq '{releaseGatePassed,auditPassed,trainingArtifactEligible}' "$behavioral_baseline/manifest.json" > "$evidence/baseline-manifest-status.json"
+          sudo jq '{selection:.metrics.selection,floors:.metrics.probabilityFloorSensitivity,releaseGate:.releaseGate}' "$behavioral_baseline/evaluation.json" > "$evidence/baseline-full-evaluation.json"
+          sudo sha256sum "$replay/dataset.ndjson" "$dataset/dataset.ndjson" "$behavioral_baseline/model.json" "$behavioral_baseline/propensities.ndjson" > "$evidence/preserved-sha256.txt"
+          sudo chown "$(id -u):$(id -g)" "$evidence"/*
+
+          image="$(sudo docker inspect --format='{{.Config.Image}}' "$source_container")"
+          network="$(sudo docker inspect "$source_container" | jq -r '.[0].NetworkSettings.Networks | keys[0]')"
+          test -n "$image"
+          test -n "$network"
+          sudo docker inspect "$source_container" | jq -r '.[0].Config.Env[]' > "$env_file"
+
+          run_sweep() {
+            local label="$1"
+            local hash_dimension="$2"
+            local epochs="$3"
+            local learning_rate="$4"
+            local l2="$5"
+            local name="v8-behavioral-v51-sweep-${label}-${GITHUB_RUN_ID}"
+            local output_name="recommendation-behavioral-v5-v51-sweep-${label}-${GITHUB_RUN_ID}"
+            local output_dir="/app/apps/api/storage/$output_name"
+            local host_output="$storage/$output_name"
+            local host_port
+            local base_url
+            local status='{}'
+
+            check_disk
+            echo "Starting sweep $label: hashDimension=$hash_dimension epochs=$epochs learningRate=$learning_rate l2=$l2"
+
+            sudo docker run -d --rm \
+              --name "$name" \
+              --network "$network" \
+              --volumes-from "$source_container" \
+              --env-file "$env_file" \
+              -e DEADLOCK_RECOMMENDATION_BEHAVIORAL_V5_SOURCE_DIR=/app/apps/api/storage/recommendation-pro-decision-dataset-v6-terminal-5000-v2 \
+              -e DEADLOCK_RECOMMENDATION_BEHAVIORAL_V5_DIR="$output_dir" \
+              -p 127.0.0.1::3000 \
+              "$image" >/dev/null
+
+            cleanup_sweep() {
+              sudo docker rm -f "$name" >/dev/null 2>&1 || true
+            }
+            trap cleanup_sweep RETURN
+
+            for attempt in $(seq 1 120); do
+              host_port="$(sudo docker port "$name" 3000/tcp 2>/dev/null | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p' | head -n 1)"
+              if [ -n "$host_port" ] && curl --fail --silent --max-time 5 "http://127.0.0.1:$host_port/deadlock/analysis/recommendation-behavioral-v5-training/status" >/dev/null 2>&1; then
+                break
+              fi
+              sleep 2
+            done
+            test -n "${host_port:-}"
+            base_url="http://127.0.0.1:$host_port"
+
+            curl --fail --silent --show-error --max-time 30 \
+              -H 'content-type: application/json' \
+              -X POST \
+              "$base_url/deadlock/analysis/recommendation-behavioral-v5-training/start" \
+              --data "$(jq -nc \
+                --arg sha "$dataset_sha" \
+                --argjson foldCount 5 \
+                --argjson epochs "$epochs" \
+                --argjson learningRate "$learning_rate" \
+                --argjson l2 "$l2" \
+                --argjson hashDimension "$hash_dimension" \
+                --argjson propensityFloor 0.01 \
+                --argjson supportProbability 0.01 \
+                --argjson majorGroupMinDecisions 100 \
+                --argjson maxRows 50000 \
+                '{foldCount:$foldCount,epochs:$epochs,learningRate:$learningRate,l2:$l2,hashDimension:$hashDimension,propensityFloor:$propensityFloor,supportProbability:$supportProbability,majorGroupMinDecisions:$majorGroupMinDecisions,maxRows:$maxRows,expectedSourceSha256:$sha}')" \
+              > "$evidence/${label}-start.json"
+
+            for attempt in $(seq 1 10800); do
+              check_disk
+              status="$(curl --fail --silent --show-error --max-time 15 "$base_url/deadlock/analysis/recommendation-behavioral-v5-training/status")"
+              state="$(jq -r '.state' <<<"$status")"
+              phase="$(jq -r '.phase' <<<"$status")"
+              pass="$(jq -r '.currentPass // 0' <<<"$status")"
+              total="$(jq -r '.totalPasses // 0' <<<"$status")"
+              if (( attempt % 30 == 0 )); then
+                echo "sweep=$label state=$state phase=$phase pass=$pass/$total"
+              fi
+              if [ "$state" = 'COMPLETE' ]; then
+                break
+              fi
+              if [ "$state" = 'FAILED' ]; then
+                echo "$status" | jq . >&2
+                exit 1
+              fi
+              sleep 2
+            done
+
+            test "$(jq -r '.state' <<<"$status")" = 'COMPLETE'
+            printf '%s\n' "$status" | jq . > "$evidence/${label}-status.json"
+            sudo test -s "$host_output/evaluation.json"
+            sudo test -s "$host_output/audit.json"
+            sudo test -s "$host_output/manifest.json"
+            sudo cp "$host_output/evaluation.json" "$evidence/${label}-evaluation.json"
+            sudo cp "$host_output/audit.json" "$evidence/${label}-audit.json"
+            sudo cp "$host_output/manifest.json" "$evidence/${label}-manifest.json"
+            sudo chown "$(id -u):$(id -g)" "$evidence/${label}-"*.json
+
+            jq -n \
+              --arg label "$label" \
+              --argjson hashDimension "$hash_dimension" \
+              --argjson epochs "$epochs" \
+              --argjson learningRate "$learning_rate" \
+              --argjson l2 "$l2" \
+              --slurpfile evaluation "$evidence/${label}-evaluation.json" \
+              --slurpfile audit "$evidence/${label}-audit.json" \
+              '{
+                label:$label,
+                config:{hashDimension:$hashDimension,epochs:$epochs,learningRate:$learningRate,l2:$l2,maxRows:50000},
+                supportCoverage:$evaluation[0].metrics.selection.supportCoverage,
+                rawLogLoss:$evaluation[0].metrics.selection.rawLogLoss,
+                top1Rate:$evaluation[0].metrics.selection.top1Rate,
+                meanObservedRawProbability:$evaluation[0].metrics.selection.meanObservedRawProbability,
+                minimumObservedRawProbability:$evaluation[0].metrics.selection.minimumObservedRawProbability,
+                floorSensitivityDelta:$evaluation[0].metrics.probabilityFloorSensitivity.maximumLogLossDelta,
+                majorLowSupportGroupCount:($evaluation[0].releaseGate.majorLowSupportGroups | length),
+                releaseGatePassed:$evaluation[0].releaseGate.passed,
+                structuralAuditPassed:$audit[0].passed,
+                trainingArtifactEligible:$audit[0].trainingArtifactEligible
+              }' > "$evidence/${label}-summary.json"
+
+            cleanup_sweep
+            trap - RETURN
+            check_disk
+          }
+
+          run_sweep a 8192 3 0.2 0.0001
+          run_sweep b 65536 5 0.1 0.0001
+          run_sweep c 131072 5 0.05 0.0001
+
+          jq -s '.' "$evidence"/a-summary.json "$evidence"/b-summary.json "$evidence"/c-summary.json > "$evidence/summary.json"
+          cat "$evidence/summary.json"
+
+          test "$(sudo docker inspect --format='{{.State.Running}}' "$source_container")" = 'true'
+          test "$(sudo docker inspect --format='{{.State.OOMKilled}}' "$source_container")" = 'false'
+          if sudo docker exec "$source_container" sh -lc "pgrep -f '[r]un-recommendation-v8-diagnostic-only-pipeline.mjs' >/dev/null"; then
+            echo 'Unexpected main pipeline PID appeared during isolated sweep.' >&2
+            exit 1
+          fi
+          check_disk
+
+      - name: Upload bounded sweep evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-v8-behavioral-v51-bounded-sweep-${{ github.run_id }}
+          path: ${{ runner.temp }}/recommendation-v8-behavioral-v51-sweep
+          if-no-files-found: warn
+          retention-days: 14
