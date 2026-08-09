@@ -22,6 +22,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup Node.js for preflight
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
       - name: Validate authorization and immutable inputs
         id: preflight
         shell: bash
