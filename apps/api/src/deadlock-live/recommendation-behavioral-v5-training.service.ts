@@ -46,6 +46,7 @@ const DEFAULT_OUTPUT_DIRECTORY =
   '/app/apps/api/storage/recommendation-behavioral-v5-1';
 const DATASET_FILE_NAME = 'dataset.ndjson';
 const PROPENSITY_FILE_NAME = 'propensities.ndjson';
+const DIAGNOSTIC_SAMPLE_FILE_NAME = 'diagnostic-sample.ndjson.gz';
 const CALIBRATION_BIN_COUNT = 10;
 const EXTREME_PROBABILITY_EPSILON = 1e-6;
 
@@ -143,6 +144,7 @@ export interface RecommendationBehavioralV5PropensityRow {
 
 interface SourceSummary {
   scannedRowCount: number;
+  diagnosticSampleRowCount: number;
   invalidRowCount: number;
   candidateCoveredSelectionDecisionCount: number;
   selectionDecisionCount: number;
@@ -409,6 +411,7 @@ export class RecommendationBehavioralV5TrainingService implements OnModuleInit {
     process.env.DEADLOCK_RECOMMENDATION_BEHAVIORAL_V5_DIR?.trim() ||
     DEFAULT_OUTPUT_DIRECTORY;
   private readonly paths = {
+    diagnosticSample: join(this.outputDirectory, DIAGNOSTIC_SAMPLE_FILE_NAME),
     propensities: join(this.outputDirectory, PROPENSITY_FILE_NAME),
     model: join(this.outputDirectory, 'model.json'),
     evaluation: join(this.outputDirectory, 'evaluation.json'),
@@ -526,7 +529,23 @@ export class RecommendationBehavioralV5TrainingService implements OnModuleInit {
         source.datasetPath,
         source.rowCount,
         options,
+        options.diagnosticMatchModulo === undefined
+          ? undefined
+          : this.paths.diagnosticSample,
       );
+      const iterationDatasetPath =
+        options.diagnosticMatchModulo === undefined
+          ? source.datasetPath
+          : this.paths.diagnosticSample;
+      const diagnosticSampleArtifact =
+        options.diagnosticMatchModulo === undefined
+          ? undefined
+          : {
+              fileName: DIAGNOSTIC_SAMPLE_FILE_NAME,
+              rowCount: summary.diagnosticSampleRowCount,
+              byteLength: (await stat(this.paths.diagnosticSample)).size,
+              sha256: await hashFile(this.paths.diagnosticSample),
+            };
       if (summary.invalidRowCount > 0) {
         throw new Error('Recommendation Dataset V6 contains invalid rows.');
       }
@@ -568,7 +587,7 @@ export class RecommendationBehavioralV5TrainingService implements OnModuleInit {
             currentEpoch: epoch + 1,
           };
           await eachSourceRow(
-            source.datasetPath,
+            iterationDatasetPath,
             options,
             async (row) => {
               if (
@@ -615,7 +634,7 @@ export class RecommendationBehavioralV5TrainingService implements OnModuleInit {
           currentEpoch: epoch + 1,
         };
         await eachSourceRow(
-          source.datasetPath,
+          iterationDatasetPath,
           options,
           async (row) => {
             if (row.split === 'TRAIN' && isBehavioralEligible(row)) {
@@ -651,6 +670,7 @@ export class RecommendationBehavioralV5TrainingService implements OnModuleInit {
                   hash: 'FNV1A_32',
                   modulo: options.diagnosticMatchModulo,
                   remainder: options.diagnosticMatchRemainder,
+                  artifact: diagnosticSampleArtifact,
                 },
           outcomeFieldsUsed: false,
           crossFittingUnit: 'MATCH',
@@ -683,7 +703,7 @@ export class RecommendationBehavioralV5TrainingService implements OnModuleInit {
       let fullTrainPredictionCount = 0;
       try {
         await eachSourceRow(
-          source.datasetPath,
+          iterationDatasetPath,
           options,
           async (row) => {
             if (!isBehavioralEligible(row)) {
@@ -953,6 +973,7 @@ export class RecommendationBehavioralV5TrainingService implements OnModuleInit {
                   modulo: options.diagnosticMatchModulo,
                   remainder: options.diagnosticMatchRemainder,
                   futureTestEvaluated: false,
+                  artifact: diagnosticSampleArtifact,
                 },
         },
         reasons: structuralReasons,
@@ -1053,6 +1074,8 @@ export class RecommendationBehavioralV5TrainingService implements OnModuleInit {
 
   private async clearOutputs(): Promise<void> {
     await Promise.all([
+      rm(this.paths.diagnosticSample, { force: true }),
+      rm(`${this.paths.diagnosticSample}.partial`, { force: true }),
       rm(this.paths.propensities, { force: true }),
       rm(`${this.paths.propensities}.partial`, { force: true }),
       rm(this.paths.model, { force: true }),
@@ -1130,9 +1153,11 @@ async function scanSource(
   datasetPath: string,
   expectedRowCount: number,
   options: RecommendationBehavioralV5TrainingOptions,
+  diagnosticSamplePath?: string,
 ): Promise<SourceSummary> {
   const summary: SourceSummary = {
     scannedRowCount: 0,
+    diagnosticSampleRowCount: 0,
     invalidRowCount: 0,
     candidateCoveredSelectionDecisionCount: 0,
     selectionDecisionCount: 0,
@@ -1147,42 +1172,60 @@ async function scanSource(
       () => 0,
     ),
   };
-  for await (const value of ndjson(datasetPath)) {
-    if (
-      options.maxRows !== undefined &&
-      summary.scannedRowCount >= options.maxRows
-    ) {
-      break;
-    }
-    summary.scannedRowCount += 1;
-    let row: RecommendationProDecisionDatasetV6Row;
-    try {
-      row = sourceRow(value, summary.scannedRowCount);
-    } catch {
-      summary.invalidRowCount += 1;
-      continue;
-    }
-    if (!behavioralRowSelected(row, options)) {
-      continue;
-    }
-    if (row.split !== 'FUTURE_TEST') {
-      summary.selectionDecisionCount += 1;
-      summary.candidateCoveredSelectionDecisionCount +=
-        row.observedActionInCandidateSet ? 1 : 0;
-    }
-    if (isBehavioralEligible(row)) {
-      summary.eligibleBySplit[row.split] += 1;
-      if (row.split === 'TRAIN') {
-        const foldId = recommendationBehavioralV5FoldId(
-          row.matchId,
-          options.foldCount,
-        );
-        summary.trainMatchIdsByFold[foldId].add(row.matchId);
-        summary.trainDecisionCountByFold[foldId] += 1;
+  const sampleWriter = diagnosticSamplePath
+    ? await GzipNdjsonWriter.create(`${diagnosticSamplePath}.partial`)
+    : undefined;
+  try {
+    for await (const value of ndjson(datasetPath)) {
+      if (
+        options.maxRows !== undefined &&
+        summary.scannedRowCount >= options.maxRows
+      ) {
+        break;
       }
-    } else {
-      summary.ineligibleBySplit[row.split] += 1;
+      summary.scannedRowCount += 1;
+      let row: RecommendationProDecisionDatasetV6Row;
+      try {
+        row = sourceRow(value, summary.scannedRowCount);
+      } catch {
+        summary.invalidRowCount += 1;
+        continue;
+      }
+      if (!behavioralRowSelected(row, options)) {
+        continue;
+      }
+      if (sampleWriter) {
+        await sampleWriter.write(row);
+        summary.diagnosticSampleRowCount += 1;
+      }
+      if (row.split !== 'FUTURE_TEST') {
+        summary.selectionDecisionCount += 1;
+        summary.candidateCoveredSelectionDecisionCount +=
+          row.observedActionInCandidateSet ? 1 : 0;
+      }
+      if (isBehavioralEligible(row)) {
+        summary.eligibleBySplit[row.split] += 1;
+        if (row.split === 'TRAIN') {
+          const foldId = recommendationBehavioralV5FoldId(
+            row.matchId,
+            options.foldCount,
+          );
+          summary.trainMatchIdsByFold[foldId].add(row.matchId);
+          summary.trainDecisionCountByFold[foldId] += 1;
+        }
+      } else {
+        summary.ineligibleBySplit[row.split] += 1;
+      }
     }
+    if (sampleWriter) {
+      await sampleWriter.close();
+      await rename(`${diagnosticSamplePath}.partial`, diagnosticSamplePath);
+    }
+  } catch (error) {
+    if (sampleWriter) {
+      await sampleWriter.abort();
+    }
+    throw error;
   }
   if (options.maxRows === undefined && summary.scannedRowCount !== expectedRowCount) {
     throw new Error('Recommendation Dataset V6 source row count mismatch.');
