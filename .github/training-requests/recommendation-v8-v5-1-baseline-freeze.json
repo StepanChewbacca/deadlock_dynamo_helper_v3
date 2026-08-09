@@ -1,0 +1,15 @@
+{
+  "operation": "FREEZE_RECOMMENDATION_V8_V5_1_BASELINE",
+  "requestedAt": "2026-08-09T17:30:00Z",
+  "replayDirectory": "recommendation-historical-pro-replay-terminal-5000-v2",
+  "datasetDirectory": "recommendation-pro-decision-dataset-v6-terminal-5000-v2",
+  "behavioralDirectory": "recommendation-behavioral-v5-terminal-5000-v2",
+  "readOnly": true,
+  "trainingAuthorized": false,
+  "fullValueTrainingAuthorized": false,
+  "productionRankingChanged": false,
+  "passiveShadowActivated": false,
+  "randomizedCanaryAuthorized": false,
+  "auditThresholdsLowered": false,
+  "observedActionInjected": false
+}
