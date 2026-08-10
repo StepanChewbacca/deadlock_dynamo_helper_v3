@@ -46,7 +46,10 @@ jobs:
             .futureTestAllowed == false and
             .sourceDirectory == "recommendation-pro-decision-dataset-v6-terminal-5000-v2" and
             .sample.modulo == 16 and
-            .sample.remainder == 0
+            .sample.remainder == 0 and
+            (.retry.attempt | type == "number") and
+            (.retry.attempt >= 1) and
+            (.retry.attempt == (.retry.attempt | floor))
           ' "$request"
 
           node --check scripts/run-recommendation-behavioral-v5-1-bounded-sweep.mjs
@@ -55,7 +58,9 @@ jobs:
           source_name="$(jq -r '.sourceDirectory' "$request")"
           source="$storage/$source_name"
           expected_sha="$(jq -r '.expectedDatasetSha256' "$request")"
+          retry_attempt="$(jq -r '.retry.attempt' "$request")"
           [[ "$expected_sha" =~ ^[a-f0-9]{64}$ ]]
+          [[ "$retry_attempt" =~ ^[1-9][0-9]*$ ]]
 
           sudo test -s "$source/dataset.ndjson"
           sudo test -s "$source/manifest.json"
@@ -70,10 +75,10 @@ jobs:
           available_kib="$(sudo df -Pk "$storage" | awk 'NR==2 {print $4}')"
           test "$available_kib" -ge $((12 * 1024 * 1024))
 
-          a='recommendation-behavioral-v5-1-sweep-a-v1'
-          b='recommendation-behavioral-v5-1-sweep-b-v1'
-          c='recommendation-behavioral-v5-1-sweep-c-v1'
-          summary='recommendation-behavioral-v5-1-sweep-v1'
+          a="recommendation-behavioral-v5-1-sweep-a-v${retry_attempt}"
+          b="recommendation-behavioral-v5-1-sweep-b-v${retry_attempt}"
+          c="recommendation-behavioral-v5-1-sweep-c-v${retry_attempt}"
+          summary="recommendation-behavioral-v5-1-sweep-v${retry_attempt}"
           for name in "$a" "$b" "$c" "$summary"; do
             if sudo test -e "$storage/$name"; then
               echo "Refusing destructive reuse of existing output: $storage/$name" >&2
@@ -85,6 +90,7 @@ jobs:
             echo "storage=$storage"
             echo "source_name=$source_name"
             echo "expected_sha=$expected_sha"
+            echo "retry_attempt=$retry_attempt"
             echo "a=$a"
             echo "b=$b"
             echo "c=$c"
@@ -180,6 +186,7 @@ jobs:
           {
             echo "gitSha=$GITHUB_SHA"
             echo "runId=$GITHUB_RUN_ID"
+            echo "retryAttempt=${{ steps.preflight.outputs.retry_attempt }}"
             echo "sourceDatasetSha256=${{ steps.preflight.outputs.expected_sha }}"
             echo "readOnlySource=true"
             echo "fullTrainingAuthorized=false"
