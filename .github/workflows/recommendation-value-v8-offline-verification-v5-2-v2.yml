@@ -1,0 +1,207 @@
+name: Recommendation Value V8 Offline Verification V5.2 V2
+
+on:
+  pull_request:
+    paths:
+      - '.github/training-requests/recommendation-value-v8-offline-verification-v5-2-v2.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-value-v8-offline-verification-v5-2-v2
+  cancel-in-progress: true
+
+jobs:
+  offline-verification-v2:
+    runs-on: self-hosted
+    timeout-minutes: 20
+    steps:
+      - name: Checkout requested implementation
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate authorization and immutable bounded-Value v2 lineage
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/training-requests/recommendation-value-v8-offline-verification-v5-2-v2.json'
+          test -s "$request"
+          jq -e '
+            .schemaVersion == 1 and
+            .executorVersion == "BOUNDED_VALUE_V2_PINNED_2" and
+            .operation == "RECOMMENDATION_VALUE_V8_OFFLINE_VERIFICATION_V5_2" and
+            .offlineVerificationAuthorized == true and
+            .fullValueV8TrainingAuthorized == false and
+            .productionRankingChanged == false and
+            .passiveShadowAuthorized == false and
+            .randomizedCanaryAuthorized == false and
+            .datasetDirectory == "recommendation-pro-decision-dataset-v6-terminal-5000-v2" and
+            .valueDirectory == "recommendation-value-v8-diagnostic-v5-2-v2" and
+            .outputDirectory == "recommendation-value-v8-offline-verification-v5-2-v2"
+          ' "$request"
+          node --check scripts/run-recommendation-value-v8-offline-verification-v5-2.mjs
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          dataset_name="$(jq -r '.datasetDirectory' "$request")"
+          value_name="$(jq -r '.valueDirectory' "$request")"
+          output_name="$(jq -r '.outputDirectory' "$request")"
+          dataset="$storage/$dataset_name"
+          value="$storage/$value_name"
+          output="$storage/$output_name"
+          dataset_sha="$(jq -r '.expectedDatasetSha256' "$request")"
+          behavioral_propensity_sha="$(jq -r '.expectedBehavioralPropensitySha256' "$request")"
+          value_manifest_sha="$(jq -r '.expectedValueManifestSha256' "$request")"
+          value_model_sha="$(jq -r '.expectedValueModelSha256' "$request")"
+          value_predictions_sha="$(jq -r '.expectedValuePredictionsSha256' "$request")"
+          value_evaluation_sha="$(jq -r '.expectedValueEvaluationSha256' "$request")"
+          value_audit_sha="$(jq -r '.expectedValueAuditSha256' "$request")"
+          for value_sha in "$dataset_sha" "$behavioral_propensity_sha" "$value_manifest_sha" "$value_model_sha" "$value_predictions_sha" "$value_evaluation_sha" "$value_audit_sha"; do
+            [[ "$value_sha" =~ ^[a-f0-9]{64}$ ]]
+          done
+          sudo test -s "$dataset/manifest.json"
+          sudo test -s "$value/manifest.json"
+          sudo test -s "$value/model.json"
+          sudo test -s "$value/diagnostic-predictions.ndjson"
+          sudo test -s "$value/evaluation.json"
+          sudo test -s "$value/audit.json"
+          test "$(sudo sha256sum "$dataset/$(sudo jq -r '.artifact.fileName' "$dataset/manifest.json")" | awk '{print $1}')" = "$dataset_sha"
+          test "$(sudo sha256sum "$value/manifest.json" | awk '{print $1}')" = "$value_manifest_sha"
+          test "$(sudo sha256sum "$value/model.json" | awk '{print $1}')" = "$value_model_sha"
+          test "$(sudo sha256sum "$value/diagnostic-predictions.ndjson" | awk '{print $1}')" = "$value_predictions_sha"
+          test "$(sudo sha256sum "$value/evaluation.json" | awk '{print $1}')" = "$value_evaluation_sha"
+          test "$(sudo sha256sum "$value/audit.json" | awk '{print $1}')" = "$value_audit_sha"
+          sudo jq -e \
+            --arg dataset_sha "$dataset_sha" \
+            --arg propensity_sha "$behavioral_propensity_sha" '
+              .diagnosticOnly == true and
+              .futureTestUsed == false and
+              .auditPassed == true and
+              .diagnosticGatePassed == true and
+              .fullTrainingRecommended == true and
+              .source.dataset.sha256 == $dataset_sha and
+              .source.behavioral.sha256 == $propensity_sha and
+              .source.behavioral.modelVersion == "RECOMMENDATION_BEHAVIORAL_V5_2_LOW_RANK_TWO_TOWER_1_RAW_PROPENSITY" and
+              .source.behavioral.featureVersion == "RECOMMENDATION_BEHAVIORAL_V5_2_FEATURES_1_TWO_TOWER"
+            ' "$value/manifest.json"
+          sudo jq -e '
+            .passed == true and
+            .diagnosticArtifactEligible == true and
+            .build.diagnosticOnly == true and
+            .build.maxRows == 50000 and
+            .build.fullCorpus == false and
+            .leakage.futureTestUsedForTraining == false and
+            .leakage.futureTestUsedForSelection == false
+          ' "$value/audit.json"
+          if sudo test -e "$output"; then
+            echo "Refusing destructive reuse of existing output: $output" >&2
+            exit 1
+          fi
+          sudo mkdir "$output"
+          evidence_dir="$RUNNER_TEMP/recommendation-value-v8-offline-verification-v5-2-v2-$GITHUB_RUN_ID"
+          mkdir -p "$evidence_dir"
+          {
+            echo "storage=$storage"
+            echo "dataset_name=$dataset_name"
+            echo "value_name=$value_name"
+            echo "output_name=$output_name"
+            echo "dataset_sha=$dataset_sha"
+            echo "behavioral_propensity_sha=$behavioral_propensity_sha"
+            echo "value_manifest_sha=$value_manifest_sha"
+            echo "value_model_sha=$value_model_sha"
+            echo "value_predictions_sha=$value_predictions_sha"
+            echo "value_evaluation_sha=$value_evaluation_sha"
+            echo "value_audit_sha=$value_audit_sha"
+            echo "evidence_dir=$evidence_dir"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build isolated offline-verification image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo docker build \
+            --label deadlock.recommendation.operation=value-v8-offline-verification-v5-2-v2 \
+            --label deadlock.recommendation.git-sha="$GITHUB_SHA" \
+            -t "deadlock-value-v8-offline-v5-2-v2:$GITHUB_RUN_ID" .
+
+      - name: Run deterministic offline verification with hard 10-minute process budget
+        id: verification
+        shell: bash
+        run: |
+          set -uo pipefail
+          storage='${{ steps.preflight.outputs.storage }}'
+          dataset_name='${{ steps.preflight.outputs.dataset_name }}'
+          value_name='${{ steps.preflight.outputs.value_name }}'
+          output_name='${{ steps.preflight.outputs.output_name }}'
+          evidence_dir='${{ steps.preflight.outputs.evidence_dir }}'
+          image="deadlock-value-v8-offline-v5-2-v2:$GITHUB_RUN_ID"
+          container_name="deadlock-value-v8-offline-v5-2-v2-$GITHUB_RUN_ID"
+          set +e
+          timeout --signal=TERM --kill-after=30s 10m sudo docker run --rm \
+            --name "$container_name" \
+            --stop-timeout 15 \
+            --network none \
+            --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,size=256m \
+            -e OFFLINE_VALUE_V8_V5_2_REQUEST_PATH='/app/.github/training-requests/recommendation-value-v8-offline-verification-v5-2-v2.json' \
+            -e OFFLINE_VALUE_V8_DATASET_DIR="/app/apps/api/storage/$dataset_name" \
+            -e OFFLINE_VALUE_V8_DIAGNOSTIC_DIR="/app/apps/api/storage/$value_name" \
+            -e OFFLINE_VALUE_V8_EVIDENCE_PATH='/evidence/offline-verification.json' \
+            -e EXPECTED_DATASET_SHA256='${{ steps.preflight.outputs.dataset_sha }}' \
+            -e EXPECTED_BEHAVIORAL_PROPENSITY_SHA256='${{ steps.preflight.outputs.behavioral_propensity_sha }}' \
+            -e EXPECTED_VALUE_MANIFEST_SHA256='${{ steps.preflight.outputs.value_manifest_sha }}' \
+            -e EXPECTED_VALUE_MODEL_SHA256='${{ steps.preflight.outputs.value_model_sha }}' \
+            -e EXPECTED_VALUE_PREDICTIONS_SHA256='${{ steps.preflight.outputs.value_predictions_sha }}' \
+            -e EXPECTED_VALUE_EVALUATION_SHA256='${{ steps.preflight.outputs.value_evaluation_sha }}' \
+            -e EXPECTED_VALUE_AUDIT_SHA256='${{ steps.preflight.outputs.value_audit_sha }}' \
+            -v "$storage/$dataset_name:/app/apps/api/storage/$dataset_name:ro" \
+            -v "$storage/$value_name:/app/apps/api/storage/$value_name:ro" \
+            -v "$storage/$output_name:/app/apps/api/storage/$output_name:rw" \
+            -v "$evidence_dir:/evidence:rw" \
+            "$image" node /app/scripts/run-recommendation-value-v8-offline-verification-v5-2.mjs \
+            2>&1 | tee "$evidence_dir/container.log"
+          verification_exit="${PIPESTATUS[0]}"
+          set -e
+          if [ "$verification_exit" = '124' ] || [ "$verification_exit" = '137' ]; then
+            sudo docker stop --time 15 "$container_name" >/dev/null 2>&1 || true
+            sudo docker rm -f "$container_name" >/dev/null 2>&1 || true
+          fi
+          echo "exit_code=$verification_exit" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Verify offline evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test '${{ steps.verification.outputs.exit_code }}' = '0'
+          evidence='${{ steps.preflight.outputs.evidence_dir }}/offline-verification.json'
+          test -s "$evidence"
+          jq -e '
+            .offlineVerificationPassed == true and
+            ([.gateChecks[]] | all) and
+            .fullValueV8TrainingAuthorized == false and
+            .productionRankingChanged == false and
+            .passiveShadowAuthorized == false and
+            .randomizedCanaryAuthorized == false
+          ' "$evidence"
+
+      - name: Upload offline verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-value-v8-offline-verification-v5-2-v2-${{ github.run_id }}
+          path: ${{ steps.preflight.outputs.evidence_dir }}
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Cleanup transient container and image
+        if: always()
+        shell: bash
+        run: |
+          sudo docker rm -f "deadlock-value-v8-offline-v5-2-v2-$GITHUB_RUN_ID" >/dev/null 2>&1 || true
+          sudo docker image rm "deadlock-value-v8-offline-v5-2-v2:$GITHUB_RUN_ID" >/dev/null 2>&1 || true
