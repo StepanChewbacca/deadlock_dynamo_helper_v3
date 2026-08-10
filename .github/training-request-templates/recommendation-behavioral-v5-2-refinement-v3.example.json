@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "executorVersion": "CANDIDATE_COVERAGE_FIXED_2",
+  "operation": "RECOMMENDATION_BEHAVIORAL_V5_2_BOUNDED_REFINEMENT",
+  "boundedRefinementAuthorized": true,
+  "maximumTrainingMinutes": 20,
+  "fullTrainingAuthorized": false,
+  "valueV8TrainingAuthorized": false,
+  "productionRankingChanged": false,
+  "passiveShadowAuthorized": false,
+  "randomizedCanaryAuthorized": false,
+  "datasetDirectory": "recommendation-pro-decision-dataset-v6-terminal-5000-v2",
+  "sampleDirectory": "recommendation-behavioral-v5-1-sweep-b-v1",
+  "sourceSweepDirectory": "recommendation-behavioral-v5-2-bounded-v3",
+  "outputDirectory": "recommendation-behavioral-v5-2-refinement-v3",
+  "expectedDatasetSha256": "e8b11e26df37ff1e17b334eda18ea2141cfb7fa78f0a34eaf95d448c22962235",
+  "expectedDiagnosticSampleSha256": "8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac",
+  "expectedSourceSweepSummarySha256": "<fill-after-bounded-pass>",
+  "variants": [
+    {
+      "id": "R1",
+      "linearHashDimension": 8192,
+      "embeddingHashDimension": 2048,
+      "latentDimension": 4,
+      "epochs": 3,
+      "learningRate": 0.08
+    },
+    {
+      "id": "R2",
+      "linearHashDimension": 8192,
+      "embeddingHashDimension": 4096,
+      "latentDimension": 8,
+      "epochs": 4,
+      "learningRate": 0.08
+    },
+    {
+      "id": "R3",
+      "linearHashDimension": 8192,
+      "embeddingHashDimension": 8192,
+      "latentDimension": 12,
+      "epochs": 4,
+      "learningRate": 0.05
+    }
+  ],
+  "common": {
+    "foldCount": 5,
+    "l2": 0.0001,
+    "supportProbability": 0.01,
+    "majorGroupMinDecisions": 100
+  }
+}
