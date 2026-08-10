@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 4,
+  "operation": "RECOMMENDATION_BEHAVIORAL_V5_2_BOUNDED_ARCHITECTURE_SWEEP",
+  "executorVersion": "ELIGIBILITY_FILTERED_2",
+  "boundedArchitectureSweepAuthorized": true,
+  "maximumTrainingMinutes": 20,
+  "boundedRefinementAuthorized": false,
+  "fullTrainingAuthorized": false,
+  "valueV8TrainingAuthorized": false,
+  "productionRankingChanged": false,
+  "passiveShadowAuthorized": false,
+  "randomizedCanaryAuthorized": false,
+  "auditThresholdsLowered": false,
+  "sourceDirectory": "recommendation-pro-decision-dataset-v6-terminal-5000-v2",
+  "sampleDirectory": "recommendation-behavioral-v5-1-sweep-b-v1",
+  "v51SweepSummaryDirectory": "recommendation-behavioral-v5-1-sweep-v1",
+  "outputDirectory": "recommendation-behavioral-v5-2-bounded-v4",
+  "expectedDatasetSha256": "e8b11e26df37ff1e17b334eda18ea2141cfb7fa78f0a34eaf95d448c22962235",
+  "expectedDiagnosticSampleSha256": "8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac",
+  "expectedV51SweepSummarySha256": "0e06b01e8f33257754d6994a10411b5b76da16d07d17c2fc6c7c236b776d4f4e",
+  "eligibilityFilteringAppliedAfterPinnedSampleVerification": true,
+  "recoveryReason": "V3_JOB_TIMEOUT_WATCHDOG_REPAIR"
+}
