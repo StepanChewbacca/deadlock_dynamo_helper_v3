@@ -1,0 +1,299 @@
+name: Recommendation Value V8 Bounded V3
+
+on:
+  pull_request:
+    paths:
+      - '.github/training-requests/recommendation-value-v8-bounded-v3.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-value-v8-bounded-v3
+  cancel-in-progress: false
+
+jobs:
+  bounded-value:
+    runs-on: self-hosted
+    timeout-minutes: 720
+    steps:
+      - name: Checkout requested implementation
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js for preflight
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate authorization and immutable lineage
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/training-requests/recommendation-value-v8-bounded-v3.json'
+          test -s "$request"
+          jq -e '
+            .schemaVersion == 1 and
+            .operation == "RECOMMENDATION_VALUE_V8_BOUNDED_V3" and
+            .valueV8DiagnosticAuthorized == true and
+            .maxRows == 50000 and
+            .fullValueV8TrainingAuthorized == false and
+            .offlineVerificationAuthorized == false and
+            .productionRankingChanged == false and
+            .passiveShadowAuthorized == false and
+            .randomizedCanaryAuthorized == false and
+            .auditThresholdsLowered == false and
+            .datasetDirectory == "recommendation-pro-decision-dataset-v6-terminal-5000-v2" and
+            .behavioralDirectory == "recommendation-behavioral-v5-1-terminal-5000-v3" and
+            .outputDirectory == "recommendation-value-v8-diagnostic-terminal-5000-v3"
+          ' "$request"
+
+          node --check scripts/run-recommendation-value-v8-bounded-v3.mjs
+
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          dataset_name="$(jq -r '.datasetDirectory' "$request")"
+          behavioral_name="$(jq -r '.behavioralDirectory' "$request")"
+          output_name="$(jq -r '.outputDirectory' "$request")"
+          dataset="$storage/$dataset_name"
+          behavioral="$storage/$behavioral_name"
+          output="$storage/$output_name"
+          expected_dataset_sha="$(jq -r '.expectedDatasetSha256' "$request")"
+          expected_behavioral_propensity_sha="$(jq -r '.expectedBehavioralPropensitySha256' "$request")"
+          expected_behavioral_manifest_sha="$(jq -r '.expectedBehavioralManifestSha256' "$request")"
+          [[ "$expected_dataset_sha" =~ ^[a-f0-9]{64}$ ]]
+          [[ "$expected_behavioral_propensity_sha" =~ ^[a-f0-9]{64}$ ]]
+          [[ "$expected_behavioral_manifest_sha" =~ ^[a-f0-9]{64}$ ]]
+
+          sudo test -s "$dataset/manifest.json"
+          sudo test -s "$dataset/audit.json"
+          sudo test -s "$behavioral/manifest.json"
+          sudo test -s "$behavioral/audit.json"
+          sudo test -s "$behavioral/evaluation.json"
+
+          dataset_manifest="$(sudo cat "$dataset/manifest.json")"
+          dataset_audit="$(sudo cat "$dataset/audit.json")"
+          behavioral_manifest="$(sudo cat "$behavioral/manifest.json")"
+          behavioral_audit="$(sudo cat "$behavioral/audit.json")"
+          behavioral_evaluation="$(sudo cat "$behavioral/evaluation.json")"
+
+          jq -e '.auditPassed == true and .trainingArtifactEligible == true' <<<"$dataset_manifest"
+          jq -e '.passed == true and .trainingArtifactEligible == true' <<<"$dataset_audit"
+          test "$(jq -r '.artifact.sha256' <<<"$dataset_manifest")" = "$expected_dataset_sha"
+          dataset_file="$(jq -r '.artifact.fileName' <<<"$dataset_manifest")"
+          sudo test -s "$dataset/$dataset_file"
+          test "$(sudo sha256sum "$dataset/$dataset_file" | awk '{print $1}')" = "$expected_dataset_sha"
+
+          jq -e \
+            --arg dataset_sha "$expected_dataset_sha" \
+            --arg propensity_sha "$expected_behavioral_propensity_sha" '
+              .schemaVersion == 2 and
+              .modelVersion == "RECOMMENDATION_BEHAVIORAL_V5_1_HASHED_CONDITIONAL_CHOICE_2_RAW_PROPENSITY" and
+              .featureVersion == "RECOMMENDATION_BEHAVIORAL_V5_1_FEATURES_4_CAPACITY_INTERACTIONS" and
+              .auditPassed == true and
+              .releaseGatePassed == true and
+              .trainingArtifactEligible == true and
+              .source.sha256 == $dataset_sha and
+              .trainingContract.propensityOutput == "RAW_SOFTMAX_WITHIN_DECISION" and
+              .trainingContract.candidateProbabilityFloorApplied == false and
+              .trainingContract.ipsClippingApplied == false and
+              .trainingContract.probabilityFloorSensitivity == "OBSERVED_PROPENSITY_CLIP_ONLY" and
+              .artifacts.propensities.sha256 == $propensity_sha
+            ' <<<"$behavioral_manifest"
+          jq -e '.passed == true and .trainingArtifactEligible == true and .build.fullCorpus == true' <<<"$behavioral_audit"
+          jq -e '.releaseGate.passed == true and .futureTestPolicy.usedForTraining == false' <<<"$behavioral_evaluation"
+          test "$(sudo sha256sum "$behavioral/manifest.json" | awk '{print $1}')" = "$expected_behavioral_manifest_sha"
+          propensity_file="$(jq -r '.artifacts.propensities.fileName' <<<"$behavioral_manifest")"
+          sudo test -s "$behavioral/$propensity_file"
+          test "$(sudo sha256sum "$behavioral/$propensity_file" | awk '{print $1}')" = "$expected_behavioral_propensity_sha"
+
+          if sudo test -e "$output"; then
+            echo "Refusing destructive reuse of existing Value output: $output" >&2
+            exit 1
+          fi
+
+          available_kib="$(sudo df -Pk "$storage" | awk 'NR==2 {print $4}')"
+          minimum_kib=$((4 * 1024 * 1024))
+          echo "availableKiB=$available_kib minimumKiB=$minimum_kib"
+          if [ "$available_kib" -lt "$minimum_kib" ]; then
+            echo 'Insufficient free disk for bounded Value V8.' >&2
+            exit 1
+          fi
+
+          evidence_dir="$RUNNER_TEMP/recommendation-value-v8-bounded-$GITHUB_RUN_ID"
+          mkdir -p "$evidence_dir"
+          sudo mkdir "$output"
+
+          {
+            echo "storage=$storage"
+            echo "dataset_name=$dataset_name"
+            echo "behavioral_name=$behavioral_name"
+            echo "output_name=$output_name"
+            echo "expected_dataset_sha=$expected_dataset_sha"
+            echo "expected_behavioral_propensity_sha=$expected_behavioral_propensity_sha"
+            echo "expected_behavioral_manifest_sha=$expected_behavioral_manifest_sha"
+            echo "evidence_dir=$evidence_dir"
+            echo "available_kib=$available_kib"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build isolated Value V8 image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo docker build \
+            --label deadlock.recommendation.operation=value-v8-bounded-v3 \
+            --label deadlock.recommendation.git-sha="$GITHUB_SHA" \
+            -t "deadlock-value-v8-bounded-v3:$GITHUB_RUN_ID" \
+            .
+
+      - name: Run bounded Value V8 diagnostic
+        id: training
+        shell: bash
+        run: |
+          set -uo pipefail
+          storage='${{ steps.preflight.outputs.storage }}'
+          dataset_name='${{ steps.preflight.outputs.dataset_name }}'
+          behavioral_name='${{ steps.preflight.outputs.behavioral_name }}'
+          output_name='${{ steps.preflight.outputs.output_name }}'
+          evidence_dir='${{ steps.preflight.outputs.evidence_dir }}'
+          image="deadlock-value-v8-bounded-v3:$GITHUB_RUN_ID"
+
+          set +e
+          sudo docker run --rm \
+            --name "deadlock-value-v8-bounded-v3-$GITHUB_RUN_ID" \
+            --network none \
+            --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,size=256m \
+            -e NODE_OPTIONS=--max-old-space-size=6144 \
+            -e DEADLOCK_RECOMMENDATION_VALUE_V8_DATASET_DIR="/app/apps/api/storage/$dataset_name" \
+            -e DEADLOCK_RECOMMENDATION_VALUE_V8_BEHAVIORAL_DIR="/app/apps/api/storage/$behavioral_name" \
+            -e DEADLOCK_RECOMMENDATION_VALUE_V8_DIAGNOSTIC_DIR="/app/apps/api/storage/$output_name" \
+            -e VALUE_V8_BOUNDED_EVIDENCE_PATH=/evidence/value-v8-bounded-evidence.json \
+            -e EXPECTED_DATASET_SHA256='${{ steps.preflight.outputs.expected_dataset_sha }}' \
+            -e EXPECTED_BEHAVIORAL_PROPENSITY_SHA256='${{ steps.preflight.outputs.expected_behavioral_propensity_sha }}' \
+            -e EXPECTED_BEHAVIORAL_MANIFEST_SHA256='${{ steps.preflight.outputs.expected_behavioral_manifest_sha }}' \
+            -v "$storage/$dataset_name:/app/apps/api/storage/$dataset_name:ro" \
+            -v "$storage/$behavioral_name:/app/apps/api/storage/$behavioral_name:ro" \
+            -v "$storage/$output_name:/app/apps/api/storage/$output_name:rw" \
+            -v "$evidence_dir:/evidence:rw" \
+            "$image" \
+            node /app/scripts/run-recommendation-value-v8-bounded-v3.mjs \
+            2>&1 | tee "$evidence_dir/container.log"
+          training_exit="${PIPESTATUS[0]}"
+          set -e
+          echo "exit_code=$training_exit" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Verify bounded Value evidence
+        shell: bash
+        run: |
+          set -uo pipefail
+          storage='${{ steps.preflight.outputs.storage }}'
+          output_name='${{ steps.preflight.outputs.output_name }}'
+          evidence_dir='${{ steps.preflight.outputs.evidence_dir }}'
+          output="$storage/$output_name"
+          evidence="$evidence_dir/value-v8-bounded-evidence.json"
+          training_exit='${{ steps.training.outputs.exit_code }}'
+          verification_exit=0
+
+          sudo test -s "$output/model.json" || verification_exit=1
+          sudo test -s "$output/state-oof.ndjson" || verification_exit=1
+          sudo test -s "$output/diagnostic-predictions.ndjson" || verification_exit=1
+          sudo test -s "$output/evaluation.json" || verification_exit=1
+          sudo test -s "$output/audit.json" || verification_exit=1
+          sudo test -s "$output/manifest.json" || verification_exit=1
+          test -s "$evidence" || verification_exit=1
+
+          if [ -s "$evidence" ]; then
+            jq -e '
+              .operation == "RECOMMENDATION_VALUE_V8_BOUNDED_V3" and
+              .options.maxRows == 50000 and
+              .gateChecks.statusComplete == true and
+              .gateChecks.statusDiagnosticGatePassed == true and
+              .gateChecks.statusFullTrainingRecommended == true and
+              .gateChecks.auditPassed == true and
+              .gateChecks.auditDiagnosticArtifactEligible == true and
+              .gateChecks.auditFullTrainingRecommended == true and
+              .gateChecks.auditDiagnosticOnly == true and
+              .gateChecks.auditMaxRows == true and
+              .gateChecks.auditNotFullCorpus == true and
+              .gateChecks.auditFutureNotTraining == true and
+              .gateChecks.auditFutureNotSelection == true and
+              .gateChecks.auditTuningNotTraining == true and
+              .gateChecks.manifestDiagnosticOnly == true and
+              .gateChecks.manifestFutureNotUsed == true and
+              .gateChecks.manifestAuditPassed == true and
+              .gateChecks.manifestDiagnosticGatePassed == true and
+              .gateChecks.manifestFullTrainingRecommended == true and
+              .gateChecks.evaluationGatePassed == true and
+              .gateChecks.evaluationFullTrainingRecommended == true and
+              .gateChecks.evaluationFutureNotTraining == true and
+              .gateChecks.evaluationFutureNotSelection == true and
+              .gateChecks.evaluationFutureNotEvaluated == true and
+              .gateChecks.modelRawBehavioralWeighting == true and
+              .gateChecks.sourceDatasetShaMatches == true and
+              .gateChecks.behavioralPropensityShaMatches == true and
+              .gateChecks.behavioralFeatureContractVerified == true and
+              .valueV8DiagnosticAuthorized == true and
+              .fullValueV8TrainingAuthorized == false and
+              .offlineVerificationAuthorized == false and
+              .productionRankingChanged == false and
+              .passiveShadowAuthorized == false and
+              .randomizedCanaryAuthorized == false
+            ' "$evidence" || verification_exit=1
+          fi
+
+          if sudo test -s "$output/manifest.json"; then
+            manifest="$(sudo cat "$output/manifest.json")"
+            for key in model stateOof predictions evaluation audit; do
+              file="$(jq -r --arg key "$key" '.artifacts[$key].fileName' <<<"$manifest")"
+              expected="$(jq -r --arg key "$key" '.artifacts[$key].sha256' <<<"$manifest")"
+              actual="$(sudo sha256sum "$output/$file" | awk '{print $1}')"
+              test "$actual" = "$expected" || verification_exit=1
+            done
+            manifest_sha="$(sudo sha256sum "$output/manifest.json" | awk '{print $1}')"
+          else
+            manifest_sha='missing'
+          fi
+
+          {
+            echo "gitSha=$GITHUB_SHA"
+            echo "runId=$GITHUB_RUN_ID"
+            echo "trainingExit=$training_exit"
+            echo "verificationExit=$verification_exit"
+            echo "datasetSha256=${{ steps.preflight.outputs.expected_dataset_sha }}"
+            echo "behavioralPropensitySha256=${{ steps.preflight.outputs.expected_behavioral_propensity_sha }}"
+            echo "behavioralManifestSha256=${{ steps.preflight.outputs.expected_behavioral_manifest_sha }}"
+            echo "valueManifestSha256=$manifest_sha"
+            echo "maxRows=50000"
+            echo "valueV8DiagnosticAuthorized=true"
+            echo "fullValueV8TrainingAuthorized=false"
+            echo "productionRankingChanged=false"
+            echo "passiveShadowAuthorized=false"
+            echo "randomizedCanaryAuthorized=false"
+            echo '=== evidence ==='
+            if [ -s "$evidence" ]; then jq '.' "$evidence"; else echo 'missing'; fi
+            echo '=== storage ==='
+            sudo df -hT "$storage"
+            sudo du -sh "$output" 2>/dev/null || true
+          } | tee "$evidence_dir/value-v8-bounded-report.txt"
+
+          if [ "$training_exit" != '0' ] || [ "$verification_exit" != '0' ]; then
+            exit 1
+          fi
+
+      - name: Upload bounded Value evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-value-v8-bounded-v3-${{ github.run_id }}
+          path: ${{ steps.preflight.outputs.evidence_dir }}
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Remove transient Docker image
+        if: always()
+        shell: bash
+        run: |
+          sudo docker image rm -f "deadlock-value-v8-bounded-v3:$GITHUB_RUN_ID" >/dev/null 2>&1 || true
