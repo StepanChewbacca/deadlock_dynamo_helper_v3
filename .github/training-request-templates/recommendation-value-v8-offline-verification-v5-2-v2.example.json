@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "executorVersion": "BOUNDED_VALUE_V2_PINNED_2",
+  "operation": "RECOMMENDATION_VALUE_V8_OFFLINE_VERIFICATION_V5_2",
+  "offlineVerificationAuthorized": true,
+  "fullValueV8TrainingAuthorized": false,
+  "productionRankingChanged": false,
+  "passiveShadowAuthorized": false,
+  "randomizedCanaryAuthorized": false,
+  "datasetDirectory": "recommendation-pro-decision-dataset-v6-terminal-5000-v2",
+  "valueDirectory": "recommendation-value-v8-diagnostic-v5-2-v2",
+  "outputDirectory": "recommendation-value-v8-offline-verification-v5-2-v2",
+  "expectedDatasetSha256": "e8b11e26df37ff1e17b334eda18ea2141cfb7fa78f0a34eaf95d448c22962235",
+  "expectedBehavioralPropensitySha256": "<fill-from-bounded-value-manifest>",
+  "expectedValueManifestSha256": "<fill-after-bounded-value-pass>",
+  "expectedValueModelSha256": "<fill-after-bounded-value-pass>",
+  "expectedValuePredictionsSha256": "<fill-after-bounded-value-pass>",
+  "expectedValueEvaluationSha256": "<fill-after-bounded-value-pass>",
+  "expectedValueAuditSha256": "<fill-after-bounded-value-pass>"
+}
