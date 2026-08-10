@@ -1,0 +1,56 @@
+name: Recommendation Behavioral V5.2 Detached Trigger Validator
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/recommendation-behavioral-v5-2-bounded-v5-detached.yml'
+      - '.github/training-request-templates/recommendation-behavioral-v5-2-bounded-v5-detached.example.json'
+      - '.github/workflows/recommendation-behavioral-v5-2-detached-trigger-validator.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate detached trigger contract
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          workflow='.github/workflows/recommendation-behavioral-v5-2-bounded-v5-detached.yml'
+          template='.github/training-request-templates/recommendation-behavioral-v5-2-bounded-v5-detached.example.json'
+
+          test -s "$workflow"
+          test -s "$template"
+
+          grep -F 'timeout-minutes: 15' "$workflow"
+          grep -F 'sudo docker run -d' "$workflow"
+          grep -F 'trainingProcessBoundToActionLifetime == false' "$workflow"
+          grep -F 'GitHub Actions trigger is complete. Training continues independently on the VPS.' "$workflow"
+
+          if grep -Fq 'timeout --signal=TERM' "$workflow"; then
+            echo 'Detached trigger must not wrap model training in GNU timeout.' >&2
+            exit 1
+          fi
+
+          if grep -Eq 'docker (rm|stop) .*deadlock-behavioral-v5-2-bounded-v5-detached' "$workflow"; then
+            echo 'Detached trigger must not stop or remove the launched training container.' >&2
+            exit 1
+          fi
+
+          jq -e '
+            .schemaVersion == 5 and
+            .launcherVersion == "DETACHED_DOCKER_TRIGGER_1" and
+            .actionTriggerOnlyAuthorized == true and
+            .trainingProcessBoundToActionLifetime == false and
+            .fullTrainingAuthorized == false and
+            .valueV8TrainingAuthorized == false and
+            .productionRankingChanged == false and
+            .passiveShadowAuthorized == false and
+            .randomizedCanaryAuthorized == false
+          ' "$template"
