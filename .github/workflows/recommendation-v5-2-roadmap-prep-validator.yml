@@ -14,9 +14,9 @@ on:
       - '.github/workflows/recommendation-behavioral-v5-2-refinement-budgeted-v3.yml'
       - '.github/workflows/recommendation-behavioral-v5-2-full-readiness-v2.yml'
       - '.github/workflows/recommendation-behavioral-v5-2-full-budgeted-v2.yml'
-      - '.github/workflows/recommendation-value-v8-v5-2-input-readiness.yml'
+      - '.github/workflows/recommendation-value-v8-v5-2-input-readiness-v2.yml'
       - '.github/workflows/recommendation-value-v8-bounded-v5-2-v2.yml'
-      - '.github/workflows/recommendation-value-v8-offline-verification-v5-2.yml'
+      - '.github/workflows/recommendation-value-v8-offline-verification-v5-2-v2.yml'
       - '.github/training-request-templates/**'
       - 'docs/recommendation-v5-2-authoritative-budgeted-chain.md'
       - '.github/workflows/recommendation-v5-2-roadmap-prep-validator.yml'
@@ -55,9 +55,9 @@ jobs:
             .github/training-requests/recommendation-behavioral-v5-2-refinement-v3.json
             .github/training-requests/recommendation-behavioral-v5-2-full-readiness-v2.json
             .github/training-requests/recommendation-behavioral-v5-2-full-v2.json
-            .github/training-requests/recommendation-value-v8-v5-2-input-readiness-v1.json
+            .github/training-requests/recommendation-value-v8-v5-2-input-readiness-v2.json
             .github/training-requests/recommendation-value-v8-bounded-v5-2-v2.json
-            .github/training-requests/recommendation-value-v8-offline-verification-v5-2-v1.json
+            .github/training-requests/recommendation-value-v8-offline-verification-v5-2-v2.json
           )
           for path in "${forbidden[@]}"; do
             if [ -e "$path" ]; then
@@ -80,7 +80,10 @@ jobs:
           grep -F 'CANDIDATE_COVERAGE_FIXED_2' .github/workflows/recommendation-behavioral-v5-2-refinement-budgeted-v3.yml
           grep -F 'IMMUTABLE_COST_PROJECTION_2' .github/workflows/recommendation-behavioral-v5-2-full-readiness-v2.yml
           grep -F 'READINESS_PINNED_2' .github/workflows/recommendation-behavioral-v5-2-full-budgeted-v2.yml
+          grep -F 'FULL_V5_2_PINNED_2' .github/workflows/recommendation-value-v8-v5-2-input-readiness-v2.yml
           grep -F 'FULL_PROPENSITY_STREAM_AUDIT_2' .github/workflows/recommendation-value-v8-bounded-v5-2-v2.yml
+          grep -F 'BOUNDED_VALUE_V2_PINNED_2' .github/workflows/recommendation-value-v8-offline-verification-v5-2-v2.yml
+          grep -F 'timeout --signal=TERM --kill-after=30s 10m' .github/workflows/recommendation-value-v8-offline-verification-v5-2-v2.yml
 
       - name: Verify superseded executable workflows are absent
         shell: bash
@@ -91,7 +94,9 @@ jobs:
             .github/workflows/recommendation-behavioral-v5-2-refinement-budgeted-v2.yml
             .github/workflows/recommendation-behavioral-v5-2-full-readiness.yml
             .github/workflows/recommendation-behavioral-v5-2-full-budgeted.yml
+            .github/workflows/recommendation-value-v8-v5-2-input-readiness.yml
             .github/workflows/recommendation-value-v8-bounded-v5-2.yml
+            .github/workflows/recommendation-value-v8-offline-verification-v5-2.yml
           )
           for path in "${superseded[@]}"; do
             if [ -e "$path" ]; then
