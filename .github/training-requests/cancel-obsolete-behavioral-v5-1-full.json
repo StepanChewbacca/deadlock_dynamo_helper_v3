@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "operation": "CANCEL_OBSOLETE_RECOMMENDATION_BEHAVIORAL_V5_1_FULL",
+  "targetWorkflowRunId": 31343448965,
+  "trainingAuthorized": false,
+  "reason": "V5.1 architecture is superseded by the bounded V5.2 recovery path and must not consume runner time."
+}
