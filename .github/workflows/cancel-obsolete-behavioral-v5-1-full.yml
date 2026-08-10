@@ -1,0 +1,23 @@
+name: Cancel Obsolete Behavioral V5.1 Full Training
+
+on:
+  pull_request:
+    paths:
+      - '.github/training-requests/cancel-obsolete-behavioral-v5-1-full.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v5-1-full-v1
+  cancel-in-progress: true
+
+jobs:
+  cancel-marker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Confirm obsolete full training cancellation
+        run: |
+          echo 'Cancelling any in-progress workflow using recommendation-behavioral-v5-1-full-v1 concurrency.'
+          echo 'No training is executed by this workflow.'
