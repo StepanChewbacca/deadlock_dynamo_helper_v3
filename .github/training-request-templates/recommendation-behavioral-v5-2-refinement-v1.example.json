@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "operation": "RECOMMENDATION_BEHAVIORAL_V5_2_BOUNDED_REFINEMENT",
+  "boundedRefinementAuthorized": true,
+  "maximumTrainingMinutes": 20,
+  "fullTrainingAuthorized": false,
+  "valueV8TrainingAuthorized": false,
+  "productionRankingChanged": false,
+  "passiveShadowAuthorized": false,
+  "randomizedCanaryAuthorized": false,
+  "sourceDirectory": "recommendation-pro-decision-dataset-v6-terminal-5000-v2",
+  "sampleDirectory": "recommendation-behavioral-v5-1-sweep-b-v1",
+  "sourceSweepDirectory": "recommendation-behavioral-v5-2-bounded-v3",
+  "outputDirectory": "recommendation-behavioral-v5-2-refinement-v1",
+  "expectedDatasetSha256": "e8b11e26df37ff1e17b334eda18ea2141cfb7fa78f0a34eaf95d448c22962235",
+  "expectedDiagnosticSampleSha256": "8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac",
+  "expectedSourceSweepSummarySha256": "__FILL_AFTER_BOUNDED_V3__",
+  "variants": [
+    {
+      "id": "R1",
+      "linearHashDimension": "__COPY_WINNER__",
+      "embeddingHashDimension": "__AROUND_WINNER__",
+      "latentDimension": "__AROUND_WINNER__",
+      "epochs": "__AROUND_WINNER__",
+      "learningRate": "__AROUND_WINNER__"
+    },
+    {
+      "id": "R2",
+      "linearHashDimension": "__COPY_WINNER__",
+      "embeddingHashDimension": "__AROUND_WINNER__",
+      "latentDimension": "__AROUND_WINNER__",
+      "epochs": "__AROUND_WINNER__",
+      "learningRate": "__AROUND_WINNER__"
+    },
+    {
+      "id": "R3",
+      "linearHashDimension": "__COPY_WINNER__",
+      "embeddingHashDimension": "__AROUND_WINNER__",
+      "latentDimension": "__AROUND_WINNER__",
+      "epochs": "__AROUND_WINNER__",
+      "learningRate": "__AROUND_WINNER__"
+    }
+  ],
+  "common": {
+    "foldCount": 5,
+    "l2": 0.0001,
+    "supportProbability": 0.01,
+    "majorGroupMinDecisions": 100
+  }
+}
