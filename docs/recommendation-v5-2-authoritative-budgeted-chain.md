@@ -15,11 +15,25 @@ Every model-training stage is a one-shot GitHub Actions run only.
 
 Non-training offline verification also has a 10-minute process cap and a 20-minute job timeout.
 
+## Stage 1 recovery status
+
+The intended V3 architecture sweep run `31382112874` failed because the job-level 30-minute timeout cancelled the job while the original `timeout ... sudo docker run` watchdog failed to regain shell control. Preflight lineage checks and image build passed; no valid sweep summary was produced. The partial V3 output is immutable failed-run evidence and must not be reused or deleted.
+
+Exactly one same-budget orchestration repair is authorized for Stage 1:
+
+- workflow: `.github/workflows/recommendation-behavioral-v5-2-bounded-v4-watchdog.yml`;
+- fresh output: `recommendation-behavioral-v5-2-bounded-v4`;
+- immutable Dataset V6, pinned MATCH sample, and V5.1 sweep-summary SHA remain unchanged;
+- training-process budget remains exactly 20 minutes;
+- self-hosted job timeout remains exactly 30 minutes;
+- the repair changes only process supervision/output identity and does not enlarge model work or thresholds;
+- if this repaired Stage 1 fails or times out, stop the chain; no further Stage 1 retry is authorized.
+
 ## Authoritative stages
 
 1. Initial architecture sweep
-   - `Recommendation Behavioral V5.2 Bounded V3 Budgeted`;
-   - current intended run: `31357375817`;
+   - failed V3 run: `31382112874`;
+   - one authorized same-budget repair: `Recommendation Behavioral V5.2 Bounded V4 Watchdog`;
    - immutable Dataset V6 and MATCH sample lineage only.
 
 2. Exactly one bounded refinement, only after architecture continuation PASS
