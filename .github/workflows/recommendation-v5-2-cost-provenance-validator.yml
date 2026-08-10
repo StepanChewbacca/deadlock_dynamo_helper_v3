@@ -1,0 +1,74 @@
+name: Recommendation V5.2 Cost Provenance Validator
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/verify-recommendation-behavioral-v5-2-full-readiness-v2.mjs'
+      - '.github/workflows/recommendation-behavioral-v5-2-full-readiness-v2.yml'
+      - '.github/workflows/recommendation-behavioral-v5-2-full-budgeted-v2.yml'
+      - '.github/training-request-templates/recommendation-behavioral-v5-2-full-readiness-v2.example.json'
+      - '.github/training-request-templates/recommendation-behavioral-v5-2-full-v2.example.json'
+      - '.github/workflows/recommendation-v5-2-cost-provenance-validator.yml'
+      - 'docs/recommendation-v5-2-authoritative-budgeted-chain.md'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate readiness v2 script
+        run: |
+          set -euo pipefail
+          node --check scripts/verify-recommendation-behavioral-v5-2-full-readiness-v2.mjs
+
+      - name: Validate complete cost projection
+        run: |
+          set -euo pipefail
+          script='scripts/verify-recommendation-behavioral-v5-2-full-readiness-v2.mjs'
+          grep -F 'const preflightDatasetPasses = 1;' "$script"
+          grep -F 'const crossFitTrainingPasses = configuration.epochs * configuration.foldCount;' "$script"
+          grep -F 'const finalTrainingPasses = configuration.epochs;' "$script"
+          grep -F 'const propensityEvaluationPasses = 1;' "$script"
+          grep -F "executorVersion: 'IMMUTABLE_COST_PROJECTION_2'" "$script"
+          grep -F 'hardTrainingBudgetMinutes: 20' "$script"
+          grep -F 'hardJobBudgetMinutes: 30' "$script"
+
+      - name: Validate immutable readiness workflow
+        run: |
+          set -euo pipefail
+          workflow='.github/workflows/recommendation-behavioral-v5-2-full-readiness-v2.yml'
+          grep -F 'recommendation-behavioral-v5-2-full-readiness-v2' "$workflow"
+          grep -F 'readiness-report.json' "$workflow"
+          grep -F 'Refusing destructive reuse of existing readiness output' "$workflow"
+          grep -F '.executorVersion == "IMMUTABLE_COST_PROJECTION_2"' "$workflow"
+
+      - name: Validate full training readiness pin
+        run: |
+          set -euo pipefail
+          workflow='.github/workflows/recommendation-behavioral-v5-2-full-budgeted-v2.yml'
+          grep -F 'timeout-minutes: 30' "$workflow"
+          grep -F 'timeout --signal=TERM --kill-after=60s 20m' "$workflow"
+          grep -F '.executorVersion == "READINESS_PINNED_2"' "$workflow"
+          grep -F 'expectedReadinessReportSha256' "$workflow"
+          grep -F 'test "$(sudo sha256sum "$readiness"' "$workflow"
+          grep -F '.executorVersion == "IMMUTABLE_COST_PROJECTION_2"' "$workflow"
+          grep -F '.selectedConfiguration == $selected' "$workflow"
+
+      - name: Verify no full/readiness one-shot triggers are committed
+        run: |
+          set -euo pipefail
+          if find .github/training-requests -maxdepth 1 -type f \
+            \( -name 'recommendation-behavioral-v5-2-full-readiness-v2.json' \
+            -o -name 'recommendation-behavioral-v5-2-full-v2.json' \) \
+            -print -quit 2>/dev/null | grep -q .; then
+            echo 'A full/readiness one-shot trigger is committed.' >&2
+            exit 1
+          fi
