@@ -1,0 +1,60 @@
+name: Recommendation V5.2 Roadmap Semantic Validator
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/audit-recommendation-behavioral-v5-2-propensities.mjs'
+      - 'scripts/normalize-recommendation-behavioral-v5-2-refinement-v2.mjs'
+      - '.github/workflows/recommendation-behavioral-v5-2-refinement-budgeted-v3.yml'
+      - '.github/workflows/recommendation-value-v8-bounded-v5-2-v2.yml'
+      - '.github/training-request-templates/recommendation-behavioral-v5-2-refinement-v3.example.json'
+      - '.github/training-request-templates/recommendation-value-v8-bounded-v5-2-v2.example.json'
+      - '.github/workflows/recommendation-v5-2-roadmap-semantic-validator.yml'
+      - 'docs/recommendation-v5-2-budgeted-roadmap-hardening.md'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate new scripts
+        run: |
+          set -euo pipefail
+          node --check scripts/audit-recommendation-behavioral-v5-2-propensities.mjs
+          node --check scripts/normalize-recommendation-behavioral-v5-2-refinement-v2.mjs
+      - name: Validate corrected refinement contract
+        run: |
+          set -euo pipefail
+          workflow='.github/workflows/recommendation-behavioral-v5-2-refinement-budgeted-v3.yml'
+          grep -F 'timeout-minutes: 30' "$workflow"
+          grep -F 'timeout --signal=TERM --kill-after=60s 20m' "$workflow"
+          grep -F '.schemaVersion == 1' "$workflow"
+          grep -F '.executorVersion == "CANDIDATE_COVERAGE_FIXED_2"' "$workflow"
+          grep -F 'normalize-recommendation-behavioral-v5-2-refinement-v2.mjs' "$workflow"
+          grep -F 'candidateCoverageSource == "PINNED_SAMPLE_SOURCE_SWEEP"' "$workflow"
+      - name: Validate bounded Value full-stream audit
+        run: |
+          set -euo pipefail
+          workflow='.github/workflows/recommendation-value-v8-bounded-v5-2-v2.yml'
+          grep -F 'timeout-minutes: 30' "$workflow"
+          grep -F 'timeout --signal=TERM --kill-after=60s 20m' "$workflow"
+          grep -F '.executorVersion == "FULL_PROPENSITY_STREAM_AUDIT_2"' "$workflow"
+          grep -F 'audit-recommendation-behavioral-v5-2-propensities.mjs' "$workflow"
+          grep -F 'futureTestEvaluated == false' "$workflow"
+      - name: Verify no one-shot triggers are committed
+        run: |
+          set -euo pipefail
+          if find .github/training-requests -maxdepth 1 -type f \
+            \( -name 'recommendation-behavioral-v5-2-refinement-v3.json' \
+            -o -name 'recommendation-value-v8-bounded-v5-2-v2.json' \) \
+            -print -quit 2>/dev/null | grep -q .; then
+            echo 'A one-shot training trigger is committed.' >&2
+            exit 1
+          fi
