@@ -1,0 +1,107 @@
+name: Recommendation Behavioral V5.2 Full Readiness V2
+
+on:
+  pull_request:
+    paths:
+      - '.github/training-requests/recommendation-behavioral-v5-2-full-readiness-v2.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v5-2-full-readiness-v2
+  cancel-in-progress: true
+
+jobs:
+  readiness-v2:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build immutable cost and readiness report
+        id: readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/training-requests/recommendation-behavioral-v5-2-full-readiness-v2.json'
+          test -s "$request"
+          jq -e '
+            .schemaVersion == 2 and
+            .executorVersion == "IMMUTABLE_COST_PROJECTION_2" and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V5_2_FULL_READINESS" and
+            .fullTrainingReadinessAuthorized == true and
+            .fullTrainingAuthorized == false and
+            .valueV8TrainingAuthorized == false and
+            .productionRankingChanged == false and
+            .passiveShadowAuthorized == false and
+            .randomizedCanaryAuthorized == false and
+            .sourceDirectory == "recommendation-pro-decision-dataset-v6-terminal-5000-v2" and
+            .refinementDirectory == "recommendation-behavioral-v5-2-refinement-v3" and
+            .outputDirectory == "recommendation-behavioral-v5-2-full-readiness-v2"
+          ' "$request"
+          node --check scripts/verify-recommendation-behavioral-v5-2-full-readiness-v2.mjs
+
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          source="$storage/$(jq -r '.sourceDirectory' "$request")"
+          refinement="$storage/$(jq -r '.refinementDirectory' "$request")/refinement-summary.json"
+          output="$storage/$(jq -r '.outputDirectory' "$request")"
+          report="$output/readiness-report.json"
+          dataset_sha="$(jq -r '.expectedDatasetSha256' "$request")"
+          refinement_sha="$(jq -r '.expectedRefinementSummarySha256' "$request")"
+          [[ "$dataset_sha" =~ ^[a-f0-9]{64}$ ]]
+          [[ "$refinement_sha" =~ ^[a-f0-9]{64}$ ]]
+          sudo test -s "$source/manifest.json"
+          sudo test -s "$source/audit.json"
+          sudo test -s "$refinement"
+          test "$(sudo sha256sum "$source/$(sudo jq -r '.artifact.fileName' "$source/manifest.json")" | awk '{print $1}')" = "$dataset_sha"
+          test "$(sudo sha256sum "$refinement" | awk '{print $1}')" = "$refinement_sha"
+          sudo jq -e '
+            .executorVersion == "CANDIDATE_COVERAGE_FIXED_2" and
+            .fullTrainingCandidatePrepared == true and
+            .fullTrainingAuthorized == false and
+            .valueV8TrainingAuthorized == false and
+            .source.futureTestRowCount == 0
+          ' "$refinement"
+
+          if sudo test -e "$output"; then
+            echo "Refusing destructive reuse of existing readiness output: $output" >&2
+            exit 1
+          fi
+          sudo mkdir "$output"
+          sudo chown "$(id -u):$(id -g)" "$output"
+
+          DEADLOCK_RECOMMENDATION_BEHAVIORAL_V5_2_SOURCE_DIR="$source" \
+          BEHAVIORAL_V5_2_REFINEMENT_SUMMARY_PATH="$refinement" \
+          BEHAVIORAL_V5_2_FULL_READINESS_REQUEST_PATH="$request" \
+          BEHAVIORAL_V5_2_FULL_READINESS_REPORT_PATH="$report" \
+          EXPECTED_DATASET_SHA256="$dataset_sha" \
+          EXPECTED_REFINEMENT_SUMMARY_SHA256="$refinement_sha" \
+          node scripts/verify-recommendation-behavioral-v5-2-full-readiness-v2.mjs
+
+          jq -e '
+            .schemaVersion == 2 and
+            .executorVersion == "IMMUTABLE_COST_PROJECTION_2" and
+            .readyForExplicitCostDecision == true and
+            .costProjection.preflightDatasetPasses == 1 and
+            .costProjection.propensityEvaluationPasses == 1 and
+            .costProjection.hardTrainingBudgetMinutes == 20 and
+            .costProjection.hardJobBudgetMinutes == 30 and
+            .fullTrainingAuthorized == false and
+            .valueV8TrainingAuthorized == false
+          ' "$report"
+          report_sha="$(sha256sum "$report" | awk '{print $1}')"
+          echo "report=$report" >> "$GITHUB_OUTPUT"
+          echo "report_sha=$report_sha" >> "$GITHUB_OUTPUT"
+          echo "readinessReportSha256=$report_sha"
+
+      - name: Upload immutable readiness report
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-behavioral-v5-2-full-readiness-v2-${{ github.run_id }}
+          path: ${{ steps.readiness.outputs.report }}
+          if-no-files-found: error
+          retention-days: 7
