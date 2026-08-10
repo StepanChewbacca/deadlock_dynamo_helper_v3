@@ -1,0 +1,22 @@
+name: Cancel Obsolete Behavioral V5.2 Bounded V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/training-requests/cancel-obsolete-behavioral-v5-2-bounded-v1.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v5-2-bounded-v1
+  cancel-in-progress: true
+
+jobs:
+  cancel-marker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: |
+          echo 'Cancelling obsolete V5.2 bounded-v1 workflow.'
+          echo 'No training is executed by this workflow.'
