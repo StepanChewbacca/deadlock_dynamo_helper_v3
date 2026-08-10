@@ -23,84 +23,70 @@ The model-training process is not bound to the GitHub Actions job lifetime.
 
 Non-training readiness and offline-verification stages may run to completion inside GitHub Actions because they do not own a long-running model-training process.
 
-## Stage 1 recovery status
+## Stage 1 final status
 
-The V3 architecture sweep run `31382112874` failed operationally because the training process was attached to the Actions job lifetime. Preflight lineage checks and image build passed, but the 30-minute job timeout cancelled the job before a valid sweep summary was produced. The partial V3 output is failed-run evidence and must not be reused or deleted.
+The V3 architecture sweep run `31382112874` failed operationally because the training process was attached to the Actions job lifetime. Its partial output remains immutable failed-run evidence and must not be reused or deleted.
 
-The old V4 watchdog design is superseded because it still kept the Actions job alive while waiting for model training. It must not be executed.
+The superseded V4 watchdog design must not be executed.
 
-The authoritative Stage 1 recovery is now:
+The authoritative detached Stage 1 recovery completed through:
 
+- workflow run: `31403705105`;
 - workflow: `.github/workflows/recommendation-behavioral-v5-2-bounded-v5-detached.yml`;
 - launcher: `DETACHED_DOCKER_TRIGGER_1`;
-- fresh output: `recommendation-behavioral-v5-2-bounded-v5-detached-1`;
+- output: `recommendation-behavioral-v5-2-bounded-v5-detached-1`;
 - immutable Dataset V6 SHA: `e8b11e26df37ff1e17b334eda18ea2141cfb7fa78f0a34eaf95d448c22962235`;
 - pinned MATCH sample SHA: `8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac`;
 - frozen V5.1 sweep summary SHA: `0e06b01e8f33257754d6994a10411b5b76da16d07d17c2fc6c7c236b776d4f4e`;
-- Action timeout: 15 minutes for trigger/preflight/build/launch only;
-- training continues independently in the detached Docker container after the Action completes;
-- the container writes `container.log` and `training-exit-code.txt` into the fresh output directory;
-- the trigger records container ID/name/image and launch metadata in the output directory.
+- detached container exited normally with exit code `0`;
+- `oomKilled=false`;
+- `sweep-summary.json` and `sweep-report.txt` were produced;
+- preferred V5.2 variant: `A`;
+- structural audit passed;
+- raw propensity contract passed;
+- architecture continuation recommendation: `false`.
 
-## Authoritative stages
+The unchanged continuation gate failed these required checks:
 
-1. Initial architecture sweep
-   - failed attached run: `31382112874`;
-   - authoritative detached trigger: `Recommendation Behavioral V5.2 Bounded V5 Detached Trigger`;
-   - immutable Dataset V6 and MATCH sample lineage only;
-   - after launch, status is read from the detached container and the fresh output directory, not from a long-running Actions job.
+- support coverage improvement: FAIL;
+- raw log-loss within allowed regression bound: FAIL;
+- major low-support-group reduction: FAIL.
 
-2. Exactly one bounded refinement, only after architecture continuation PASS
-   - required executor: `CANDIDATE_COVERAGE_FIXED_2`;
-   - candidate coverage comes from the complete pinned sample, not from the already-eligible subset;
-   - before execution, this model-training stage must use the same trigger-only detached-launch contract as Stage 1;
-   - no in-job training watchdog is authoritative.
+The structural-audit and raw-propensity-contract checks passed, but all continuation checks are conjunctive. Therefore Stage 2 bounded refinement is not authorized.
 
-3. Full readiness and cost projection, no model training
-   - workflow: `.github/workflows/recommendation-behavioral-v5-2-full-readiness-v2.yml`;
-   - request template: `.github/training-request-templates/recommendation-behavioral-v5-2-full-readiness-v2.example.json`;
-   - required executor: `IMMUTABLE_COST_PROJECTION_2`;
-   - output: immutable `readiness-report.json` in storage.
+For the preferred V5.2 variant A:
 
-4. Full Behavioral V5.2, only after exact readiness SHA is known
-   - required executor: `READINESS_PINNED_2`;
-   - release gates remain unchanged;
-   - FUTURE_TEST is neither trained on, selected on, nor evaluated;
-   - before execution, this model-training stage must use the trigger-only detached-launch contract.
+- support coverage: `0.7659205197810511` vs V5.1 baseline `0.7767122068443773`;
+- raw log-loss: `2.964878289755934` vs V5.1 baseline `2.9291381922162625`;
+- major low-support groups: `21` vs V5.1 baseline `17`;
+- candidate coverage: `0.9991773938949288`;
+- structural audit: PASS;
+- release gate: FAIL.
 
-5. Value V8 input readiness, no Value training
-   - workflow: `.github/workflows/recommendation-value-v8-v5-2-input-readiness-v2.yml`;
-   - request template: `.github/training-request-templates/recommendation-value-v8-v5-2-input-readiness-v2.example.json`;
-   - required executor: `FULL_V5_2_PINNED_2`;
-   - exact Behavioral input is pinned by immutable SHA lineage.
+The release gate reasons were unchanged threshold failures: behavior support below 90%, at least one major cohort below 75% support, and instability across probability floors.
 
-6. Bounded Value V8 diagnostic
-   - required executor: `FULL_PROPENSITY_STREAM_AUDIT_2`;
-   - `maxRows=50000`;
-   - the complete Behavioral propensity artifact is streamed and validated before any Value update;
-   - Value applies observed-propensity stabilization and importance-weight clipping exactly once;
-   - FUTURE_TEST is not trained on, selected on, or evaluated;
-   - before execution, this model-training stage must use the trigger-only detached-launch contract.
+## Chain disposition
 
-7. Offline verification
-   - workflow: `.github/workflows/recommendation-value-v8-offline-verification-v5-2-v2.yml`;
-   - request template: `.github/training-request-templates/recommendation-value-v8-offline-verification-v5-2-v2.example.json`;
-   - required executor: `BOUNDED_VALUE_V2_PINNED_2`;
-   - deterministic replay and exact stored-prediction comparison;
-   - state-only vs state+action comparison;
-   - candidate and metadata permutation diagnostics;
-   - candidate ranking/separation diagnostics;
-   - latency and heap measurements;
-   - no model training.
+The Recommendation V5.2 recovery chain stops after Stage 1 because architecture continuation did not pass.
 
-## Superseded execution paths
+Do not execute:
 
-Any workflow that keeps a model-training process attached to a long-running GitHub Actions job is non-authoritative for this chain. In particular, the V4 watchdog path is removed from the authoritative branch.
+- Stage 2 bounded refinement;
+- full Behavioral V5.2 training;
+- Value V8 input readiness for a nonexistent release-eligible full Behavioral V5.2 artifact;
+- bounded Value V8 diagnostic;
+- downstream offline verification tied to that Value artifact.
 
-## Stop boundary
+A future attempt requires a new explicitly authorized architecture/research plan rather than weakening the existing thresholds or silently retrying this chain.
 
-This chain does not authorize:
+## Preserved safety boundaries
 
+The stopped chain does not authorize:
+
+- Replay or Dataset V6 rebuild;
+- threshold lowering;
+- observed-action injection;
+- FUTURE_TEST use where prohibited;
 - full Value V8 training;
 - production ranking changes;
 - passive shadow;
