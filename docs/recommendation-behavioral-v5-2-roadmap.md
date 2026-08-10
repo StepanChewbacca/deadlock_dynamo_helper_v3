@@ -63,14 +63,29 @@ Required tests:
 
 ## Stage 2 - MATCH-cross-fitted bounded trainer
 
-Add a standalone V5.2 bounded trainer that reads the immutable Dataset V6 artifact directly.
+Add a standalone V5.2 bounded trainer that reuses the exact immutable V5.1 diagnostic sample instead of creating a new 50k prefix sample. This removes sample drift from the architecture comparison.
 
-- `maxRows=50000` for the first architecture diagnostic.
+Pinned comparison lineage:
+
+- Dataset V6 SHA-256: `e8b11e26df37ff1e17b334eda18ea2141cfb7fa78f0a34eaf95d448c22962235`
+- sample unit: MATCH
+- sample hash: FNV1A_32
+- modulo: 16
+- remainder: 0
+- sample SHA-256: `8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac`
+- V5.1 sweep summary SHA-256: `0e06b01e8f33257754d6994a10411b5b76da16d07d17c2fc6c7c236b776d4f4e`
+- FUTURE_TEST excluded from the bounded sample
+
+The separate 50k V5.1 diagnostics supplied later remain secondary evidence, but architecture continuation is decided on the inherited immutable MATCH sample so V5.1 and V5.2 are directly comparable.
+
+Training/evaluation rules:
+
 - TRAIN only for fitting.
 - TUNING for selection metrics.
 - FUTURE_TEST excluded from bounded evaluation.
 - OOF TRAIN predictions must come from a model that excluded the complete MATCH fold.
-- Every output row records schema/model/feature versions and raw propensity semantics.
+- All A/B/C variants consume the identical sample artifact.
+- Bounded artifacts are diagnostic-only and never training/release eligible.
 
 The first bounded comparison is precommitted before results are visible:
 
@@ -94,13 +109,13 @@ No sampled artifact is release eligible.
 
 ## Stage 3 - Architecture decision
 
-Proceed only if V5.2 materially improves the failed V5.1 frontier.
+Proceed only if V5.2 materially improves the failed V5.1 frontier on the same immutable sample.
 
 Minimum continuation criteria on the bounded diagnostic:
 
-- support coverage improves by at least 5 percentage points over the best comparable V5.1 bounded result;
-- raw log loss is not worse than the best comparable V5.1 result by more than 0.02;
-- major low-support group count decreases materially;
+- support coverage improves by at least 5 percentage points over the preferred comparable V5.1 bounded result;
+- raw log loss is not worse than the preferred comparable V5.1 result by more than 0.02;
+- major low-support group count decreases;
 - no structural audit failures;
 - raw propensity contract is intact.
 
