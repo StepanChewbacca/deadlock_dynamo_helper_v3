@@ -1,0 +1,45 @@
+name: Recommendation Value V8 V5.2 Input Readiness
+
+on:
+  pull_request:
+    paths:
+      - '.github/training-requests/recommendation-value-v8-v5-2-input-readiness-v1.json'
+
+permissions:
+  contents: read
+
+jobs:
+  readiness:
+    runs-on: self-hosted
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify Behavioral V5.2 input contract for bounded Value V8
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/training-requests/recommendation-value-v8-v5-2-input-readiness-v1.json'
+          test -s "$request"
+          jq -e '.readinessAuthorized == true and .valueV8TrainingAuthorized == false and .fullValueV8TrainingAuthorized == false' "$request"
+          node --check scripts/verify-recommendation-value-v8-v5-2-input-readiness.mjs
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          dataset="$storage/$(jq -r '.datasetDirectory' "$request")"
+          behavioral="$storage/$(jq -r '.behavioralDirectory' "$request")"
+          report="$RUNNER_TEMP/recommendation-value-v8-v5-2-input-readiness-$GITHUB_RUN_ID.json"
+          VALUE_V8_V5_2_INPUT_READINESS_REQUEST_PATH="$request" \
+          DEADLOCK_RECOMMENDATION_VALUE_V8_DATASET_DIR="$dataset" \
+          DEADLOCK_RECOMMENDATION_VALUE_V8_BEHAVIORAL_DIR="$behavioral" \
+          VALUE_V8_V5_2_INPUT_READINESS_REPORT_PATH="$report" \
+          node scripts/verify-recommendation-value-v8-v5-2-input-readiness.mjs
+          jq -e '.valueInputReady == true and .valueV8TrainingAuthorized == false and .fullValueV8TrainingAuthorized == false' "$report"
+      - name: Upload readiness report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-value-v8-v5-2-input-readiness-${{ github.run_id }}
+          path: ${{ runner.temp }}/recommendation-value-v8-v5-2-input-readiness-${{ github.run_id }}.json
+          if-no-files-found: warn
+          retention-days: 7
