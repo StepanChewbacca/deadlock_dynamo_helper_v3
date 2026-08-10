@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "executorVersion": "FULL_V5_2_PINNED_2",
+  "operation": "RECOMMENDATION_VALUE_V8_V5_2_INPUT_READINESS",
+  "readinessAuthorized": true,
+  "valueV8TrainingAuthorized": false,
+  "fullValueV8TrainingAuthorized": false,
+  "offlineVerificationAuthorized": false,
+  "productionRankingChanged": false,
+  "passiveShadowAuthorized": false,
+  "randomizedCanaryAuthorized": false,
+  "datasetDirectory": "recommendation-pro-decision-dataset-v6-terminal-5000-v2",
+  "behavioralDirectory": "recommendation-behavioral-v5-2-full-v2"
+}
