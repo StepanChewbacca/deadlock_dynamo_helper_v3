@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "executorVersion": "FULL_PROPENSITY_STREAM_AUDIT_2",
+  "operation": "RECOMMENDATION_VALUE_V8_BOUNDED_V5_2",
+  "valueV8DiagnosticAuthorized": true,
+  "maximumTrainingMinutes": 20,
+  "maxRows": 50000,
+  "fullValueV8TrainingAuthorized": false,
+  "offlineVerificationAuthorized": false,
+  "productionRankingChanged": false,
+  "passiveShadowAuthorized": false,
+  "randomizedCanaryAuthorized": false,
+  "datasetDirectory": "recommendation-pro-decision-dataset-v6-terminal-5000-v2",
+  "behavioralDirectory": "recommendation-behavioral-v5-2-full-v1",
+  "outputDirectory": "recommendation-value-v8-diagnostic-v5-2-v2",
+  "expectedDatasetSha256": "e8b11e26df37ff1e17b334eda18ea2141cfb7fa78f0a34eaf95d448c22962235",
+  "expectedBehavioralPropensitySha256": "<fill-after-full-behavioral-pass>",
+  "expectedBehavioralManifestSha256": "<fill-after-full-behavioral-pass>"
+}
