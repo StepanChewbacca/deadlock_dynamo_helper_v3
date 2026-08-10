@@ -40,6 +40,7 @@ jobs:
           node --check scripts/run-recommendation-v8-training-supervisor.mjs
           node --check scripts/run-recommendation-behavioral-v5-1-bounded-sweep.mjs
           node --check scripts/run-recommendation-behavioral-v5-1-full.mjs
+          node --check scripts/run-recommendation-behavioral-v5-2-bounded.mjs
 
       - name: Build shared package
         run: yarn workspace @deadlock-live-probe/shared build
