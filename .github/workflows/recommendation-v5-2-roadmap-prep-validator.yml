@@ -1,0 +1,71 @@
+name: Recommendation V5.2 Roadmap Prep Validator
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/run-recommendation-behavioral-v5-2-refinement.mjs'
+      - 'scripts/verify-recommendation-behavioral-v5-2-full-readiness.mjs'
+      - 'scripts/run-recommendation-behavioral-v5-2-full.mjs'
+      - 'scripts/verify-recommendation-value-v8-v5-2-input-readiness.mjs'
+      - 'scripts/run-recommendation-value-v8-bounded-v5-2.mjs'
+      - 'scripts/run-recommendation-value-v8-offline-verification-v5-2.mjs'
+      - '.github/workflows/recommendation-behavioral-v5-2-refinement-budgeted.yml'
+      - '.github/workflows/recommendation-behavioral-v5-2-full-readiness.yml'
+      - '.github/workflows/recommendation-behavioral-v5-2-full-budgeted.yml'
+      - '.github/workflows/recommendation-value-v8-v5-2-input-readiness.yml'
+      - '.github/workflows/recommendation-value-v8-bounded-v5-2.yml'
+      - '.github/workflows/recommendation-value-v8-offline-verification-v5-2.yml'
+      - '.github/training-request-templates/**'
+      - 'docs/recommendation-v5-2-budgeted-roadmap-prepared.md'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check scripts/run-recommendation-behavioral-v5-2-refinement.mjs
+          node --check scripts/verify-recommendation-behavioral-v5-2-full-readiness.mjs
+          node --check scripts/run-recommendation-behavioral-v5-2-full.mjs
+          node --check scripts/verify-recommendation-value-v8-v5-2-input-readiness.mjs
+          node --check scripts/run-recommendation-value-v8-bounded-v5-2.mjs
+          node --check scripts/run-recommendation-value-v8-offline-verification-v5-2.mjs
+      - name: Verify no training trigger files are committed
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          forbidden=(
+            .github/training-requests/recommendation-behavioral-v5-2-refinement-v1.json
+            .github/training-requests/recommendation-behavioral-v5-2-full-readiness-v1.json
+            .github/training-requests/recommendation-behavioral-v5-2-full-v1.json
+            .github/training-requests/recommendation-value-v8-v5-2-input-readiness-v1.json
+            .github/training-requests/recommendation-value-v8-bounded-v5-2-v1.json
+            .github/training-requests/recommendation-value-v8-offline-verification-v5-2-v1.json
+          )
+          for path in "${forbidden[@]}"; do
+            if [ -e "$path" ]; then
+              echo "Preparation PR must not contain trigger file: $path" >&2
+              exit 1
+            fi
+          done
+      - name: Verify cost-control declarations
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'timeout-minutes: 30' .github/workflows/recommendation-behavioral-v5-2-refinement-budgeted.yml
+          grep -q '20m sudo docker run' .github/workflows/recommendation-behavioral-v5-2-refinement-budgeted.yml
+          grep -q 'timeout-minutes: 30' .github/workflows/recommendation-behavioral-v5-2-full-budgeted.yml
+          grep -q '20m sudo docker run' .github/workflows/recommendation-behavioral-v5-2-full-budgeted.yml
+          grep -q 'timeout-minutes: 30' .github/workflows/recommendation-value-v8-bounded-v5-2.yml
+          grep -q '20m sudo docker run' .github/workflows/recommendation-value-v8-bounded-v5-2.yml
