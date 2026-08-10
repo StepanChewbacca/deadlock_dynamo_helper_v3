@@ -1,0 +1,47 @@
+name: Recommendation Behavioral V5.2 Full Readiness
+
+on:
+  pull_request:
+    paths:
+      - '.github/training-requests/recommendation-behavioral-v5-2-full-readiness-v1.json'
+
+permissions:
+  contents: read
+
+jobs:
+  readiness:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify selected configuration and cost projection
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/training-requests/recommendation-behavioral-v5-2-full-readiness-v1.json'
+          test -s "$request"
+          jq -e '.fullTrainingReadinessAuthorized == true and .fullTrainingAuthorized == false and .valueV8TrainingAuthorized == false' "$request"
+          node --check scripts/verify-recommendation-behavioral-v5-2-full-readiness.mjs
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          dataset="$storage/$(jq -r '.sourceDirectory' "$request")"
+          refinement="$storage/$(jq -r '.refinementDirectory' "$request")/refinement-summary.json"
+          report="$RUNNER_TEMP/recommendation-behavioral-v5-2-full-readiness-$GITHUB_RUN_ID.json"
+          DEADLOCK_RECOMMENDATION_BEHAVIORAL_V5_2_SOURCE_DIR="$dataset" \
+          BEHAVIORAL_V5_2_REFINEMENT_SUMMARY_PATH="$refinement" \
+          BEHAVIORAL_V5_2_FULL_READINESS_REQUEST_PATH="$request" \
+          BEHAVIORAL_V5_2_FULL_READINESS_REPORT_PATH="$report" \
+          EXPECTED_DATASET_SHA256="$(jq -r '.expectedDatasetSha256' "$request")" \
+          EXPECTED_REFINEMENT_SUMMARY_SHA256="$(jq -r '.expectedRefinementSummarySha256' "$request")" \
+          node scripts/verify-recommendation-behavioral-v5-2-full-readiness.mjs
+          jq -e '.readyForExplicitCostDecision == true and .fullTrainingAuthorized == false and .valueV8TrainingAuthorized == false' "$report"
+      - name: Upload readiness report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-behavioral-v5-2-full-readiness-${{ github.run_id }}
+          path: ${{ runner.temp }}/recommendation-behavioral-v5-2-full-readiness-${{ github.run_id }}.json
+          if-no-files-found: warn
+          retention-days: 7
