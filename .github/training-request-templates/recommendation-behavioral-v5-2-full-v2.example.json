@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "executorVersion": "READINESS_PINNED_2",
+  "operation": "RECOMMENDATION_BEHAVIORAL_V5_2_FULL_TRAINING",
+  "fullTrainingAuthorized": true,
+  "maximumTrainingMinutes": 20,
+  "valueV8TrainingAuthorized": false,
+  "productionRankingChanged": false,
+  "passiveShadowAuthorized": false,
+  "randomizedCanaryAuthorized": false,
+  "sourceDirectory": "recommendation-pro-decision-dataset-v6-terminal-5000-v2",
+  "refinementDirectory": "recommendation-behavioral-v5-2-refinement-v3",
+  "readinessDirectory": "recommendation-behavioral-v5-2-full-readiness-v2",
+  "outputDirectory": "recommendation-behavioral-v5-2-full-v2",
+  "expectedDatasetSha256": "e8b11e26df37ff1e17b334eda18ea2141cfb7fa78f0a34eaf95d448c22962235",
+  "expectedRefinementSummarySha256": "<fill-after-refinement-pass>",
+  "expectedReadinessReportSha256": "<fill-after-readiness-pass>",
+  "selectedConfiguration": {
+    "linearHashDimension": 8192,
+    "embeddingHashDimension": 4096,
+    "latentDimension": 8,
+    "epochs": 4,
+    "learningRate": 0.08,
+    "foldCount": 5,
+    "l2": 0.0001,
+    "supportProbability": 0.01,
+    "majorGroupMinDecisions": 100
+  }
+}
