@@ -1,0 +1,237 @@
+name: Recommendation Behavioral V5.2 Bounded Architecture Sweep V2
+
+on:
+  pull_request:
+    paths:
+      - '.github/training-requests/recommendation-behavioral-v5-2-bounded-v2.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v5-2-bounded-v2
+  cancel-in-progress: false
+
+jobs:
+  bounded-architecture-sweep-v2:
+    runs-on: self-hosted
+    timeout-minutes: 1440
+    steps:
+      - name: Checkout requested implementation
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js for preflight
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate authorization and immutable lineage
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/training-requests/recommendation-behavioral-v5-2-bounded-v2.json'
+          test -s "$request"
+          jq -e '
+            .schemaVersion == 2 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V5_2_BOUNDED_ARCHITECTURE_SWEEP" and
+            .executorVersion == "ELIGIBILITY_FILTERED_2" and
+            .boundedArchitectureSweepAuthorized == true and
+            .boundedRefinementAuthorized == false and
+            .fullTrainingAuthorized == false and
+            .valueV8TrainingAuthorized == false and
+            .productionRankingChanged == false and
+            .passiveShadowAuthorized == false and
+            .randomizedCanaryAuthorized == false and
+            .auditThresholdsLowered == false and
+            .sourceDirectory == "recommendation-pro-decision-dataset-v6-terminal-5000-v2" and
+            .sampleDirectory == "recommendation-behavioral-v5-1-sweep-b-v1" and
+            .v51SweepSummaryDirectory == "recommendation-behavioral-v5-1-sweep-v1" and
+            .outputDirectory == "recommendation-behavioral-v5-2-bounded-v2" and
+            .sampleContract.unit == "MATCH" and
+            .sampleContract.hash == "FNV1A_32" and
+            .sampleContract.modulo == 16 and
+            .sampleContract.remainder == 0 and
+            .sampleContract.futureTestEvaluated == false and
+            .eligibilityFilteringAppliedAfterPinnedSampleVerification == true
+          ' "$request"
+          node --check scripts/run-recommendation-behavioral-v5-2-bounded-v2.mjs
+
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          source_name="$(jq -r '.sourceDirectory' "$request")"
+          sample_name="$(jq -r '.sampleDirectory' "$request")"
+          v51_name="$(jq -r '.v51SweepSummaryDirectory' "$request")"
+          output_name="$(jq -r '.outputDirectory' "$request")"
+          source="$storage/$source_name"
+          sample="$storage/$sample_name/diagnostic-sample.ndjson.gz"
+          v51_summary="$storage/$v51_name/sweep-summary.json"
+          output="$storage/$output_name"
+          expected_dataset_sha="$(jq -r '.expectedDatasetSha256' "$request")"
+          expected_sample_sha="$(jq -r '.expectedDiagnosticSampleSha256' "$request")"
+          expected_v51_sha="$(jq -r '.expectedV51SweepSummarySha256' "$request")"
+
+          sudo test -s "$source/manifest.json"
+          sudo test -s "$source/audit.json"
+          sudo test -s "$sample"
+          sudo test -s "$v51_summary"
+          source_manifest="$(sudo cat "$source/manifest.json")"
+          source_audit="$(sudo cat "$source/audit.json")"
+          jq -e '.auditPassed == true and .trainingArtifactEligible == true' <<<"$source_manifest"
+          jq -e '.passed == true and .trainingArtifactEligible == true' <<<"$source_audit"
+          test "$(jq -r '.artifact.sha256' <<<"$source_manifest")" = "$expected_dataset_sha"
+          test "$(sudo sha256sum "$source/$(jq -r '.artifact.fileName' <<<"$source_manifest")" | awk '{print $1}')" = "$expected_dataset_sha"
+          test "$(sudo sha256sum "$sample" | awk '{print $1}')" = "$expected_sample_sha"
+          test "$(sudo sha256sum "$v51_summary" | awk '{print $1}')" = "$expected_v51_sha"
+
+          if sudo test -e "$output"; then
+            echo "Refusing destructive reuse of existing output: $output" >&2
+            exit 1
+          fi
+          available_kib="$(sudo df -Pk "$storage" | awk 'NR==2 {print $4}')"
+          minimum_kib=$((8 * 1024 * 1024))
+          test "$available_kib" -ge "$minimum_kib"
+
+          evidence_dir="$RUNNER_TEMP/recommendation-behavioral-v5-2-bounded-v2-$GITHUB_RUN_ID"
+          mkdir -p "$evidence_dir"
+          sudo mkdir "$output"
+          {
+            echo "storage=$storage"
+            echo "source_name=$source_name"
+            echo "sample_name=$sample_name"
+            echo "v51_name=$v51_name"
+            echo "output_name=$output_name"
+            echo "expected_dataset_sha=$expected_dataset_sha"
+            echo "expected_sample_sha=$expected_sample_sha"
+            echo "expected_v51_sha=$expected_v51_sha"
+            echo "evidence_dir=$evidence_dir"
+            echo "available_kib=$available_kib"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build isolated Behavioral V5.2 image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo docker build \
+            --label deadlock.recommendation.operation=behavioral-v5-2-bounded-v2 \
+            --label deadlock.recommendation.git-sha="$GITHUB_SHA" \
+            -t "deadlock-behavioral-v5-2-bounded-v2:$GITHUB_RUN_ID" \
+            .
+
+      - name: Run corrected bounded architecture sweep
+        id: training
+        shell: bash
+        run: |
+          set -uo pipefail
+          storage='${{ steps.preflight.outputs.storage }}'
+          source_name='${{ steps.preflight.outputs.source_name }}'
+          sample_name='${{ steps.preflight.outputs.sample_name }}'
+          v51_name='${{ steps.preflight.outputs.v51_name }}'
+          output_name='${{ steps.preflight.outputs.output_name }}'
+          evidence_dir='${{ steps.preflight.outputs.evidence_dir }}'
+          image="deadlock-behavioral-v5-2-bounded-v2:$GITHUB_RUN_ID"
+          set +e
+          sudo docker run --rm \
+            --name "deadlock-behavioral-v5-2-bounded-v2-$GITHUB_RUN_ID" \
+            --network none \
+            --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,size=512m \
+            -e NODE_OPTIONS=--max-old-space-size=6144 \
+            -e DEADLOCK_RECOMMENDATION_BEHAVIORAL_V5_2_SOURCE_DIR="/app/apps/api/storage/$source_name" \
+            -e BEHAVIORAL_V5_2_SAMPLE_PATH="/app/apps/api/storage/$sample_name/diagnostic-sample.ndjson.gz" \
+            -e BEHAVIORAL_V5_1_SWEEP_SUMMARY_PATH="/app/apps/api/storage/$v51_name/sweep-summary.json" \
+            -e BEHAVIORAL_V5_2_OUTPUT_DIR="/app/apps/api/storage/$output_name" \
+            -e EXPECTED_DATASET_SHA256='${{ steps.preflight.outputs.expected_dataset_sha }}' \
+            -e EXPECTED_DIAGNOSTIC_SAMPLE_SHA256='${{ steps.preflight.outputs.expected_sample_sha }}' \
+            -e EXPECTED_V5_1_SWEEP_SUMMARY_SHA256='${{ steps.preflight.outputs.expected_v51_sha }}' \
+            -v "$storage/$source_name:/app/apps/api/storage/$source_name:ro" \
+            -v "$storage/$sample_name:/app/apps/api/storage/$sample_name:ro" \
+            -v "$storage/$v51_name:/app/apps/api/storage/$v51_name:ro" \
+            -v "$storage/$output_name:/app/apps/api/storage/$output_name:rw" \
+            "$image" node /app/scripts/run-recommendation-behavioral-v5-2-bounded-v2.mjs \
+            2>&1 | tee "$evidence_dir/container.log"
+          training_exit="${PIPESTATUS[0]}"
+          set -e
+          echo "exit_code=$training_exit" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Verify corrected bounded evidence
+        shell: bash
+        run: |
+          set -uo pipefail
+          storage='${{ steps.preflight.outputs.storage }}'
+          output="$storage/${{ steps.preflight.outputs.output_name }}"
+          evidence_dir='${{ steps.preflight.outputs.evidence_dir }}'
+          training_exit='${{ steps.training.outputs.exit_code }}'
+          verification_exit=0
+          sudo test -s "$output/sweep-summary.json" || verification_exit=1
+          sudo test -s "$output/sweep-report.txt" || verification_exit=1
+          if sudo test -s "$output/sweep-summary.json"; then
+            summary="$(sudo cat "$output/sweep-summary.json")"
+            jq -e \
+              --arg dataset_sha '${{ steps.preflight.outputs.expected_dataset_sha }}' \
+              --arg sample_sha '${{ steps.preflight.outputs.expected_sample_sha }}' '
+                .schemaVersion == 2 and
+                .executorVersion == "ELIGIBILITY_FILTERED_2" and
+                .operation == "RECOMMENDATION_BEHAVIORAL_V5_2_BOUNDED_ARCHITECTURE_SWEEP" and
+                .source.datasetSha256 == $dataset_sha and
+                .source.pinnedSampleSha256 == $sample_sha and
+                .source.futureTestRowCount == 0 and
+                .source.eligibilityFilteringAppliedAfterPinnedSampleVerification == true and
+                (.results | length) == 3 and
+                ([.results[] | .structuralAuditPassed] | all) and
+                ([.results[] | .trainingArtifactEligible == false] | all) and
+                .boundedRefinementAuthorized == false and
+                .fullTrainingAuthorized == false and
+                .valueV8TrainingAuthorized == false and
+                .productionRankingChanged == false and
+                .passiveShadowAuthorized == false and
+                .randomizedCanaryAuthorized == false
+              ' <<<"$summary" || verification_exit=1
+            sudo cp "$output/sweep-summary.json" "$evidence_dir/" 2>/dev/null || true
+            sudo cp "$output/sweep-report.txt" "$evidence_dir/" 2>/dev/null || true
+            for variant in a b c; do
+              sudo mkdir -p "$evidence_dir/$variant"
+              sudo cp "$output/$variant/evaluation.json" "$evidence_dir/$variant/" 2>/dev/null || true
+              sudo cp "$output/$variant/audit.json" "$evidence_dir/$variant/" 2>/dev/null || true
+              sudo cp "$output/$variant/manifest.json" "$evidence_dir/$variant/" 2>/dev/null || true
+            done
+            sudo chown -R "$(id -u):$(id -g)" "$evidence_dir"
+          fi
+          {
+            echo "gitSha=$GITHUB_SHA"
+            echo "runId=$GITHUB_RUN_ID"
+            echo "trainingExit=$training_exit"
+            echo "verificationExit=$verification_exit"
+            echo "datasetSha256=${{ steps.preflight.outputs.expected_dataset_sha }}"
+            echo "diagnosticSampleSha256=${{ steps.preflight.outputs.expected_sample_sha }}"
+            echo "eligibilityFilteringAppliedAfterPinnedSampleVerification=true"
+            echo "boundedRefinementAuthorized=false"
+            echo "fullTrainingAuthorized=false"
+            echo "valueV8TrainingAuthorized=false"
+            echo "productionRankingChanged=false"
+            echo "passiveShadowAuthorized=false"
+            echo "randomizedCanaryAuthorized=false"
+            echo '=== summary ==='
+            if [ -f "$evidence_dir/sweep-summary.json" ]; then jq '.' "$evidence_dir/sweep-summary.json"; else echo missing; fi
+            echo '=== storage ==='
+            sudo df -hT "$storage"
+            sudo du -sh "$output" 2>/dev/null || true
+          } | tee "$evidence_dir/workflow-report.txt"
+          if [ "$training_exit" != '0' ] || [ "$verification_exit" != '0' ]; then exit 1; fi
+
+      - name: Upload corrected bounded V5.2 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-behavioral-v5-2-bounded-v2-${{ github.run_id }}
+          path: ${{ steps.preflight.outputs.evidence_dir }}
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Remove transient Docker image
+        if: always()
+        shell: bash
+        run: |
+          sudo docker image rm "deadlock-behavioral-v5-2-bounded-v2:$GITHUB_RUN_ID" >/dev/null 2>&1 || true
