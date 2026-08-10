@@ -1,0 +1,33 @@
+name: Recommendation Behavioral V5.2 Validator
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/run-recommendation-behavioral-v5-2-bounded-v2.mjs'
+      - '.github/workflows/recommendation-behavioral-v5-2-bounded-v2.yml'
+      - '.github/training-requests/recommendation-behavioral-v5-2-bounded-v2.json'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+      - run: yarn install --frozen-lockfile --ignore-engines
+      - name: Validate runner syntax
+        run: node --check scripts/run-recommendation-behavioral-v5-2-bounded-v2.mjs
+      - name: Build shared
+        run: yarn workspace @deadlock-live-probe/shared build
+      - name: Build domain
+        run: yarn workspace @deadlock-live-probe/build-domain build
+      - name: Build API
+        run: yarn workspace @deadlock-live-probe/api build
+      - name: Run V5.2 core tests
+        run: yarn workspace @deadlock-live-probe/api jest --runInBand test/recommendation-behavioral-v5-2.spec.ts
