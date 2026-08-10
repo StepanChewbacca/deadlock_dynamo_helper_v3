@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "operation": "INSPECT_RECOMMENDATION_BEHAVIORAL_V5_2_DETACHED",
+  "outputDirectory": "recommendation-behavioral-v5-2-bounded-v5-detached-1",
+  "containerName": "deadlock-behavioral-v5-2-bounded-v5-detached-31403705105",
+  "trainingMutationAuthorized": false,
+  "artifactDeletionAuthorized": false
+}
