@@ -1,0 +1,91 @@
+name: Recommendation Value V8 V5.2 Input Readiness V2
+
+on:
+  pull_request:
+    paths:
+      - '.github/training-requests/recommendation-value-v8-v5-2-input-readiness-v2.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-value-v8-v5-2-input-readiness-v2
+  cancel-in-progress: true
+
+jobs:
+  readiness-v2:
+    runs-on: self-hosted
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Verify authoritative full Behavioral V5.2 input contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/training-requests/recommendation-value-v8-v5-2-input-readiness-v2.json'
+          test -s "$request"
+          jq -e '
+            .schemaVersion == 1 and
+            .executorVersion == "FULL_V5_2_PINNED_2" and
+            .operation == "RECOMMENDATION_VALUE_V8_V5_2_INPUT_READINESS" and
+            .readinessAuthorized == true and
+            .valueV8TrainingAuthorized == false and
+            .fullValueV8TrainingAuthorized == false and
+            .offlineVerificationAuthorized == false and
+            .productionRankingChanged == false and
+            .passiveShadowAuthorized == false and
+            .randomizedCanaryAuthorized == false and
+            .datasetDirectory == "recommendation-pro-decision-dataset-v6-terminal-5000-v2" and
+            .behavioralDirectory == "recommendation-behavioral-v5-2-full-v2"
+          ' "$request"
+          node --check scripts/verify-recommendation-value-v8-v5-2-input-readiness.mjs
+
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          dataset="$storage/$(jq -r '.datasetDirectory' "$request")"
+          behavioral="$storage/$(jq -r '.behavioralDirectory' "$request")"
+          report="$RUNNER_TEMP/recommendation-value-v8-v5-2-input-readiness-v2-$GITHUB_RUN_ID.json"
+          sudo test -s "$dataset/manifest.json"
+          sudo test -s "$behavioral/manifest.json"
+          sudo test -s "$behavioral/model.json"
+          sudo test -s "$behavioral/audit.json"
+          sudo test -s "$behavioral/evaluation.json"
+          sudo jq -e '
+            .modelVersion == "RECOMMENDATION_BEHAVIORAL_V5_2_LOW_RANK_TWO_TOWER_1_RAW_PROPENSITY" and
+            .featureVersion == "RECOMMENDATION_BEHAVIORAL_V5_2_FEATURES_1_TWO_TOWER" and
+            .build.fullCorpus == true and
+            .auditPassed == true and
+            .releaseGatePassed == true and
+            .trainingArtifactEligible == true and
+            .trainingContract.futureTestUsedForTraining == false and
+            .trainingContract.futureTestUsedForSelection == false and
+            .trainingContract.futureTestEvaluated == false
+          ' "$behavioral/manifest.json"
+
+          VALUE_V8_V5_2_INPUT_READINESS_REQUEST_PATH="$request" \
+          DEADLOCK_RECOMMENDATION_VALUE_V8_DATASET_DIR="$dataset" \
+          DEADLOCK_RECOMMENDATION_VALUE_V8_BEHAVIORAL_DIR="$behavioral" \
+          VALUE_V8_V5_2_INPUT_READINESS_REPORT_PATH="$report" \
+          node scripts/verify-recommendation-value-v8-v5-2-input-readiness.mjs
+
+          jq -e '
+            .valueInputReady == true and
+            .valueLoaderV52IntegrationRequired == false and
+            .recommendedDiagnosticMaxRows == 50000 and
+            .maximumTrainingMinutes == 20 and
+            .valueV8TrainingAuthorized == false and
+            .fullValueV8TrainingAuthorized == false and
+            .offlineVerificationAuthorized == false
+          ' "$report"
+
+      - name: Upload readiness report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-value-v8-v5-2-input-readiness-v2-${{ github.run_id }}
+          path: ${{ runner.temp }}/recommendation-value-v8-v5-2-input-readiness-v2-${{ github.run_id }}.json
+          if-no-files-found: warn
+          retention-days: 7
