@@ -4,19 +4,22 @@ on:
   pull_request:
     paths:
       - 'scripts/run-recommendation-behavioral-v5-2-refinement.mjs'
-      - 'scripts/verify-recommendation-behavioral-v5-2-full-readiness.mjs'
+      - 'scripts/normalize-recommendation-behavioral-v5-2-refinement-v2.mjs'
+      - 'scripts/verify-recommendation-behavioral-v5-2-full-readiness-v2.mjs'
       - 'scripts/run-recommendation-behavioral-v5-2-full.mjs'
       - 'scripts/verify-recommendation-value-v8-v5-2-input-readiness.mjs'
+      - 'scripts/audit-recommendation-behavioral-v5-2-propensities.mjs'
       - 'scripts/run-recommendation-value-v8-bounded-v5-2.mjs'
       - 'scripts/run-recommendation-value-v8-offline-verification-v5-2.mjs'
-      - '.github/workflows/recommendation-behavioral-v5-2-refinement-budgeted.yml'
-      - '.github/workflows/recommendation-behavioral-v5-2-full-readiness.yml'
-      - '.github/workflows/recommendation-behavioral-v5-2-full-budgeted.yml'
+      - '.github/workflows/recommendation-behavioral-v5-2-refinement-budgeted-v3.yml'
+      - '.github/workflows/recommendation-behavioral-v5-2-full-readiness-v2.yml'
+      - '.github/workflows/recommendation-behavioral-v5-2-full-budgeted-v2.yml'
       - '.github/workflows/recommendation-value-v8-v5-2-input-readiness.yml'
-      - '.github/workflows/recommendation-value-v8-bounded-v5-2.yml'
+      - '.github/workflows/recommendation-value-v8-bounded-v5-2-v2.yml'
       - '.github/workflows/recommendation-value-v8-offline-verification-v5-2.yml'
       - '.github/training-request-templates/**'
-      - 'docs/recommendation-v5-2-budgeted-roadmap-prepared.md'
+      - 'docs/recommendation-v5-2-authoritative-budgeted-chain.md'
+      - '.github/workflows/recommendation-v5-2-roadmap-prep-validator.yml'
 
 permissions:
   contents: read
@@ -30,27 +33,30 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+
       - name: Validate JavaScript syntax
         shell: bash
         run: |
           set -euo pipefail
           node --check scripts/run-recommendation-behavioral-v5-2-refinement.mjs
-          node --check scripts/verify-recommendation-behavioral-v5-2-full-readiness.mjs
+          node --check scripts/normalize-recommendation-behavioral-v5-2-refinement-v2.mjs
+          node --check scripts/verify-recommendation-behavioral-v5-2-full-readiness-v2.mjs
           node --check scripts/run-recommendation-behavioral-v5-2-full.mjs
           node --check scripts/verify-recommendation-value-v8-v5-2-input-readiness.mjs
+          node --check scripts/audit-recommendation-behavioral-v5-2-propensities.mjs
           node --check scripts/run-recommendation-value-v8-bounded-v5-2.mjs
           node --check scripts/run-recommendation-value-v8-offline-verification-v5-2.mjs
-      - name: Verify no training trigger files are committed
+
+      - name: Verify no one-shot trigger files are committed
         shell: bash
         run: |
           set -euo pipefail
-          shopt -s nullglob
           forbidden=(
-            .github/training-requests/recommendation-behavioral-v5-2-refinement-v1.json
-            .github/training-requests/recommendation-behavioral-v5-2-full-readiness-v1.json
-            .github/training-requests/recommendation-behavioral-v5-2-full-v1.json
+            .github/training-requests/recommendation-behavioral-v5-2-refinement-v3.json
+            .github/training-requests/recommendation-behavioral-v5-2-full-readiness-v2.json
+            .github/training-requests/recommendation-behavioral-v5-2-full-v2.json
             .github/training-requests/recommendation-value-v8-v5-2-input-readiness-v1.json
-            .github/training-requests/recommendation-value-v8-bounded-v5-2-v1.json
+            .github/training-requests/recommendation-value-v8-bounded-v5-2-v2.json
             .github/training-requests/recommendation-value-v8-offline-verification-v5-2-v1.json
           )
           for path in "${forbidden[@]}"; do
@@ -59,13 +65,37 @@ jobs:
               exit 1
             fi
           done
-      - name: Verify cost-control declarations
+
+      - name: Verify authoritative cost-control declarations
         shell: bash
         run: |
           set -euo pipefail
-          grep -q 'timeout-minutes: 30' .github/workflows/recommendation-behavioral-v5-2-refinement-budgeted.yml
-          grep -q '20m sudo docker run' .github/workflows/recommendation-behavioral-v5-2-refinement-budgeted.yml
-          grep -q 'timeout-minutes: 30' .github/workflows/recommendation-behavioral-v5-2-full-budgeted.yml
-          grep -q '20m sudo docker run' .github/workflows/recommendation-behavioral-v5-2-full-budgeted.yml
-          grep -q 'timeout-minutes: 30' .github/workflows/recommendation-value-v8-bounded-v5-2.yml
-          grep -q '20m sudo docker run' .github/workflows/recommendation-value-v8-bounded-v5-2.yml
+          for workflow in \
+            .github/workflows/recommendation-behavioral-v5-2-refinement-budgeted-v3.yml \
+            .github/workflows/recommendation-behavioral-v5-2-full-budgeted-v2.yml \
+            .github/workflows/recommendation-value-v8-bounded-v5-2-v2.yml; do
+            grep -F 'timeout-minutes: 30' "$workflow"
+            grep -F 'timeout --signal=TERM --kill-after=60s 20m' "$workflow"
+          done
+          grep -F 'CANDIDATE_COVERAGE_FIXED_2' .github/workflows/recommendation-behavioral-v5-2-refinement-budgeted-v3.yml
+          grep -F 'IMMUTABLE_COST_PROJECTION_2' .github/workflows/recommendation-behavioral-v5-2-full-readiness-v2.yml
+          grep -F 'READINESS_PINNED_2' .github/workflows/recommendation-behavioral-v5-2-full-budgeted-v2.yml
+          grep -F 'FULL_PROPENSITY_STREAM_AUDIT_2' .github/workflows/recommendation-value-v8-bounded-v5-2-v2.yml
+
+      - name: Verify superseded executable workflows are absent
+        shell: bash
+        run: |
+          set -euo pipefail
+          superseded=(
+            .github/workflows/recommendation-behavioral-v5-2-refinement-budgeted.yml
+            .github/workflows/recommendation-behavioral-v5-2-refinement-budgeted-v2.yml
+            .github/workflows/recommendation-behavioral-v5-2-full-readiness.yml
+            .github/workflows/recommendation-behavioral-v5-2-full-budgeted.yml
+            .github/workflows/recommendation-value-v8-bounded-v5-2.yml
+          )
+          for path in "${superseded[@]}"; do
+            if [ -e "$path" ]; then
+              echo "Superseded executable workflow remains: $path" >&2
+              exit 1
+            fi
+          done
