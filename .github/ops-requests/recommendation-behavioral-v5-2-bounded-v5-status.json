@@ -4,5 +4,6 @@
   "outputDirectory": "recommendation-behavioral-v5-2-bounded-v5-detached-1",
   "containerName": "deadlock-behavioral-v5-2-bounded-v5-detached-31403705105",
   "trainingMutationAuthorized": false,
-  "artifactDeletionAuthorized": false
+  "artifactDeletionAuthorized": false,
+  "inspectionNonce": "2026-08-10T16:25:44Z"
 }
