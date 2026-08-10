@@ -1,0 +1,97 @@
+name: Recommendation Behavioral V5.2 Detached Status
+
+on:
+  pull_request:
+    paths:
+      - '.github/ops-requests/recommendation-behavioral-v5-2-bounded-v5-status.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v5-2-bounded-v5-status
+  cancel-in-progress: true
+
+jobs:
+  inspect:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Checkout status request
+        uses: actions/checkout@v4
+
+      - name: Inspect detached training
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          request='.github/ops-requests/recommendation-behavioral-v5-2-bounded-v5-status.json'
+          test -s "$request"
+
+          jq -e '
+            .schemaVersion == 1 and
+            .operation == "INSPECT_RECOMMENDATION_BEHAVIORAL_V5_2_DETACHED" and
+            .trainingMutationAuthorized == false and
+            .artifactDeletionAuthorized == false
+          ' "$request"
+
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          output_name="$(jq -r '.outputDirectory' "$request")"
+          container_name="$(jq -r '.containerName' "$request")"
+          output="$storage/$output_name"
+
+          echo '=== DETACHED CONTAINER ==='
+          if sudo docker inspect "$container_name" >/dev/null 2>&1; then
+            sudo docker inspect \
+              --format='exists=true running={{.State.Running}} status={{.State.Status}} exitCode={{.State.ExitCode}} oomKilled={{.State.OOMKilled}} startedAt={{.State.StartedAt}} finishedAt={{.State.FinishedAt}}' \
+              "$container_name"
+          else
+            echo 'exists=false'
+          fi
+
+          echo
+          echo '=== DISK ==='
+          sudo df -h "$storage"
+          sudo df -B1 "$storage"
+
+          echo
+          echo '=== OUTPUT FILES ==='
+          if sudo test -d "$output"; then
+            sudo find "$output" -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
+          else
+            echo 'outputDirectoryMissing=true'
+          fi
+
+          echo
+          echo '=== TRAINING EXIT CODE ==='
+          if sudo test -s "$output/training-exit-code.txt"; then
+            sudo cat "$output/training-exit-code.txt"
+          else
+            echo 'pending'
+          fi
+
+          echo
+          echo '=== SWEEP SUMMARY ==='
+          if sudo test -s "$output/sweep-summary.json"; then
+            sudo jq '{
+              schemaVersion,
+              executorVersion,
+              operation,
+              source,
+              preferredVariant,
+              architectureContinuationPassed,
+              fullTrainingAuthorized,
+              valueV8TrainingAuthorized,
+              results
+            }' "$output/sweep-summary.json"
+          else
+            echo 'pending'
+          fi
+
+          echo
+          echo '=== LOG TAIL ==='
+          if sudo test -f "$output/container.log"; then
+            sudo tail -n 80 "$output/container.log"
+          else
+            echo 'container.log missing'
+          fi
