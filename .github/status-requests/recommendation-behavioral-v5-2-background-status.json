@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "operation": "INSPECT_RECOMMENDATION_BEHAVIORAL_V5_2_BACKGROUND_STATUS",
+  "trainingAuthorized": false
+}
