@@ -1,5 +1,6 @@
 {
   "schemaVersion": 1,
   "operation": "INSPECT_RECOMMENDATION_BEHAVIORAL_V5_2_BACKGROUND_STATUS",
-  "trainingAuthorized": false
+  "trainingAuthorized": false,
+  "inspectionNonce": "2026-08-11T10:21:16Z"
 }
