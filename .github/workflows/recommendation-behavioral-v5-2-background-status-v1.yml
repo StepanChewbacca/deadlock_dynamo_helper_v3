@@ -1,0 +1,55 @@
+name: Recommendation Behavioral V5.2 Background Status V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/status-requests/recommendation-behavioral-v5-2-background-status.json'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-background-training:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Inspect background training state
+        shell: bash
+        run: |
+          set -u
+          unit='deadlock-behavioral-v5-2-bounded-v8-31465791973.service'
+          container='deadlock-behavioral-v5-2-bounded-v8-31465791973'
+          output='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v5-2-bounded-v8-background'
+
+          echo '=== TIME ==='
+          date -u --iso-8601=seconds
+
+          echo '=== SYSTEMD ==='
+          sudo systemctl is-active "$unit" || true
+          sudo systemctl status "$unit" --no-pager -l || true
+
+          echo '=== DOCKER PS ==='
+          sudo docker ps -a --filter "name=^/${container}$" --format 'name={{.Names}} status={{.Status}} image={{.Image}} size={{.Size}}' || true
+
+          echo '=== DOCKER STATE ==='
+          sudo docker inspect -f 'running={{.State.Running}} exitCode={{.State.ExitCode}} oomKilled={{.State.OOMKilled}} startedAt={{.State.StartedAt}} finishedAt={{.State.FinishedAt}} memory={{.HostConfig.Memory}} memorySwap={{.HostConfig.MemorySwap}}' "$container" 2>/dev/null || true
+
+          echo '=== PERSISTED STATUS ==='
+          sudo cat "$output/background-status.json" 2>/dev/null || true
+
+          echo '=== OUTPUT FILES ==='
+          sudo find "$output" -maxdepth 1 -type f -printf '%f %s bytes\n' 2>/dev/null | sort || true
+
+          echo '=== TRAINING LOG TAIL ==='
+          sudo tail -n 80 "$output/container.log" 2>/dev/null || true
+
+          echo '=== SWEEP SUMMARY ==='
+          if sudo test -s "$output/sweep-summary.json"; then
+            sudo jq '{schemaVersion,executorVersion,operation,architectureContinuationRecommended,preferredVariantId,source,results}' "$output/sweep-summary.json" || true
+          else
+            echo 'sweep-summary.json not present yet'
+          fi
+
+          echo '=== RESOURCES ==='
+          free -h
+          df -h /
