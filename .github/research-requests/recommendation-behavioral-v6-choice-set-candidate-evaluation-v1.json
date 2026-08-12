@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "operation": "RECOMMENDATION_BEHAVIORAL_V6_CHOICE_SET_CANDIDATE_EVALUATION",
+  "trainingAuthorized": false,
+  "valueTrainingAuthorized": false,
+  "productionChangesAuthorized": false,
+  "futureTestAuthorized": false
+}
