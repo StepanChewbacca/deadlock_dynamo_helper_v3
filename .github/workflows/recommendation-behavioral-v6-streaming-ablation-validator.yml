@@ -1,0 +1,43 @@
+name: Recommendation Behavioral V6 Streaming Ablation Validator
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/run-recommendation-behavioral-v6-equal-capacity-ablation-streaming-v2.mjs'
+      - '.github/workflows/recommendation-behavioral-v6-streaming-ablation-validator.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate streaming executor contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          script='scripts/run-recommendation-behavioral-v6-equal-capacity-ablation-streaming-v2.mjs'
+          node --check "$script"
+          grep -q "choiceSetDefinition = 'MERGED_TOP_96'" "$script"
+          grep -q 'linearHashDimension: 65_536' "$script"
+          grep -q 'foldCount: 5' "$script"
+          grep -q 'epochs: 5' "$script"
+          grep -q "'LINEAR_ONLY'" "$script"
+          grep -q "'LINEAR_PLUS_TOWER'" "$script"
+          grep -q 'MERGED_TOP_96_AGGREGATED_OPTIMIZER_STREAMING_2' "$script"
+          grep -q 'createWriteStream' "$script"
+          grep -q 'readNdjson' "$script"
+          grep -q 'trainFilePreservesPinnedSampleOrder: true' "$script"
+          grep -q 'foldFilesPreservePinnedSampleOrderWithinFold: true' "$script"
+          ! grep -q 'loadPinnedSample' "$script"
+          ! grep -q 'rows.push(JSON.parse' "$script"
