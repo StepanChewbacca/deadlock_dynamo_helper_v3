@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "operation": "RECOMMENDATION_BEHAVIORAL_V6_SAFE_DOCKER_GARBAGE_CLEANUP",
+  "trainingAuthorized": false,
+  "productionChangesAuthorized": false,
+  "containerPruneAuthorized": false,
+  "volumePruneAuthorized": false,
+  "danglingImagePruneAuthorized": true,
+  "unusedBuildCachePruneAuthorized": true,
+  "preserveActiveV3Training": true
+}
