@@ -1,6 +1,0 @@
-{
-  "schemaVersion": 2,
-  "operation": "RECOMMENDATION_BEHAVIORAL_V6_EQUAL_CAPACITY_ABLATION_STATUS",
-  "trainingAuthorized": false,
-  "productionChangesAuthorized": false
-}
