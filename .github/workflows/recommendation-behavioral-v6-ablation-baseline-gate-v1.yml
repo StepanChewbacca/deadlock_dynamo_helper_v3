@@ -63,12 +63,15 @@ jobs:
             .choiceSet.definition == "MERGED_TOP_96"
           ' "$ablation/ablation-summary.json"
           sudo jq -e '
-            .schemaVersion == 1 and
+            .schemaVersion == 2 and
             .operation == "RECOMMENDATION_BEHAVIORAL_V6_TOP96_BASELINE_EVALUATION" and
+            .executorVersion == "MERGED_TOP_96_BASELINES_STREAMING_2" and
             .trainingPerformed == false and
             .valueTrainingPerformed == false and
             .futureTestEvaluated == false and
             .source.futureTestRowCount == 0 and
+            .execution.rowsMaterializedInHeap == false and
+            .execution.singlePassStreamingEvaluation == true and
             .choiceSet.definition == "MERGED_TOP_96"
           ' "$baselines/report.json"
 
@@ -97,11 +100,12 @@ jobs:
           BEHAVIORAL_V6_ABLATION_BASELINE_GATE_PATH="$staged_gate" \
             node scripts/compare-recommendation-behavioral-v6-ablation-to-baselines.mjs > "$staged_log"
           jq -e '
-            .schemaVersion == 1 and
+            .schemaVersion == 2 and
             .operation == "RECOMMENDATION_BEHAVIORAL_V6_ABLATION_BASELINE_GATE" and
             .trainingPerformed == false and
             .valueTrainingPerformed == false and
             .futureTestEvaluated == false and
+            .source.baselineExecutorVersion == "MERGED_TOP_96_BASELINES_STREAMING_2" and
             .source.choiceSetDefinition == "MERGED_TOP_96" and
             .fullTrainingAuthorized == false and
             .valueV8TrainingAuthorized == false
