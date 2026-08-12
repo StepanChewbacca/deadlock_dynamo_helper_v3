@@ -1,0 +1,183 @@
+name: Recommendation Behavioral V6 Tuning Diagnostics V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/research-requests/recommendation-behavioral-v6-tuning-diagnostics-v1.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v6-tuning-diagnostics-v1
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    runs-on: self-hosted
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate request, completed V3, and capacity
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/research-requests/recommendation-behavioral-v6-tuning-diagnostics-v1.json'
+          jq -e '
+            .schemaVersion == 1 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_TUNING_PROBABILITY_DIAGNOSTICS" and
+            .executorVersion == "TUNING_INFERENCE_STREAMING_1" and
+            .trainingAuthorized == false and
+            .valueTrainingAuthorized == false and
+            .productionChangesAuthorized == false and
+            .futureTestAuthorized == false and
+            .choiceSetDefinition == "MERGED_TOP_96" and
+            .ablationOutputDirectory == "recommendation-behavioral-v6-equal-capacity-ablation-v3-streaming-background" and
+            .outputDirectory == "recommendation-behavioral-v6-tuning-diagnostics-v1" and
+            .expectedDiagnosticSampleSha256 == "8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac"
+          ' "$request"
+          node --check scripts/evaluate-recommendation-behavioral-v6-tuning-diagnostics.mjs
+          node --check scripts/apply-recommendation-behavioral-v6-hot-path-optimization.mjs
+
+          df -h /
+          free -h
+          sudo docker system df || true
+          free_kb="$(df --output=avail -k / | tail -n 1 | tr -d ' ')"
+          mem_available_kb="$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)"
+          test "$free_kb" -ge $((12 * 1024 * 1024))
+          test "$mem_available_kb" -ge $((4 * 1024 * 1024))
+
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          sample_name='recommendation-behavioral-v5-1-sweep-b-v1'
+          ablation_name='recommendation-behavioral-v6-equal-capacity-ablation-v3-streaming-background'
+          output_name='recommendation-behavioral-v6-tuning-diagnostics-v1'
+          sample="$storage/$sample_name/diagnostic-sample.ndjson.gz"
+          ablation="$storage/$ablation_name"
+          output="$storage/$output_name"
+
+          sudo jq -e '
+            .schemaVersion == 3 and
+            .state == "SUCCEEDED" and
+            .exitCode == 0 and
+            .oomKilled != "true" and
+            .executorVersion == "MERGED_TOP_96_AGGREGATED_OPTIMIZER_STREAMING_2" and
+            .runtimeExecution == "DISK_SPOOLED_STREAMING_ROWS_2"
+          ' "$ablation/background-status.json"
+          sudo jq -e '
+            .schemaVersion == 2 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_EQUAL_CAPACITY_ABLATION" and
+            .executorVersion == "MERGED_TOP_96_AGGREGATED_OPTIMIZER_STREAMING_2" and
+            .source.futureTestRowCount == 0 and
+            .choiceSet.definition == "MERGED_TOP_96" and
+            (.results | length) == 2
+          ' "$ablation/ablation-summary.json"
+          sudo test -s "$ablation/l/model.json"
+          sudo test -s "$ablation/lt/model.json"
+          test "$(sudo sha256sum "$sample" | awk '{print $1}')" = '8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac'
+
+          if sudo systemctl list-units --type=service --state=running --no-legend | grep -q 'deadlock-behavioral-v6-ablation-v3-'; then
+            echo 'Refusing TUNING diagnostics while V3 training service is active.' >&2
+            exit 1
+          fi
+          if sudo docker ps --format '{{.Names}}' | grep -q '^deadlock-behavioral-v6-ablation-v3-'; then
+            echo 'Refusing TUNING diagnostics while V3 training container is active.' >&2
+            exit 1
+          fi
+          if sudo test -e "$output"; then
+            echo "Refusing destructive reuse of existing TUNING diagnostic output: $output" >&2
+            exit 1
+          fi
+          sudo mkdir "$output"
+          echo "storage=$storage" >> "$GITHUB_OUTPUT"
+          echo "sample_name=$sample_name" >> "$GITHUB_OUTPUT"
+          echo "ablation_name=$ablation_name" >> "$GITHUB_OUTPUT"
+          echo "output_name=$output_name" >> "$GITHUB_OUTPUT"
+          echo "output=$output" >> "$GITHUB_OUTPUT"
+
+      - name: Apply V6 prediction hot-path optimization
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/apply-recommendation-behavioral-v6-hot-path-optimization.mjs
+          git diff --check
+          grep -q 'validateRecommendationBehavioralV6ModelHeader' apps/api/src/deadlock-live/recommendation-behavioral-v6.ts
+
+      - name: Build isolated diagnostic image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo docker build \
+            --label deadlock.recommendation.operation=behavioral-v6-tuning-diagnostics-v1 \
+            --label deadlock.recommendation.git-sha="$GITHUB_SHA" \
+            -t "deadlock-behavioral-v6-tuning-diagnostics:$GITHUB_RUN_ID" \
+            .
+
+      - name: Run inference-only TUNING diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          storage='${{ steps.preflight.outputs.storage }}'
+          sample_name='${{ steps.preflight.outputs.sample_name }}'
+          ablation_name='${{ steps.preflight.outputs.ablation_name }}'
+          output_name='${{ steps.preflight.outputs.output_name }}'
+          image="deadlock-behavioral-v6-tuning-diagnostics:$GITHUB_RUN_ID"
+          sudo docker run --rm \
+            --network none \
+            --read-only \
+            --memory 4g \
+            --memory-swap 6g \
+            --tmpfs /tmp:rw,nosuid,nodev,size=256m \
+            -e NODE_OPTIONS=--max-old-space-size=3072 \
+            -e BEHAVIORAL_V6_SAMPLE_PATH='/app/apps/api/storage/$sample_name/diagnostic-sample.ndjson.gz' \
+            -e BEHAVIORAL_V6_ABLATION_DIR='/app/apps/api/storage/$ablation_name' \
+            -e BEHAVIORAL_V6_TUNING_DIAGNOSTIC_REPORT_PATH='/app/apps/api/storage/$output_name/report.json' \
+            -e EXPECTED_DIAGNOSTIC_SAMPLE_SHA256='8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac' \
+            -v "$storage/$sample_name:/app/apps/api/storage/$sample_name:ro" \
+            -v "$storage/$ablation_name:/app/apps/api/storage/$ablation_name:ro" \
+            -v "$storage/$output_name:/app/apps/api/storage/$output_name:rw" \
+            "$image" node /app/scripts/evaluate-recommendation-behavioral-v6-tuning-diagnostics.mjs \
+            > '${{ steps.preflight.outputs.output }}/diagnostic.log' 2>&1
+
+      - name: Verify TUNING diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          report='${{ steps.preflight.outputs.output }}/report.json'
+          sudo test -s "$report"
+          sudo jq -e '
+            .schemaVersion == 1 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_TUNING_PROBABILITY_DIAGNOSTICS" and
+            .executorVersion == "TUNING_INFERENCE_STREAMING_1" and
+            .trainingPerformed == false and
+            .valueTrainingPerformed == false and
+            .futureTestEvaluated == false and
+            .source.futureTestRowCount == 0 and
+            .source.choiceSetDefinition == "MERGED_TOP_96" and
+            .contracts.probabilityContract == "RAW_SOFTMAX_WITHIN_DECISION" and
+            .contracts.optimizerContract == "AGGREGATE_DATA_GRADIENT_THEN_SINGLE_L2_UPDATE_PER_PARAMETER" and
+            (.results | length) == 2 and
+            (.results | all(.decisionCount > 0 and .meanMulticlassBrier >= 0 and .calibration.candidateLevel.expectedCalibrationError >= 0 and .calibration.topLabel.expectedCalibrationError >= 0 and .separation.zeroSeparationRate >= 0))
+          ' "$report"
+
+      - name: Upload TUNING diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-behavioral-v6-tuning-diagnostics-${{ github.run_id }}
+          path: /var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v6-tuning-diagnostics-v1
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Cleanup diagnostic image
+        if: always()
+        shell: bash
+        run: |
+          sudo docker image rm "deadlock-behavioral-v6-tuning-diagnostics:$GITHUB_RUN_ID" >/dev/null 2>&1 || true
