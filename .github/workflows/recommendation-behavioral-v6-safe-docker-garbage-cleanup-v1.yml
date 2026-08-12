@@ -1,0 +1,105 @@
+name: Recommendation Behavioral V6 Safe Docker Garbage Cleanup V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/research-requests/recommendation-behavioral-v6-safe-docker-garbage-cleanup-v1.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v6-safe-docker-garbage-cleanup-v1
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate maintenance authorization
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/research-requests/recommendation-behavioral-v6-safe-docker-garbage-cleanup-v1.json'
+          jq -e '
+            .schemaVersion == 1 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_SAFE_DOCKER_GARBAGE_CLEANUP" and
+            .trainingAuthorized == false and
+            .productionChangesAuthorized == false and
+            .containerPruneAuthorized == false and
+            .volumePruneAuthorized == false and
+            .danglingImagePruneAuthorized == true and
+            .unusedBuildCachePruneAuthorized == true and
+            .preserveActiveV3Training == true
+          ' "$request"
+
+          unit='deadlock-behavioral-v6-ablation-v3-31638521581'
+          container='deadlock-behavioral-v6-ablation-v3-31638521581'
+          sudo systemctl is-active --quiet "$unit"
+          test "$(sudo docker inspect -f '{{.State.Running}}' "$container")" = 'true'
+
+          evidence="$RUNNER_TEMP/recommendation-behavioral-v6-safe-docker-garbage-cleanup-$GITHUB_RUN_ID"
+          mkdir -p "$evidence"
+          before_free_kb="$(df --output=avail -k / | tail -n 1 | tr -d ' ')"
+          before_used_kb="$(df --output=used -k / | tail -n 1 | tr -d ' ')"
+          sudo docker system df > "$evidence/docker-system-df-before.txt" || true
+          {
+            echo "evidence=$evidence"
+            echo "before_free_kb=$before_free_kb"
+            echo "before_used_kb=$before_used_kb"
+            echo "unit=$unit"
+            echo "container=$container"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Prune only safe transient Docker garbage
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo docker image prune -f
+          sudo docker builder prune -af --filter 'until=24h'
+
+      - name: Verify training preservation and disk result
+        shell: bash
+        run: |
+          set -euo pipefail
+          unit='${{ steps.preflight.outputs.unit }}'
+          container='${{ steps.preflight.outputs.container }}'
+          evidence='${{ steps.preflight.outputs.evidence }}'
+          before_free_kb='${{ steps.preflight.outputs.before_free_kb }}'
+          before_used_kb='${{ steps.preflight.outputs.before_used_kb }}'
+
+          sudo systemctl is-active --quiet "$unit"
+          test "$(sudo docker inspect -f '{{.State.Running}}' "$container")" = 'true'
+          after_free_kb="$(df --output=avail -k / | tail -n 1 | tr -d ' ')"
+          after_used_kb="$(df --output=used -k / | tail -n 1 | tr -d ' ')"
+          sudo docker system df > "$evidence/docker-system-df-after.txt" || true
+          sudo docker stats --no-stream --format '{{.Name}} CPU={{.CPUPerc}} MEM={{.MemUsage}} MEM_PCT={{.MemPerc}} PIDS={{.PIDs}}' "$container" > "$evidence/v3-container-stats.txt" || true
+
+          reclaimed_kb=$((after_free_kb - before_free_kb))
+          jq -n \
+            --arg operation 'RECOMMENDATION_BEHAVIORAL_V6_SAFE_DOCKER_GARBAGE_CLEANUP' \
+            --argjson beforeFreeKb "$before_free_kb" \
+            --argjson beforeUsedKb "$before_used_kb" \
+            --argjson afterFreeKb "$after_free_kb" \
+            --argjson afterUsedKb "$after_used_kb" \
+            --argjson reclaimedKb "$reclaimed_kb" \
+            --arg unit "$unit" \
+            --arg container "$container" \
+            '{schemaVersion:1,operation:$operation,trainingPerformed:false,productionChangesPerformed:false,containerPrunePerformed:false,volumePrunePerformed:false,danglingImagePrunePerformed:true,unusedBuildCachePrunePerformed:true,activeV3Preserved:true,v3Unit:$unit,v3Container:$container,beforeFreeKb:$beforeFreeKb,beforeUsedKb:$beforeUsedKb,afterFreeKb:$afterFreeKb,afterUsedKb:$afterUsedKb,reclaimedKb:$reclaimedKb}' \
+            > "$evidence/report.json"
+          cat "$evidence/report.json"
+          df -h /
+
+      - name: Upload cleanup evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-behavioral-v6-safe-docker-garbage-cleanup-${{ github.run_id }}
+          path: ${{ steps.preflight.outputs.evidence }}
+          if-no-files-found: warn
+          retention-days: 7
