@@ -43,19 +43,31 @@ jobs:
 
           storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
           sample_dir="$storage/recommendation-behavioral-v5-1-sweep-b-v1"
-          snapshot_dir="$storage/recommendation-candidate-generator-snapshots"
           sample="$sample_dir/diagnostic-sample.ndjson.gz"
           sudo test -s "$sample"
-          sudo test -s "$snapshot_dir/registry.json"
           test "$(sudo sha256sum "$sample" | awk '{print $1}')" = '8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac'
 
+          mapfile -t registry_candidates < <(
+            sudo find "$storage" -maxdepth 4 -type f -name registry.json -print \
+              | grep -E 'candidate.*generator|generator.*candidate' \
+              | sort
+          )
+          printf 'Candidate snapshot registries:\n'
+          printf '%s\n' "${registry_candidates[@]:-}"
+          if [ "${#registry_candidates[@]}" -ne 1 ]; then
+            echo "Expected exactly one candidate-generator registry, found ${#registry_candidates[@]}." >&2
+            exit 1
+          fi
+          snapshot_dir="$(dirname "${registry_candidates[0]}")"
+          sudo test -s "$snapshot_dir/registry.json"
+
           evidence_dir="$RUNNER_TEMP/recommendation-behavioral-v6-choice-set-audit-$GITHUB_RUN_ID"
+          rm -rf "$evidence_dir"
           mkdir -p "$evidence_dir"
+          printf '%s\n' "$snapshot_dir" > "$evidence_dir/snapshot-directory.txt"
           {
-            echo "storage=$storage"
             echo "sample_dir=$sample_dir"
             echo "snapshot_dir=$snapshot_dir"
-            echo "evidence_dir=$evidence_dir"
           } >> "$GITHUB_OUTPUT"
 
       - name: Build isolated audit image
@@ -74,7 +86,7 @@ jobs:
           set -euo pipefail
           sample_dir='${{ steps.preflight.outputs.sample_dir }}'
           snapshot_dir='${{ steps.preflight.outputs.snapshot_dir }}'
-          evidence_dir='${{ steps.preflight.outputs.evidence_dir }}'
+          evidence_dir="$RUNNER_TEMP/recommendation-behavioral-v6-choice-set-audit-$GITHUB_RUN_ID"
           image="deadlock-behavioral-v6-choice-set-audit:$GITHUB_RUN_ID"
 
           sudo docker run --rm \
@@ -99,7 +111,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          evidence_dir='${{ steps.preflight.outputs.evidence_dir }}'
+          evidence_dir="$RUNNER_TEMP/recommendation-behavioral-v6-choice-set-audit-$GITHUB_RUN_ID"
           report="$evidence_dir/choice-set-audit.json"
           test -s "$report"
           jq -e '
@@ -119,7 +131,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: recommendation-behavioral-v6-choice-set-audit-${{ github.run_id }}
-          path: ${{ steps.preflight.outputs.evidence_dir }}
+          path: ${{ runner.temp }}/recommendation-behavioral-v6-choice-set-audit-${{ github.run_id }}
           if-no-files-found: warn
           retention-days: 7
 
