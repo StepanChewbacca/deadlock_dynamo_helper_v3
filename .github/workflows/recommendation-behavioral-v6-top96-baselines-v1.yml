@@ -25,7 +25,7 @@ jobs:
         with:
           node-version: 22
 
-      - name: Validate read-only request and frozen inputs
+      - name: Validate read-only request, completed V3, and frozen inputs
         id: preflight
         shell: bash
         run: |
@@ -41,16 +41,43 @@ jobs:
             .futureTestAuthorized == false and
             .choiceSetDefinition == "MERGED_TOP_96" and
             .outputDirectory == "recommendation-behavioral-v6-top96-baselines-v1" and
-            .expectedDiagnosticSampleSha256 == "8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac"
+            .expectedDiagnosticSampleSha256 == "8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac" and
+            .expectedChoiceSetReportSha256 == "b2953bc63baff315cc66d4bdfb0ca8655e5fef0a99fc6916c782821f8c31e664"
           ' "$request"
           node --check scripts/evaluate-recommendation-behavioral-v6-top96-baselines.mjs
 
           storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
           sample="$storage/recommendation-behavioral-v5-1-sweep-b-v1/diagnostic-sample.ndjson.gz"
-          choice_report="$storage/recommendation-behavioral-v6-equal-capacity-ablation-v2-background/choice-set-candidate-evaluation.json"
+          v3="$storage/recommendation-behavioral-v6-equal-capacity-ablation-v3-streaming-background"
+          choice_report="$v3/choice-set-candidate-evaluation.json"
           output="$storage/recommendation-behavioral-v6-top96-baselines-v1"
+
+          sudo jq -e '
+            .schemaVersion == 3 and
+            .state == "SUCCEEDED" and
+            .exitCode == 0 and
+            .oomKilled != "true" and
+            .executorVersion == "MERGED_TOP_96_AGGREGATED_OPTIMIZER_STREAMING_2" and
+            .runtimeExecution == "DISK_SPOOLED_STREAMING_ROWS_2"
+          ' "$v3/background-status.json"
+          sudo jq -e '
+            .schemaVersion == 2 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_EQUAL_CAPACITY_ABLATION" and
+            .executorVersion == "MERGED_TOP_96_AGGREGATED_OPTIMIZER_STREAMING_2" and
+            .source.futureTestRowCount == 0 and
+            .choiceSet.definition == "MERGED_TOP_96"
+          ' "$v3/ablation-summary.json"
+          if sudo systemctl list-units --type=service --state=running --no-legend | grep -q 'deadlock-behavioral-v6-ablation-v3-'; then
+            echo 'Refusing baseline evaluation while V3 training service is active.' >&2
+            exit 1
+          fi
+          if sudo docker ps --format '{{.Names}}' | grep -q '^deadlock-behavioral-v6-ablation-v3-'; then
+            echo 'Refusing baseline evaluation while V3 training container is active.' >&2
+            exit 1
+          fi
+
           test "$(sudo sha256sum "$sample" | awk '{print $1}')" = '8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac'
-          sudo test -s "$choice_report"
+          test "$(sudo sha256sum "$choice_report" | awk '{print $1}')" = 'b2953bc63baff315cc66d4bdfb0ca8655e5fef0a99fc6916c782821f8c31e664'
           sudo jq -e '
             .schemaVersion == 1 and
             .operation == "RECOMMENDATION_BEHAVIORAL_V6_CHOICE_SET_CANDIDATE_EVALUATION" and
