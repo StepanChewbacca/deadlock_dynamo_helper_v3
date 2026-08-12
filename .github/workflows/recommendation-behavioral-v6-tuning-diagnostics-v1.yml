@@ -128,7 +128,9 @@ jobs:
           sample_name='${{ steps.preflight.outputs.sample_name }}'
           ablation_name='${{ steps.preflight.outputs.ablation_name }}'
           output_name='${{ steps.preflight.outputs.output_name }}'
+          output='${{ steps.preflight.outputs.output }}'
           image="deadlock-behavioral-v6-tuning-diagnostics:$GITHUB_RUN_ID"
+          staged_log="$RUNNER_TEMP/recommendation-behavioral-v6-tuning-diagnostics-$GITHUB_RUN_ID.log"
           sudo docker run --rm \
             --network none \
             --read-only \
@@ -144,7 +146,9 @@ jobs:
             -v "$storage/$ablation_name:/app/apps/api/storage/$ablation_name:ro" \
             -v "$storage/$output_name:/app/apps/api/storage/$output_name:rw" \
             "$image" node /app/scripts/evaluate-recommendation-behavioral-v6-tuning-diagnostics.mjs \
-            > '${{ steps.preflight.outputs.output }}/diagnostic.log' 2>&1
+            > "$staged_log" 2>&1
+          sudo install -m 0644 "$staged_log" "$output/diagnostic.log"
+          rm -f "$staged_log"
 
       - name: Verify TUNING diagnostics
         shell: bash
