@@ -24,23 +24,24 @@ jobs:
           test -s "$request"
           jq -e '.schemaVersion == 1 and .operation == "RECOMMENDATION_TIMELINE_PLAYER_FIELD_AUDIT" and .trainingAuthorized == false and .productionChangesAuthorized == false' "$request"
 
-      - name: Audit raw timeline player-controller fields
+      - name: Audit raw timeline player-controller fields across volumes
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
+          sudo python3 - <<'PY'
           import json, os, re
-          root='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          roots=['/var/lib/docker/volumes']
           event_files=[]
-          for dirpath, dirnames, filenames in os.walk(root):
-              rel=os.path.relpath(dirpath, root)
-              if rel.count(os.sep) > 3:
-                  dirnames[:] = []
-                  continue
-              if 'events.ndjson' in filenames and ('timeline' in dirpath.lower() or 'match' in dirpath.lower()):
-                  event_files.append(os.path.join(dirpath,'events.ndjson'))
-              if len(event_files) >= 40:
-                  break
+          for root in roots:
+              for dirpath, dirnames, filenames in os.walk(root):
+                  rel=os.path.relpath(dirpath, root)
+                  if rel.count(os.sep) > 7:
+                      dirnames[:] = []
+                      continue
+                  if 'events.ndjson' in filenames:
+                      event_files.append(os.path.join(dirpath,'events.ndjson'))
+                  if len(event_files) >= 80:
+                      break
           counts={}
           player_rows=0
           sample_payloads=[]
@@ -50,7 +51,7 @@ jobs:
               try:
                   with open(path,'r',encoding='utf-8') as f:
                       for line in f:
-                          if player_rows >= 20000:
+                          if player_rows >= 30000:
                               break
                           try: row=json.loads(line)
                           except Exception: continue
@@ -67,13 +68,14 @@ jobs:
                                       info['sampleValues'].append(v)
                           if len(sample_payloads) < 3:
                               sample_payloads.append(payload)
-                      if player_rows >= 20000:
+                      if player_rows >= 30000:
                           break
-              except (PermissionError, FileNotFoundError):
+              except (PermissionError, FileNotFoundError, OSError):
                   continue
           result={
-              'schemaVersion':1,
+              'schemaVersion':2,
               'operation':'RECOMMENDATION_TIMELINE_PLAYER_FIELD_AUDIT',
+              'eventFilesFound':event_files,
               'eventFileCountScanned':len(event_files),
               'playerControllerRowsScanned':player_rows,
               'fieldCounts':dict(sorted(counts.items(), key=lambda kv:(-kv[1],kv[0]))),
@@ -87,6 +89,7 @@ jobs:
               json.dump(result,out,indent=2,sort_keys=True)
               out.write('\n')
           PY
+          sudo chown "$(id -u):$(id -g)" /tmp/recommendation-timeline-player-field-audit-v1.json
 
       - name: Upload field audit
         uses: actions/upload-artifact@v4
