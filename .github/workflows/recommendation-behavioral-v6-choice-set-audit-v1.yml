@@ -100,6 +100,7 @@ jobs:
             -e BEHAVIORAL_V6_SAMPLE_PATH=/evidence-input/diagnostic-sample.ndjson.gz \
             -e BEHAVIORAL_V6_SNAPSHOT_DIR=/snapshots \
             -e BEHAVIORAL_V6_CHOICE_SET_REPORT_PATH=/evidence/choice-set-audit.json \
+            -e BEHAVIORAL_V6_CHOICE_SET_ROWS_PATH=/evidence/choice-set-rows.ndjson \
             -e EXPECTED_DIAGNOSTIC_SAMPLE_SHA256=8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac \
             -v "$sample_dir:/evidence-input:ro" \
             -v "$snapshot_dir:/snapshots:ro" \
@@ -113,9 +114,11 @@ jobs:
           set -euo pipefail
           evidence_dir="$RUNNER_TEMP/recommendation-behavioral-v6-choice-set-audit-$GITHUB_RUN_ID"
           report="$evidence_dir/choice-set-audit.json"
+          rows="$evidence_dir/choice-set-rows.ndjson"
           test -s "$report"
+          test -s "$rows"
           jq -e '
-            .schemaVersion == 1 and
+            .schemaVersion == 2 and
             .operation == "RECOMMENDATION_BEHAVIORAL_V6_CHOICE_SET_AUDIT" and
             .trainingPerformed == false and
             .valueTrainingPerformed == false and
@@ -123,8 +126,11 @@ jobs:
             .source.sampleSha256 == "8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac" and
             .source.futureTestRowCount == 0 and
             .structural.allSnapshotsResolved == true and
-            .structural.mergedMatchesStoredDataset == true
+            .structural.mergedMatchesStoredDataset == true and
+            .rowEvidence.emitted == true and
+            .rowEvidence.rowCount == .source.selectedRowCount
           ' "$report"
+          test "$(wc -l < "$rows")" -eq "$(jq -r '.source.selectedRowCount' "$report")"
 
       - name: Upload choice-set evidence
         if: always()
