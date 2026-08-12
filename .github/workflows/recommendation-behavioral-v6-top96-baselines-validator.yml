@@ -22,15 +22,21 @@ jobs:
         with:
           node-version: 22
 
-      - name: Validate read-only baseline evaluator
+      - name: Validate read-only streaming baseline evaluator
         shell: bash
         run: |
           set -euo pipefail
-          node --check scripts/evaluate-recommendation-behavioral-v6-top96-baselines.mjs
-          grep -q "choiceSetDefinition = 'MERGED_TOP_96'" scripts/evaluate-recommendation-behavioral-v6-top96-baselines.mjs
-          grep -q "futureTestEvaluated: false" scripts/evaluate-recommendation-behavioral-v6-top96-baselines.mjs
-          grep -q "trainingPerformed: false" scripts/evaluate-recommendation-behavioral-v6-top96-baselines.mjs
-          grep -q "valueTrainingPerformed: false" scripts/evaluate-recommendation-behavioral-v6-top96-baselines.mjs
-          grep -q "HISTORICAL_PRIOR" scripts/evaluate-recommendation-behavioral-v6-top96-baselines.mjs
-          grep -q "GENERATOR_PRIOR" scripts/evaluate-recommendation-behavioral-v6-top96-baselines.mjs
-          grep -q "INVERSE_RANK" scripts/evaluate-recommendation-behavioral-v6-top96-baselines.mjs
+          script='scripts/evaluate-recommendation-behavioral-v6-top96-baselines.mjs'
+          node --check "$script"
+          grep -q "executorVersion = 'MERGED_TOP_96_BASELINES_STREAMING_2'" "$script"
+          grep -q "choiceSetDefinition = 'MERGED_TOP_96'" "$script"
+          grep -q "futureTestEvaluated: false" "$script"
+          grep -q "trainingPerformed: false" "$script"
+          grep -q "valueTrainingPerformed: false" "$script"
+          grep -q "rowsMaterializedInHeap: false" "$script"
+          grep -q "singlePassStreamingEvaluation: true" "$script"
+          grep -q "HISTORICAL_PRIOR" "$script"
+          grep -q "GENERATOR_PRIOR" "$script"
+          grep -q "INVERSE_RANK" "$script"
+          ! grep -q 'loadPinnedSample' "$script"
+          ! grep -q 'rows.push(JSON.parse' "$script"
