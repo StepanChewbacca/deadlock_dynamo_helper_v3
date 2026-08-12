@@ -1,0 +1,94 @@
+name: Recommendation Timeline Player Field Audit V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/research-requests/recommendation-timeline-player-field-audit-v1.json'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-player-fields:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Validate request
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/research-requests/recommendation-timeline-player-field-audit-v1.json'
+          test -s "$request"
+          jq -e '.schemaVersion == 1 and .operation == "RECOMMENDATION_TIMELINE_PLAYER_FIELD_AUDIT" and .trainingAuthorized == false and .productionChangesAuthorized == false' "$request"
+
+      - name: Audit raw timeline player-controller fields
+        shell: bash
+        run: |
+          set -euo pipefail
+          root='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          python3 - <<'PY'
+          import json, os, re
+          root='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          event_files=[]
+          for dirpath, dirnames, filenames in os.walk(root):
+              rel=os.path.relpath(dirpath, root)
+              if rel.count(os.sep) > 3:
+                  dirnames[:] = []
+                  continue
+              if 'events.ndjson' in filenames and ('timeline' in dirpath.lower() or 'match' in dirpath.lower()):
+                  event_files.append(os.path.join(dirpath,'events.ndjson'))
+              if len(event_files) >= 40:
+                  break
+          counts={}
+          player_rows=0
+          sample_payloads=[]
+          interesting={}
+          pattern=re.compile(r'(soul|gold|money|currency|wallet|spend|worth|credit|cash)', re.I)
+          for path in event_files:
+              try:
+                  with open(path,'r',encoding='utf-8') as f:
+                      for line in f:
+                          if player_rows >= 20000:
+                              break
+                          try: row=json.loads(line)
+                          except Exception: continue
+                          payload=row.get('payload') or {}
+                          if payload.get('entity_type') != 'player_controller':
+                              continue
+                          player_rows += 1
+                          for k,v in payload.items():
+                              counts[k]=counts.get(k,0)+1
+                              if pattern.search(k):
+                                  info=interesting.setdefault(k, {'count':0,'sampleValues':[]})
+                                  info['count'] += 1
+                                  if len(info['sampleValues']) < 10 and v not in info['sampleValues']:
+                                      info['sampleValues'].append(v)
+                          if len(sample_payloads) < 3:
+                              sample_payloads.append(payload)
+                      if player_rows >= 20000:
+                          break
+              except (PermissionError, FileNotFoundError):
+                  continue
+          result={
+              'schemaVersion':1,
+              'operation':'RECOMMENDATION_TIMELINE_PLAYER_FIELD_AUDIT',
+              'eventFileCountScanned':len(event_files),
+              'playerControllerRowsScanned':player_rows,
+              'fieldCounts':dict(sorted(counts.items(), key=lambda kv:(-kv[1],kv[0]))),
+              'currencyLikeFields':interesting,
+              'samplePayloads':sample_payloads,
+              'trainingPerformed':False,
+              'productionChangesPerformed':False,
+          }
+          print(json.dumps(result, indent=2, sort_keys=True))
+          with open('/tmp/recommendation-timeline-player-field-audit-v1.json','w') as out:
+              json.dump(result,out,indent=2,sort_keys=True)
+              out.write('\n')
+          PY
+
+      - name: Upload field audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-timeline-player-field-audit-v1
+          path: /tmp/recommendation-timeline-player-field-audit-v1.json
+          retention-days: 7
