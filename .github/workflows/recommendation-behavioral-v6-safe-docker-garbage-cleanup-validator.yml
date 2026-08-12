@@ -1,0 +1,37 @@
+name: Recommendation Behavioral V6 Safe Docker Garbage Cleanup Validator
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/recommendation-behavioral-v6-safe-docker-garbage-cleanup-v1.yml'
+      - '.github/workflows/recommendation-behavioral-v6-safe-docker-garbage-cleanup-validator.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate cleanup safety contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow='.github/workflows/recommendation-behavioral-v6-safe-docker-garbage-cleanup-v1.yml'
+          grep -q 'docker image prune -f' "$workflow"
+          grep -q "docker builder prune -af --filter 'until=24h'" "$workflow"
+          grep -q 'containerPruneAuthorized == false' "$workflow"
+          grep -q 'volumePruneAuthorized == false' "$workflow"
+          grep -q 'preserveActiveV3Training == true' "$workflow"
+          grep -q 'systemctl is-active --quiet' "$workflow"
+          grep -q "docker inspect -f '{{.State.Running}}'" "$workflow"
+          ! grep -q 'docker container prune' "$workflow"
+          ! grep -q 'docker volume prune' "$workflow"
+          ! grep -q 'docker system prune' "$workflow"
+          ! grep -q 'docker rm' "$workflow"
+          ! grep -q 'docker kill' "$workflow"
+          ! grep -q 'docker stop' "$workflow"
