@@ -1,0 +1,208 @@
+name: Recommendation Behavioral V6 Choice Set Audit V2 Background
+
+on:
+  pull_request:
+    paths:
+      - '.github/research-requests/recommendation-behavioral-v6-choice-set-audit-v2-background.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v6-choice-set-audit-background-launch
+  cancel-in-progress: false
+
+jobs:
+  launch-background-audit:
+    runs-on: self-hosted
+    timeout-minutes: 15
+    steps:
+      - name: Checkout requested implementation
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js for preflight
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Inspect capacity and refuse duplicate audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          df -h /
+          free -h
+          sudo docker system df || true
+
+          free_kb="$(df --output=avail -k / | tail -n 1 | tr -d ' ')"
+          mem_available_kb="$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)"
+          swap_free_kb="$(awk '/SwapFree:/ {print $2}' /proc/meminfo)"
+          test "$free_kb" -ge $((12 * 1024 * 1024))
+          test "$mem_available_kb" -ge $((4 * 1024 * 1024))
+          test "$swap_free_kb" -ge $((3 * 1024 * 1024))
+
+          if sudo docker ps --format '{{.Names}}' | grep -q '^deadlock-behavioral-v6-choice-set-audit-v2-'; then
+            echo 'Behavioral V6 background choice-set audit container is already running.' >&2
+            exit 1
+          fi
+          if sudo systemctl list-units --type=service --state=running --no-legend | grep -q 'deadlock-behavioral-v6-choice-set-audit-v2-'; then
+            echo 'Behavioral V6 background choice-set audit service is already running.' >&2
+            exit 1
+          fi
+
+      - name: Validate read-only request and immutable lineage
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/research-requests/recommendation-behavioral-v6-choice-set-audit-v2-background.json'
+          test -s "$request"
+          jq -e '
+            .schemaVersion == 2 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_CHOICE_SET_AUDIT" and
+            .backgroundResearch == true and
+            .auditTimeLimit == "NONE" and
+            .trainingAuthorized == false and
+            .valueTrainingAuthorized == false and
+            .productionChangesAuthorized == false and
+            .futureTestAuthorized == false and
+            .outputDirectory == "recommendation-behavioral-v6-choice-set-audit-v2-background" and
+            .expectedDiagnosticSampleSha256 == "8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac"
+          ' "$request"
+          node --check scripts/audit-recommendation-behavioral-v6-choice-set.mjs
+
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          sample_dir="$storage/recommendation-behavioral-v5-1-sweep-b-v1"
+          sample="$sample_dir/diagnostic-sample.ndjson.gz"
+          sudo test -s "$sample"
+          test "$(sudo sha256sum "$sample" | awk '{print $1}')" = '8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac'
+
+          mapfile -t registry_candidates < <(
+            sudo find "$storage" -maxdepth 4 -type f -name registry.json -print \
+              | grep -E 'candidate.*generator|generator.*candidate' \
+              | sort
+          )
+          if [ "${#registry_candidates[@]}" -ne 1 ]; then
+            echo "Expected exactly one candidate-generator registry, found ${#registry_candidates[@]}." >&2
+            printf '%s\n' "${registry_candidates[@]:-}" >&2
+            exit 1
+          fi
+          snapshot_dir="$(dirname "${registry_candidates[0]}")"
+          sudo test -s "$snapshot_dir/registry.json"
+
+          output_name="$(jq -r '.outputDirectory' "$request")"
+          output="$storage/$output_name"
+          if sudo test -e "$output"; then
+            echo "Refusing destructive reuse of existing output: $output" >&2
+            exit 1
+          fi
+          sudo mkdir "$output"
+
+          {
+            echo "storage=$storage"
+            echo "sample_dir=$sample_dir"
+            echo "snapshot_dir=$snapshot_dir"
+            echo "output_name=$output_name"
+            echo "output=$output"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build isolated audit image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo docker build \
+            --label deadlock.recommendation.operation=behavioral-v6-choice-set-audit-v2-background \
+            --label deadlock.recommendation.git-sha="$GITHUB_SHA" \
+            -t "deadlock-behavioral-v6-choice-set-audit-v2:$GITHUB_RUN_ID" \
+            .
+
+      - name: Launch audit as detached systemd service
+        id: launch
+        shell: bash
+        run: |
+          set -euo pipefail
+          sample_dir='${{ steps.preflight.outputs.sample_dir }}'
+          snapshot_dir='${{ steps.preflight.outputs.snapshot_dir }}'
+          output='${{ steps.preflight.outputs.output }}'
+          output_name='${{ steps.preflight.outputs.output_name }}'
+          image="deadlock-behavioral-v6-choice-set-audit-v2:$GITHUB_RUN_ID"
+          container_name="deadlock-behavioral-v6-choice-set-audit-v2-$GITHUB_RUN_ID"
+          unit="deadlock-behavioral-v6-choice-set-audit-v2-$GITHUB_RUN_ID"
+          launcher="/var/tmp/$unit.sh"
+
+          cat <<EOF | sudo tee "$launcher" >/dev/null
+          #!/usr/bin/env bash
+          set -uo pipefail
+          output='$output'
+          image='$image'
+          container_name='$container_name'
+          launcher='$launcher'
+          started_at="\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq -n --arg state RUNNING --arg startedAt "\$started_at" --arg unit '$unit' --arg container '$container_name' --arg image '$image' '{schemaVersion:2,state:\$state,startedAt:\$startedAt,unit:\$unit,container:\$container,image:\$image,auditTimeLimit:"NONE",backgroundResearch:true,trainingPerformed:false,valueTrainingPerformed:false}' > "\$output/background-status.json"
+          set +e
+          docker run \
+            --name "\$container_name" \
+            --network none \
+            --read-only \
+            --memory 4g \
+            --memory-swap 6g \
+            --tmpfs /tmp:rw,nosuid,nodev,size=256m \
+            -e NODE_OPTIONS=--max-old-space-size=3072 \
+            -e BEHAVIORAL_V6_SAMPLE_PATH=/evidence-input/diagnostic-sample.ndjson.gz \
+            -e BEHAVIORAL_V6_SNAPSHOT_DIR=/snapshots \
+            -e BEHAVIORAL_V6_CHOICE_SET_REPORT_PATH=/evidence/choice-set-audit.json \
+            -e BEHAVIORAL_V6_CHOICE_SET_ROWS_PATH=/evidence/choice-set-rows.ndjson \
+            -e EXPECTED_DIAGNOSTIC_SAMPLE_SHA256=8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac \
+            -v '$sample_dir:/evidence-input:ro' \
+            -v '$snapshot_dir:/snapshots:ro' \
+            -v '$output:/evidence:rw' \
+            "\$image" node /app/scripts/audit-recommendation-behavioral-v6-choice-set.mjs > "\$output/audit.log" 2>&1
+          exit_code=\$?
+          set -e
+          finished_at="\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          docker inspect "\$container_name" > "\$output/container-inspect.json" 2>/dev/null || true
+          oom_killed="\$(docker inspect -f '{{.State.OOMKilled}}' "\$container_name" 2>/dev/null || echo unknown)"
+          if [ "\$exit_code" -eq 0 ] && [ -s "\$output/choice-set-audit.json" ] && [ -s "\$output/choice-set-rows.ndjson" ]; then
+            state=SUCCEEDED
+          else
+            state=FAILED
+          fi
+          jq -n --arg state "\$state" --arg startedAt "\$started_at" --arg finishedAt "\$finished_at" --arg unit '$unit' --arg container '$container_name' --arg image '$image' --argjson exitCode "\$exit_code" --arg oomKilled "\$oom_killed" '{schemaVersion:2,state:\$state,startedAt:\$startedAt,finishedAt:\$finishedAt,unit:\$unit,container:\$container,image:\$image,exitCode:\$exitCode,oomKilled:\$oomKilled,auditTimeLimit:"NONE",backgroundResearch:true,trainingPerformed:false,valueTrainingPerformed:false}' > "\$output/background-status.json"
+          docker rm -f "\$container_name" >/dev/null 2>&1 || true
+          docker image rm "\$image" >/dev/null 2>&1 || true
+          rm -f "\$launcher" || true
+          exit "\$exit_code"
+          EOF
+          sudo chmod 0755 "$launcher"
+
+          sudo systemd-run \
+            --collect \
+            --unit="$unit" \
+            --description="Deadlock Behavioral V6 choice-set background audit $GITHUB_RUN_ID" \
+            --property=Restart=no \
+            "$launcher"
+
+          sleep 3
+          sudo systemctl is-active --quiet "$unit"
+          test "$(sudo jq -r '.state' "$output/background-status.json")" = 'RUNNING'
+
+          jq -n \
+            --arg runId "$GITHUB_RUN_ID" \
+            --arg unit "$unit" \
+            --arg outputDirectory "$output_name" \
+            --arg image "$image" \
+            '{schemaVersion:2,launcherRunId:$runId,unit:$unit,outputDirectory:$outputDirectory,image:$image,backgroundResearch:true,auditTimeLimit:"NONE",trainingPerformed:false,valueTrainingPerformed:false}' \
+            | sudo tee "$output/background-launch.json" >/dev/null
+
+          echo "unit=$unit" >> "$GITHUB_OUTPUT"
+
+      - name: Confirm background audit launcher
+        shell: bash
+        run: |
+          set -euo pipefail
+          unit='${{ steps.launch.outputs.unit }}'
+          output='${{ steps.preflight.outputs.output }}'
+          sudo systemctl status "$unit" --no-pager -l || true
+          sudo cat "$output/background-status.json"
+          test "$(sudo jq -r '.state' "$output/background-status.json")" = 'RUNNING'
