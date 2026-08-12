@@ -1,0 +1,131 @@
+name: Recommendation Behavioral V6 V3 Completion V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/research-requests/recommendation-behavioral-v6-v3-completion-v1.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v6-v3-completion-v1
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify completed streaming ablation
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/research-requests/recommendation-behavioral-v6-v3-completion-v1.json'
+          jq -e '
+            .schemaVersion == 1 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_V3_COMPLETION" and
+            .trainingAuthorized == false and
+            .valueTrainingAuthorized == false and
+            .productionChangesAuthorized == false and
+            .futureTestAuthorized == false and
+            .outputDirectory == "recommendation-behavioral-v6-equal-capacity-ablation-v3-streaming-background" and
+            .expectedDatasetSha256 == "e8b11e26df37ff1e17b334eda18ea2141cfb7fa78f0a34eaf95d448c22962235" and
+            .expectedDiagnosticSampleSha256 == "8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac" and
+            .expectedChoiceSetReportSha256 == "b2953bc63baff315cc66d4bdfb0ca8655e5fef0a99fc6916c782821f8c31e664"
+          ' "$request"
+
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          output="$storage/recommendation-behavioral-v6-equal-capacity-ablation-v3-streaming-background"
+          evidence="$RUNNER_TEMP/recommendation-behavioral-v6-v3-completion-$GITHUB_RUN_ID"
+          mkdir -p "$evidence"
+
+          sudo jq -e '
+            .schemaVersion == 3 and
+            .state == "SUCCEEDED" and
+            .exitCode == 0 and
+            .oomKilled != "true" and
+            .choiceSetSha256 == "b2953bc63baff315cc66d4bdfb0ca8655e5fef0a99fc6916c782821f8c31e664" and
+            .executorVersion == "MERGED_TOP_96_AGGREGATED_OPTIMIZER_STREAMING_2" and
+            .runtimeExecution == "DISK_SPOOLED_STREAMING_ROWS_2"
+          ' "$output/background-status.json"
+          sudo jq -e '
+            .schemaVersion == 2 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_EQUAL_CAPACITY_ABLATION" and
+            .executorVersion == "MERGED_TOP_96_AGGREGATED_OPTIMIZER_STREAMING_2" and
+            .source.datasetSha256 == "e8b11e26df37ff1e17b334eda18ea2141cfb7fa78f0a34eaf95d448c22962235" and
+            .source.pinnedSampleSha256 == "8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac" and
+            .source.futureTestRowCount == 0 and
+            .choiceSet.definition == "MERGED_TOP_96" and
+            .choiceSet.candidateCoverage >= 0.99 and
+            .execution.rowsMaterializedInHeap == false and
+            .execution.spoolDirectoryRemovedAfterSuccess == true and
+            .execution.trainOrderPreserved == true and
+            .execution.foldOrderPreserved == true and
+            .fullTrainingAuthorized == false and
+            .valueV8TrainingAuthorized == false and
+            (.results | length) == 2 and
+            (.results | all(.structuralAuditPassed == true and .trainingArtifactEligible == false))
+          ' "$output/ablation-summary.json"
+
+          for variant in l lt; do
+            sudo test -s "$output/$variant/model.json"
+            sudo test -s "$output/$variant/evaluation.json"
+            sudo test -s "$output/$variant/audit.json"
+            sudo jq -e '
+              .passed == true and
+              .trainingArtifactEligible == false and
+              .diagnosticOnly == true and
+              .executorVersion == "MERGED_TOP_96_AGGREGATED_OPTIMIZER_STREAMING_2" and
+              .choiceSetDefinition == "MERGED_TOP_96" and
+              .futureTestDecisionCount == 0 and
+              .probabilityContract.output == "RAW_SOFTMAX_WITHIN_DECISION" and
+              .optimizerContract == "AGGREGATE_DATA_GRADIENT_THEN_SINGLE_L2_UPDATE_PER_PARAMETER"
+            ' "$output/$variant/audit.json"
+          done
+
+          if sudo test -e "$output/.streaming-spool-v2"; then
+            echo 'Streaming spool directory still exists after reported success.' >&2
+            exit 1
+          fi
+          if sudo systemctl list-units --type=service --state=running --no-legend | grep -q 'deadlock-behavioral-v6-ablation-v3-'; then
+            echo 'V3 systemd service is still active after reported success.' >&2
+            exit 1
+          fi
+          if sudo docker ps --format '{{.Names}}' | grep -q '^deadlock-behavioral-v6-ablation-v3-'; then
+            echo 'V3 training container is still active after reported success.' >&2
+            exit 1
+          fi
+
+          free_kb="$(df --output=avail -k / | tail -n 1 | tr -d ' ')"
+          mem_available_kb="$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)"
+          swap_free_kb="$(awk '/SwapFree:/ {print $2}' /proc/meminfo)"
+          test "$free_kb" -ge $((12 * 1024 * 1024))
+          test "$mem_available_kb" -ge $((4 * 1024 * 1024))
+
+          summary_sha="$(sudo sha256sum "$output/ablation-summary.json" | awk '{print $1}')"
+          l_model_sha="$(sudo sha256sum "$output/l/model.json" | awk '{print $1}')"
+          lt_model_sha="$(sudo sha256sum "$output/lt/model.json" | awk '{print $1}')"
+          jq -n \
+            --arg operation 'RECOMMENDATION_BEHAVIORAL_V6_V3_COMPLETION' \
+            --arg summarySha256 "$summary_sha" \
+            --arg linearModelSha256 "$l_model_sha" \
+            --arg towerModelSha256 "$lt_model_sha" \
+            --argjson freeKb "$free_kb" \
+            --argjson memAvailableKb "$mem_available_kb" \
+            --argjson swapFreeKb "$swap_free_kb" \
+            '{schemaVersion:1,operation:$operation,passed:true,trainingPerformed:false,valueTrainingPerformed:false,futureTestEvaluated:false,executorVersion:"MERGED_TOP_96_AGGREGATED_OPTIMIZER_STREAMING_2",runtimeExecution:"DISK_SPOOLED_STREAMING_ROWS_2",spoolRemoved:true,activeTrainingProcessPresent:false,ablationSummarySha256:$summarySha256,linearModelSha256:$linearModelSha256,towerModelSha256:$towerModelSha256,freeKb:$freeKb,memAvailableKb:$memAvailableKb,swapFreeKb:$swapFreeKb,fullTrainingAuthorized:false,valueV8TrainingAuthorized:false,productionChangesAuthorized:false}' \
+            > "$evidence/report.json"
+          cat "$evidence/report.json"
+
+      - name: Upload completion evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-behavioral-v6-v3-completion-${{ github.run_id }}
+          path: ${{ runner.temp }}/recommendation-behavioral-v6-v3-completion-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 7
