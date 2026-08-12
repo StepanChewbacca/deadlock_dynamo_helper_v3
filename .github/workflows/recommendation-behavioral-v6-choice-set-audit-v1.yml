@@ -1,0 +1,131 @@
+name: Recommendation Behavioral V6 Choice Set Audit V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/research-requests/recommendation-behavioral-v6-choice-set-audit-v1.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v6-choice-set-audit-v1
+  cancel-in-progress: true
+
+jobs:
+  audit-choice-set:
+    runs-on: self-hosted
+    timeout-minutes: 15
+    steps:
+      - name: Checkout requested implementation
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate read-only request and lineage
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/research-requests/recommendation-behavioral-v6-choice-set-audit-v1.json'
+          jq -e '
+            .schemaVersion == 1 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_CHOICE_SET_AUDIT" and
+            .trainingAuthorized == false and
+            .valueTrainingAuthorized == false and
+            .productionChangesAuthorized == false and
+            .expectedDiagnosticSampleSha256 == "8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac"
+          ' "$request"
+          node --check scripts/audit-recommendation-behavioral-v6-choice-set.mjs
+
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          sample_dir="$storage/recommendation-behavioral-v5-1-sweep-b-v1"
+          snapshot_dir="$storage/recommendation-candidate-generator-snapshots"
+          sample="$sample_dir/diagnostic-sample.ndjson.gz"
+          sudo test -s "$sample"
+          sudo test -s "$snapshot_dir/registry.json"
+          test "$(sudo sha256sum "$sample" | awk '{print $1}')" = '8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac'
+
+          evidence_dir="$RUNNER_TEMP/recommendation-behavioral-v6-choice-set-audit-$GITHUB_RUN_ID"
+          mkdir -p "$evidence_dir"
+          {
+            echo "storage=$storage"
+            echo "sample_dir=$sample_dir"
+            echo "snapshot_dir=$snapshot_dir"
+            echo "evidence_dir=$evidence_dir"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build isolated audit image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo docker build \
+            --label deadlock.recommendation.operation=behavioral-v6-choice-set-audit \
+            --label deadlock.recommendation.git-sha="$GITHUB_SHA" \
+            -t "deadlock-behavioral-v6-choice-set-audit:$GITHUB_RUN_ID" \
+            .
+
+      - name: Run frozen-sample audit without training
+        shell: bash
+        run: |
+          set -euo pipefail
+          sample_dir='${{ steps.preflight.outputs.sample_dir }}'
+          snapshot_dir='${{ steps.preflight.outputs.snapshot_dir }}'
+          evidence_dir='${{ steps.preflight.outputs.evidence_dir }}'
+          image="deadlock-behavioral-v6-choice-set-audit:$GITHUB_RUN_ID"
+
+          sudo docker run --rm \
+            --name "deadlock-behavioral-v6-choice-set-audit-$GITHUB_RUN_ID" \
+            --network none \
+            --read-only \
+            --memory 4g \
+            --memory-swap 6g \
+            --tmpfs /tmp:rw,nosuid,nodev,size=256m \
+            -e NODE_OPTIONS=--max-old-space-size=3072 \
+            -e BEHAVIORAL_V6_SAMPLE_PATH=/evidence-input/diagnostic-sample.ndjson.gz \
+            -e BEHAVIORAL_V6_SNAPSHOT_DIR=/snapshots \
+            -e BEHAVIORAL_V6_CHOICE_SET_REPORT_PATH=/evidence/choice-set-audit.json \
+            -e EXPECTED_DIAGNOSTIC_SAMPLE_SHA256=8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac \
+            -v "$sample_dir:/evidence-input:ro" \
+            -v "$snapshot_dir:/snapshots:ro" \
+            -v "$evidence_dir:/evidence:rw" \
+            "$image" node /app/scripts/audit-recommendation-behavioral-v6-choice-set.mjs \
+            | tee "$evidence_dir/audit.log"
+
+      - name: Verify audit evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir='${{ steps.preflight.outputs.evidence_dir }}'
+          report="$evidence_dir/choice-set-audit.json"
+          test -s "$report"
+          jq -e '
+            .schemaVersion == 1 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_CHOICE_SET_AUDIT" and
+            .trainingPerformed == false and
+            .valueTrainingPerformed == false and
+            .futureTestEvaluated == false and
+            .source.sampleSha256 == "8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac" and
+            .source.futureTestRowCount == 0 and
+            .structural.allSnapshotsResolved == true and
+            .structural.mergedMatchesStoredDataset == true
+          ' "$report"
+
+      - name: Upload choice-set evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-behavioral-v6-choice-set-audit-${{ github.run_id }}
+          path: ${{ steps.preflight.outputs.evidence_dir }}
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Cleanup transient image
+        if: always()
+        shell: bash
+        run: |
+          sudo docker rm -f "deadlock-behavioral-v6-choice-set-audit-$GITHUB_RUN_ID" >/dev/null 2>&1 || true
+          sudo docker image rm "deadlock-behavioral-v6-choice-set-audit:$GITHUB_RUN_ID" >/dev/null 2>&1 || true
