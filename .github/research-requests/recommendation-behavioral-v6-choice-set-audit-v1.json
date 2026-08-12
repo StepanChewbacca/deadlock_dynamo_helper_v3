@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "operation": "RECOMMENDATION_BEHAVIORAL_V6_CHOICE_SET_AUDIT",
+  "trainingAuthorized": false,
+  "valueTrainingAuthorized": false,
+  "productionChangesAuthorized": false,
+  "expectedDiagnosticSampleSha256": "8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac"
+}
