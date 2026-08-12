@@ -1,0 +1,40 @@
+name: Recommendation Behavioral V6 V3 Completion Validator
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/recommendation-behavioral-v6-v3-completion-v1.yml'
+      - '.github/workflows/recommendation-behavioral-v6-v3-completion-validator.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate V3 completion contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow='.github/workflows/recommendation-behavioral-v6-v3-completion-v1.yml'
+          grep -q 'state == "SUCCEEDED"' "$workflow"
+          grep -q 'exitCode == 0' "$workflow"
+          grep -q 'oomKilled != "true"' "$workflow"
+          grep -q 'MERGED_TOP_96_AGGREGATED_OPTIMIZER_STREAMING_2' "$workflow"
+          grep -q 'DISK_SPOOLED_STREAMING_ROWS_2' "$workflow"
+          grep -q 'streaming-spool-v2' "$workflow"
+          grep -q '12 \* 1024 \* 1024' "$workflow"
+          grep -q 'trainingArtifactEligible == false' "$workflow"
+          grep -q 'RAW_SOFTMAX_WITHIN_DECISION' "$workflow"
+          grep -q 'AGGREGATE_DATA_GRADIENT_THEN_SINGLE_L2_UPDATE_PER_PARAMETER' "$workflow"
+          ! grep -q 'docker volume prune' "$workflow"
+          ! grep -q 'docker container prune' "$workflow"
+          ! grep -q 'docker kill' "$workflow"
+          ! grep -q 'docker stop' "$workflow"
+          ! grep -q 'trainingAuthorized == true' "$workflow"
+          ! grep -q 'valueTrainingAuthorized == true' "$workflow"
