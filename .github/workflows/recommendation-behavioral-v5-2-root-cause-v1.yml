@@ -33,7 +33,7 @@ jobs:
             .valueTrainingAuthorized == false and
             .productionChangesAuthorized == false
           ' "$request"
-          node --check scripts/analyze-recommendation-behavioral-v5-2-root-cause-v2.mjs
+          node --check scripts/analyze-recommendation-behavioral-v5-2-root-cause-v3.mjs
 
       - name: Stage immutable evidence read-only
         shell: bash
@@ -59,7 +59,7 @@ jobs:
           ROOT_CAUSE_REPORT_PATH: /tmp/recommendation-behavioral-v5-2-root-cause.json
         run: |
           set -euo pipefail
-          node scripts/analyze-recommendation-behavioral-v5-2-root-cause-v2.mjs
+          node scripts/analyze-recommendation-behavioral-v5-2-root-cause-v3.mjs
 
       - name: Upload root cause evidence
         uses: actions/upload-artifact@v4
