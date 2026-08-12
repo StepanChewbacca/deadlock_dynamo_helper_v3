@@ -23,6 +23,13 @@ jobs:
           request='.github/training-requests/recommendation-behavioral-v6-equal-capacity-ablation-v3-streaming-status.json'
           jq -e '.schemaVersion == 3 and .operation == "RECOMMENDATION_BEHAVIORAL_V6_EQUAL_CAPACITY_ABLATION_STATUS" and .trainingAuthorized == false and .productionChangesAuthorized == false' "$request"
           output='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v6-equal-capacity-ablation-v3-streaming-background'
+          container='deadlock-behavioral-v6-ablation-v3-31638521581'
+          echo 'Capacity:'
+          df -h /
+          free -h
+          sudo docker system df || true
+          echo 'Container resource snapshot:'
+          sudo docker stats --no-stream --format '{{.Name}} CPU={{.CPUPerc}} MEM={{.MemUsage}} MEM_PCT={{.MemPerc}} PIDS={{.PIDs}}' "$container" 2>/dev/null || true
           echo 'Persisted files:'
           sudo find "$output" -maxdepth 2 -type f -printf '%P %s bytes\n' 2>/dev/null | sort || true
           echo 'Background status:'
@@ -35,7 +42,7 @@ jobs:
           echo 'Streaming spool manifest:'
           sudo cat "$output/streaming-spool-manifest.json" 2>/dev/null || true
           echo 'Progress log tail:'
-          sudo tail -n 120 "$output/container.log" 2>/dev/null || true
+          sudo tail -n 160 "$output/container.log" 2>/dev/null || true
           echo 'Ablation summary:'
           if sudo test -s "$output/ablation-summary.json"; then
             sudo jq '{schemaVersion,operation,executorVersion,source,choiceSet,commonConfiguration,execution,preferredVariant,towerRecommended,anyReleaseEligible,nextFamilyRecommended,results}' "$output/ablation-summary.json"
