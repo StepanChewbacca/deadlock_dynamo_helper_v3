@@ -1,0 +1,37 @@
+name: Recommendation Behavioral V6 Streaming Launcher Validator
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/recommendation-behavioral-v6-equal-capacity-ablation-v3-streaming-background.yml'
+      - '.github/workflows/recommendation-behavioral-v6-streaming-launcher-validator.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate V3 streaming launcher safety
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow='.github/workflows/recommendation-behavioral-v6-equal-capacity-ablation-v3-streaming-background.yml'
+          grep -q 'MERGED_TOP_96_AGGREGATED_OPTIMIZER_STREAMING_2' "$workflow"
+          grep -q 'DISK_SPOOLED_STREAMING_ROWS_2' "$workflow"
+          grep -q 'trainingTimeLimit == "NONE"' "$workflow"
+          grep -q 'fullTrainingAuthorized == false' "$workflow"
+          grep -q 'valueV8TrainingAuthorized == false' "$workflow"
+          grep -q 'futureTestAuthorized == false' "$workflow"
+          grep -q 'expectedChoiceSetReportSha256' "$workflow"
+          grep -q 'run-recommendation-behavioral-v6-equal-capacity-ablation-streaming-v2.mjs' "$workflow"
+          grep -q 'systemd-run' "$workflow"
+          grep -q -- '--memory 6g' "$workflow"
+          grep -q -- '--memory-swap 10g' "$workflow"
+          grep -q -- '--max-old-space-size=4096' "$workflow"
+          ! grep -q 'timeout .*run-recommendation-behavioral-v6-equal-capacity-ablation-streaming' "$workflow"
