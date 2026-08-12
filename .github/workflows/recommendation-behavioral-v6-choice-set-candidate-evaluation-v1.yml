@@ -46,11 +46,16 @@ jobs:
           set -euo pipefail
           source='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v6-choice-set-audit-v2-background'
           evidence="$RUNNER_TEMP/recommendation-behavioral-v6-choice-set-candidate-evaluation-$GITHUB_RUN_ID"
+          staged_rows="$RUNNER_TEMP/recommendation-behavioral-v6-choice-set-rows-$GITHUB_RUN_ID.ndjson"
+          rm -rf "$evidence"
           mkdir -p "$evidence"
-          export BEHAVIORAL_V6_CHOICE_SET_ROWS_PATH="$source/choice-set-rows.ndjson"
+          sudo cp "$source/choice-set-rows.ndjson" "$staged_rows"
+          sudo chown "$(id -u):$(id -g)" "$staged_rows"
+          export BEHAVIORAL_V6_CHOICE_SET_ROWS_PATH="$staged_rows"
           export BEHAVIORAL_V6_CHOICE_SET_CANDIDATE_REPORT_PATH="$evidence/report.json"
-          sudo --preserve-env=BEHAVIORAL_V6_CHOICE_SET_ROWS_PATH,BEHAVIORAL_V6_CHOICE_SET_CANDIDATE_REPORT_PATH node scripts/evaluate-recommendation-behavioral-v6-choice-set-candidates.mjs | tee "$evidence/evaluation.log"
+          node scripts/evaluate-recommendation-behavioral-v6-choice-set-candidates.mjs | tee "$evidence/evaluation.log"
           jq -e '.source.futureTestRowCount == 0 and .source.malformedRowCount == 0 and .trainingPerformed == false and .valueTrainingPerformed == false' "$evidence/report.json"
+          rm -f "$staged_rows"
 
       - name: Upload choice-set candidate evidence
         if: always()
