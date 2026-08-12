@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'scripts/evaluate-recommendation-behavioral-v6-tuning-diagnostics.mjs'
+      - '.github/workflows/recommendation-behavioral-v6-tuning-diagnostics-v1.yml'
       - '.github/workflows/recommendation-behavioral-v6-tuning-diagnostics-validator.yml'
 
 permissions:
@@ -27,6 +28,7 @@ jobs:
         run: |
           set -euo pipefail
           script='scripts/evaluate-recommendation-behavioral-v6-tuning-diagnostics.mjs'
+          workflow='.github/workflows/recommendation-behavioral-v6-tuning-diagnostics-v1.yml'
           node --check "$script"
           grep -q "expectedChoiceSetDefinition = 'MERGED_TOP_96'" "$script"
           grep -q "TUNING_INFERENCE_STREAMING_1" "$script"
@@ -39,3 +41,12 @@ jobs:
           grep -q "top1Top2ProbabilityMargin" "$script"
           grep -q "RAW_SOFTMAX_WITHIN_DECISION" "$script" || grep -q 'RECOMMENDATION_BEHAVIORAL_V6_PROBABILITY_CONTRACT' "$script"
           ! grep -q 'trainRecommendationBehavioralV6Decision' "$script"
+
+          grep -q 'trainingAuthorized == false' "$workflow"
+          grep -q 'valueTrainingAuthorized == false' "$workflow"
+          grep -q 'futureTestAuthorized == false' "$workflow"
+          grep -q '12 \* 1024 \* 1024' "$workflow"
+          grep -q 'Refusing TUNING diagnostics while V3 training service is active.' "$workflow"
+          grep -q 'staged_log="$RUNNER_TEMP/' "$workflow"
+          grep -q 'sudo install -m 0644 "$staged_log" "$output/diagnostic.log"' "$workflow"
+          ! grep -q "> '\${{ steps.preflight.outputs.output }}/diagnostic.log'" "$workflow"
