@@ -1,0 +1,120 @@
+name: Recommendation Behavioral V6 Ablation Baseline Gate V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/research-requests/recommendation-behavioral-v6-ablation-baseline-gate-v1.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v6-ablation-baseline-gate-v1
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate read-only request and completed inputs
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/research-requests/recommendation-behavioral-v6-ablation-baseline-gate-v1.json'
+          jq -e '
+            .schemaVersion == 1 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_ABLATION_BASELINE_GATE" and
+            .trainingAuthorized == false and
+            .valueTrainingAuthorized == false and
+            .productionChangesAuthorized == false and
+            .futureTestAuthorized == false and
+            .ablationOutputDirectory == "recommendation-behavioral-v6-equal-capacity-ablation-v3-streaming-background" and
+            .baselineOutputDirectory == "recommendation-behavioral-v6-top96-baselines-v1" and
+            .outputDirectory == "recommendation-behavioral-v6-ablation-baseline-gate-v1"
+          ' "$request"
+          node --check scripts/compare-recommendation-behavioral-v6-ablation-to-baselines.mjs
+
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          ablation="$storage/recommendation-behavioral-v6-equal-capacity-ablation-v3-streaming-background"
+          baselines="$storage/recommendation-behavioral-v6-top96-baselines-v1"
+          output="$storage/recommendation-behavioral-v6-ablation-baseline-gate-v1"
+
+          sudo jq -e '
+            .state == "SUCCEEDED" and
+            .exitCode == 0 and
+            .oomKilled != "true" and
+            .executorVersion == "MERGED_TOP_96_AGGREGATED_OPTIMIZER_STREAMING_2"
+          ' "$ablation/background-status.json"
+          sudo jq -e '
+            .schemaVersion == 2 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_EQUAL_CAPACITY_ABLATION" and
+            .executorVersion == "MERGED_TOP_96_AGGREGATED_OPTIMIZER_STREAMING_2" and
+            .source.futureTestRowCount == 0 and
+            .choiceSet.definition == "MERGED_TOP_96"
+          ' "$ablation/ablation-summary.json"
+          sudo jq -e '
+            .schemaVersion == 1 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_TOP96_BASELINE_EVALUATION" and
+            .trainingPerformed == false and
+            .valueTrainingPerformed == false and
+            .futureTestEvaluated == false and
+            .source.futureTestRowCount == 0 and
+            .choiceSet.definition == "MERGED_TOP_96"
+          ' "$baselines/report.json"
+
+          if sudo test -e "$output"; then
+            echo "Refusing destructive reuse of existing gate output: $output" >&2
+            exit 1
+          fi
+          sudo mkdir "$output"
+          echo "ablation=$ablation/ablation-summary.json" >> "$GITHUB_OUTPUT"
+          echo "baselines=$baselines/report.json" >> "$GITHUB_OUTPUT"
+          echo "output=$output" >> "$GITHUB_OUTPUT"
+
+      - name: Compare ablation to cheap baselines
+        shell: bash
+        run: |
+          set -euo pipefail
+          staged_ablation="$RUNNER_TEMP/behavioral-v6-ablation-$GITHUB_RUN_ID.json"
+          staged_baselines="$RUNNER_TEMP/behavioral-v6-baselines-$GITHUB_RUN_ID.json"
+          staged_gate="$RUNNER_TEMP/behavioral-v6-baseline-gate-$GITHUB_RUN_ID.json"
+          staged_log="$RUNNER_TEMP/behavioral-v6-baseline-gate-$GITHUB_RUN_ID.log"
+          sudo cp '${{ steps.preflight.outputs.ablation }}' "$staged_ablation"
+          sudo cp '${{ steps.preflight.outputs.baselines }}' "$staged_baselines"
+          sudo chown "$(id -u):$(id -g)" "$staged_ablation" "$staged_baselines"
+          BEHAVIORAL_V6_ABLATION_SUMMARY_PATH="$staged_ablation" \
+          BEHAVIORAL_V6_BASELINE_REPORT_PATH="$staged_baselines" \
+          BEHAVIORAL_V6_ABLATION_BASELINE_GATE_PATH="$staged_gate" \
+            node scripts/compare-recommendation-behavioral-v6-ablation-to-baselines.mjs > "$staged_log"
+          jq -e '
+            .schemaVersion == 1 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_ABLATION_BASELINE_GATE" and
+            .trainingPerformed == false and
+            .valueTrainingPerformed == false and
+            .futureTestEvaluated == false and
+            .source.choiceSetDefinition == "MERGED_TOP_96" and
+            .fullTrainingAuthorized == false and
+            .valueV8TrainingAuthorized == false
+          ' "$staged_gate"
+          sudo install -m 0644 "$staged_gate" '${{ steps.preflight.outputs.output }}/report.json'
+          sudo install -m 0644 "$staged_log" '${{ steps.preflight.outputs.output }}/comparison.log'
+          rm -f "$staged_ablation" "$staged_baselines" "$staged_gate" "$staged_log"
+
+      - name: Upload gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-behavioral-v6-ablation-baseline-gate-${{ github.run_id }}
+          path: /var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v6-ablation-baseline-gate-v1
+          if-no-files-found: warn
+          retention-days: 7
