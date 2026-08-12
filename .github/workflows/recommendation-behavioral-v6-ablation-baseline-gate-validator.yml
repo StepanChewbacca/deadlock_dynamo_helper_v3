@@ -1,0 +1,39 @@
+name: Recommendation Behavioral V6 Ablation Baseline Gate Validator
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/compare-recommendation-behavioral-v6-ablation-to-baselines.mjs'
+      - '.github/workflows/recommendation-behavioral-v6-ablation-baseline-gate-validator.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate baseline gate contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          script='scripts/compare-recommendation-behavioral-v6-ablation-to-baselines.mjs'
+          node --check "$script"
+          grep -q 'MERGED_TOP_96_AGGREGATED_OPTIMIZER_STREAMING_2' "$script"
+          grep -q 'AGGREGATE_DATA_GRADIENT_THEN_SINGLE_L2_UPDATE_PER_PARAMETER' "$script"
+          grep -q 'RAW_SOFTMAX_WITHIN_DECISION' "$script"
+          grep -q 'preferredSupportBeatsBaselineEnvelope' "$script"
+          grep -q 'preferredRawLogLossBeatsBaselineEnvelope' "$script"
+          grep -q "'GROUPED_BOOSTED_LISTWISE'" "$script"
+          grep -q 'fullTrainingAuthorized: false' "$script"
+          grep -q 'valueV8TrainingAuthorized: false' "$script"
+          grep -q 'futureTestEvaluated: false' "$script"
