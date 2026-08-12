@@ -33,23 +33,33 @@ jobs:
             .valueTrainingAuthorized == false and
             .productionChangesAuthorized == false
           ' "$request"
-          node --check scripts/analyze-recommendation-behavioral-v5-2-root-cause.mjs
+          node --check scripts/analyze-recommendation-behavioral-v5-2-root-cause-v2.mjs
+
+      - name: Stage immutable evidence read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          root='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          stage='/tmp/recommendation-behavioral-v5-2-root-cause-input'
+          sudo rm -rf "$stage"
+          sudo mkdir -p "$stage/v52/a" "$stage/v52/b" "$stage/v52/c"
+          sudo cp "$root/recommendation-behavioral-v5-1-sweep-b-v1/diagnostic-sample.ndjson.gz" "$stage/sample.ndjson.gz"
+          for variant in a b c; do
+            sudo cp "$root/recommendation-behavioral-v5-2-bounded-v8-background/$variant/evaluation.json" "$stage/v52/$variant/evaluation.json"
+          done
+          sudo chown -R "$(id -u):$(id -g)" "$stage"
+          sha256sum "$stage/sample.ndjson.gz"
+          find "$stage" -type f -maxdepth 3 -printf '%p %s bytes\n' | sort
 
       - name: Analyze immutable pinned sample and completed evaluations
         shell: bash
         env:
-          BEHAVIORAL_SAMPLE_PATH: /var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v5-1-sweep-b-v1/diagnostic-sample.ndjson.gz
-          BEHAVIORAL_V51_EVALUATION_PATH: /var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v5-1-sweep-b-v1/evaluation.json
-          BEHAVIORAL_V52_OUTPUT_DIR: /var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v5-2-bounded-v8-background
+          BEHAVIORAL_SAMPLE_PATH: /tmp/recommendation-behavioral-v5-2-root-cause-input/sample.ndjson.gz
+          BEHAVIORAL_V52_OUTPUT_DIR: /tmp/recommendation-behavioral-v5-2-root-cause-input/v52
           ROOT_CAUSE_REPORT_PATH: /tmp/recommendation-behavioral-v5-2-root-cause.json
         run: |
           set -euo pipefail
-          test -s "$BEHAVIORAL_SAMPLE_PATH"
-          test -s "$BEHAVIORAL_V51_EVALUATION_PATH"
-          test -s "$BEHAVIORAL_V52_OUTPUT_DIR/a/evaluation.json"
-          test -s "$BEHAVIORAL_V52_OUTPUT_DIR/b/evaluation.json"
-          test -s "$BEHAVIORAL_V52_OUTPUT_DIR/c/evaluation.json"
-          node scripts/analyze-recommendation-behavioral-v5-2-root-cause.mjs
+          node scripts/analyze-recommendation-behavioral-v5-2-root-cause-v2.mjs
 
       - name: Upload root cause evidence
         uses: actions/upload-artifact@v4
