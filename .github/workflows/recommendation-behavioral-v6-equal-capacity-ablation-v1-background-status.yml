@@ -1,0 +1,40 @@
+name: Recommendation Behavioral V6 Equal Capacity Ablation V1 Status
+
+on:
+  pull_request:
+    paths:
+      - '.github/training-requests/recommendation-behavioral-v6-equal-capacity-ablation-v1-status.json'
+
+permissions:
+  contents: read
+
+jobs:
+  status:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read persisted ablation status
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/training-requests/recommendation-behavioral-v6-equal-capacity-ablation-v1-status.json'
+          jq -e '.schemaVersion == 1 and .operation == "RECOMMENDATION_BEHAVIORAL_V6_EQUAL_CAPACITY_ABLATION_STATUS" and .trainingAuthorized == false and .productionChangesAuthorized == false' "$request"
+          output='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v6-equal-capacity-ablation-v1-background'
+          echo 'Persisted files:'
+          sudo find "$output" -maxdepth 2 -type f -printf '%P %s bytes\n' 2>/dev/null | sort || true
+          echo 'Background status:'
+          sudo cat "$output/background-status.json" 2>/dev/null || true
+          echo 'Background launch:'
+          sudo cat "$output/background-launch.json" 2>/dev/null || true
+          echo 'Systemd/container:'
+          sudo systemctl list-units --type=service --all --no-legend | grep 'deadlock-behavioral-v6-ablation-v1-' || true
+          sudo docker ps -a --format '{{.Names}} {{.Status}}' | grep 'deadlock-behavioral-v6-ablation-v1-' || true
+          echo 'Progress log tail:'
+          sudo tail -n 80 "$output/container.log" 2>/dev/null || true
+          echo 'Ablation summary:'
+          if sudo test -s "$output/ablation-summary.json"; then
+            sudo jq '{schemaVersion,operation,source,choiceSet,commonConfiguration,preferredVariant,towerRecommended,anyReleaseEligible,nextFamilyRecommended,results}' "$output/ablation-summary.json"
+          fi
