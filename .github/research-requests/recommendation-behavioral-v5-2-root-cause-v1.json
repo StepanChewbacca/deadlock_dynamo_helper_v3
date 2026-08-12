@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "operation": "RECOMMENDATION_BEHAVIORAL_V5_2_ROOT_CAUSE_DIAGNOSTIC",
+  "trainingAuthorized": false,
+  "valueTrainingAuthorized": false,
+  "productionChangesAuthorized": false
+}
