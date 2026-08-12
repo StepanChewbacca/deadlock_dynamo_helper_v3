@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "operation": "RECOMMENDATION_BEHAVIORAL_V6_CHOICE_SET_AUDIT_STATUS",
+  "trainingAuthorized": false,
+  "productionChangesAuthorized": false
+}
