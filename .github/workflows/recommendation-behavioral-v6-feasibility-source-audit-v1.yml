@@ -1,0 +1,208 @@
+name: Recommendation Behavioral V6 Feasibility Source Audit V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/research-requests/recommendation-behavioral-v6-feasibility-source-audit-v1.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v6-feasibility-source-audit-v1
+  cancel-in-progress: true
+
+jobs:
+  audit-feasibility-sources:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate read-only request
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/research-requests/recommendation-behavioral-v6-feasibility-source-audit-v1.json'
+          jq -e '
+            .schemaVersion == 1 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_FEASIBILITY_SOURCE_AUDIT" and
+            .trainingAuthorized == false and
+            .valueTrainingAuthorized == false and
+            .productionChangesAuthorized == false
+          ' "$request"
+
+      - name: Audit raw timeline and PostgreSQL fields
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/recommendation-behavioral-v6-feasibility-source-audit-$GITHUB_RUN_ID"
+          rm -rf "$evidence_dir"
+          mkdir -p "$evidence_dir"
+
+          sudo python3 - "$evidence_dir/report.json" <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
+
+          report_path = sys.argv[1]
+          storage = '/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          timeline_root = os.path.join(storage, 'match-timeline-events-v1')
+          currency_pattern = re.compile(r'(soul|gold|money|currency|wallet|spend|credit|cash|worth)', re.I)
+          exact_affordability_pattern = re.compile(
+              r'(^|_)(spendable_?souls?|current_?souls?|souls?|gold|money|currency|wallet|cash|credits?)(_|$)',
+              re.I,
+          )
+
+          event_files = []
+          if os.path.isdir(timeline_root):
+              for name in sorted(os.listdir(timeline_root)):
+                  path = os.path.join(timeline_root, name, 'events.ndjson')
+                  if os.path.isfile(path):
+                      event_files.append(path)
+                  if len(event_files) >= 120:
+                      break
+
+          field_counts = {}
+          currency_fields = {}
+          player_rows = 0
+          for path in event_files:
+              try:
+                  with open(path, 'r', encoding='utf-8') as source:
+                      for line in source:
+                          if player_rows >= 50000:
+                              break
+                          try:
+                              row = json.loads(line)
+                          except Exception:
+                              continue
+                          payload = row.get('payload') or {}
+                          if payload.get('entity_type') != 'player_controller':
+                              continue
+                          player_rows += 1
+                          for key, value in payload.items():
+                              field_counts[key] = field_counts.get(key, 0) + 1
+                              if currency_pattern.search(key):
+                                  entry = currency_fields.setdefault(
+                                      key,
+                                      {'count': 0, 'sampleValues': []},
+                                  )
+                                  entry['count'] += 1
+                                  if len(entry['sampleValues']) < 10 and value not in entry['sampleValues']:
+                                      entry['sampleValues'].append(value)
+                      if player_rows >= 50000:
+                          break
+              except OSError:
+                  continue
+
+          db_columns = []
+          db_query_error = None
+          postgres_container = 'aboba-telegramovich-postgres-1'
+          sql = r'''
+          SELECT table_schema, table_name, column_name, data_type
+          FROM information_schema.columns
+          WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+            AND lower(column_name) ~ '(soul|gold|money|currency|wallet|spend|credit|cash|worth)'
+          ORDER BY table_schema, table_name, ordinal_position;
+          '''
+          try:
+              command = [
+                  'docker', 'exec', postgres_container,
+                  'psql', '-U', 'postgres', '-d', 'deadlock_builds',
+                  '-At', '-F', '\t', '-c', sql,
+              ]
+              completed = subprocess.run(
+                  command,
+                  check=True,
+                  text=True,
+                  capture_output=True,
+                  timeout=30,
+              )
+              for line in completed.stdout.splitlines():
+                  parts = line.split('\t')
+                  if len(parts) == 4:
+                      db_columns.append({
+                          'schema': parts[0],
+                          'table': parts[1],
+                          'column': parts[2],
+                          'dataType': parts[3],
+                      })
+          except Exception as error:
+              db_query_error = str(error)
+
+          timeline_affordability_fields = sorted(
+              key for key in currency_fields
+              if key.lower() != 'net_worth' and exact_affordability_pattern.search(key)
+          )
+          database_affordability_columns = [
+              entry for entry in db_columns
+              if entry['column'].lower() != 'networth'
+              and entry['column'].lower() != 'net_worth'
+              and exact_affordability_pattern.search(entry['column'])
+          ]
+          affordability_observed = bool(
+              timeline_affordability_fields or database_affordability_columns
+          )
+
+          result = {
+              'schemaVersion': 1,
+              'operation': 'RECOMMENDATION_BEHAVIORAL_V6_FEASIBILITY_SOURCE_AUDIT',
+              'trainingPerformed': False,
+              'valueTrainingPerformed': False,
+              'productionChangesPerformed': False,
+              'timeline': {
+                  'root': timeline_root,
+                  'eventFileCountScanned': len(event_files),
+                  'playerControllerRowCountScanned': player_rows,
+                  'fieldCounts': dict(sorted(field_counts.items())),
+                  'currencyLikeFields': currency_fields,
+                  'affordabilityFields': timeline_affordability_fields,
+              },
+              'database': {
+                  'container': postgres_container,
+                  'querySucceeded': db_query_error is None,
+                  'queryError': db_query_error,
+                  'currencyLikeColumns': db_columns,
+                  'affordabilityColumns': database_affordability_columns,
+              },
+              'conclusion': {
+                  'affordabilityObserved': affordability_observed,
+                  'netWorthMaySubstituteForSpendableCurrency': False,
+                  'requiresExplicitSourceBeforeAffordabilityFeature': not affordability_observed,
+              },
+          }
+          print(json.dumps(result, indent=2, sort_keys=True))
+          with open(report_path, 'w', encoding='utf-8') as output:
+              json.dump(result, output, indent=2, sort_keys=True)
+              output.write('\n')
+          PY
+          sudo chown -R "$(id -u):$(id -g)" "$evidence_dir"
+
+      - name: Verify source audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/recommendation-behavioral-v6-feasibility-source-audit-$GITHUB_RUN_ID/report.json"
+          test -s "$report"
+          jq -e '
+            .schemaVersion == 1 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_FEASIBILITY_SOURCE_AUDIT" and
+            .trainingPerformed == false and
+            .valueTrainingPerformed == false and
+            .productionChangesPerformed == false and
+            .timeline.playerControllerRowCountScanned > 0 and
+            .database.querySucceeded == true and
+            .conclusion.netWorthMaySubstituteForSpendableCurrency == false
+          ' "$report"
+
+      - name: Upload feasibility-source evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-behavioral-v6-feasibility-source-audit-${{ github.run_id }}
+          path: ${{ runner.temp }}/recommendation-behavioral-v6-feasibility-source-audit-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 7
