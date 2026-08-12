@@ -37,19 +37,28 @@ const preferred = ablation.results.find(
   (result) => result.variant === ablation.preferredVariant,
 );
 if (!preferred) {
-  throw new Error(`Preferred ablation variant ${ablation.preferredVariant} is missing.`);
+  throw new Error(
+    `Preferred ablation variant ${ablation.preferredVariant} is missing.`,
+  );
 }
 const baselineSupportCeiling = Math.max(
-  ...baselines.results.map((result) => finite(result.supportCoverage, `${result.id}.supportCoverage`)),
+  ...baselines.results.map((result) =>
+    finite(result.supportCoverage, `${result.id}.supportCoverage`),
+  ),
 );
 const baselineRawLogLossFloor = Math.min(
-  ...baselines.results.map((result) => finite(result.rawLogLoss, `${result.id}.rawLogLoss`)),
+  ...baselines.results.map((result) =>
+    finite(result.rawLogLoss, `${result.id}.rawLogLoss`),
+  ),
 );
 const bestSupportBaseline = [...baselines.results].sort(
-  (left, right) => right.supportCoverage - left.supportCoverage || left.id.localeCompare(right.id),
+  (left, right) =>
+    right.supportCoverage - left.supportCoverage ||
+    left.id.localeCompare(right.id),
 )[0];
 const bestLogLossBaseline = [...baselines.results].sort(
-  (left, right) => left.rawLogLoss - right.rawLogLoss || left.id.localeCompare(right.id),
+  (left, right) =>
+    left.rawLogLoss - right.rawLogLoss || left.id.localeCompare(right.id),
 )[0];
 const checks = {
   frozenChoiceSetPassed:
@@ -65,6 +74,10 @@ const checks = {
     ablation.source.futureTestRowCount === 0 &&
     baselines.source.futureTestRowCount === 0 &&
     baselines.futureTestEvaluated === false,
+  streamingBaselineExecution:
+    baselines.executorVersion === 'MERGED_TOP_96_BASELINES_STREAMING_2' &&
+    baselines.execution?.rowsMaterializedInHeap === false &&
+    baselines.execution?.singlePassStreamingEvaluation === true,
   rawPropensityContract:
     ablation.contracts?.probabilityContract === 'RAW_SOFTMAX_WITHIN_DECISION',
   aggregatedOptimizerContract:
@@ -76,7 +89,7 @@ const failedChecks = Object.entries(checks)
   .map(([name]) => name);
 const currentFamilyContinuationRecommended = failedChecks.length === 0;
 const report = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   operation: 'RECOMMENDATION_BEHAVIORAL_V6_ABLATION_BASELINE_GATE',
   generatedAt: new Date().toISOString(),
   trainingPerformed: false,
@@ -85,6 +98,7 @@ const report = {
   source: {
     ablationSummarySha256: sha256(ablationBytes),
     baselineReportSha256: sha256(baselineBytes),
+    baselineExecutorVersion: baselines.executorVersion,
     pinnedSampleSha256: ablation.source.pinnedSampleSha256,
     choiceSetDefinition: ablation.choiceSet.definition,
   },
@@ -134,32 +148,44 @@ function validateAblation(value) {
   if (
     value.schemaVersion !== 2 ||
     value.operation !== 'RECOMMENDATION_BEHAVIORAL_V6_EQUAL_CAPACITY_ABLATION' ||
-    value.executorVersion !== 'MERGED_TOP_96_AGGREGATED_OPTIMIZER_STREAMING_2' ||
+    value.executorVersion !==
+      'MERGED_TOP_96_AGGREGATED_OPTIMIZER_STREAMING_2' ||
     value.choiceSet?.definition !== 'MERGED_TOP_96' ||
     value.fullTrainingAuthorized !== false ||
     value.valueV8TrainingAuthorized !== false ||
     !Array.isArray(value.results) ||
     value.results.length !== 2
   ) {
-    throw new Error('Behavioral V6 ablation summary is not eligible for baseline comparison.');
+    throw new Error(
+      'Behavioral V6 ablation summary is not eligible for baseline comparison.',
+    );
   }
 }
 
 function validateBaselines(value) {
-  const expectedIds = new Set(['HISTORICAL_PRIOR', 'GENERATOR_PRIOR', 'INVERSE_RANK']);
+  const expectedIds = new Set([
+    'HISTORICAL_PRIOR',
+    'GENERATOR_PRIOR',
+    'INVERSE_RANK',
+  ]);
   if (
-    value.schemaVersion !== 1 ||
+    value.schemaVersion !== 2 ||
     value.operation !== 'RECOMMENDATION_BEHAVIORAL_V6_TOP96_BASELINE_EVALUATION' ||
+    value.executorVersion !== 'MERGED_TOP_96_BASELINES_STREAMING_2' ||
     value.trainingPerformed !== false ||
     value.valueTrainingPerformed !== false ||
     value.futureTestEvaluated !== false ||
+    value.execution?.rowsMaterializedInHeap !== false ||
+    value.execution?.singlePassStreamingEvaluation !== true ||
     value.choiceSet?.definition !== 'MERGED_TOP_96' ||
     !Array.isArray(value.results) ||
     value.results.length !== 3 ||
     value.results.some((result) => !expectedIds.delete(result.id)) ||
     expectedIds.size !== 0
   ) {
-    throw new Error('Behavioral V6 baseline report is not eligible for ablation comparison.');
+    throw new Error(
+      'Behavioral V6 baseline report is not eligible for ablation comparison.',
+    );
   }
 }
 
@@ -183,6 +209,8 @@ function sha256(value) {
 
 function assertEqual(actual, expected, label) {
   if (actual !== expected) {
-    throw new Error(`${label} mismatch: expected ${expected}, received ${actual}.`);
+    throw new Error(
+      `${label} mismatch: expected ${expected}, received ${actual}.`,
+    );
   }
 }
