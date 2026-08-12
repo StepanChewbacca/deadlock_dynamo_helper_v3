@@ -1,0 +1,62 @@
+name: Recommendation Behavioral V6 Choice Set Candidate Evaluation V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/research-requests/recommendation-behavioral-v6-choice-set-candidate-evaluation-v1.json'
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate-choice-sets:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate request and completed Stage 2 evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/research-requests/recommendation-behavioral-v6-choice-set-candidate-evaluation-v1.json'
+          jq -e '
+            .schemaVersion == 1 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_CHOICE_SET_CANDIDATE_EVALUATION" and
+            .trainingAuthorized == false and
+            .valueTrainingAuthorized == false and
+            .productionChangesAuthorized == false and
+            .futureTestAuthorized == false
+          ' "$request"
+          node --check scripts/evaluate-recommendation-behavioral-v6-choice-set-candidates.mjs
+          source='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v6-choice-set-audit-v2-background'
+          sudo jq -e '.state == "SUCCEEDED" and .exitCode == 0 and .backgroundResearch == true and .trainingPerformed == false' "$source/background-status.json"
+          sudo jq -e '.structural.mergedMatchesStoredDataset == true and .structural.allSnapshotsResolved == true and .source.futureTestRowCount == 0' "$source/choice-set-audit.json"
+          sudo test -s "$source/choice-set-rows.ndjson"
+
+      - name: Evaluate deterministic ex-ante definitions
+        shell: bash
+        run: |
+          set -euo pipefail
+          source='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v6-choice-set-audit-v2-background'
+          evidence="$RUNNER_TEMP/recommendation-behavioral-v6-choice-set-candidate-evaluation-$GITHUB_RUN_ID"
+          mkdir -p "$evidence"
+          export BEHAVIORAL_V6_CHOICE_SET_ROWS_PATH="$source/choice-set-rows.ndjson"
+          export BEHAVIORAL_V6_CHOICE_SET_CANDIDATE_REPORT_PATH="$evidence/report.json"
+          sudo --preserve-env=BEHAVIORAL_V6_CHOICE_SET_ROWS_PATH,BEHAVIORAL_V6_CHOICE_SET_CANDIDATE_REPORT_PATH node scripts/evaluate-recommendation-behavioral-v6-choice-set-candidates.mjs | tee "$evidence/evaluation.log"
+          jq -e '.source.futureTestRowCount == 0 and .source.malformedRowCount == 0 and .trainingPerformed == false and .valueTrainingPerformed == false' "$evidence/report.json"
+
+      - name: Upload choice-set candidate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-behavioral-v6-choice-set-candidate-evaluation-${{ github.run_id }}
+          path: ${{ runner.temp }}/recommendation-behavioral-v6-choice-set-candidate-evaluation-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 7
