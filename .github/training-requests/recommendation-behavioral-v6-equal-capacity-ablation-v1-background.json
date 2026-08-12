@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "operation": "RECOMMENDATION_BEHAVIORAL_V6_EQUAL_CAPACITY_ABLATION",
+  "backgroundTraining": true,
+  "trainingTimeLimit": "NONE",
+  "boundedAblationAuthorized": true,
+  "fullTrainingAuthorized": false,
+  "valueV8TrainingAuthorized": false,
+  "productionRankingChanged": false,
+  "passiveShadowAuthorized": false,
+  "randomizedCanaryAuthorized": false,
+  "futureTestAuthorized": false,
+  "choiceSetDefinition": "MERGED_TOP_96",
+  "linearHashDimension": 65536,
+  "foldCount": 5,
+  "epochs": 5,
+  "learningRate": 0.1,
+  "l2": 0.0001,
+  "outputDirectory": "recommendation-behavioral-v6-equal-capacity-ablation-v1-background",
+  "expectedDatasetSha256": "e8b11e26df37ff1e17b334eda18ea2141cfb7fa78f0a34eaf95d448c22962235",
+  "expectedDiagnosticSampleSha256": "8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac"
+}
