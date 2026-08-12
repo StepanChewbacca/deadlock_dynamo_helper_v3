@@ -1,0 +1,38 @@
+name: Recommendation Behavioral V6 Validator
+
+on:
+  pull_request:
+    paths:
+      - 'apps/api/src/deadlock-live/recommendation-behavioral-v6-choice-set.ts'
+      - 'apps/api/test/recommendation-behavioral-v6-choice-set.spec.ts'
+      - 'scripts/audit-recommendation-behavioral-v6-choice-set.mjs'
+      - '.github/workflows/recommendation-behavioral-v6-choice-set-audit-v1.yml'
+      - '.github/workflows/recommendation-behavioral-v6-validator.yml'
+      - 'docs/recommendation-behavioral-v6-feasible-choice-set-roadmap.md'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate audit executor and authorization safety
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check scripts/audit-recommendation-behavioral-v6-choice-set.mjs
+          test ! -e .github/research-requests/recommendation-behavioral-v6-choice-set-audit-v1.json
+          ! grep -R --line-number --fixed-strings 'trainingAuthorized == true' .github/workflows/recommendation-behavioral-v6-choice-set-audit-v1.yml
+          ! grep -R --line-number --fixed-strings 'valueTrainingAuthorized == true' .github/workflows/recommendation-behavioral-v6-choice-set-audit-v1.yml
+          grep -q 'futureTestEvaluated == false' .github/workflows/recommendation-behavioral-v6-choice-set-audit-v1.yml
+          grep -q 'mergedMatchesStoredDataset == true' .github/workflows/recommendation-behavioral-v6-choice-set-audit-v1.yml
