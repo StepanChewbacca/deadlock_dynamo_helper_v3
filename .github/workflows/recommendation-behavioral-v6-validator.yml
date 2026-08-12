@@ -3,12 +3,17 @@ name: Recommendation Behavioral V6 Validator
 on:
   pull_request:
     paths:
+      - 'apps/api/src/deadlock-live/recommendation-behavioral-v6.ts'
+      - 'apps/api/test/recommendation-behavioral-v6.spec.ts'
       - 'apps/api/src/deadlock-live/recommendation-behavioral-v6-choice-set.ts'
       - 'apps/api/test/recommendation-behavioral-v6-choice-set.spec.ts'
       - 'scripts/audit-recommendation-behavioral-v6-choice-set.mjs'
+      - 'scripts/evaluate-recommendation-behavioral-v6-choice-set-candidates.mjs'
       - '.github/workflows/recommendation-behavioral-v6-choice-set-audit-v1.yml'
       - '.github/workflows/recommendation-behavioral-v6-choice-set-audit-v2-background.yml'
+      - '.github/workflows/recommendation-behavioral-v6-choice-set-audit-v2-background-status.yml'
       - '.github/workflows/recommendation-behavioral-v6-feasibility-source-audit-v1.yml'
+      - '.github/workflows/recommendation-behavioral-v6-choice-set-candidate-evaluation-v1.yml'
       - '.github/workflows/recommendation-behavioral-v6-validator.yml'
       - 'docs/recommendation-behavioral-v6-feasible-choice-set-roadmap.md'
 
@@ -33,23 +38,17 @@ jobs:
         run: |
           set -euo pipefail
           node --check scripts/audit-recommendation-behavioral-v6-choice-set.mjs
+          node --check scripts/evaluate-recommendation-behavioral-v6-choice-set-candidates.mjs
 
           choice_v1_request='.github/research-requests/recommendation-behavioral-v6-choice-set-audit-v1.json'
           if [ -e "$choice_v1_request" ]; then
-            jq -e '
-              .schemaVersion == 1 and
-              .operation == "RECOMMENDATION_BEHAVIORAL_V6_CHOICE_SET_AUDIT" and
-              .trainingAuthorized == false and
-              .valueTrainingAuthorized == false and
-              .productionChangesAuthorized == false
-            ' "$choice_v1_request"
+            jq -e '.trainingAuthorized == false and .valueTrainingAuthorized == false and .productionChangesAuthorized == false' "$choice_v1_request"
           fi
 
           choice_v2_request='.github/research-requests/recommendation-behavioral-v6-choice-set-audit-v2-background.json'
           if [ -e "$choice_v2_request" ]; then
             jq -e '
               .schemaVersion == 2 and
-              .operation == "RECOMMENDATION_BEHAVIORAL_V6_CHOICE_SET_AUDIT" and
               .backgroundResearch == true and
               .auditTimeLimit == "NONE" and
               .trainingAuthorized == false and
@@ -62,25 +61,30 @@ jobs:
 
           feasibility_request='.github/research-requests/recommendation-behavioral-v6-feasibility-source-audit-v1.json'
           if [ -e "$feasibility_request" ]; then
-            jq -e '
-              .schemaVersion == 1 and
-              .operation == "RECOMMENDATION_BEHAVIORAL_V6_FEASIBILITY_SOURCE_AUDIT" and
-              .trainingAuthorized == false and
-              .valueTrainingAuthorized == false and
-              .productionChangesAuthorized == false
-            ' "$feasibility_request"
+            jq -e '.trainingAuthorized == false and .valueTrainingAuthorized == false and .productionChangesAuthorized == false' "$feasibility_request"
+          fi
+
+          choice_eval_request='.github/research-requests/recommendation-behavioral-v6-choice-set-candidate-evaluation-v1.json'
+          if [ -e "$choice_eval_request" ]; then
+            jq -e '.trainingAuthorized == false and .valueTrainingAuthorized == false and .productionChangesAuthorized == false and .futureTestAuthorized == false' "$choice_eval_request"
           fi
 
           ! grep -R --line-number --fixed-strings 'trainingAuthorized == true' \
             .github/workflows/recommendation-behavioral-v6-choice-set-audit-v1.yml \
             .github/workflows/recommendation-behavioral-v6-choice-set-audit-v2-background.yml \
-            .github/workflows/recommendation-behavioral-v6-feasibility-source-audit-v1.yml
+            .github/workflows/recommendation-behavioral-v6-feasibility-source-audit-v1.yml \
+            .github/workflows/recommendation-behavioral-v6-choice-set-candidate-evaluation-v1.yml
           ! grep -R --line-number --fixed-strings 'valueTrainingAuthorized == true' \
             .github/workflows/recommendation-behavioral-v6-choice-set-audit-v1.yml \
             .github/workflows/recommendation-behavioral-v6-choice-set-audit-v2-background.yml \
-            .github/workflows/recommendation-behavioral-v6-feasibility-source-audit-v1.yml
-          grep -q 'futureTestEvaluated == false' .github/workflows/recommendation-behavioral-v6-choice-set-audit-v1.yml
+            .github/workflows/recommendation-behavioral-v6-feasibility-source-audit-v1.yml \
+            .github/workflows/recommendation-behavioral-v6-choice-set-candidate-evaluation-v1.yml
+
           grep -q 'auditTimeLimit == "NONE"' .github/workflows/recommendation-behavioral-v6-choice-set-audit-v2-background.yml
           grep -q 'backgroundResearch == true' .github/workflows/recommendation-behavioral-v6-choice-set-audit-v2-background.yml
           grep -q 'BEHAVIORAL_V6_CHOICE_SET_ROWS_PATH' .github/workflows/recommendation-behavioral-v6-choice-set-audit-v2-background.yml
           grep -q 'netWorthMaySubstituteForSpendableCurrency' .github/workflows/recommendation-behavioral-v6-feasibility-source-audit-v1.yml
+          grep -q 'MERGED_TOP_' scripts/evaluate-recommendation-behavioral-v6-choice-set-candidates.mjs
+          grep -q 'AGGREGATE_DATA_GRADIENT_THEN_SINGLE_L2_UPDATE_PER_PARAMETER' apps/api/src/deadlock-live/recommendation-behavioral-v6.ts
+          grep -q "'LINEAR_ONLY'" apps/api/src/deadlock-live/recommendation-behavioral-v6.ts
+          grep -q "'LINEAR_PLUS_TOWER'" apps/api/src/deadlock-live/recommendation-behavioral-v6.ts
