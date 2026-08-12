@@ -1,0 +1,40 @@
+name: Recommendation Behavioral V6 Choice Set Audit V2 Background Status
+
+on:
+  pull_request:
+    paths:
+      - '.github/research-requests/recommendation-behavioral-v6-choice-set-audit-v2-background-status.json'
+
+permissions:
+  contents: read
+
+jobs:
+  status:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read background audit status
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/research-requests/recommendation-behavioral-v6-choice-set-audit-v2-background-status.json'
+          jq -e '.schemaVersion == 1 and .operation == "RECOMMENDATION_BEHAVIORAL_V6_CHOICE_SET_AUDIT_STATUS" and .trainingAuthorized == false and .productionChangesAuthorized == false' "$request"
+          output='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v6-choice-set-audit-v2-background'
+          echo 'Output directory:'
+          sudo find "$output" -maxdepth 1 -type f -printf '%f %s bytes\n' 2>/dev/null | sort || true
+          echo 'Status:'
+          sudo cat "$output/background-status.json" 2>/dev/null || true
+          echo 'Launch:'
+          sudo cat "$output/background-launch.json" 2>/dev/null || true
+          echo 'Running service/container:'
+          sudo systemctl list-units --type=service --all --no-legend | grep 'deadlock-behavioral-v6-choice-set-audit-v2-' || true
+          sudo docker ps -a --format '{{.Names}} {{.Status}}' | grep 'deadlock-behavioral-v6-choice-set-audit-v2-' || true
+          echo 'Audit log tail:'
+          sudo tail -n 40 "$output/audit.log" 2>/dev/null || true
+          echo 'Report summary:'
+          if sudo test -s "$output/choice-set-audit.json"; then
+            sudo jq '{schemaVersion,source,structural,overall,rowEvidence}' "$output/choice-set-audit.json"
+          fi
