@@ -1,0 +1,245 @@
+name: Recommendation Behavioral V6 Equal Capacity Ablation V2 Background
+
+on:
+  pull_request:
+    paths:
+      - '.github/training-requests/recommendation-behavioral-v6-equal-capacity-ablation-v2-background.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v6-equal-capacity-background-launch
+  cancel-in-progress: false
+
+jobs:
+  launch-background-ablation:
+    runs-on: self-hosted
+    timeout-minutes: 15
+    steps:
+      - name: Checkout requested implementation
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js for preflight
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Inspect capacity and refuse duplicate training
+        shell: bash
+        run: |
+          set -euo pipefail
+          df -h /
+          free -h
+          sudo docker system df || true
+
+          free_kb="$(df --output=avail -k / | tail -n 1 | tr -d ' ')"
+          mem_available_kb="$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)"
+          swap_free_kb="$(awk '/SwapFree:/ {print $2}' /proc/meminfo)"
+          test "$free_kb" -ge $((12 * 1024 * 1024))
+          test "$mem_available_kb" -ge $((6 * 1024 * 1024))
+          test "$swap_free_kb" -ge $((4 * 1024 * 1024))
+
+          if sudo docker ps --format '{{.Names}}' | grep -qE '^deadlock-behavioral-v6-ablation-v(1|2)-'; then
+            echo 'Behavioral V6 ablation container is already running.' >&2
+            exit 1
+          fi
+          if sudo systemctl list-units --type=service --state=running --no-legend | grep -qE 'deadlock-behavioral-v6-ablation-v(1|2)-'; then
+            echo 'Behavioral V6 ablation service is already running.' >&2
+            exit 1
+          fi
+
+      - name: Validate authorization, lineage, and frozen choice set
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/training-requests/recommendation-behavioral-v6-equal-capacity-ablation-v2-background.json'
+          test -s "$request"
+          jq -e '
+            .schemaVersion == 2 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_EQUAL_CAPACITY_ABLATION" and
+            .backgroundTraining == true and
+            .trainingTimeLimit == "NONE" and
+            .boundedAblationAuthorized == true and
+            .fullTrainingAuthorized == false and
+            .valueV8TrainingAuthorized == false and
+            .productionRankingChanged == false and
+            .passiveShadowAuthorized == false and
+            .randomizedCanaryAuthorized == false and
+            .futureTestAuthorized == false and
+            .choiceSetDefinition == "MERGED_TOP_96" and
+            .linearHashDimension == 65536 and
+            .foldCount == 5 and
+            .epochs == 5 and
+            .learningRate == 0.1 and
+            .l2 == 0.0001 and
+            .outputDirectory == "recommendation-behavioral-v6-equal-capacity-ablation-v2-background" and
+            .expectedDatasetSha256 == "e8b11e26df37ff1e17b334eda18ea2141cfb7fa78f0a34eaf95d448c22962235" and
+            .expectedDiagnosticSampleSha256 == "8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac"
+          ' "$request"
+          node --check scripts/run-recommendation-behavioral-v6-equal-capacity-ablation.mjs
+          node --check scripts/evaluate-recommendation-behavioral-v6-choice-set-candidates.mjs
+          node --check scripts/apply-recommendation-behavioral-v6-hot-path-optimization.mjs
+
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          source_name='recommendation-pro-decision-dataset-v6-terminal-5000-v2'
+          sample_name='recommendation-behavioral-v5-1-sweep-b-v1'
+          stage2_name='recommendation-behavioral-v6-choice-set-audit-v2-background'
+          output_name="$(jq -r '.outputDirectory' "$request")"
+          source="$storage/$source_name"
+          sample="$storage/$sample_name/diagnostic-sample.ndjson.gz"
+          stage2="$storage/$stage2_name"
+          output="$storage/$output_name"
+
+          sudo test -s "$source/manifest.json"
+          sudo test -s "$source/audit.json"
+          sudo jq -e '.auditPassed == true and .trainingArtifactEligible == true' "$source/manifest.json"
+          sudo jq -e '.passed == true and .trainingArtifactEligible == true' "$source/audit.json"
+          dataset_file="$(sudo jq -r '.artifact.fileName' "$source/manifest.json")"
+          test "$(sudo sha256sum "$source/$dataset_file" | awk '{print $1}')" = 'e8b11e26df37ff1e17b334eda18ea2141cfb7fa78f0a34eaf95d448c22962235'
+          test "$(sudo sha256sum "$sample" | awk '{print $1}')" = '8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac'
+
+          sudo jq -e '.state == "SUCCEEDED" and .exitCode == 0 and .oomKilled != "true" and .trainingPerformed == false' "$stage2/background-status.json"
+          sudo jq -e '.structural.mergedMatchesStoredDataset == true and .structural.allSnapshotsResolved == true and .source.futureTestRowCount == 0 and .rowEvidence.rowCount == 44979' "$stage2/choice-set-audit.json"
+          sudo test -s "$stage2/choice-set-rows.ndjson"
+
+          if sudo test -e "$output"; then
+            echo "Refusing destructive reuse of existing output: $output" >&2
+            exit 1
+          fi
+          sudo mkdir "$output"
+
+          staged_rows="$RUNNER_TEMP/recommendation-behavioral-v6-choice-set-rows-$GITHUB_RUN_ID.ndjson"
+          staged_report="$RUNNER_TEMP/recommendation-behavioral-v6-choice-set-report-$GITHUB_RUN_ID.json"
+          staged_log="$RUNNER_TEMP/recommendation-behavioral-v6-choice-set-evaluation-$GITHUB_RUN_ID.log"
+          sudo cp "$stage2/choice-set-rows.ndjson" "$staged_rows"
+          sudo chown "$(id -u):$(id -g)" "$staged_rows"
+          BEHAVIORAL_V6_CHOICE_SET_ROWS_PATH="$staged_rows" \
+          BEHAVIORAL_V6_CHOICE_SET_CANDIDATE_REPORT_PATH="$staged_report" \
+            node scripts/evaluate-recommendation-behavioral-v6-choice-set-candidates.mjs \
+            > "$staged_log"
+          rm -f "$staged_rows"
+          jq -e '
+            .source.futureTestRowCount == 0 and
+            .source.malformedRowCount == 0 and
+            .recommendation.candidateDefinitionId == "MERGED_TOP_96" and
+            (.variants[] | select(.id == "MERGED_TOP_96") | .gate.passed == true and .overall.observedCoverage >= 0.99 and .gate.lowCoverageMajorGroupCount == 0)
+          ' "$staged_report"
+          choice_set_sha="$(sha256sum "$staged_report" | awk '{print $1}')"
+          sudo install -m 0644 "$staged_report" "$output/choice-set-candidate-evaluation.json"
+          sudo install -m 0644 "$staged_log" "$output/choice-set-candidate-evaluation.log"
+          rm -f "$staged_report" "$staged_log"
+
+          {
+            echo "storage=$storage"
+            echo "source_name=$source_name"
+            echo "sample_name=$sample_name"
+            echo "output_name=$output_name"
+            echo "output=$output"
+            echo "choice_set_sha=$choice_set_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Apply V6 hot-path optimization
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/apply-recommendation-behavioral-v6-hot-path-optimization.mjs
+          git diff --check
+          grep -q 'validateRecommendationBehavioralV6ModelHeader' apps/api/src/deadlock-live/recommendation-behavioral-v6.ts
+          grep -q 'export function validateRecommendationBehavioralV6Model' apps/api/src/deadlock-live/recommendation-behavioral-v6.ts
+
+      - name: Build isolated Behavioral V6 image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo docker build \
+            --label deadlock.recommendation.operation=behavioral-v6-equal-capacity-ablation-v2 \
+            --label deadlock.recommendation.git-sha="$GITHUB_SHA" \
+            -t "deadlock-behavioral-v6-ablation-v2:$GITHUB_RUN_ID" \
+            .
+
+      - name: Launch ablation as detached systemd service
+        id: launch
+        shell: bash
+        run: |
+          set -euo pipefail
+          storage='${{ steps.preflight.outputs.storage }}'
+          source_name='${{ steps.preflight.outputs.source_name }}'
+          sample_name='${{ steps.preflight.outputs.sample_name }}'
+          output_name='${{ steps.preflight.outputs.output_name }}'
+          output='${{ steps.preflight.outputs.output }}'
+          choice_set_sha='${{ steps.preflight.outputs.choice_set_sha }}'
+          image="deadlock-behavioral-v6-ablation-v2:$GITHUB_RUN_ID"
+          container_name="deadlock-behavioral-v6-ablation-v2-$GITHUB_RUN_ID"
+          unit="deadlock-behavioral-v6-ablation-v2-$GITHUB_RUN_ID"
+          launcher="/var/tmp/$unit.sh"
+
+          cat <<EOF | sudo tee "$launcher" >/dev/null
+          #!/usr/bin/env bash
+          set -uo pipefail
+          output='$output'
+          image='$image'
+          container_name='$container_name'
+          launcher='$launcher'
+          started_at="\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq -n --arg state RUNNING --arg startedAt "\$started_at" --arg unit '$unit' --arg container '$container_name' --arg image '$image' --arg choiceSetSha '$choice_set_sha' '{schemaVersion:2,state:\$state,startedAt:\$startedAt,unit:\$unit,container:\$container,image:\$image,choiceSetSha256:\$choiceSetSha,trainingTimeLimit:"NONE",backgroundTraining:true}' > "\$output/background-status.json"
+          set +e
+          docker run \
+            --name "\$container_name" \
+            --network none \
+            --read-only \
+            --memory 6g \
+            --memory-swap 10g \
+            --tmpfs /tmp:rw,nosuid,nodev,size=512m \
+            -e NODE_OPTIONS=--max-old-space-size=4096 \
+            -e DEADLOCK_RECOMMENDATION_BEHAVIORAL_V6_SOURCE_DIR='/app/apps/api/storage/$source_name' \
+            -e BEHAVIORAL_V6_SAMPLE_PATH='/app/apps/api/storage/$sample_name/diagnostic-sample.ndjson.gz' \
+            -e BEHAVIORAL_V6_CHOICE_SET_REPORT_PATH='/app/apps/api/storage/$output_name/choice-set-candidate-evaluation.json' \
+            -e BEHAVIORAL_V6_ABLATION_OUTPUT_DIR='/app/apps/api/storage/$output_name' \
+            -e EXPECTED_DATASET_SHA256='e8b11e26df37ff1e17b334eda18ea2141cfb7fa78f0a34eaf95d448c22962235' \
+            -e EXPECTED_DIAGNOSTIC_SAMPLE_SHA256='8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac' \
+            -v '$storage/$source_name:/app/apps/api/storage/$source_name:ro' \
+            -v '$storage/$sample_name:/app/apps/api/storage/$sample_name:ro' \
+            -v '$storage/$output_name:/app/apps/api/storage/$output_name:rw' \
+            "\$image" node /app/scripts/run-recommendation-behavioral-v6-equal-capacity-ablation.mjs \
+            > "\$output/container.log" 2>&1
+          exit_code=\$?
+          set -e
+          finished_at="\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          docker inspect "\$container_name" > "\$output/container-inspect.json" 2>/dev/null || true
+          oom_killed="\$(docker inspect -f '{{.State.OOMKilled}}' "\$container_name" 2>/dev/null || echo unknown)"
+          if [ "\$exit_code" -eq 0 ] && [ -s "\$output/ablation-summary.json" ]; then state=SUCCEEDED; else state=FAILED; fi
+          jq -n --arg state "\$state" --arg startedAt "\$started_at" --arg finishedAt "\$finished_at" --arg unit '$unit' --arg container '$container_name' --arg image '$image' --arg choiceSetSha '$choice_set_sha' --argjson exitCode "\$exit_code" --arg oomKilled "\$oom_killed" '{schemaVersion:2,state:\$state,startedAt:\$startedAt,finishedAt:\$finishedAt,unit:\$unit,container:\$container,image:\$image,choiceSetSha256:\$choiceSetSha,exitCode:\$exitCode,oomKilled:\$oomKilled,trainingTimeLimit:"NONE",backgroundTraining:true}' > "\$output/background-status.json"
+          docker rm -f "\$container_name" >/dev/null 2>&1 || true
+          docker image rm "\$image" >/dev/null 2>&1 || true
+          rm -f "\$launcher" || true
+          exit "\$exit_code"
+          EOF
+          sudo chmod 0755 "$launcher"
+
+          sudo systemd-run \
+            --collect \
+            --unit="$unit" \
+            --description="Deadlock Behavioral V6 equal-capacity ablation V2 $GITHUB_RUN_ID" \
+            --property=Restart=no \
+            "$launcher"
+
+          sleep 3
+          sudo systemctl is-active --quiet "$unit"
+          test "$(sudo jq -r '.state' "$output/background-status.json")" = 'RUNNING'
+          jq -n --arg runId "$GITHUB_RUN_ID" --arg unit "$unit" --arg outputDirectory "$output_name" --arg image "$image" --arg choiceSetSha "$choice_set_sha" '{schemaVersion:2,launcherRunId:$runId,unit:$unit,outputDirectory:$outputDirectory,image:$image,choiceSetSha256:$choiceSetSha,backgroundTraining:true,trainingTimeLimit:"NONE"}' \
+            | sudo tee "$output/background-launch.json" >/dev/null
+          echo "unit=$unit" >> "$GITHUB_OUTPUT"
+
+      - name: Confirm background launcher
+        shell: bash
+        run: |
+          set -euo pipefail
+          unit='${{ steps.launch.outputs.unit }}'
+          output='${{ steps.preflight.outputs.output }}'
+          sudo systemctl status "$unit" --no-pager -l || true
+          sudo cat "$output/background-status.json"
+          test "$(sudo jq -r '.state' "$output/background-status.json")" = 'RUNNING'
