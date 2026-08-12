@@ -17,6 +17,7 @@ on:
       - '.github/workflows/recommendation-behavioral-v6-feasibility-source-audit-v1.yml'
       - '.github/workflows/recommendation-behavioral-v6-choice-set-candidate-evaluation-v1.yml'
       - '.github/workflows/recommendation-behavioral-v6-equal-capacity-ablation-v1-background.yml'
+      - '.github/workflows/recommendation-behavioral-v6-equal-capacity-ablation-v2-background.yml'
       - '.github/workflows/recommendation-behavioral-v6-validator.yml'
       - 'docs/recommendation-behavioral-v6-feasible-choice-set-roadmap.md'
 
@@ -74,8 +75,8 @@ jobs:
             jq -e '.trainingAuthorized == false and .valueTrainingAuthorized == false and .productionChangesAuthorized == false and .futureTestAuthorized == false' "$choice_eval_request"
           fi
 
-          ablation_request='.github/training-requests/recommendation-behavioral-v6-equal-capacity-ablation-v1-background.json'
-          if [ -e "$ablation_request" ]; then
+          ablation_v1_request='.github/training-requests/recommendation-behavioral-v6-equal-capacity-ablation-v1-background.json'
+          if [ -e "$ablation_v1_request" ]; then
             jq -e '
               .schemaVersion == 1 and
               .operation == "RECOMMENDATION_BEHAVIORAL_V6_EQUAL_CAPACITY_ABLATION" and
@@ -95,7 +96,31 @@ jobs:
               .learningRate == 0.1 and
               .l2 == 0.0001 and
               .outputDirectory == "recommendation-behavioral-v6-equal-capacity-ablation-v1-background"
-            ' "$ablation_request"
+            ' "$ablation_v1_request"
+          fi
+
+          ablation_v2_request='.github/training-requests/recommendation-behavioral-v6-equal-capacity-ablation-v2-background.json'
+          if [ -e "$ablation_v2_request" ]; then
+            jq -e '
+              .schemaVersion == 2 and
+              .operation == "RECOMMENDATION_BEHAVIORAL_V6_EQUAL_CAPACITY_ABLATION" and
+              .backgroundTraining == true and
+              .trainingTimeLimit == "NONE" and
+              .boundedAblationAuthorized == true and
+              .fullTrainingAuthorized == false and
+              .valueV8TrainingAuthorized == false and
+              .productionRankingChanged == false and
+              .passiveShadowAuthorized == false and
+              .randomizedCanaryAuthorized == false and
+              .futureTestAuthorized == false and
+              .choiceSetDefinition == "MERGED_TOP_96" and
+              .linearHashDimension == 65536 and
+              .foldCount == 5 and
+              .epochs == 5 and
+              .learningRate == 0.1 and
+              .l2 == 0.0001 and
+              .outputDirectory == "recommendation-behavioral-v6-equal-capacity-ablation-v2-background"
+            ' "$ablation_v2_request"
           fi
 
           ! grep -R --line-number --fixed-strings 'trainingAuthorized == true' \
@@ -121,3 +146,7 @@ jobs:
           grep -q 'trainingTimeLimit == "NONE"' .github/workflows/recommendation-behavioral-v6-equal-capacity-ablation-v1-background.yml
           grep -q 'systemd-run' .github/workflows/recommendation-behavioral-v6-equal-capacity-ablation-v1-background.yml
           ! grep -q 'timeout .*run-recommendation-behavioral-v6-equal-capacity-ablation' .github/workflows/recommendation-behavioral-v6-equal-capacity-ablation-v1-background.yml
+          grep -q 'trainingTimeLimit == "NONE"' .github/workflows/recommendation-behavioral-v6-equal-capacity-ablation-v2-background.yml
+          grep -q 'systemd-run' .github/workflows/recommendation-behavioral-v6-equal-capacity-ablation-v2-background.yml
+          grep -q 'sudo install -m 0644' .github/workflows/recommendation-behavioral-v6-equal-capacity-ablation-v2-background.yml
+          ! grep -q 'timeout .*run-recommendation-behavioral-v6-equal-capacity-ablation' .github/workflows/recommendation-behavioral-v6-equal-capacity-ablation-v2-background.yml
