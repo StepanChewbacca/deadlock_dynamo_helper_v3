@@ -1,6 +1,0 @@
-{
-  "schemaVersion": 1,
-  "operation": "RECOMMENDATION_TIMELINE_PLAYER_FIELD_AUDIT",
-  "trainingAuthorized": false,
-  "productionChangesAuthorized": false
-}
