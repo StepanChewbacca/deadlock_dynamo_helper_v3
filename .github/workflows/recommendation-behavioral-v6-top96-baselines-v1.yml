@@ -1,0 +1,111 @@
+name: Recommendation Behavioral V6 Top96 Baselines V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/research-requests/recommendation-behavioral-v6-top96-baselines-v1.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v6-top96-baselines-v1
+  cancel-in-progress: false
+
+jobs:
+  evaluate-baselines:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate read-only request and frozen inputs
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/research-requests/recommendation-behavioral-v6-top96-baselines-v1.json'
+          jq -e '
+            .schemaVersion == 1 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_TOP96_BASELINE_EVALUATION" and
+            .trainingAuthorized == false and
+            .valueTrainingAuthorized == false and
+            .productionChangesAuthorized == false and
+            .futureTestAuthorized == false and
+            .choiceSetDefinition == "MERGED_TOP_96" and
+            .outputDirectory == "recommendation-behavioral-v6-top96-baselines-v1" and
+            .expectedDiagnosticSampleSha256 == "8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac"
+          ' "$request"
+          node --check scripts/evaluate-recommendation-behavioral-v6-top96-baselines.mjs
+
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          sample="$storage/recommendation-behavioral-v5-1-sweep-b-v1/diagnostic-sample.ndjson.gz"
+          choice_report="$storage/recommendation-behavioral-v6-equal-capacity-ablation-v2-background/choice-set-candidate-evaluation.json"
+          output="$storage/recommendation-behavioral-v6-top96-baselines-v1"
+          test "$(sudo sha256sum "$sample" | awk '{print $1}')" = '8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac'
+          sudo test -s "$choice_report"
+          sudo jq -e '
+            .schemaVersion == 1 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_CHOICE_SET_CANDIDATE_EVALUATION" and
+            .futureTestEvaluated == false and
+            .recommendation.candidateDefinitionId == "MERGED_TOP_96" and
+            (.variants[] | select(.id == "MERGED_TOP_96") | .gate.passed == true)
+          ' "$choice_report"
+          if sudo test -e "$output"; then
+            echo "Refusing destructive reuse of existing baseline output: $output" >&2
+            exit 1
+          fi
+          sudo mkdir "$output"
+          echo "storage=$storage" >> "$GITHUB_OUTPUT"
+          echo "sample=$sample" >> "$GITHUB_OUTPUT"
+          echo "choice_report=$choice_report" >> "$GITHUB_OUTPUT"
+          echo "output=$output" >> "$GITHUB_OUTPUT"
+
+      - name: Evaluate no-training baselines
+        shell: bash
+        run: |
+          set -euo pipefail
+          sample='${{ steps.preflight.outputs.sample }}'
+          choice_report='${{ steps.preflight.outputs.choice_report }}'
+          output='${{ steps.preflight.outputs.output }}'
+          staged_sample="$RUNNER_TEMP/behavioral-v6-top96-baseline-sample-$GITHUB_RUN_ID.ndjson.gz"
+          staged_choice="$RUNNER_TEMP/behavioral-v6-top96-choice-report-$GITHUB_RUN_ID.json"
+          staged_report="$RUNNER_TEMP/behavioral-v6-top96-baselines-$GITHUB_RUN_ID.json"
+          staged_log="$RUNNER_TEMP/behavioral-v6-top96-baselines-$GITHUB_RUN_ID.log"
+          sudo cp "$sample" "$staged_sample"
+          sudo cp "$choice_report" "$staged_choice"
+          sudo chown "$(id -u):$(id -g)" "$staged_sample" "$staged_choice"
+          BEHAVIORAL_V6_SAMPLE_PATH="$staged_sample" \
+          BEHAVIORAL_V6_CHOICE_SET_REPORT_PATH="$staged_choice" \
+          BEHAVIORAL_V6_BASELINE_REPORT_PATH="$staged_report" \
+          EXPECTED_DIAGNOSTIC_SAMPLE_SHA256='8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac' \
+            node scripts/evaluate-recommendation-behavioral-v6-top96-baselines.mjs > "$staged_log"
+          jq -e '
+            .schemaVersion == 1 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_TOP96_BASELINE_EVALUATION" and
+            .trainingPerformed == false and
+            .valueTrainingPerformed == false and
+            .futureTestEvaluated == false and
+            .source.futureTestRowCount == 0 and
+            .choiceSet.definition == "MERGED_TOP_96" and
+            .choiceSet.candidateCoverage >= 0.99 and
+            (.results | length) == 3
+          ' "$staged_report"
+          sudo install -m 0644 "$staged_report" "$output/report.json"
+          sudo install -m 0644 "$staged_log" "$output/evaluation.log"
+          rm -f "$staged_sample" "$staged_choice" "$staged_report" "$staged_log"
+
+      - name: Upload baseline evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-behavioral-v6-top96-baselines-${{ github.run_id }}
+          path: /var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v6-top96-baselines-v1
+          if-no-files-found: warn
+          retention-days: 7
