@@ -66,34 +66,50 @@ jobs:
                   if len(event_files) >= 120:
                       break
 
+          event_rows = 0
+          player_controller_rows = 0
+          entity_type_counts = {}
           field_counts = {}
           currency_fields = {}
-          player_rows = 0
+          currency_fields_by_entity = {}
           for path in event_files:
               try:
                   with open(path, 'r', encoding='utf-8') as source:
                       for line in source:
-                          if player_rows >= 50000:
+                          if event_rows >= 100000:
                               break
                           try:
                               row = json.loads(line)
                           except Exception:
                               continue
                           payload = row.get('payload') or {}
-                          if payload.get('entity_type') != 'player_controller':
+                          if not isinstance(payload, dict):
                               continue
-                          player_rows += 1
+                          event_rows += 1
+                          entity_type = str(payload.get('entity_type') or 'UNKNOWN')
+                          entity_type_counts[entity_type] = entity_type_counts.get(entity_type, 0) + 1
+                          if entity_type == 'player_controller':
+                              player_controller_rows += 1
                           for key, value in payload.items():
                               field_counts[key] = field_counts.get(key, 0) + 1
                               if currency_pattern.search(key):
                                   entry = currency_fields.setdefault(
                                       key,
-                                      {'count': 0, 'sampleValues': []},
+                                      {'count': 0, 'sampleValues': [], 'entityTypes': {}},
                                   )
                                   entry['count'] += 1
+                                  entry['entityTypes'][entity_type] = entry['entityTypes'].get(entity_type, 0) + 1
                                   if len(entry['sampleValues']) < 10 and value not in entry['sampleValues']:
                                       entry['sampleValues'].append(value)
-                      if player_rows >= 50000:
+                                  entity_fields = currency_fields_by_entity.setdefault(entity_type, {})
+                                  entity_entry = entity_fields.setdefault(
+                                      key,
+                                      {'count': 0, 'sampleValues': []},
+                                  )
+                                  entity_entry['count'] += 1
+                                  if len(entity_entry['sampleValues']) < 10 and value not in entity_entry['sampleValues']:
+                                      entity_entry['sampleValues'].append(value)
+                      if event_rows >= 100000:
                           break
               except OSError:
                   continue
@@ -139,8 +155,7 @@ jobs:
           )
           database_affordability_columns = [
               entry for entry in db_columns
-              if entry['column'].lower() != 'networth'
-              and entry['column'].lower() != 'net_worth'
+              if entry['column'].lower() not in ('networth', 'net_worth')
               and exact_affordability_pattern.search(entry['column'])
           ]
           affordability_observed = bool(
@@ -148,7 +163,7 @@ jobs:
           )
 
           result = {
-              'schemaVersion': 1,
+              'schemaVersion': 2,
               'operation': 'RECOMMENDATION_BEHAVIORAL_V6_FEASIBILITY_SOURCE_AUDIT',
               'trainingPerformed': False,
               'valueTrainingPerformed': False,
@@ -156,9 +171,12 @@ jobs:
               'timeline': {
                   'root': timeline_root,
                   'eventFileCountScanned': len(event_files),
-                  'playerControllerRowCountScanned': player_rows,
+                  'eventRowCountScanned': event_rows,
+                  'playerControllerRowCountScanned': player_controller_rows,
+                  'entityTypeCounts': dict(sorted(entity_type_counts.items())),
                   'fieldCounts': dict(sorted(field_counts.items())),
                   'currencyLikeFields': currency_fields,
+                  'currencyLikeFieldsByEntity': currency_fields_by_entity,
                   'affordabilityFields': timeline_affordability_fields,
               },
               'database': {
@@ -188,11 +206,12 @@ jobs:
           report="$RUNNER_TEMP/recommendation-behavioral-v6-feasibility-source-audit-$GITHUB_RUN_ID/report.json"
           test -s "$report"
           jq -e '
-            .schemaVersion == 1 and
+            .schemaVersion == 2 and
             .operation == "RECOMMENDATION_BEHAVIORAL_V6_FEASIBILITY_SOURCE_AUDIT" and
             .trainingPerformed == false and
             .valueTrainingPerformed == false and
             .productionChangesPerformed == false and
+            .timeline.eventRowCountScanned > 0 and
             .timeline.playerControllerRowCountScanned > 0 and
             .database.querySucceeded == true and
             .conclusion.netWorthMaySubstituteForSpendableCurrency == false
