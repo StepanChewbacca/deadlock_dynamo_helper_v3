@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "operation": "RECOMMENDATION_BEHAVIORAL_V6_FEASIBILITY_SOURCE_AUDIT",
+  "trainingAuthorized": false,
+  "valueTrainingAuthorized": false,
+  "productionChangesAuthorized": false
+}
