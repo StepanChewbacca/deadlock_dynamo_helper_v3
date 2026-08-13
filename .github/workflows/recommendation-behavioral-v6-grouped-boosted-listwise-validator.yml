@@ -7,7 +7,9 @@ on:
       - 'apps/api/test/recommendation-behavioral-v6-boosted-listwise.spec.ts'
       - 'scripts/run-recommendation-behavioral-v6-grouped-boosted-listwise-screen.mjs'
       - '.github/workflows/recommendation-behavioral-v6-grouped-boosted-listwise-screen-v1-background.yml'
+      - '.github/workflows/recommendation-behavioral-v6-grouped-boosted-listwise-screen-v2-background.yml'
       - '.github/training-requests/recommendation-behavioral-v6-grouped-boosted-listwise-screen-v1-background.json'
+      - '.github/training-requests/recommendation-behavioral-v6-grouped-boosted-listwise-screen-v2-background.json'
       - '.github/workflows/recommendation-behavioral-v6-grouped-boosted-listwise-validator.yml'
 
 permissions:
@@ -39,12 +41,19 @@ jobs:
           grep -q "tuningUsedForTraining: false" scripts/run-recommendation-behavioral-v6-grouped-boosted-listwise-screen.mjs
           grep -q "crossFittingPerformed: false" scripts/run-recommendation-behavioral-v6-grouped-boosted-listwise-screen.mjs
           grep -q "trainingArtifactEligible: false" scripts/run-recommendation-behavioral-v6-grouped-boosted-listwise-screen.mjs
-          grep -q 'trainingTimeLimit == "NONE"' .github/workflows/recommendation-behavioral-v6-grouped-boosted-listwise-screen-v1-background.yml
-          grep -q 'systemd-run' .github/workflows/recommendation-behavioral-v6-grouped-boosted-listwise-screen-v1-background.yml
-          ! grep -q 'timeout .*run-recommendation-behavioral-v6-grouped-boosted-listwise-screen' .github/workflows/recommendation-behavioral-v6-grouped-boosted-listwise-screen-v1-background.yml
 
-          request='.github/training-requests/recommendation-behavioral-v6-grouped-boosted-listwise-screen-v1-background.json'
-          if [ -e "$request" ]; then
+          for workflow in \
+            .github/workflows/recommendation-behavioral-v6-grouped-boosted-listwise-screen-v1-background.yml \
+            .github/workflows/recommendation-behavioral-v6-grouped-boosted-listwise-screen-v2-background.yml; do
+            grep -q 'trainingTimeLimit == "NONE"' "$workflow"
+            grep -q 'systemd-run' "$workflow"
+            ! grep -q 'timeout .*run-recommendation-behavioral-v6-grouped-boosted-listwise-screen' "$workflow"
+          done
+          grep -q 'choice-set-candidate-evaluation.json' .github/workflows/recommendation-behavioral-v6-grouped-boosted-listwise-screen-v2-background.yml
+          grep -q 'b2953bc63baff315cc66d4bdfb0ca8655e5fef0a99fc6916c782821f8c31e664' .github/workflows/recommendation-behavioral-v6-grouped-boosted-listwise-screen-v2-background.yml
+
+          request_v1='.github/training-requests/recommendation-behavioral-v6-grouped-boosted-listwise-screen-v1-background.json'
+          if [ -e "$request_v1" ]; then
             jq -e '
               .schemaVersion == 1 and
               .operation == "RECOMMENDATION_BEHAVIORAL_V6_GROUPED_BOOSTED_LISTWISE_SCREEN" and
@@ -65,5 +74,30 @@ jobs:
               .maximumLeafValue == 1.5 and
               .minimumLeafCandidateCount == 500 and
               .outputDirectory == "recommendation-behavioral-v6-grouped-boosted-listwise-screen-v1-background"
-            ' "$request"
+            ' "$request_v1"
+          fi
+
+          request_v2='.github/training-requests/recommendation-behavioral-v6-grouped-boosted-listwise-screen-v2-background.json'
+          if [ -e "$request_v2" ]; then
+            jq -e '
+              .schemaVersion == 2 and
+              .operation == "RECOMMENDATION_BEHAVIORAL_V6_GROUPED_BOOSTED_LISTWISE_SCREEN" and
+              .backgroundTraining == true and
+              .trainingTimeLimit == "NONE" and
+              .boundedScreenAuthorized == true and
+              .strictCrossFitAuthorized == false and
+              .fullTrainingAuthorized == false and
+              .valueV8TrainingAuthorized == false and
+              .productionRankingChanged == false and
+              .passiveShadowAuthorized == false and
+              .randomizedCanaryAuthorized == false and
+              .futureTestAuthorized == false and
+              .choiceSetDefinition == "MERGED_TOP_96" and
+              .treeCount == 8 and
+              .learningRate == 0.1 and
+              .leafL2 == 10 and
+              .maximumLeafValue == 1.5 and
+              .minimumLeafCandidateCount == 500 and
+              .outputDirectory == "recommendation-behavioral-v6-grouped-boosted-listwise-screen-v2-background"
+            ' "$request_v2"
           fi
