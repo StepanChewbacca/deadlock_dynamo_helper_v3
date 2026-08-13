@@ -1,0 +1,45 @@
+name: Recommendation Behavioral V6 State Reconstruction Validator
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/run-recommendation-behavioral-v6-state-reconstruction-screen.mjs'
+      - '.github/workflows/recommendation-behavioral-v6-state-reconstruction-screen-v1-background.yml'
+      - '.github/workflows/recommendation-behavioral-v6-state-reconstruction-validator.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate reconstruction contracts and launcher safety
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check scripts/run-recommendation-behavioral-v6-state-reconstruction-screen.mjs
+          grep -q "MASKED_LAST_HISTORY_STATE_RECONSTRUCTION_1" scripts/run-recommendation-behavioral-v6-state-reconstruction-screen.mjs
+          grep -q "reconstructionUsesFutureState: false" scripts/run-recommendation-behavioral-v6-state-reconstruction-screen.mjs
+          grep -q "reconstructionUsesOutcome: false" scripts/run-recommendation-behavioral-v6-state-reconstruction-screen.mjs
+          grep -q "reconstructionUsesCurrentObservedAction: false" scripts/run-recommendation-behavioral-v6-state-reconstruction-screen.mjs
+          grep -q "tuningUsedForTraining: false" scripts/run-recommendation-behavioral-v6-state-reconstruction-screen.mjs
+          grep -q "candidateProbabilityFloorApplied: false" scripts/run-recommendation-behavioral-v6-state-reconstruction-screen.mjs
+          grep -q 'trainingTimeLimit == "NONE"' .github/workflows/recommendation-behavioral-v6-state-reconstruction-screen-v1-background.yml
+          grep -q -- '--memory 6g' .github/workflows/recommendation-behavioral-v6-state-reconstruction-screen-v1-background.yml
+          grep -q -- '--memory-swap 10g' .github/workflows/recommendation-behavioral-v6-state-reconstruction-screen-v1-background.yml
+          grep -q 'latentStateSignalSupported == false' .github/workflows/recommendation-behavioral-v6-state-reconstruction-screen-v1-background.yml
+          grep -q 'boundedLatentMixtureScreenRecommended == false' .github/workflows/recommendation-behavioral-v6-state-reconstruction-screen-v1-background.yml
+          grep -q 'strictCrossFitAuthorized == false' .github/workflows/recommendation-behavioral-v6-state-reconstruction-screen-v1-background.yml
+          grep -q 'fullTrainingAuthorized == false' .github/workflows/recommendation-behavioral-v6-state-reconstruction-screen-v1-background.yml
+          grep -q 'valueV8TrainingAuthorized == false' .github/workflows/recommendation-behavioral-v6-state-reconstruction-screen-v1-background.yml
+          grep -q 'systemd-run --collect' .github/workflows/recommendation-behavioral-v6-state-reconstruction-screen-v1-background.yml
