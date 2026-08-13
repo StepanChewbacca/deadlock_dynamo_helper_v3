@@ -1,0 +1,45 @@
+name: Recommendation Behavioral V7 Historical Ledger V1
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/build-recommendation-behavioral-v7-historical-ledger.py'
+      - '.github/workflows/recommendation-behavioral-v7-historical-ledger-v1.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v7-historical-ledger-v1
+  cancel-in-progress: false
+
+jobs:
+  export:
+    runs-on: self-hosted
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Export prefix-only player observability ledger
+        shell: bash
+        run: |
+          set -euo pipefail
+          source='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/match-timeline-events-v1'
+          output='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v7-historical-ledger-v1'
+          report="$RUNNER_TEMP/v7-historical-ledger.ndjson"
+          sudo test -d "$source"
+          sudo test ! -e "$output"
+          sudo python3 scripts/build-recommendation-behavioral-v7-historical-ledger.py \
+            --timeline-root "$source" \
+            --output "$report"
+          sudo chown "$(id -u):$(id -g)" "$report" "$RUNNER_TEMP/v7-historical-ledger.manifest.json"
+          jq -e '.trainingPerformed == false and .futureTestEvaluated == false and .observedActionUsed == false and .emittedChangeEventCount > 0' "$RUNNER_TEMP/v7-historical-ledger.manifest.json"
+          sudo mkdir "$output"
+          sudo install -m 0644 "$report" "$output/ledger.ndjson"
+          sudo install -m 0644 "$RUNNER_TEMP/v7-historical-ledger.manifest.json" "$output/manifest.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-behavioral-v7-historical-ledger-v1-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/v7-historical-ledger.ndjson
+            ${{ runner.temp }}/v7-historical-ledger.manifest.json
+          retention-days: 14
