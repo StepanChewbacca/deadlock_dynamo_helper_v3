@@ -1,6 +1,0 @@
-{
-  "schemaVersion": 1,
-  "operation": "RECOMMENDATION_BEHAVIORAL_V6_STATE_RECONSTRUCTION_STATUS",
-  "trainingAuthorized": false,
-  "productionChangesAuthorized": false
-}
