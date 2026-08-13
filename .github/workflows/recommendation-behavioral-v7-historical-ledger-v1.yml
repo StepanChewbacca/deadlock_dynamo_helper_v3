@@ -1,45 +1,102 @@
-name: Recommendation Behavioral V7 Historical Ledger V1
+name: Recommendation Behavioral V7 Pinned Data Gates V1
 
 on:
   pull_request:
     paths:
-      - 'scripts/build-recommendation-behavioral-v7-historical-ledger.py'
       - '.github/workflows/recommendation-behavioral-v7-historical-ledger-v1.yml'
+      - 'scripts/export-recommendation-pro-decision-dataset-v7.mjs'
+      - 'scripts/audit-recommendation-behavioral-v7-choice-set.mjs'
+      - 'scripts/diagnose-recommendation-behavioral-v7-information-gain.mjs'
 
 permissions:
   contents: read
 
 concurrency:
-  group: recommendation-behavioral-v7-historical-ledger-v1
+  group: recommendation-behavioral-v7-pinned-data-gates-v1
   cancel-in-progress: false
 
 jobs:
-  export:
+  gates:
     runs-on: self-hosted
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-      - name: Export prefix-only player observability ledger
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Reuse immutable historical ledger and stage inputs
         shell: bash
         run: |
           set -euo pipefail
-          source='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/match-timeline-events-v1'
-          output='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v7-historical-ledger-v1'
-          report="$RUNNER_TEMP/v7-historical-ledger.ndjson"
-          sudo test -d "$source"
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          ledger="$storage/recommendation-behavioral-v7-historical-ledger-v1/ledger.ndjson"
+          temporal="$storage/recommendation-behavioral-v7-temporal-audit-v2/report.json"
+          sample="$storage/recommendation-behavioral-v5-1-sweep-b-v1/diagnostic-sample.ndjson.gz"
+          output="$storage/recommendation-behavioral-v7-pinned-data-gates-v1"
+          sudo test -s "$ledger"
+          sudo test -s "$temporal"
+          sudo test -s "$sample"
           sudo test ! -e "$output"
-          sudo python3 scripts/build-recommendation-behavioral-v7-historical-ledger.py \
-            --timeline-root "$source" \
-            --output "$report"
-          sudo chown "$(id -u):$(id -g)" "$report" "$RUNNER_TEMP/v7-historical-ledger.manifest.json"
-          jq -e '.trainingPerformed == false and .futureTestEvaluated == false and .observedActionUsed == false and .emittedChangeEventCount > 0' "$RUNNER_TEMP/v7-historical-ledger.manifest.json"
+          sudo cp "$ledger" "$RUNNER_TEMP/v7-ledger.ndjson"
+          sudo cp "$temporal" "$RUNNER_TEMP/v7-temporal.json"
+          sudo cp "$sample" "$RUNNER_TEMP/v7-source.ndjson.gz"
+          sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/v7-ledger.ndjson" "$RUNNER_TEMP/v7-temporal.json" "$RUNNER_TEMP/v7-source.ndjson.gz"
+          echo '8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac  '"$RUNNER_TEMP/v7-source.ndjson.gz" | sha256sum -c -
+
+      - name: Export pinned Dataset V7
+        shell: bash
+        env:
+          BEHAVIORAL_V7_SOURCE_DATASET_V6_PATH: ${{ runner.temp }}/v7-source.ndjson.gz
+          BEHAVIORAL_V7_TEMPORAL_AUDIT_PATH: ${{ runner.temp }}/v7-temporal.json
+          BEHAVIORAL_V7_HISTORICAL_LEDGER_PATH: ${{ runner.temp }}/v7-ledger.ndjson
+          BEHAVIORAL_V7_OUTPUT_DATASET_PATH: ${{ runner.temp }}/dataset-v7.ndjson
+          BEHAVIORAL_V7_OUTPUT_AUDIT_PATH: ${{ runner.temp }}/dataset-v7-audit.json
+        run: |
+          set -euo pipefail
+          node scripts/export-recommendation-pro-decision-dataset-v7.mjs
+          jq -e '.schemaVersion == 2 and .stageCExportPassed == true and .futureTestDecisionCount == 0 and .futureTestEvaluated == false and .newObservedDecisionCount > 0 and .observedActionInjectedCount == 0' "$BEHAVIORAL_V7_OUTPUT_AUDIT_PATH"
+          gzip -9 "$BEHAVIORAL_V7_OUTPUT_DATASET_PATH"
+          sha256sum "$RUNNER_TEMP/dataset-v7.ndjson.gz" > "$RUNNER_TEMP/dataset-v7.sha256"
+
+      - name: Audit V7 choice set
+        shell: bash
+        env:
+          BEHAVIORAL_V7_DATASET_PATH: ${{ runner.temp }}/dataset-v7.ndjson.gz
+          BEHAVIORAL_V7_CHOICE_SET_REPORT_PATH: ${{ runner.temp }}/stage-d.json
+        run: |
+          set -euo pipefail
+          node scripts/audit-recommendation-behavioral-v7-choice-set.mjs
+          jq -e '.schemaVersion == 2 and .stageDGatePassed == true and .futureTestEvaluated == false' "$BEHAVIORAL_V7_CHOICE_SET_REPORT_PATH"
+
+      - name: Measure incremental information gain
+        shell: bash
+        env:
+          BEHAVIORAL_V7_DATASET_PATH: ${{ runner.temp }}/dataset-v7.ndjson.gz
+          BEHAVIORAL_V7_INFORMATION_GAIN_REPORT_PATH: ${{ runner.temp }}/stage-e.json
+        run: |
+          set -euo pipefail
+          node scripts/diagnose-recommendation-behavioral-v7-information-gain.mjs
+          jq -e '.behavioralModelTrainingPerformed == false and .futureTestEvaluated == false and .tuningUsedForDiagnostic == false' "$BEHAVIORAL_V7_INFORMATION_GAIN_REPORT_PATH"
+
+      - name: Persist immutable data-gate evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          output='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v7-pinned-data-gates-v1'
           sudo mkdir "$output"
-          sudo install -m 0644 "$report" "$output/ledger.ndjson"
-          sudo install -m 0644 "$RUNNER_TEMP/v7-historical-ledger.manifest.json" "$output/manifest.json"
+          sudo install -m 0644 "$RUNNER_TEMP/dataset-v7.ndjson.gz" "$output/dataset.ndjson.gz"
+          sudo install -m 0644 "$RUNNER_TEMP/dataset-v7.sha256" "$output/dataset.sha256"
+          sudo install -m 0644 "$RUNNER_TEMP/dataset-v7-audit.json" "$output/dataset-audit.json"
+          sudo install -m 0644 "$RUNNER_TEMP/stage-d.json" "$output/stage-d.json"
+          sudo install -m 0644 "$RUNNER_TEMP/stage-e.json" "$output/stage-e.json"
+
       - uses: actions/upload-artifact@v4
         with:
-          name: recommendation-behavioral-v7-historical-ledger-v1-${{ github.run_id }}
+          name: recommendation-behavioral-v7-pinned-data-gates-v1-${{ github.run_id }}
           path: |
-            ${{ runner.temp }}/v7-historical-ledger.ndjson
-            ${{ runner.temp }}/v7-historical-ledger.manifest.json
+            ${{ runner.temp }}/dataset-v7-audit.json
+            ${{ runner.temp }}/dataset-v7.sha256
+            ${{ runner.temp }}/stage-d.json
+            ${{ runner.temp }}/stage-e.json
           retention-days: 14
