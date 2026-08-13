@@ -1,0 +1,64 @@
+name: Recommendation Behavioral V6 Top96 Baselines Status V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/research-requests/recommendation-behavioral-v6-top96-baselines-status-v1.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v6-top96-baselines-status-v1
+  cancel-in-progress: false
+
+jobs:
+  status:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate and stage persisted baseline evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/research-requests/recommendation-behavioral-v6-top96-baselines-status-v1.json'
+          jq -e '
+            .schemaVersion == 1 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_TOP96_BASELINE_STATUS" and
+            .trainingAuthorized == false and
+            .valueTrainingAuthorized == false and
+            .productionChangesAuthorized == false and
+            .futureTestAuthorized == false
+          ' "$request"
+
+          source='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v6-top96-baselines-v1'
+          stage="$RUNNER_TEMP/recommendation-behavioral-v6-top96-baselines-status-$GITHUB_RUN_ID"
+          mkdir -p "$stage"
+          sudo test -s "$source/report.json"
+          sudo jq -e '
+            .schemaVersion == 2 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_TOP96_BASELINE_EVALUATION" and
+            .executorVersion == "MERGED_TOP_96_BASELINES_STREAMING_2" and
+            .trainingPerformed == false and
+            .valueTrainingPerformed == false and
+            .futureTestEvaluated == false and
+            .source.futureTestRowCount == 0 and
+            .choiceSet.definition == "MERGED_TOP_96" and
+            .choiceSet.candidateCoverage >= 0.99 and
+            (.results | length) == 3
+          ' "$source/report.json"
+          sudo cp "$source/report.json" "$stage/report.json"
+          sudo cp "$source/evaluation.log" "$stage/evaluation.log"
+          sudo chown -R "$(id -u):$(id -g)" "$stage"
+          jq '{schemaVersion,operation,executorVersion,source,choiceSet,results}' "$stage/report.json"
+
+      - name: Upload persisted baseline evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-behavioral-v6-top96-baselines-status-${{ github.run_id }}
+          path: ${{ runner.temp }}/recommendation-behavioral-v6-top96-baselines-status-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 7
