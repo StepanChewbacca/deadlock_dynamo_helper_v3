@@ -164,11 +164,6 @@ function row(): RecommendationProDecisionDatasetV6Row {
       behavioralModel: true,
       exclusionReasons: [],
     },
-    source: {
-      replayPolicyVersion: 'TEST',
-      candidateGeneratorSnapshotVersion: 'TEST',
-      candidateGeneratorSnapshotSha256: 'a'.repeat(64),
-    },
   };
 }
 
