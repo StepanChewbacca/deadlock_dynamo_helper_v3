@@ -1,0 +1,45 @@
+name: Recommendation Behavioral V7 Observability Inventory V2
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/audit-recommendation-behavioral-v7-observability-root.py'
+      - '.github/workflows/recommendation-behavioral-v7-observability-inventory-v2.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v7-observability-inventory-v2
+  cancel-in-progress: false
+
+jobs:
+  inventory:
+    runs-on: self-hosted
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build read-only observability inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeline='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/match-timeline-events-v1'
+          output='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v7-observability-inventory-v2'
+          report="$RUNNER_TEMP/recommendation-behavioral-v7-observability-v2.json"
+          sudo test -d "$timeline"
+          test -d apps/api/src/deadlock-live/entities
+          sudo test ! -e "$output"
+          sudo python3 scripts/audit-recommendation-behavioral-v7-observability-root.py \
+            --timeline-root "$timeline" \
+            --entity-root apps/api/src/deadlock-live/entities \
+            --output "$report" \
+            --max-event-rows 250000
+          sudo chown "$(id -u):$(id -g)" "$report"
+          jq -e '.schemaVersion == 2 and .trainingPerformed == false and .futureTestEvaluated == false and .source.eventRowCountScanned > 0' "$report"
+          sudo mkdir "$output"
+          sudo install -m 0644 "$report" "$output/report.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-behavioral-v7-observability-inventory-v2-${{ github.run_id }}
+          path: ${{ runner.temp }}/recommendation-behavioral-v7-observability-v2.json
+          retention-days: 14
