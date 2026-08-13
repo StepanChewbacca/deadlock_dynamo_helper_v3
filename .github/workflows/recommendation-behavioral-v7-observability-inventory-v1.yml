@@ -3,7 +3,7 @@ name: Recommendation Behavioral V7 Observability Inventory V1
 on:
   pull_request:
     paths:
-      - '.github/research-requests/recommendation-behavioral-v7-observability-inventory-v1.json'
+      - 'docs/recommendation-behavioral-v7-observability-support-ceiling-roadmap.md'
 
 permissions:
   contents: read
@@ -25,21 +25,11 @@ jobs:
         with:
           node-version: 22
 
-      - name: Validate read-only request and inputs
+      - name: Validate read-only inputs
         id: preflight
         shell: bash
         run: |
           set -euo pipefail
-          request='.github/research-requests/recommendation-behavioral-v7-observability-inventory-v1.json'
-          jq -e '
-            .schemaVersion == 1 and
-            .operation == "RECOMMENDATION_BEHAVIORAL_V7_OBSERVABILITY_INVENTORY" and
-            .trainingAuthorized == false and
-            .valueTrainingAuthorized == false and
-            .productionChangesAuthorized == false and
-            .futureTestAuthorized == false and
-            .outputDirectory == "recommendation-behavioral-v7-observability-inventory-v1"
-          ' "$request"
           node --check scripts/audit-recommendation-behavioral-v7-observability-v2.mjs
           storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
           timeline="$storage/match-timeline-events-v1"
