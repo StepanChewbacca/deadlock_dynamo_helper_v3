@@ -1,0 +1,35 @@
+name: Recommendation Behavioral V7 Observability Inventory Validator
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/audit-recommendation-behavioral-v7-observability-v2.mjs'
+      - '.github/workflows/recommendation-behavioral-v7-observability-inventory-v1.yml'
+      - '.github/workflows/recommendation-behavioral-v7-observability-inventory-validator.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate inventory contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check scripts/audit-recommendation-behavioral-v7-observability-v2.mjs
+          grep -q 'TIMELINE_AND_TYPEORM_SCHEMA_INVENTORY_2' scripts/audit-recommendation-behavioral-v7-observability-v2.mjs
+          grep -q 'stageAGatePassed' scripts/audit-recommendation-behavioral-v7-observability-v2.mjs
+          grep -q 'futureTestEvaluated: false' scripts/audit-recommendation-behavioral-v7-observability-v2.mjs
+          grep -q 'trainingPerformed: false' scripts/audit-recommendation-behavioral-v7-observability-v2.mjs
+          grep -q 'net_worth' scripts/audit-recommendation-behavioral-v7-observability-v2.mjs
