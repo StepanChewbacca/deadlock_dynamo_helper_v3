@@ -1,0 +1,100 @@
+name: Recommendation Behavioral V6 Sequence Neural Screen V1 Summary
+
+on:
+  pull_request:
+    paths:
+      - '.github/research-requests/recommendation-behavioral-v6-sequence-neural-screen-v1-summary.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v6-sequence-neural-screen-v1-summary
+  cancel-in-progress: false
+
+jobs:
+  summarize:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read completed Sequence Neural screen summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/research-requests/recommendation-behavioral-v6-sequence-neural-screen-v1-summary.json'
+          jq -e '
+            .schemaVersion == 1 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_SEQUENCE_NEURAL_SCREEN_SUMMARY" and
+            .trainingAuthorized == false and
+            .valueTrainingAuthorized == false and
+            .productionChangesAuthorized == false and
+            .futureTestAuthorized == false
+          ' "$request"
+
+          output='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v6-sequence-neural-screen-v1-background'
+          sudo jq -e '
+            .state == "SUCCEEDED" and
+            .exitCode == 0 and
+            .oomKilled != "true" and
+            .executorVersion == "MERGED_TOP_96_SEQUENCE_NEURAL_SCREEN_1"
+          ' "$output/background-status.json"
+          sudo jq -e '
+            .schemaVersion == 1 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_SEQUENCE_NEURAL_SCREEN" and
+            .source.futureTestRowCount == 0 and
+            .choiceSet.definition == "MERGED_TOP_96" and
+            .training.tuningUsedForTraining == false and
+            .training.tuningUsedForEarlyStopping == false and
+            .training.crossFittingPerformed == false and
+            .trainingArtifactEligible == false and
+            .fullTrainingAuthorized == false and
+            .valueV8TrainingAuthorized == false
+          ' "$output/screen-summary.json"
+
+          sudo jq '
+            def group($groups; $key): ($groups | map(select(.key == $key)) | first // null);
+            {
+              screenPassed,
+              strictCrossFitRecommended,
+              currentFamily,
+              nextFamilyRecommended,
+              continuationChecks,
+              training,
+              model: {
+                decisionCount: .tuning.model.decisionCount,
+                supportCoverage: .tuning.model.supportCoverage,
+                rawLogLoss: .tuning.model.rawLogLoss,
+                top1Rate: .tuning.model.top1Rate,
+                meanObservedRawProbability: .tuning.model.meanObservedRawProbability,
+                minimumObservedRawProbability: .tuning.model.minimumObservedRawProbability,
+                floorSensitivityDelta: .tuning.model.floorSensitivityDelta,
+                majorLowSupportGroupCount: .tuning.model.majorLowSupportGroupCount,
+                late: group(.tuning.model.groups; "PHASE:LATE"),
+                highEconomy: group(.tuning.model.groups; "ECONOMY:GE_20000"),
+                time25_30: group(.tuning.model.groups; "TIME:25-30m"),
+                time30_35: group(.tuning.model.groups; "TIME:30-35m"),
+                time35_40: group(.tuning.model.groups; "TIME:35-40m"),
+                time40_45: group(.tuning.model.groups; "TIME:40-45m")
+              },
+              historyAblated: {
+                supportCoverage: .tuning.historyAblated.supportCoverage,
+                rawLogLoss: .tuning.historyAblated.rawLogLoss,
+                top1Rate: .tuning.historyAblated.top1Rate,
+                floorSensitivityDelta: .tuning.historyAblated.floorSensitivityDelta,
+                majorLowSupportGroupCount: .tuning.historyAblated.majorLowSupportGroupCount,
+                late: group(.tuning.historyAblated.groups; "PHASE:LATE"),
+                highEconomy: group(.tuning.historyAblated.groups; "ECONOMY:GE_20000")
+              },
+              inverseRank: {
+                supportCoverage: .tuning.inverseRank.supportCoverage,
+                rawLogLoss: .tuning.inverseRank.rawLogLoss,
+                top1Rate: .tuning.inverseRank.top1Rate,
+                floorSensitivityDelta: .tuning.inverseRank.floorSensitivityDelta,
+                majorLowSupportGroupCount: .tuning.inverseRank.majorLowSupportGroupCount
+              },
+              references
+            }
+          ' "$output/screen-summary.json"
