@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "operation": "RECOMMENDATION_BEHAVIORAL_V6_LATENT_STATE_MIXTURE_SCREEN",
+  "backgroundTraining": true,
+  "trainingTimeLimit": "NONE",
+  "boundedScreenAuthorized": true,
+  "strictCrossFitAuthorized": false,
+  "fullTrainingAuthorized": false,
+  "valueV8TrainingAuthorized": false,
+  "productionRankingChanged": false,
+  "passiveShadowAuthorized": false,
+  "randomizedCanaryAuthorized": false,
+  "futureTestAuthorized": false,
+  "choiceSetDefinition": "MERGED_TOP_96",
+  "expertCount": 4,
+  "historyLength": 8,
+  "epochs": 3,
+  "learningRate": 0.03,
+  "l2": 0,
+  "outputDirectory": "recommendation-behavioral-v6-latent-mixture-screen-v1-background"
+}
