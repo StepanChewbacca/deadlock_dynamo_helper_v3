@@ -1,0 +1,74 @@
+name: Recommendation Behavioral V6 Sequence Neural Validator
+
+on:
+  pull_request:
+    paths:
+      - 'apps/api/src/deadlock-live/recommendation-behavioral-v6-sequence-neural.ts'
+      - 'apps/api/test/recommendation-behavioral-v6-sequence-neural.spec.ts'
+      - 'scripts/run-recommendation-behavioral-v6-sequence-neural-screen.mjs'
+      - '.github/workflows/recommendation-behavioral-v6-sequence-neural-screen-v1-background.yml'
+      - '.github/training-requests/recommendation-behavioral-v6-sequence-neural-screen-v1-background.json'
+      - '.github/workflows/recommendation-behavioral-v6-sequence-neural-validator.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate Sequence Neural contracts and safety
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check scripts/run-recommendation-behavioral-v6-sequence-neural-screen.mjs
+          grep -q 'RECOMMENDATION_BEHAVIORAL_V6_SEQUENCE_NEURAL_1_RAW_PROPENSITY' apps/api/src/deadlock-live/recommendation-behavioral-v6-sequence-neural.ts
+          grep -q 'RECURRENT_TANH_ORDERED_ACTION_ENCODER_1' apps/api/src/deadlock-live/recommendation-behavioral-v6-sequence-neural.ts
+          grep -q 'RAW_SOFTMAX_WITHIN_DECISION' apps/api/src/deadlock-live/recommendation-behavioral-v6-sequence-neural.ts
+          grep -q "historyLength: 16" scripts/run-recommendation-behavioral-v6-sequence-neural-screen.mjs
+          grep -q "hiddenDimension: 12" scripts/run-recommendation-behavioral-v6-sequence-neural-screen.mjs
+          grep -q "epochs: 3" scripts/run-recommendation-behavioral-v6-sequence-neural-screen.mjs
+          grep -q "l2: 0" scripts/run-recommendation-behavioral-v6-sequence-neural-screen.mjs
+          grep -q "tuningUsedForTraining: false" scripts/run-recommendation-behavioral-v6-sequence-neural-screen.mjs
+          grep -q "tuningUsedForEarlyStopping: false" scripts/run-recommendation-behavioral-v6-sequence-neural-screen.mjs
+          grep -q "crossFittingPerformed: false" scripts/run-recommendation-behavioral-v6-sequence-neural-screen.mjs
+          grep -q "previousActionKeys: \[\]" scripts/run-recommendation-behavioral-v6-sequence-neural-screen.mjs
+          grep -q "orderedHistorySignalObserved" scripts/run-recommendation-behavioral-v6-sequence-neural-screen.mjs
+          grep -q "trainingArtifactEligible: false" scripts/run-recommendation-behavioral-v6-sequence-neural-screen.mjs
+          grep -q 'trainingTimeLimit == "NONE"' .github/workflows/recommendation-behavioral-v6-sequence-neural-screen-v1-background.yml
+          grep -q 'systemd-run' .github/workflows/recommendation-behavioral-v6-sequence-neural-screen-v1-background.yml
+          ! grep -q 'timeout .*run-recommendation-behavioral-v6-sequence-neural-screen' .github/workflows/recommendation-behavioral-v6-sequence-neural-screen-v1-background.yml
+
+          request='.github/training-requests/recommendation-behavioral-v6-sequence-neural-screen-v1-background.json'
+          if [ -e "$request" ]; then
+            jq -e '
+              .schemaVersion == 1 and
+              .operation == "RECOMMENDATION_BEHAVIORAL_V6_SEQUENCE_NEURAL_SCREEN" and
+              .backgroundTraining == true and
+              .trainingTimeLimit == "NONE" and
+              .boundedScreenAuthorized == true and
+              .strictCrossFitAuthorized == false and
+              .fullTrainingAuthorized == false and
+              .valueV8TrainingAuthorized == false and
+              .productionRankingChanged == false and
+              .passiveShadowAuthorized == false and
+              .randomizedCanaryAuthorized == false and
+              .futureTestAuthorized == false and
+              .choiceSetDefinition == "MERGED_TOP_96" and
+              .historyLength == 16 and
+              .hiddenDimension == 12 and
+              .epochs == 3 and
+              .learningRate == 0.03 and
+              .l2 == 0 and
+              .outputDirectory == "recommendation-behavioral-v6-sequence-neural-screen-v1-background"
+            ' "$request"
+          fi
