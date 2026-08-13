@@ -25,7 +25,7 @@ await scanDataset(async (row) => {
   }
   if (!eligibleTrainRow(row)) return;
 
-  const partition = fnv1a32(String(row.matchId)) & 1;
+  const partition = stageEPartition(String(row.matchId));
   partitionDecisionCounts[partition] += 1;
   incrementCount(
     baselineCountsByPartition[partition],
@@ -45,7 +45,9 @@ if (futureTestRowCount !== 0) {
   );
 }
 if (partitionDecisionCounts.some((count) => count < 1000)) {
-  throw new Error('Both TRAIN MATCH partitions require at least 1000 decisions.');
+  throw new Error(
+    `Both TRAIN MATCH partitions require at least 1000 decisions; got ${partitionDecisionCounts.join('/')}.`,
+  );
 }
 
 const directionAccumulators = [
@@ -67,7 +69,7 @@ const directionAccumulators = [
 
 await scanDataset(async (row) => {
   if (!eligibleTrainRow(row)) return;
-  const evaluationPartition = fnv1a32(String(row.matchId)) & 1;
+  const evaluationPartition = stageEPartition(String(row.matchId));
   const trainingPartition = evaluationPartition ^ 1;
   const direction =
     evaluationPartition === 1
@@ -130,7 +132,7 @@ const stageEGatePassed = Object.values(gates).every(Boolean);
 const report = {
   schemaVersion: 2,
   operation: 'RECOMMENDATION_BEHAVIORAL_V7_INFORMATION_GAIN_DIAGNOSTIC',
-  executorVersion: 'MATCH_CROSSFIT_CONDITIONAL_PRIOR_GAIN_STREAMING_2',
+  executorVersion: 'MATCH_CROSSFIT_CONDITIONAL_PRIOR_GAIN_STREAMING_3',
   generatedAt: new Date().toISOString(),
   trainingArtifactEligible: false,
   behavioralModelTrainingPerformed: false,
@@ -139,6 +141,7 @@ const report = {
   tuningUsedForDiagnostic: false,
   source: {
     datasetPath,
+    partitionAssignment: 'FNV1A_MATCH_ID_BIT4_AFTER_MOD16_SAMPLE',
     partitionDecisionCounts,
     tuningRowCountUntouched: tuningRowCount,
     futureTestRowCount,
@@ -151,6 +154,8 @@ const report = {
     identicalBehavioralChoiceSet: true,
     observedActionMaySelectFeatures: false,
     matchCrossFit: true,
+    diagnosticSampleUsesLowerFourHashBits: true,
+    crossFitUsesNextHashBit: true,
     executionOnlyOptimization: true,
   },
   directions,
@@ -171,7 +176,12 @@ const report = {
 await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
 console.log(
   JSON.stringify(
-    { stageEGatePassed, gains: report.gains, gates },
+    {
+      stageEGatePassed,
+      partitionDecisionCounts,
+      gains: report.gains,
+      gates,
+    },
     null,
     2,
   ),
@@ -410,6 +420,10 @@ function economyBand(value) {
 function openDataset(path) {
   const stream = createReadStream(path);
   return path.endsWith('.gz') ? stream.pipe(createGunzip()) : stream;
+}
+
+function stageEPartition(matchId) {
+  return (fnv1a32(matchId) >>> 4) & 1;
 }
 
 function fnv1a32(value) {
