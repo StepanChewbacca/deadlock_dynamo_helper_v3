@@ -1,6 +1,0 @@
-{
-  "schemaVersion": 1,
-  "operation": "RECOMMENDATION_BEHAVIORAL_V6_LATENT_STATE_MIXTURE_SCREEN_STATUS",
-  "trainingAuthorized": false,
-  "productionChangesAuthorized": false
-}
