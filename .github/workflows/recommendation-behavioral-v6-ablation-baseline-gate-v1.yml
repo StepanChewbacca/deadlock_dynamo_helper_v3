@@ -114,11 +114,24 @@ jobs:
           sudo install -m 0644 "$staged_log" '${{ steps.preflight.outputs.output }}/comparison.log'
           rm -f "$staged_ablation" "$staged_baselines" "$staged_gate" "$staged_log"
 
+      - name: Stage gate evidence for upload
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          source='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v6-ablation-baseline-gate-v1'
+          stage="$RUNNER_TEMP/recommendation-behavioral-v6-ablation-baseline-gate-$GITHUB_RUN_ID"
+          mkdir -p "$stage"
+          if sudo test -d "$source"; then
+            sudo cp -a "$source/." "$stage/"
+            sudo chown -R "$(id -u):$(id -g)" "$stage"
+          fi
+
       - name: Upload gate evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: recommendation-behavioral-v6-ablation-baseline-gate-${{ github.run_id }}
-          path: /var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v6-ablation-baseline-gate-v1
+          path: ${{ runner.temp }}/recommendation-behavioral-v6-ablation-baseline-gate-${{ github.run_id }}
           if-no-files-found: warn
           retention-days: 7
