@@ -1,0 +1,60 @@
+name: Recommendation Behavioral V6 Latent State Regime Diagnostic Validator
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/diagnose-recommendation-behavioral-v6-latent-state-regimes.mjs'
+      - '.github/workflows/recommendation-behavioral-v6-latent-state-regime-diagnostic-v1.yml'
+      - '.github/research-requests/recommendation-behavioral-v6-latent-state-regime-diagnostic-v1.json'
+      - '.github/workflows/recommendation-behavioral-v6-latent-state-regime-diagnostic-validator.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate diagnostic contracts and read-only safety
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check scripts/diagnose-recommendation-behavioral-v6-latent-state-regimes.mjs
+          grep -q 'PREDECISION_REGIME_ENTROPY_DIAGNOSTIC_1' scripts/diagnose-recommendation-behavioral-v6-latent-state-regimes.mjs
+          grep -q 'assignmentUsesObservedAction: false' scripts/diagnose-recommendation-behavioral-v6-latent-state-regimes.mjs
+          grep -q 'assignmentUsesOutcome: false' scripts/diagnose-recommendation-behavioral-v6-latent-state-regimes.mjs
+          grep -q 'assignmentUsesFutureState: false' scripts/diagnose-recommendation-behavioral-v6-latent-state-regimes.mjs
+          grep -q 'observedActionUsedOnlyForDescriptiveConditionalEntropy: true' scripts/diagnose-recommendation-behavioral-v6-latent-state-regimes.mjs
+          grep -q 'MATCH_COUNT_DESC_FNV1A_TIE_GREEDY_2' scripts/diagnose-recommendation-behavioral-v6-latent-state-regimes.mjs
+          grep -q "minimumRegimeDecisionCount = 20" scripts/diagnose-recommendation-behavioral-v6-latent-state-regimes.mjs
+          grep -q 'boundedLatentMixtureScreenRecommended' scripts/diagnose-recommendation-behavioral-v6-latent-state-regimes.mjs
+          grep -q 'trainingPerformed: false' scripts/diagnose-recommendation-behavioral-v6-latent-state-regimes.mjs
+          grep -q 'valueTrainingPerformed: false' scripts/diagnose-recommendation-behavioral-v6-latent-state-regimes.mjs
+          grep -q 'futureTestEvaluated: false' scripts/diagnose-recommendation-behavioral-v6-latent-state-regimes.mjs
+          ! grep -q 'trainRecommendation' scripts/diagnose-recommendation-behavioral-v6-latent-state-regimes.mjs
+          grep -q 'if sudo docker run' .github/workflows/recommendation-behavioral-v6-latent-state-regime-diagnostic-v1.yml
+
+          request='.github/research-requests/recommendation-behavioral-v6-latent-state-regime-diagnostic-v1.json'
+          if [ -e "$request" ]; then
+            jq -e '
+              .schemaVersion == 1 and
+              .operation == "RECOMMENDATION_BEHAVIORAL_V6_LATENT_STATE_REGIME_DIAGNOSTIC" and
+              .executorVersion == "PREDECISION_REGIME_ENTROPY_DIAGNOSTIC_1" and
+              .trainingAuthorized == false and
+              .valueTrainingAuthorized == false and
+              .productionChangesAuthorized == false and
+              .futureTestAuthorized == false and
+              .choiceSetDefinition == "MERGED_TOP_96" and
+              .sequenceOutputDirectory == "recommendation-behavioral-v6-sequence-neural-screen-v1-background" and
+              .outputDirectory == "recommendation-behavioral-v6-latent-state-regime-diagnostic-v1"
+            ' "$request"
+          fi
