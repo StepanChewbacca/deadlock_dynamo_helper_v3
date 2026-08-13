@@ -1,6 +1,0 @@
-{
-  "schemaVersion": 1,
-  "operation": "RECOMMENDATION_BEHAVIORAL_V6_SEQUENCE_NEURAL_SCREEN_STATUS",
-  "trainingAuthorized": false,
-  "productionChangesAuthorized": false
-}
