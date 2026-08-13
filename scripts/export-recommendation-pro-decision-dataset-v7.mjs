@@ -5,23 +5,34 @@ import { createGunzip } from 'node:zlib';
 
 const sourcePath = required('BEHAVIORAL_V7_SOURCE_DATASET_V6_PATH');
 const temporalAuditPath = required('BEHAVIORAL_V7_TEMPORAL_AUDIT_PATH');
+const historicalLedgerPath = required('BEHAVIORAL_V7_HISTORICAL_LEDGER_PATH');
 const outputPath = required('BEHAVIORAL_V7_OUTPUT_DATASET_PATH');
 const auditPath = required('BEHAVIORAL_V7_OUTPUT_AUDIT_PATH');
 const telemetryPath = process.env.BEHAVIORAL_V7_TELEMETRY_PATH?.trim();
 
 const temporalAudit = JSON.parse(await readFile(temporalAuditPath, 'utf8'));
-if (temporalAudit?.summary?.stageBGatePassed !== true) {
-  throw new Error('Stage B temporal audit does not authorize Dataset V7 export.');
+if (
+  temporalAudit?.schemaVersion !== 2 ||
+  temporalAudit?.summary?.stageBGatePassed !== true ||
+  temporalAudit?.contracts?.netWorthMayRepresentWallet !== false
+) {
+  throw new Error('Stage B V2 does not authorize Dataset V7 export.');
 }
+const historicalLedger = await loadHistoricalLedger(historicalLedgerPath);
 const telemetry = telemetryPath ? await loadTelemetry(telemetryPath) : new Map();
+const previousDecisionTimeByPlayer = new Map();
 const output = createWriteStream(outputPath, { encoding: 'utf8' });
 const counters = {
   decisionCount: 0,
   futureTestDecisionCount: 0,
+  historicalLedgerJoinedDecisionCount: 0,
   telemetryJoinedDecisionCount: 0,
+  previousDecisionTimingCount: 0,
+  newObservedDecisionCount: 0,
   candidateCount: 0,
   availabilityEvaluatedCandidateCount: 0,
   behavioralObservedCoveredCount: 0,
+  outOfOrderDecisionCount: 0,
 };
 
 const input = createInterface({ input: openDataset(sourcePath), crlfDelay: Infinity });
@@ -31,15 +42,48 @@ for await (const line of input) {
   assertV6Row(base);
   counters.decisionCount += 1;
   counters.futureTestDecisionCount += base.split === 'FUTURE_TEST' ? 1 : 0;
-  const event = latestTelemetryAtOrBefore(
-    telemetry.get(`${base.matchId}:${base.playerId}`) ?? [],
-    Number(base.state.gameTimeS),
+  const playerKey = `${base.matchId}:${base.playerId}`;
+  const decisionGameTimeS = Number(base.state.gameTimeS);
+  const historicalEvent = latestAtOrBefore(
+    historicalLedger.get(playerKey) ?? [],
+    decisionGameTimeS,
   );
-  if (event) counters.telemetryJoinedDecisionCount += 1;
-  const observability = observationsFromEvent(base, event);
+  const telemetryEvent = latestAtOrBefore(
+    telemetry.get(playerKey) ?? [],
+    decisionGameTimeS,
+  );
+  if (historicalEvent) counters.historicalLedgerJoinedDecisionCount += 1;
+  if (telemetryEvent) counters.telemetryJoinedDecisionCount += 1;
+
+  const previousDecisionTime = previousDecisionTimeByPlayer.get(playerKey);
+  let timeSincePreviousObservedPurchaseDecisionS;
+  if (previousDecisionTime !== undefined) {
+    if (decisionGameTimeS >= previousDecisionTime) {
+      timeSincePreviousObservedPurchaseDecisionS =
+        decisionGameTimeS - previousDecisionTime;
+      counters.previousDecisionTimingCount += 1;
+    } else {
+      counters.outOfOrderDecisionCount += 1;
+    }
+  }
+  if (previousDecisionTime === undefined || decisionGameTimeS >= previousDecisionTime) {
+    previousDecisionTimeByPlayer.set(playerKey, decisionGameTimeS);
+  }
+
+  const observability = [
+    ...historicalObservations(
+      base,
+      historicalEvent,
+      timeSincePreviousObservedPurchaseDecisionS,
+    ),
+    ...telemetryObservations(base, telemetryEvent),
+  ];
+  if (observability.some((observation) => !observation.missing)) {
+    counters.newObservedDecisionCount += 1;
+  }
   const candidates = base.candidates.map((candidate) => ({
     ...candidate,
-    feasibility: candidateAvailability(candidate, event),
+    feasibility: candidateAvailability(candidate, telemetryEvent),
   }));
   counters.candidateCount += candidates.length;
   counters.availabilityEvaluatedCandidateCount += candidates.filter(
@@ -47,11 +91,24 @@ for await (const line of input) {
   ).length;
   const behavioralChoiceSetActionKeys = candidates
     .slice()
-    .sort((a, b) => Number(a.rank) - Number(b.rank) || Number(b.generatorScore) - Number(a.generatorScore))
-    .filter((candidate) => !candidate.feasibility.evaluated || candidate.feasibility.feasible === true)
+    .sort(
+      (left, right) =>
+        Number(left.rank) - Number(right.rank) ||
+        Number(right.generatorScore) - Number(left.generatorScore) ||
+        String(left.actionKey).localeCompare(String(right.actionKey)),
+    )
+    .filter(
+      (candidate) =>
+        !candidate.feasibility.evaluated ||
+        candidate.feasibility.feasible === true,
+    )
     .slice(0, 96)
     .map((candidate) => candidate.actionKey);
-  counters.behavioralObservedCoveredCount += behavioralChoiceSetActionKeys.includes(base.observedActionKey) ? 1 : 0;
+  counters.behavioralObservedCoveredCount += behavioralChoiceSetActionKeys.includes(
+    base.observedActionKey,
+  )
+    ? 1
+    : 0;
   const row = {
     ...base,
     schemaVersion: 1,
@@ -62,24 +119,29 @@ for await (const line of input) {
     observability,
     candidates,
     choiceSet: {
-      coverageUniverseActionKeys: base.candidates.map((candidate) => candidate.actionKey),
+      coverageUniverseActionKeys: base.candidates.map(
+        (candidate) => candidate.actionKey,
+      ),
       behavioralChoiceSetActionKeys,
       behavioralChoiceSetDefinition: 'V7_OBSERVED_AVAILABILITY_TOP96_1',
       observedActionInjected: false,
       selectedAfterObservedAction: false,
-      feasibilityAware: candidates.some((candidate) => candidate.feasibility.evaluated),
+      feasibilityAware: candidates.some(
+        (candidate) => candidate.feasibility.evaluated,
+      ),
     },
   };
   output.write(`${JSON.stringify(row)}\n`);
 }
 await new Promise((resolve, reject) => {
-  output.end(resolve);
   output.on('error', reject);
+  output.end(resolve);
 });
 
 const audit = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   operation: 'RECOMMENDATION_PRO_DECISION_DATASET_V7_EXPORT',
+  executorVersion: 'HISTORICAL_PREFIX_OBSERVABILITY_BACKFILL_2',
   datasetVersion: 'RECOMMENDATION_PRO_DECISION_DATASET_V7_OBSERVABILITY_1',
   observabilityVersion: 'RECOMMENDATION_OBSERVABILITY_V7_STRICT_PREDECISION_1',
   generatedAt: new Date().toISOString(),
@@ -88,16 +150,67 @@ const audit = {
   futureTestEvaluated: false,
   sourceDatasetPath: sourcePath,
   temporalAuditPath,
+  historicalLedgerPath,
   telemetryPath,
   ...counters,
-  telemetryJoinCoverage: ratio(counters.telemetryJoinedDecisionCount, counters.decisionCount),
-  availabilityEvaluationCoverage: ratio(counters.availabilityEvaluatedCandidateCount, counters.candidateCount),
-  behavioralObservedActionCoverage: ratio(counters.behavioralObservedCoveredCount, counters.decisionCount),
+  historicalLedgerJoinCoverage: ratio(
+    counters.historicalLedgerJoinedDecisionCount,
+    counters.decisionCount,
+  ),
+  telemetryJoinCoverage: ratio(
+    counters.telemetryJoinedDecisionCount,
+    counters.decisionCount,
+  ),
+  previousDecisionTimingCoverage: ratio(
+    counters.previousDecisionTimingCount,
+    counters.decisionCount,
+  ),
+  newObservedDecisionCoverage: ratio(
+    counters.newObservedDecisionCount,
+    counters.decisionCount,
+  ),
+  availabilityEvaluationCoverage: ratio(
+    counters.availabilityEvaluatedCandidateCount,
+    counters.candidateCount,
+  ),
+  behavioralObservedActionCoverage: ratio(
+    counters.behavioralObservedCoveredCount,
+    counters.decisionCount,
+  ),
   observedActionInjectedCount: 0,
-  stageCExportPassed: counters.decisionCount > 0,
+  stageCExportPassed:
+    counters.decisionCount > 0 &&
+    counters.newObservedDecisionCount > 0 &&
+    counters.outOfOrderDecisionCount === 0,
 };
 await writeFile(auditPath, `${JSON.stringify(audit, null, 2)}\n`, 'utf8');
 console.log(JSON.stringify(audit, null, 2));
+
+async function loadHistoricalLedger(path) {
+  const byPlayer = new Map();
+  const input = createInterface({ input: createReadStream(path), crlfDelay: Infinity });
+  for await (const line of input) {
+    if (!line.trim()) continue;
+    const event = JSON.parse(line);
+    if (
+      event?.schemaVersion !== 1 ||
+      event?.ledgerVersion !==
+        'RECOMMENDATION_BEHAVIORAL_V7_HISTORICAL_LEDGER_1'
+    ) {
+      continue;
+    }
+    const key = `${event.matchId}:${event.steamId}`;
+    const values = byPlayer.get(key) ?? [];
+    values.push(event);
+    byPlayer.set(key, values);
+  }
+  for (const values of byPlayer.values()) {
+    values.sort(
+      (left, right) => Number(left.gameTimeS) - Number(right.gameTimeS),
+    );
+  }
+  return byPlayer;
+}
 
 async function loadTelemetry(path) {
   const byPlayer = new Map();
@@ -107,18 +220,26 @@ async function loadTelemetry(path) {
     const event = JSON.parse(line);
     if (
       event?.schemaVersion !== 1 ||
-      event?.telemetryVersion !== 'RECOMMENDATION_OBSERVABILITY_V7_TELEMETRY_1' ||
+      event?.telemetryVersion !==
+        'RECOMMENDATION_OBSERVABILITY_V7_TELEMETRY_1' ||
       event?.eventType !== 'PREDECISION_OBSERVABILITY'
-    ) continue;
+    ) {
+      continue;
+    }
     const key = `${event.matchId}:${event.steamId}`;
     const values = byPlayer.get(key) ?? [];
     values.push(event);
     byPlayer.set(key, values);
   }
-  for (const values of byPlayer.values()) values.sort((a, b) => Number(a.gameTimeS) - Number(b.gameTimeS));
+  for (const values of byPlayer.values()) {
+    values.sort(
+      (left, right) => Number(left.gameTimeS) - Number(right.gameTimeS),
+    );
+  }
   return byPlayer;
 }
-function latestTelemetryAtOrBefore(events, decisionGameTimeS) {
+
+function latestAtOrBefore(events, decisionGameTimeS) {
   let selected;
   for (const event of events) {
     if (Number(event.gameTimeS) > decisionGameTimeS) break;
@@ -126,7 +247,66 @@ function latestTelemetryAtOrBefore(events, decisionGameTimeS) {
   }
   return selected;
 }
-function observationsFromEvent(base, event) {
+
+function historicalObservations(
+  base,
+  event,
+  timeSincePreviousObservedPurchaseDecisionS,
+) {
+  return [
+    observation({
+      fieldName: 'originalAssignedLane',
+      family: 'POSITION_OPPORTUNITY',
+      value: event?.originalAssignedLane,
+      sourceSystem: 'SELF_HOSTED_DEADLOCK_LIVE_EVENTS_SSE',
+      sourceEntity: 'player_controller',
+      sourceField: 'original_assigned_lane',
+      sourceGameTimeS: event?.gameTimeS,
+      directlyObserved: true,
+      reconstructed: false,
+      provenanceVersion:
+        'RECOMMENDATION_BEHAVIORAL_V7_HISTORICAL_LEDGER_1',
+      decisionGameTimeS: Number(base.state.gameTimeS),
+    }),
+    observation({
+      fieldName: 'playerControllerUpgrades',
+      family: 'INVENTORY_LEGALITY',
+      value:
+        event?.upgrades === undefined
+          ? undefined
+          : JSON.stringify(event.upgrades),
+      sourceSystem: 'SELF_HOSTED_DEADLOCK_LIVE_EVENTS_SSE',
+      sourceEntity: 'player_controller',
+      sourceField: 'upgrades',
+      sourceGameTimeS: event?.gameTimeS,
+      directlyObserved: true,
+      reconstructed: false,
+      provenanceVersion:
+        'RECOMMENDATION_BEHAVIORAL_V7_HISTORICAL_LEDGER_1',
+      decisionGameTimeS: Number(base.state.gameTimeS),
+    }),
+    observation({
+      fieldName: 'timeSincePreviousObservedPurchaseDecisionS',
+      family: 'PURCHASE_TIMING_CONTEXT',
+      value: timeSincePreviousObservedPurchaseDecisionS,
+      sourceSystem: 'DATASET_V6_DECISION_PREFIX',
+      sourceEntity: 'recommendation_pro_decision_dataset_v6',
+      sourceField: 'state.gameTimeS',
+      sourceGameTimeS:
+        timeSincePreviousObservedPurchaseDecisionS === undefined
+          ? undefined
+          : Number(base.state.gameTimeS) -
+            timeSincePreviousObservedPurchaseDecisionS,
+      directlyObserved: false,
+      reconstructed: true,
+      reconstructionContract: 'MATCH_PLAYER_DECISION_PREFIX_ONLY',
+      provenanceVersion: 'V7_DECISION_PREFIX_1',
+      decisionGameTimeS: Number(base.state.gameTimeS),
+    }),
+  ];
+}
+
+function telemetryObservations(base, event) {
   const specs = [
     ['spendableSouls', 'SPENDABLE_CURRENCY'],
     ['shopAvailable', 'SHOP_OPPORTUNITY'],
@@ -138,23 +318,67 @@ function observationsFromEvent(base, event) {
     ['rulesetId', 'RULESET_AVAILABILITY'],
     ['itemAvailabilityVersion', 'RULESET_AVAILABILITY'],
   ];
-  return specs.map(([fieldName, family]) => {
-    const value = event?.[fieldName];
-    return {
+  return specs.map(([fieldName, family]) =>
+    observation({
       fieldName,
       family,
-      ...(value === undefined ? {} : { value }),
-      missing: value === undefined,
-      sourceSystem: event?.source ?? 'NO_SOURCE',
+      value: event?.[fieldName],
+      sourceSystem: event?.source ?? 'NO_TELEMETRY_SOURCE',
       sourceEntity: 'recommendation_observability_v7',
       sourceField: fieldName,
-      ...(event ? { sourceGameTimeS: Number(event.gameTimeS), alignmentAgeS: Number(base.state.gameTimeS) - Number(event.gameTimeS) } : {}),
+      sourceGameTimeS: event?.gameTimeS,
       directlyObserved: event !== undefined,
       reconstructed: false,
       provenanceVersion: 'RECOMMENDATION_OBSERVABILITY_V7_TELEMETRY_1',
-    };
-  });
+      decisionGameTimeS: Number(base.state.gameTimeS),
+    }),
+  );
 }
+
+function observation({
+  fieldName,
+  family,
+  value,
+  sourceSystem,
+  sourceEntity,
+  sourceField,
+  sourceGameTimeS,
+  directlyObserved,
+  reconstructed,
+  reconstructionContract,
+  provenanceVersion,
+  decisionGameTimeS,
+}) {
+  if (
+    sourceGameTimeS !== undefined &&
+    Number(sourceGameTimeS) > decisionGameTimeS
+  ) {
+    throw new Error(`Future V7 observation ${fieldName}.`);
+  }
+  return {
+    fieldName,
+    family,
+    ...(value === undefined || value === null ? {} : { value }),
+    missing: value === undefined || value === null,
+    sourceSystem,
+    sourceEntity,
+    sourceField,
+    ...(sourceGameTimeS === undefined
+      ? {}
+      : {
+          sourceGameTimeS: Number(sourceGameTimeS),
+          alignmentAgeS: Math.max(
+            0,
+            decisionGameTimeS - Number(sourceGameTimeS),
+          ),
+        }),
+    directlyObserved,
+    reconstructed,
+    ...(reconstructionContract ? { reconstructionContract } : {}),
+    provenanceVersion,
+  };
+}
+
 function candidateAvailability(candidate, event) {
   const reasons = [];
   const sources = [];
@@ -163,13 +387,17 @@ function candidateAvailability(candidate, event) {
   if (event?.spendableSouls !== undefined && candidate.cost !== undefined) {
     evaluated = true;
     sources.push('spendableSouls');
-    if (Number(candidate.cost) <= Number(event.spendableSouls)) reasons.push('AFFORDABLE');
-    else {
+    if (Number(candidate.cost) <= Number(event.spendableSouls)) {
+      reasons.push('AFFORDABLE');
+    } else {
       feasible = false;
       reasons.push('INSUFFICIENT_CURRENCY');
     }
   }
-  if (event?.shopAvailable !== undefined && ['BUY', 'REBUY', 'UPGRADE'].includes(candidate.actionType)) {
+  if (
+    event?.shopAvailable !== undefined &&
+    ['BUY', 'REBUY', 'UPGRADE'].includes(candidate.actionType)
+  ) {
     evaluated = true;
     sources.push('shopAvailable');
     if (event.shopAvailable) reasons.push('SHOP_AVAILABLE');
@@ -186,18 +414,22 @@ function candidateAvailability(candidate, event) {
     observedOnly: true,
   };
 }
+
 function openDataset(path) {
   const stream = createReadStream(path);
   return path.endsWith('.gz') ? stream.pipe(createGunzip()) : stream;
 }
+
 function assertV6Row(row) {
   if (row?.datasetVersion !== 'RECOMMENDATION_PRO_DECISION_DATASET_V6_2') {
     throw new Error('Unsupported Dataset V6 source row.');
   }
 }
+
 function ratio(numerator, denominator) {
   return denominator > 0 ? numerator / denominator : 0;
 }
+
 function required(name) {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`Missing ${name}.`);
