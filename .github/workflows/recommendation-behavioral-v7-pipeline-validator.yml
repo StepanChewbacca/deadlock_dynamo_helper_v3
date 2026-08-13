@@ -7,11 +7,14 @@ on:
       - 'apps/api/src/deadlock-live/recommendation-pro-decision-dataset-v7.spec.ts'
       - 'apps/api/src/deadlock-live/recommendation-observability-v7-telemetry.ts'
       - 'apps/api/src/deadlock-live/recommendation-behavioral-v7-choice-set.ts'
+      - 'apps/api/src/deadlock-live/recommendation-behavioral-v7.ts'
+      - 'apps/api/test/recommendation-behavioral-v7.spec.ts'
       - 'scripts/audit-recommendation-behavioral-v7-observability-v2.mjs'
-      - 'scripts/audit-recommendation-behavioral-v7-timestamp-leakage.mjs'
+      - 'scripts/refine-recommendation-behavioral-v7-temporal-audit.mjs'
       - 'scripts/export-recommendation-pro-decision-dataset-v7.mjs'
       - 'scripts/audit-recommendation-behavioral-v7-choice-set.mjs'
       - 'scripts/diagnose-recommendation-behavioral-v7-information-gain.mjs'
+      - 'scripts/run-recommendation-behavioral-v7-bounded-screen.mjs'
       - '.github/workflows/recommendation-behavioral-v7-pipeline-validator.yml'
 
 permissions:
@@ -31,17 +34,21 @@ jobs:
         run: |
           set -euo pipefail
           node --check scripts/audit-recommendation-behavioral-v7-observability-v2.mjs
-          node --check scripts/audit-recommendation-behavioral-v7-timestamp-leakage.mjs
+          node --check scripts/refine-recommendation-behavioral-v7-temporal-audit.mjs
           node --check scripts/export-recommendation-pro-decision-dataset-v7.mjs
           node --check scripts/audit-recommendation-behavioral-v7-choice-set.mjs
           node --check scripts/diagnose-recommendation-behavioral-v7-information-gain.mjs
+          node --check scripts/run-recommendation-behavioral-v7-bounded-screen.mjs
           grep -q 'RECOMMENDATION_PRO_DECISION_DATASET_V7_OBSERVABILITY_1' apps/api/src/deadlock-live/recommendation-pro-decision-dataset-v7.ts
           grep -q 'observedActionInjected: false' apps/api/src/deadlock-live/recommendation-pro-decision-dataset-v7.ts
           grep -q 'selectedAfterObservedAction: false' apps/api/src/deadlock-live/recommendation-pro-decision-dataset-v7.ts
           grep -q 'sourceGameTimeS > decisionGameTimeS' apps/api/src/deadlock-live/recommendation-pro-decision-dataset-v7.ts
-          grep -q 'NET_WORTH_IS_NOT_SPENDABLE_CURRENCY' scripts/audit-recommendation-behavioral-v7-timestamp-leakage.mjs
-          grep -q 'EVENT_LEDGER_PREFIX_ONLY' scripts/audit-recommendation-behavioral-v7-timestamp-leakage.mjs
-          grep -q 'latestTelemetryAtOrBefore' scripts/export-recommendation-pro-decision-dataset-v7.mjs
+          grep -q 'netWorthMayRepresentWallet: false' scripts/refine-recommendation-behavioral-v7-temporal-audit.mjs
+          grep -q 'EVENT_LEDGER_PREFIX_ONLY' scripts/refine-recommendation-behavioral-v7-temporal-audit.mjs
+          grep -q 'latestAtOrBefore' scripts/export-recommendation-pro-decision-dataset-v7.mjs
+          grep -q 'HISTORICAL_PREFIX_OBSERVABILITY_BACKFILL_2' scripts/export-recommendation-pro-decision-dataset-v7.mjs
           grep -q 'unknownAvailabilityRetained: true' scripts/audit-recommendation-behavioral-v7-choice-set.mjs
           grep -q 'sameChoiceSetUsedForBaselineAndEnriched: true' scripts/diagnose-recommendation-behavioral-v7-information-gain.mjs
           grep -q 'tuningUsedForDiagnostic: false' scripts/diagnose-recommendation-behavioral-v7-information-gain.mjs
+          grep -q 'V7_OBSERVABILITY_CONDITIONAL_LOGIT_BOUNDED_1' scripts/run-recommendation-behavioral-v7-bounded-screen.mjs
+          grep -q 'RAW_SOFTMAX_WITHIN_DECISION' apps/api/src/deadlock-live/recommendation-behavioral-v7.ts
