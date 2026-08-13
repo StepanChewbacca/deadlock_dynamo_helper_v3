@@ -28,17 +28,23 @@ for await (const line of input) {
     continue;
   }
   selectedRowCount += 1;
-  if (row.choiceSet?.observedActionInjected === true || row.choiceSet?.selectedAfterObservedAction === true) {
+  if (
+    row.choiceSet?.observedActionInjected === true ||
+    row.choiceSet?.selectedAfterObservedAction === true
+  ) {
     observedActionInjectionViolationCount += 1;
   }
   const selection = selectActionKeys(row.candidates);
   candidateCounts.push(selection.actionKeys.length);
-  availabilityAwareDecisionCount += selection.availabilityEvaluatedCount > 0 ? 1 : 0;
+  availabilityAwareDecisionCount +=
+    selection.availabilityEvaluatedCount > 0 ? 1 : 0;
   unavailableCandidateCount += selection.unavailableCount;
   availabilityEvaluatedCandidateCount += selection.availabilityEvaluatedCount;
   const covered = selection.actionKeys.includes(row.observedActionKey);
   observedCoveredCount += covered ? 1 : 0;
-  for (const key of groupKeys(row)) observeGroup(groups, key, covered, selection.actionKeys.length);
+  for (const key of groupKeys(row)) {
+    observeGroup(groups, key, covered, selection.actionKeys.length);
+  }
 }
 
 const groupMetrics = [...groups.entries()]
@@ -49,23 +55,33 @@ const groupMetrics = [...groups.entries()]
     meanCandidateCount: value.candidateCountSum / value.decisions,
     major: value.decisions >= majorGroupMinDecisions,
   }))
-  .sort((left, right) => left.key.localeCompare(right.key, undefined, { numeric: true }));
+  .sort((left, right) =>
+    left.key.localeCompare(right.key, undefined, { numeric: true }),
+  );
 const majorLowCoverageGroups = groupMetrics.filter(
   (group) => group.major && group.observedActionCoverage < 0.95,
 );
 const overallCoverage = ratio(observedCoveredCount, selectedRowCount);
-const reference = referencePath ? JSON.parse(await readFile(referencePath, 'utf8')) : undefined;
+const availabilityMode =
+  availabilityAwareDecisionCount > 0
+    ? 'OBSERVED_AVAILABILITY_FILTER_TOP96'
+    : 'NO_AVAILABILITY_SIGNAL_KEEP_TOP96';
+const reference = referencePath
+  ? JSON.parse(await readFile(referencePath, 'utf8'))
+  : undefined;
 const report = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   operation: 'RECOMMENDATION_BEHAVIORAL_V7_FEASIBLE_CHOICE_SET_AUDIT',
-  executorVersion: 'V7_OBSERVED_AVAILABILITY_TOP96_AUDIT_1',
+  executorVersion: 'V7_OBSERVED_AVAILABILITY_OR_SAFE_TOP96_AUDIT_2',
   trainingPerformed: false,
   valueTrainingPerformed: false,
   futureTestEvaluated: false,
+  availabilityMode,
   contract: {
     selectionUsesObservedAction: false,
     unknownAvailabilityRetained: true,
-    explicitlyUnavailableRemoved: true,
+    explicitlyUnavailableRemovedOnlyWhenObserved: true,
+    noAvailabilitySignalPreservesSafeTop96: true,
     maximumCandidates: 96,
     minimumOverallObservedActionCoverage: 0.99,
     minimumMajorGroupObservedActionCoverage: 0.95,
@@ -80,7 +96,10 @@ const report = {
     observedActionCoverage: overallCoverage,
     observedCoveredCount,
     availabilityAwareDecisionCount,
-    availabilityAwareDecisionRate: ratio(availabilityAwareDecisionCount, selectedRowCount),
+    availabilityAwareDecisionRate: ratio(
+      availabilityAwareDecisionCount,
+      selectedRowCount,
+    ),
     availabilityEvaluatedCandidateCount,
     unavailableCandidateCount,
     candidateCount: distribution(candidateCounts),
@@ -94,17 +113,28 @@ const report = {
     observedActionNeverInjected: observedActionInjectionViolationCount === 0,
     overallCoverageAtLeast099: overallCoverage >= 0.99,
     allMajorGroupsAtLeast095: majorLowCoverageGroups.length === 0,
-    newAvailabilityActuallyUsed: availabilityAwareDecisionCount > 0,
+    availabilityModeExplicitlyDocumented:
+      availabilityMode === 'OBSERVED_AVAILABILITY_FILTER_TOP96' ||
+      availabilityMode === 'NO_AVAILABILITY_SIGNAL_KEEP_TOP96',
   },
 };
 report.stageDGatePassed = Object.values(report.gates).every(Boolean);
 report.nextStep = report.stageDGatePassed
   ? 'RUN_INFORMATION_GAIN_GATE'
-  : availabilityAwareDecisionCount === 0
-    ? 'COLLECT_NEW_OBSERVABILITY_TELEMETRY'
-    : 'REVISE_V7_CHOICE_SET_WITHOUT_OBSERVED_ACTION_INJECTION';
+  : 'REVISE_V7_CHOICE_SET_WITHOUT_OBSERVED_ACTION_INJECTION';
 await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
-console.log(JSON.stringify({ stageDGatePassed: report.stageDGatePassed, metrics: report.metrics, gates: report.gates }, null, 2));
+console.log(
+  JSON.stringify(
+    {
+      stageDGatePassed: report.stageDGatePassed,
+      availabilityMode,
+      metrics: report.metrics,
+      gates: report.gates,
+    },
+    null,
+    2,
+  ),
+);
 
 function selectActionKeys(candidates) {
   const ordered = [...candidates].sort(
@@ -113,13 +143,19 @@ function selectActionKeys(candidates) {
       Number(right.generatorScore) - Number(left.generatorScore) ||
       String(left.actionKey).localeCompare(String(right.actionKey)),
   );
-  const availabilityEvaluatedCount = ordered.filter((candidate) => candidate.feasibility?.evaluated === true).length;
+  const availabilityEvaluatedCount = ordered.filter(
+    (candidate) => candidate.feasibility?.evaluated === true,
+  ).length;
   const unavailableCount = ordered.filter(
-    (candidate) => candidate.feasibility?.evaluated === true && candidate.feasibility?.feasible === false,
+    (candidate) =>
+      candidate.feasibility?.evaluated === true &&
+      candidate.feasibility?.feasible === false,
   ).length;
   const actionKeys = ordered
     .filter(
-      (candidate) => candidate.feasibility?.evaluated !== true || candidate.feasibility?.feasible === true,
+      (candidate) =>
+        candidate.feasibility?.evaluated !== true ||
+        candidate.feasibility?.feasible === true,
     )
     .slice(0, 96)
     .map((candidate) => String(candidate.actionKey));
@@ -144,7 +180,11 @@ function economyBand(value) {
   return 'GE_20000';
 }
 function observeGroup(map, key, covered, candidateCount) {
-  const value = map.get(key) ?? { decisions: 0, covered: 0, candidateCountSum: 0 };
+  const value = map.get(key) ?? {
+    decisions: 0,
+    covered: 0,
+    candidateCountSum: 0,
+  };
   value.decisions += 1;
   value.covered += covered ? 1 : 0;
   value.candidateCountSum += candidateCount;
@@ -177,15 +217,20 @@ function summarizeReference(reference) {
   if (!reference) return undefined;
   return {
     operation: reference.operation,
-    selectedDefinition: reference.selectedDefinition ?? reference.selected?.definition,
-    observedActionCoverage: reference.selected?.observedActionCoverage ?? reference.observedActionCoverage,
-    candidateCount: reference.selected?.candidateCount ?? reference.candidateCount,
+    selectedDefinition:
+      reference.selectedDefinition ?? reference.selected?.definition,
+    observedActionCoverage:
+      reference.selected?.observedActionCoverage ??
+      reference.observedActionCoverage,
+    candidateCount:
+      reference.selected?.candidateCount ?? reference.candidateCount,
   };
 }
 function assertV7Row(row) {
   if (
     row?.schemaVersion !== 1 ||
-    row?.datasetVersion !== 'RECOMMENDATION_PRO_DECISION_DATASET_V7_OBSERVABILITY_1' ||
+    row?.datasetVersion !==
+      'RECOMMENDATION_PRO_DECISION_DATASET_V7_OBSERVABILITY_1' ||
     !Array.isArray(row?.candidates)
   ) {
     throw new Error('Unsupported Dataset V7 row.');
