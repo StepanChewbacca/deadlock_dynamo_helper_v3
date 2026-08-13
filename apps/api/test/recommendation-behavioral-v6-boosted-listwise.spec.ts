@@ -158,6 +158,17 @@ function row(): RecommendationProDecisionDatasetV6Row {
     candidates: [candidate(1002, 1, 0.6, 'WEAPON'), candidate(1003, 2, 0.4, 'VITALITY')],
     observedActionKey: 'BUY:1002',
     observedActionInCandidateSet: true,
+    shortHorizonOutcomes: {},
+    finalOutcome: 1,
+    versions: {
+      catalog: 'TEST',
+      catalogSha256: 'a'.repeat(64),
+      candidateGenerator: 'TEST',
+      candidateGeneratorPolicy: 'TEST',
+      candidateGeneratorPolicySha256: 'b'.repeat(64),
+      stateFeatures: 'RECOMMENDATION_STATE_FEATURES_V6_2_FUTURE_TIMELINE_FALLBACK',
+      replay: 'RECOMMENDATION_HISTORICAL_PRO_REPLAY_2',
+    },
     eligibility: {
       stateModel: true,
       actionModel: true,
