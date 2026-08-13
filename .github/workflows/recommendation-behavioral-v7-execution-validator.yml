@@ -1,0 +1,47 @@
+name: Recommendation Behavioral V7 Execution Validator
+
+on:
+  pull_request:
+    paths:
+      - 'apps/api/src/deadlock-live/recommendation-behavioral-v7.ts'
+      - 'scripts/recommendation-behavioral-v7-evaluation.mjs'
+      - 'scripts/run-recommendation-behavioral-v7-bounded-screen.mjs'
+      - 'scripts/run-recommendation-behavioral-v7-strict-crossfit.mjs'
+      - 'scripts/run-recommendation-behavioral-v7-full-train.mjs'
+      - 'scripts/verify-recommendation-behavioral-v7-full.mjs'
+      - '.github/workflows/recommendation-behavioral-v7-background.yml'
+      - '.github/workflows/recommendation-behavioral-v7-background-status.yml'
+      - '.github/workflows/recommendation-behavioral-v7-execution-validator.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate execution contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check scripts/recommendation-behavioral-v7-evaluation.mjs
+          node --check scripts/run-recommendation-behavioral-v7-bounded-screen.mjs
+          node --check scripts/run-recommendation-behavioral-v7-strict-crossfit.mjs
+          node --check scripts/run-recommendation-behavioral-v7-full-train.mjs
+          node --check scripts/verify-recommendation-behavioral-v7-full.mjs
+          grep -q 'stageEGatePassed !== true' scripts/run-recommendation-behavioral-v7-bounded-screen.mjs
+          grep -q 'screenPassed !== true' scripts/run-recommendation-behavioral-v7-strict-crossfit.mjs
+          grep -q 'independentTuningPassed !== true' scripts/run-recommendation-behavioral-v7-full-train.mjs
+          grep -q 'futureTestUsedForTraining: false' scripts/run-recommendation-behavioral-v7-full-train.mjs
+          grep -q 'modelTrainingPerformedByVerifier: false' scripts/verify-recommendation-behavioral-v7-full.mjs
+          grep -q '.trainingTimeLimit == "NONE"' .github/workflows/recommendation-behavioral-v7-background.yml
+          grep -q '.valueV8TrainingAuthorized == false' .github/workflows/recommendation-behavioral-v7-background.yml
+          grep -q -- '--network none' .github/workflows/recommendation-behavioral-v7-background.yml
+          grep -q -- '--memory 6g' .github/workflows/recommendation-behavioral-v7-background.yml
+          grep -q -- '--memory-swap 10g' .github/workflows/recommendation-behavioral-v7-background.yml
+          ! grep -q 'valueV8TrainingAuthorized == true' .github/workflows/recommendation-behavioral-v7-background.yml
