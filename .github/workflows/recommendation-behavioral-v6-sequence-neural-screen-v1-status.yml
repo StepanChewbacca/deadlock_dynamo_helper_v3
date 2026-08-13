@@ -1,4 +1,4 @@
-name: Recommendation Behavioral V6 Sequence Neural Screen V1 Status
+name: Recommendation Behavioral V6 State Reconstruction Status
 
 on:
   pull_request:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: recommendation-behavioral-v6-sequence-neural-screen-v1-status
+  group: recommendation-behavioral-v6-state-reconstruction-status
   cancel-in-progress: false
 
 jobs:
@@ -20,18 +20,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Read Sequence Neural screen status
+      - name: Read state reconstruction screen status
         shell: bash
         run: |
           set -euo pipefail
           request='.github/training-requests/recommendation-behavioral-v6-sequence-neural-screen-v1-status.json'
-          jq -e '
-            .schemaVersion == 1 and
-            .operation == "RECOMMENDATION_BEHAVIORAL_V6_SEQUENCE_NEURAL_SCREEN_STATUS" and
-            .trainingAuthorized == false and
-            .productionChangesAuthorized == false
-          ' "$request"
-          output='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v6-sequence-neural-screen-v1-background'
+          jq -e '.schemaVersion == 1 and .operation == "RECOMMENDATION_BEHAVIORAL_V6_STATE_RECONSTRUCTION_STATUS" and .trainingAuthorized == false and .productionChangesAuthorized == false' "$request"
+          output='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v6-state-reconstruction-screen-v1-background'
           echo 'Capacity:'
           df -h /
           free -h
@@ -40,18 +35,20 @@ jobs:
           echo 'Background status:'
           sudo cat "$output/background-status.json" 2>/dev/null || true
           echo 'Systemd/container:'
-          sudo systemctl list-units --type=service --all --no-legend | grep 'deadlock-behavioral-v6-sequence-screen-' || true
-          sudo docker ps -a --format '{{.Names}} {{.Status}}' | grep 'deadlock-behavioral-v6-sequence-screen-' || true
+          sudo systemctl list-units --type=service --all --no-legend | grep 'deadlock-behavioral-v6-state-reconstruction-' || true
+          sudo docker ps -a --format '{{.Names}} {{.Status}}' | grep 'deadlock-behavioral-v6-state-reconstruction-' || true
           echo 'Container resources:'
-          container="$(sudo docker ps --format '{{.Names}}' | grep '^deadlock-behavioral-v6-sequence-screen-' | head -n 1 || true)"
+          container="$(sudo docker ps --format '{{.Names}}' | grep '^deadlock-behavioral-v6-state-reconstruction-' | head -n 1 || true)"
           if [ -n "$container" ]; then
             sudo docker stats --no-stream --format '{{.Name}} CPU={{.CPUPerc}} MEM={{.MemUsage}} MEM_PCT={{.MemPerc}} PIDS={{.PIDs}}' "$container" || true
           fi
           echo 'Progress log tail:'
-          sudo tail -n 200 "$output/container.log" 2>/dev/null || true
+          sudo tail -n 220 "$output/container.log" 2>/dev/null || true
           echo 'Screen summary:'
           if sudo test -s "$output/screen-summary.json"; then
-            sudo jq '{schemaVersion,operation,executorVersion,runtimeExecution,source,choiceSet,contracts,modelConfig,trainingConfig,training,tuning,references,continuationChecks,screenPassed,strictCrossFitRecommended,currentFamily,nextFamilyRecommended,diagnosticOnly,trainingArtifactEligible}' "$output/screen-summary.json"
+            sudo jq '{schemaVersion,operation,executorVersion,source,choiceSet,trainingConfig,training,tuning,references,continuationChecks,screenPassed,strictCrossFitRecommended,currentFamily,nextFamilyRecommended,diagnosticOnly,trainingArtifactEligible}' "$output/screen-summary.json"
+          else
+            echo 'screen-summary.json not present yet'
           fi
           echo 'Container inspect state:'
           if sudo test -s "$output/container-inspect.json"; then
