@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "operation": "RECOMMENDATION_BEHAVIORAL_V6_TOP96_BASELINE_STATUS",
-  "trainingAuthorized": false,
-  "valueTrainingAuthorized": false,
-  "productionChangesAuthorized": false,
-  "futureTestAuthorized": false
-}
