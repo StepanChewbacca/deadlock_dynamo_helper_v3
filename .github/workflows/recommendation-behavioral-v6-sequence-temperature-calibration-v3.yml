@@ -1,0 +1,187 @@
+name: Recommendation Behavioral V6 Sequence Temperature Calibration V3
+
+on:
+  pull_request:
+    paths:
+      - '.github/research-requests/recommendation-behavioral-v6-sequence-temperature-calibration-v3.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v6-sequence-temperature-calibration-v3
+  cancel-in-progress: false
+
+jobs:
+  calibrate:
+    runs-on: self-hosted
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate read-only request and completed evidence
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/research-requests/recommendation-behavioral-v6-sequence-temperature-calibration-v3.json'
+          jq -e '
+            .schemaVersion == 3 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_SEQUENCE_TEMPERATURE_CALIBRATION" and
+            .executorVersion == "TUNING_MATCH_SPLIT_TEMPERATURE_CALIBRATION_1" and
+            .trainingAuthorized == false and
+            .valueTrainingAuthorized == false and
+            .productionChangesAuthorized == false and
+            .futureTestAuthorized == false and
+            .choiceSetDefinition == "MERGED_TOP_96" and
+            .sequenceOutputDirectory == "recommendation-behavioral-v6-sequence-neural-screen-v1-background" and
+            .boostedOutputDirectory == "recommendation-behavioral-v6-grouped-boosted-listwise-screen-v2-background" and
+            .v3OutputDirectory == "recommendation-behavioral-v6-equal-capacity-ablation-v3-streaming-background" and
+            .outputDirectory == "recommendation-behavioral-v6-sequence-temperature-calibration-v3"
+          ' "$request"
+          node --check scripts/evaluate-recommendation-behavioral-v6-sequence-temperature-calibration.mjs
+
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          sample_name='recommendation-behavioral-v5-1-sweep-b-v1'
+          sequence_name='recommendation-behavioral-v6-sequence-neural-screen-v1-background'
+          boosted_name='recommendation-behavioral-v6-grouped-boosted-listwise-screen-v2-background'
+          v3_name='recommendation-behavioral-v6-equal-capacity-ablation-v3-streaming-background'
+          output_name='recommendation-behavioral-v6-sequence-temperature-calibration-v3'
+          output="$storage/$output_name"
+
+          test "$(sudo sha256sum "$storage/$sample_name/diagnostic-sample.ndjson.gz" | awk '{print $1}')" = '8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac'
+          sudo jq -e '.state == "SUCCEEDED" and .exitCode == 0 and .oomKilled != "true" and .executorVersion == "MERGED_TOP_96_SEQUENCE_NEURAL_SCREEN_1"' "$storage/$sequence_name/background-status.json"
+          sudo jq -e '.operation == "RECOMMENDATION_BEHAVIORAL_V6_SEQUENCE_NEURAL_SCREEN" and .source.futureTestRowCount == 0 and .training.tuningUsedForTraining == false and .training.tuningUsedForEarlyStopping == false and .screenPassed == false and .continuationChecks.orderedHistorySignalObserved == true and .trainingArtifactEligible == false' "$storage/$sequence_name/screen-summary.json"
+          sudo jq -e '.operation == "RECOMMENDATION_BEHAVIORAL_V6_GROUPED_BOOSTED_LISTWISE_SCREEN" and .source.futureTestRowCount == 0' "$storage/$boosted_name/screen-summary.json"
+          sudo jq -e '.operation == "RECOMMENDATION_BEHAVIORAL_V6_EQUAL_CAPACITY_ABLATION" and .source.futureTestRowCount == 0 and .choiceSet.definition == "MERGED_TOP_96"' "$storage/$v3_name/ablation-summary.json"
+
+          if sudo test -e "$output"; then
+            echo "Refusing destructive reuse of existing calibration V3 output: $output" >&2
+            exit 1
+          fi
+          free_kb="$(df --output=avail -k / | tail -n 1 | tr -d ' ')"
+          mem_available_kb="$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)"
+          test "$free_kb" -ge $((12 * 1024 * 1024))
+          test "$mem_available_kb" -ge $((4 * 1024 * 1024))
+          sudo mkdir "$output"
+          sudo chmod 0777 "$output"
+          echo "storage=$storage" >> "$GITHUB_OUTPUT"
+          echo "sample_name=$sample_name" >> "$GITHUB_OUTPUT"
+          echo "sequence_name=$sequence_name" >> "$GITHUB_OUTPUT"
+          echo "boosted_name=$boosted_name" >> "$GITHUB_OUTPUT"
+          echo "v3_name=$v3_name" >> "$GITHUB_OUTPUT"
+          echo "output_name=$output_name" >> "$GITHUB_OUTPUT"
+          echo "output=$output" >> "$GITHUB_OUTPUT"
+
+      - name: Build isolated calibration image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo docker build \
+            --label deadlock.recommendation.operation=behavioral-v6-sequence-temperature-calibration-v3 \
+            --label deadlock.recommendation.git-sha="$GITHUB_SHA" \
+            -t "deadlock-behavioral-v6-sequence-temperature-v3:$GITHUB_RUN_ID" \
+            .
+
+      - name: Run observable inference-only MATCH-split calibration diagnostic
+        shell: bash
+        run: |
+          set -uo pipefail
+          storage='${{ steps.preflight.outputs.storage }}'
+          sample_name='${{ steps.preflight.outputs.sample_name }}'
+          sequence_name='${{ steps.preflight.outputs.sequence_name }}'
+          boosted_name='${{ steps.preflight.outputs.boosted_name }}'
+          v3_name='${{ steps.preflight.outputs.v3_name }}'
+          output_name='${{ steps.preflight.outputs.output_name }}'
+          output='${{ steps.preflight.outputs.output }}'
+          image="deadlock-behavioral-v6-sequence-temperature-v3:$GITHUB_RUN_ID"
+          staged_log="$RUNNER_TEMP/behavioral-v6-sequence-temperature-v3-$GITHUB_RUN_ID.log"
+
+          if sudo docker run --rm \
+            --network none \
+            --read-only \
+            --memory 4g \
+            --memory-swap 6g \
+            --tmpfs /tmp:rw,nosuid,nodev,size=256m \
+            -e NODE_OPTIONS=--max-old-space-size=3072 \
+            -e BEHAVIORAL_V6_SAMPLE_PATH="/app/apps/api/storage/$sample_name/diagnostic-sample.ndjson.gz" \
+            -e BEHAVIORAL_V6_SEQUENCE_MODEL_PATH="/app/apps/api/storage/$sequence_name/model.json" \
+            -e BEHAVIORAL_V6_SEQUENCE_SUMMARY_PATH="/app/apps/api/storage/$sequence_name/screen-summary.json" \
+            -e BEHAVIORAL_V6_BOOSTED_SUMMARY_PATH="/app/apps/api/storage/$boosted_name/screen-summary.json" \
+            -e BEHAVIORAL_V6_V3_SUMMARY_PATH="/app/apps/api/storage/$v3_name/ablation-summary.json" \
+            -e BEHAVIORAL_V6_SEQUENCE_TEMPERATURE_REPORT_PATH="/app/apps/api/storage/$output_name/report.json" \
+            -e EXPECTED_DIAGNOSTIC_SAMPLE_SHA256='8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac' \
+            -v "$storage/$sample_name:/app/apps/api/storage/$sample_name:ro" \
+            -v "$storage/$sequence_name:/app/apps/api/storage/$sequence_name:ro" \
+            -v "$storage/$boosted_name:/app/apps/api/storage/$boosted_name:ro" \
+            -v "$storage/$v3_name:/app/apps/api/storage/$v3_name:ro" \
+            -v "$storage/$output_name:/app/apps/api/storage/$output_name:rw" \
+            "$image" node /app/scripts/evaluate-recommendation-behavioral-v6-sequence-temperature-calibration.mjs \
+            > "$staged_log" 2>&1; then
+            exit_code=0
+          else
+            exit_code=$?
+          fi
+          sudo install -m 0644 "$staged_log" "$output/diagnostic.log"
+          rm -f "$staged_log"
+          if [ "$exit_code" -ne 0 ]; then
+            echo "Calibration diagnostic failed with exit code $exit_code" >&2
+            sudo tail -n 120 "$output/diagnostic.log" >&2 || true
+            exit "$exit_code"
+          fi
+
+      - name: Verify calibration evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          report='${{ steps.preflight.outputs.output }}/report.json'
+          sudo jq -e '
+            .schemaVersion == 1 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_SEQUENCE_TEMPERATURE_CALIBRATION" and
+            .executorVersion == "TUNING_MATCH_SPLIT_TEMPERATURE_CALIBRATION_1" and
+            .source.futureTestRowCount == 0 and
+            .protocol.tuningPartitionUnit == "MATCH" and
+            .protocol.candidateProbabilityFloorApplied == false and
+            .protocol.temperatureAppliedInsideRawSoftmax == true and
+            .protocol.modelWeightsChanged == false and
+            .trainingPerformed == false and
+            .valueTrainingPerformed == false and
+            .futureTestEvaluated == false and
+            .fullTrainingAuthorized == false and
+            .valueV8TrainingAuthorized == false
+          ' "$report"
+          sudo jq '{selectedTemperature,selectedCalibrationMetrics,selectedValidationMetrics,uncalibratedValidationMetrics,cohortComparison,validationChecks,calibrationSalvageRecommended,strictSequenceCrossFitRecommended,nextFamilyRecommended}' "$report"
+
+      - name: Stage calibration evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          source='${{ steps.preflight.outputs.output }}'
+          stage="$RUNNER_TEMP/recommendation-behavioral-v6-sequence-temperature-v3-$GITHUB_RUN_ID"
+          mkdir -p "$stage"
+          if sudo test -d "$source"; then
+            sudo cp -a "$source/." "$stage/"
+            sudo chown -R "$(id -u):$(id -g)" "$stage"
+          fi
+
+      - name: Upload calibration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-behavioral-v6-sequence-temperature-v3-${{ github.run_id }}
+          path: ${{ runner.temp }}/recommendation-behavioral-v6-sequence-temperature-v3-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Cleanup calibration image
+        if: always()
+        shell: bash
+        run: |
+          sudo docker image rm "deadlock-behavioral-v6-sequence-temperature-v3:$GITHUB_RUN_ID" >/dev/null 2>&1 || true
