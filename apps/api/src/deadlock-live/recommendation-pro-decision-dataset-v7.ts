@@ -78,7 +78,10 @@ export interface RecommendationDatasetV7ChoiceSetContract {
 }
 
 export interface RecommendationProDecisionDatasetV7Row
-  extends Omit<RecommendationProDecisionDatasetV6Row, 'schemaVersion' | 'datasetVersion' | 'candidates'> {
+  extends Omit<
+    RecommendationProDecisionDatasetV6Row,
+    'schemaVersion' | 'datasetVersion' | 'candidates'
+  > {
   schemaVersion: typeof RECOMMENDATION_PRO_DECISION_DATASET_V7_SCHEMA_VERSION;
   datasetVersion: typeof RECOMMENDATION_PRO_DECISION_DATASET_V7_VERSION;
   observabilityVersion: typeof RECOMMENDATION_OBSERVABILITY_VERSION_V7;
@@ -123,10 +126,10 @@ export function createRecommendationProDecisionDatasetV7Row(
   input: CreateRecommendationProDecisionDatasetV7RowInput,
 ): RecommendationProDecisionDatasetV7Row {
   validateBaseRow(input.baseRow);
-  const observations = input.observations.map((observation) =>
+  const observability = input.observations.map((observation) =>
     normalizeObservation(input.baseRow.state.gameTimeS, observation),
   );
-  assertUniqueObservationNames(observations);
+  assertUniqueObservationNames(observability);
 
   const coverageUniverseActionKeys = input.baseRow.candidates.map(
     (candidate) => candidate.actionKey,
@@ -153,15 +156,15 @@ export function createRecommendationProDecisionDatasetV7Row(
   const feasibilityAware = candidates.some(
     (candidate) => candidate.feasibility.evaluated,
   );
+  const base = clone(input.baseRow);
 
   return {
-    ...clone(input.baseRow),
+    ...base,
     schemaVersion: RECOMMENDATION_PRO_DECISION_DATASET_V7_SCHEMA_VERSION,
     datasetVersion: RECOMMENDATION_PRO_DECISION_DATASET_V7_VERSION,
     observabilityVersion: RECOMMENDATION_OBSERVABILITY_VERSION_V7,
     sourceDatasetVersion: input.baseRow.datasetVersion,
     sourceDecisionId: input.baseRow.decisionId,
-    observations: undefined,
     observability,
     candidates,
     choiceSet: {
@@ -174,7 +177,7 @@ export function createRecommendationProDecisionDatasetV7Row(
       selectedAfterObservedAction: false,
       feasibilityAware,
     },
-  } as RecommendationProDecisionDatasetV7Row;
+  };
 }
 
 export function buildRecommendationProDecisionDatasetV7Audit(
@@ -196,14 +199,18 @@ export function buildRecommendationProDecisionDatasetV7Audit(
     futureTestDecisionCount += row.split === 'FUTURE_TEST' ? 1 : 0;
     observableDecisionCount += row.observability.some(
       (observation) => !observation.missing,
-    ) ? 1 : 0;
+    )
+      ? 1
+      : 0;
     candidateCount += row.candidates.length;
     feasibilityEvaluatedCandidateCount += row.candidates.filter(
       (candidate) => candidate.feasibility.evaluated,
     ).length;
     behavioralObservedActionCount += row.choiceSet.behavioralChoiceSetActionKeys.includes(
       row.observedActionKey,
-    ) ? 1 : 0;
+    )
+      ? 1
+      : 0;
     futureTimestampViolationCount += row.observability.filter(
       (observation) =>
         observation.sourceGameTimeS !== undefined &&
@@ -227,10 +234,14 @@ export function buildRecommendationProDecisionDatasetV7Audit(
   const reasons: string[] = [];
   if (rows.length === 0) reasons.push('Dataset V7 contains no decisions.');
   if (futureTimestampViolationCount > 0) {
-    reasons.push('Dataset V7 contains observation timestamps after decision time.');
+    reasons.push(
+      'Dataset V7 contains observation timestamps after decision time.',
+    );
   }
   if (observedActionInjectionViolationCount > 0) {
-    reasons.push('Dataset V7 contains observed-action-dependent choice-set construction.');
+    reasons.push(
+      'Dataset V7 contains observed-action-dependent choice-set construction.',
+    );
   }
 
   return {
@@ -263,17 +274,42 @@ function normalizeObservation(
   decisionGameTimeS: number,
   observation: RecommendationDatasetV7FieldObservation,
 ): RecommendationDatasetV7FieldObservation {
-  if (!observation.fieldName.trim()) throw new Error('V7 observation fieldName is required.');
-  if (!observation.sourceSystem.trim() || !observation.sourceEntity.trim() || !observation.sourceField.trim()) {
-    throw new Error(`V7 observation ${observation.fieldName} is missing source provenance.`);
+  if (!observation.fieldName.trim()) {
+    throw new Error('V7 observation fieldName is required.');
+  }
+  if (
+    !observation.sourceSystem.trim() ||
+    !observation.sourceEntity.trim() ||
+    !observation.sourceField.trim()
+  ) {
+    throw new Error(
+      `V7 observation ${observation.fieldName} is missing source provenance.`,
+    );
+  }
+  if (!observation.provenanceVersion.trim()) {
+    throw new Error(
+      `V7 observation ${observation.fieldName} is missing provenance version.`,
+    );
   }
   if (observation.sourceGameTimeS !== undefined) {
-    if (!Number.isFinite(observation.sourceGameTimeS) || observation.sourceGameTimeS > decisionGameTimeS) {
-      throw new Error(`V7 observation ${observation.fieldName} has a future source timestamp.`);
+    if (
+      !Number.isFinite(observation.sourceGameTimeS) ||
+      observation.sourceGameTimeS > decisionGameTimeS
+    ) {
+      throw new Error(
+        `V7 observation ${observation.fieldName} has a future source timestamp.`,
+      );
     }
   }
   if (observation.missing && observation.value !== undefined) {
-    throw new Error(`V7 observation ${observation.fieldName} cannot be missing and have a value.`);
+    throw new Error(
+      `V7 observation ${observation.fieldName} cannot be missing and have a value.`,
+    );
+  }
+  if (!observation.missing && observation.value === undefined) {
+    throw new Error(
+      `V7 observation ${observation.fieldName} must contain a value or be marked missing.`,
+    );
   }
   const sourceGameTimeS = observation.sourceGameTimeS;
   return {
@@ -304,10 +340,14 @@ function normalizeFeasibility(
     };
   }
   if (!value.observedOnly) {
-    throw new Error('Dataset V7 candidate feasibility must use observed pre-decision data only.');
+    throw new Error(
+      'Dataset V7 candidate feasibility must use observed pre-decision data only.',
+    );
   }
   if (value.evaluated && value.feasible === undefined) {
-    throw new Error('Evaluated Dataset V7 feasibility must include feasible boolean.');
+    throw new Error(
+      'Evaluated Dataset V7 feasibility must include feasible boolean.',
+    );
   }
   return {
     evaluated: value.evaluated,
@@ -323,6 +363,7 @@ function validateBaseRow(row: RecommendationProDecisionDatasetV6Row): void {
     throw new Error('Unsupported Dataset V6 source row for Dataset V7.');
   }
 }
+
 function validateV7Row(row: RecommendationProDecisionDatasetV7Row): void {
   if (
     row.schemaVersion !== RECOMMENDATION_PRO_DECISION_DATASET_V7_SCHEMA_VERSION ||
@@ -332,23 +373,29 @@ function validateV7Row(row: RecommendationProDecisionDatasetV7Row): void {
     throw new Error('Unsupported Dataset V7 row.');
   }
 }
+
 function assertUniqueObservationNames(
   observations: readonly RecommendationDatasetV7FieldObservation[],
 ): void {
   const names = new Set<string>();
   for (const observation of observations) {
     if (names.has(observation.fieldName)) {
-      throw new Error(`Duplicate Dataset V7 observation ${observation.fieldName}.`);
+      throw new Error(
+        `Duplicate Dataset V7 observation ${observation.fieldName}.`,
+      );
     }
     names.add(observation.fieldName);
   }
 }
+
 function deduplicate<T>(values: readonly T[]): T[] {
   return [...new Set(values)];
 }
+
 function ratio(numerator: number, denominator: number): number {
   return denominator > 0 ? numerator / denominator : 0;
 }
+
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
