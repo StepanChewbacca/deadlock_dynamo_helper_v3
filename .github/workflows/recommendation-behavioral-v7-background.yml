@@ -1,0 +1,193 @@
+name: Recommendation Behavioral V7 Background
+
+on:
+  pull_request:
+    paths:
+      - '.github/training-requests/recommendation-behavioral-v7-background.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v7-background
+  cancel-in-progress: false
+
+jobs:
+  launch:
+    runs-on: self-hosted
+    timeout-minutes: 18
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: agent/recommendation-behavioral-v6-feasible-choice-set-1
+
+      - name: Validate request, gate evidence, lineage, and capacity
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/training-requests/recommendation-behavioral-v7-background.json'
+          jq -e '
+            .schemaVersion == 1 and
+            (.operation == "BOUNDED" or .operation == "STRICT_CROSSFIT" or .operation == "FULL_TRAIN") and
+            .backgroundTraining == true and
+            .trainingTimeLimit == "NONE" and
+            .valueV8TrainingAuthorized == false and
+            .productionRankingChanged == false and
+            .passiveShadowAuthorized == false and
+            .randomizedCanaryAuthorized == false
+          ' "$request"
+          operation="$(jq -r '.operation' "$request")"
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          case "$operation" in
+            BOUNDED)
+              jq -e '.boundedScreenAuthorized == true and .strictCrossFitAuthorized == false and .fullTrainingAuthorized == false and .outputDirectory == "recommendation-behavioral-v7-bounded-v1-background"' "$request"
+              dataset="$storage/recommendation-behavioral-v7-pinned-data-gates-v1/dataset.ndjson.gz"
+              evidence="$storage/recommendation-behavioral-v7-pinned-data-gates-v1/stage-e.json"
+              sudo jq -e '.stageEGatePassed == true and .futureTestEvaluated == false and .source.futureTestRowCount == 0 and .trainingArtifactEligible == false' "$evidence"
+              script='run-recommendation-behavioral-v7-bounded-screen.mjs'
+              ;;
+            STRICT_CROSSFIT)
+              jq -e '.boundedScreenAuthorized == false and .strictCrossFitAuthorized == true and .fullTrainingAuthorized == false and .outputDirectory == "recommendation-behavioral-v7-strict-crossfit-v1-background"' "$request"
+              dataset="$storage/recommendation-behavioral-v7-pinned-data-gates-v1/dataset.ndjson.gz"
+              evidence="$storage/recommendation-behavioral-v7-bounded-v1-background/screen-summary.json"
+              sudo jq -e '.screenPassed == true and .strictCrossFitRecommended == true and .trainingArtifactEligible == false and .source.futureTestRowCount == 0' "$evidence"
+              script='run-recommendation-behavioral-v7-strict-crossfit.mjs'
+              ;;
+            FULL_TRAIN)
+              jq -e '.boundedScreenAuthorized == false and .strictCrossFitAuthorized == false and .fullTrainingAuthorized == true and .outputDirectory == "recommendation-behavioral-v7-full-train-v1-background"' "$request"
+              dataset="$storage/recommendation-pro-decision-dataset-v7-full-v1/dataset.ndjson.gz"
+              evidence="$storage/recommendation-behavioral-v7-strict-crossfit-v1-background/crossfit-summary.json"
+              sudo jq -e '.strictCrossFitPassed == true and .independentTuningPassed == true and .trainingArtifactEligible == true and .contracts.futureTestEvaluated == false' "$evidence"
+              script='run-recommendation-behavioral-v7-full-train.mjs'
+              ;;
+          esac
+          sudo test -s "$dataset"
+          sudo test -s "$evidence"
+          output="$storage/$(jq -r '.outputDirectory' "$request")"
+          sudo test ! -e "$output"
+          free_kib="$(df -Pk / | awk 'NR==2 {print $4}')"
+          test "$free_kib" -gt $((10 * 1024 * 1024))
+          available_kib="$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)"
+          test "$available_kib" -gt $((4 * 1024 * 1024))
+          if sudo systemctl list-units --type=service --all --no-legend | grep -q 'deadlock-behavioral-v7-'; then
+            echo 'Another Behavioral V7 background service exists.' >&2
+            exit 1
+          fi
+          if sudo docker ps -a --format '{{.Names}}' | grep -q '^deadlock-behavioral-v7-'; then
+            echo 'Another Behavioral V7 container exists.' >&2
+            exit 1
+          fi
+          sudo mkdir "$output"
+          echo "operation=$operation" >> "$GITHUB_OUTPUT"
+          echo "dataset=$dataset" >> "$GITHUB_OUTPUT"
+          echo "evidence=$evidence" >> "$GITHUB_OUTPUT"
+          echo "output=$output" >> "$GITHUB_OUTPUT"
+          echo "script=$script" >> "$GITHUB_OUTPUT"
+
+      - name: Build isolated Behavioral V7 image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="deadlock-behavioral-v7:${GITHUB_RUN_ID}"
+          sudo docker build --target api-builder -t "$image" .
+          sudo docker image inspect "$image" >/dev/null
+
+      - name: Launch detached Behavioral V7 process
+        shell: bash
+        run: |
+          set -euo pipefail
+          operation='${{ steps.preflight.outputs.operation }}'
+          dataset='${{ steps.preflight.outputs.dataset }}'
+          evidence='${{ steps.preflight.outputs.evidence }}'
+          output='${{ steps.preflight.outputs.output }}'
+          script='${{ steps.preflight.outputs.script }}'
+          image="deadlock-behavioral-v7:${GITHUB_RUN_ID}"
+          suffix="$(echo "$operation" | tr '[:upper:]_' '[:lower:]-')"
+          unit="deadlock-behavioral-v7-${suffix}-${GITHUB_RUN_ID}"
+          container="$unit"
+          wrapper="/var/tmp/${unit}.sh"
+          sudo tee "$wrapper" >/dev/null <<EOF
+          #!/usr/bin/env bash
+          set -uo pipefail
+          output='$output'
+          dataset='$dataset'
+          evidence='$evidence'
+          unit='$unit'
+          container='$container'
+          image='$image'
+          operation='$operation'
+          script='$script'
+          started="\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          cat > "\$output/background-status.json" <<JSON
+          {"schemaVersion":1,"state":"RUNNING","startedAt":"\$started","unit":"\$unit","container":"\$container","image":"\$image","operation":"\$operation","trainingTimeLimit":"NONE","backgroundTraining":true}
+          JSON
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          dataset_rel="\${dataset#\$storage/}"
+          evidence_rel="\${evidence#\$storage/}"
+          output_rel="\${output#\$storage/}"
+          case "\$operation" in
+            BOUNDED)
+              env_args=(
+                -e BEHAVIORAL_V7_DATASET_PATH="/storage/\$dataset_rel"
+                -e BEHAVIORAL_V7_STAGE_E_PATH="/storage/\$evidence_rel"
+                -e BEHAVIORAL_V7_BOUNDED_OUTPUT_DIR="/storage/\$output_rel"
+              )
+              ;;
+            STRICT_CROSSFIT)
+              env_args=(
+                -e BEHAVIORAL_V7_DATASET_PATH="/storage/\$dataset_rel"
+                -e BEHAVIORAL_V7_BOUNDED_SUMMARY_PATH="/storage/\$evidence_rel"
+                -e BEHAVIORAL_V7_CROSSFIT_OUTPUT_DIR="/storage/\$output_rel"
+              )
+              ;;
+            FULL_TRAIN)
+              env_args=(
+                -e BEHAVIORAL_V7_FULL_DATASET_PATH="/storage/\$dataset_rel"
+                -e BEHAVIORAL_V7_CROSSFIT_SUMMARY_PATH="/storage/\$evidence_rel"
+                -e BEHAVIORAL_V7_FULL_TRAIN_OUTPUT_DIR="/storage/\$output_rel"
+              )
+              ;;
+          esac
+          set +e
+          sudo docker run --name "\$container" \
+            --network none \
+            --memory 6g \
+            --memory-swap 10g \
+            --mount type=volume,src=deadlock_dynamo_helper_deadlock-storage,dst=/storage \
+            -e NODE_OPTIONS=--max-old-space-size=4096 \
+            "\${env_args[@]}" \
+            "\$image" \
+            node "/app/scripts/\$script" >"\$output/container.log" 2>&1
+          exit_code=\$?
+          set -e
+          sudo docker inspect "\$container" > "\$output/container-inspect.json" 2>/dev/null || true
+          oom="\$(sudo docker inspect -f '{{.State.OOMKilled}}' "\$container" 2>/dev/null || echo unknown)"
+          finished="\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          state=FAILED
+          if [ "\$exit_code" -eq 0 ]; then state=SUCCEEDED; fi
+          cat > "\$output/background-status.json" <<JSON
+          {"schemaVersion":1,"state":"\$state","startedAt":"\$started","finishedAt":"\$finished","unit":"\$unit","container":"\$container","image":"\$image","operation":"\$operation","exitCode":\$exit_code,"oomKilled":"\$oom","trainingTimeLimit":"NONE","backgroundTraining":true}
+          JSON
+          sudo docker rm "\$container" >/dev/null 2>&1 || true
+          exit "\$exit_code"
+          EOF
+          sudo chmod 0755 "$wrapper"
+          sudo tee "$output/background-launch.json" >/dev/null <<JSON
+          {"schemaVersion":1,"state":"LAUNCHED","unit":"$unit","container":"$container","image":"$image","operation":"$operation","launcherRunId":"${GITHUB_RUN_ID}","trainingTimeLimit":"NONE","backgroundTraining":true}
+          JSON
+          sudo systemd-run --unit="$unit" --collect "$wrapper" >/dev/null
+
+      - name: Confirm detached background process
+        shell: bash
+        run: |
+          set -euo pipefail
+          operation='${{ steps.preflight.outputs.operation }}'
+          suffix="$(echo "$operation" | tr '[:upper:]_' '[:lower:]-')"
+          unit="deadlock-behavioral-v7-${suffix}-${GITHUB_RUN_ID}"
+          output='${{ steps.preflight.outputs.output }}'
+          sleep 4
+          sudo jq -e '.state == "RUNNING" and .trainingTimeLimit == "NONE" and .backgroundTraining == true' "$output/background-status.json"
+          sudo systemctl is-active --quiet "$unit"
+          sudo docker ps --format '{{.Names}}' | grep -qx "$unit"
