@@ -1,0 +1,44 @@
+name: Recommendation Behavioral V7 Temporal Audit V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/recommendation-behavioral-v7-temporal-audit-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run strict temporal audit
+        shell: bash
+        env:
+          BEHAVIORAL_V7_OBSERVABILITY_INVENTORY_PATH: /var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v7-observability-inventory-v1/report.json
+          BEHAVIORAL_V7_TEMPORAL_AUDIT_PATH: ${{ runner.temp }}/recommendation-behavioral-v7-temporal-audit.json
+        run: |
+          set -euo pipefail
+          node --check scripts/audit-recommendation-behavioral-v7-timestamp-leakage.mjs
+          sudo test -s "$BEHAVIORAL_V7_OBSERVABILITY_INVENTORY_PATH"
+          stage="$RUNNER_TEMP/v7-stage-a-report.json"
+          sudo cp "$BEHAVIORAL_V7_OBSERVABILITY_INVENTORY_PATH" "$stage"
+          sudo chown "$(id -u):$(id -g)" "$stage"
+          BEHAVIORAL_V7_OBSERVABILITY_INVENTORY_PATH="$stage" node scripts/audit-recommendation-behavioral-v7-timestamp-leakage.mjs
+          jq -e '.trainingPerformed == false and .futureTestEvaluated == false and .contracts.netWorthMayRepresentWallet == false' "$BEHAVIORAL_V7_TEMPORAL_AUDIT_PATH"
+          output='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v7-temporal-audit-v1'
+          if sudo test -e "$output"; then
+            echo "Refusing destructive reuse of $output" >&2
+            exit 1
+          fi
+          sudo mkdir "$output"
+          sudo install -m 0644 "$BEHAVIORAL_V7_TEMPORAL_AUDIT_PATH" "$output/report.json"
