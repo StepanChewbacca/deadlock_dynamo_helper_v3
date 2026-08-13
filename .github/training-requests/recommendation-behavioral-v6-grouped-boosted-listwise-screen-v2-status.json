@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 2,
+  "operation": "RECOMMENDATION_BEHAVIORAL_V6_GROUPED_BOOSTED_LISTWISE_SCREEN_STATUS",
+  "trainingAuthorized": false,
+  "productionChangesAuthorized": false
+}
