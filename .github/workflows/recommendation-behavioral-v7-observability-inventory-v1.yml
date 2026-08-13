@@ -3,6 +3,7 @@ name: Recommendation Behavioral V7 Observability Inventory V1
 on:
   pull_request:
     paths:
+      - '.github/workflows/recommendation-behavioral-v7-observability-inventory-v1.yml'
       - 'docs/recommendation-behavioral-v7-observability-support-ceiling-roadmap.md'
 
 permissions:
