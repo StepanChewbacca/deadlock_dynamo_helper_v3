@@ -1,0 +1,58 @@
+name: Recommendation Behavioral V6 Sequence Temperature Calibration V4 Validator
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/evaluate-recommendation-behavioral-v6-sequence-temperature-calibration-v2.mjs'
+      - '.github/workflows/recommendation-behavioral-v6-sequence-temperature-calibration-v4.yml'
+      - '.github/research-requests/recommendation-behavioral-v6-sequence-temperature-calibration-v4.json'
+      - '.github/workflows/recommendation-behavioral-v6-sequence-temperature-calibration-v4-validator.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate balanced calibration contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check scripts/evaluate-recommendation-behavioral-v6-sequence-temperature-calibration-v2.mjs
+          grep -q 'TUNING_MATCH_BALANCED_SPLIT_TEMPERATURE_CALIBRATION_2' scripts/evaluate-recommendation-behavioral-v6-sequence-temperature-calibration-v2.mjs
+          grep -q 'MATCH_COUNT_DESC_FNV1A_TIE_GREEDY_2' scripts/evaluate-recommendation-behavioral-v6-sequence-temperature-calibration-v2.mjs
+          grep -q 'partitionUsesObservedActionOrOutcome: false' scripts/evaluate-recommendation-behavioral-v6-sequence-temperature-calibration-v2.mjs
+          grep -q 'partitionUsesOnlyEligibleDecisionCountsAndMatchId: true' scripts/evaluate-recommendation-behavioral-v6-sequence-temperature-calibration-v2.mjs
+          grep -q 'candidateProbabilityFloorApplied: false' scripts/evaluate-recommendation-behavioral-v6-sequence-temperature-calibration-v2.mjs
+          grep -q 'temperatureAppliedInsideRawSoftmax: true' scripts/evaluate-recommendation-behavioral-v6-sequence-temperature-calibration-v2.mjs
+          grep -q 'modelWeightsChanged: false' scripts/evaluate-recommendation-behavioral-v6-sequence-temperature-calibration-v2.mjs
+          ! grep -q 'trainRecommendationBehavioralV6SequenceDecision' scripts/evaluate-recommendation-behavioral-v6-sequence-temperature-calibration-v2.mjs
+          grep -q 'if sudo docker run' .github/workflows/recommendation-behavioral-v6-sequence-temperature-calibration-v4.yml
+
+          request='.github/research-requests/recommendation-behavioral-v6-sequence-temperature-calibration-v4.json'
+          if [ -e "$request" ]; then
+            jq -e '
+              .schemaVersion == 4 and
+              .operation == "RECOMMENDATION_BEHAVIORAL_V6_SEQUENCE_TEMPERATURE_CALIBRATION" and
+              .executorVersion == "TUNING_MATCH_BALANCED_SPLIT_TEMPERATURE_CALIBRATION_2" and
+              .trainingAuthorized == false and
+              .valueTrainingAuthorized == false and
+              .productionChangesAuthorized == false and
+              .futureTestAuthorized == false and
+              .choiceSetDefinition == "MERGED_TOP_96" and
+              .sequenceOutputDirectory == "recommendation-behavioral-v6-sequence-neural-screen-v1-background" and
+              .boostedOutputDirectory == "recommendation-behavioral-v6-grouped-boosted-listwise-screen-v2-background" and
+              .v3OutputDirectory == "recommendation-behavioral-v6-equal-capacity-ablation-v3-streaming-background" and
+              .outputDirectory == "recommendation-behavioral-v6-sequence-temperature-calibration-v4"
+            ' "$request"
+          fi
