@@ -1,0 +1,193 @@
+name: Recommendation Behavioral V6 Latent State Regime Diagnostic V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/research-requests/recommendation-behavioral-v6-latent-state-regime-diagnostic-v1.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v6-latent-state-regime-diagnostic-v1
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    runs-on: self-hosted
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate read-only request and sequence evidence
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/research-requests/recommendation-behavioral-v6-latent-state-regime-diagnostic-v1.json'
+          jq -e '
+            .schemaVersion == 1 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_LATENT_STATE_REGIME_DIAGNOSTIC" and
+            .executorVersion == "PREDECISION_REGIME_ENTROPY_DIAGNOSTIC_1" and
+            .trainingAuthorized == false and
+            .valueTrainingAuthorized == false and
+            .productionChangesAuthorized == false and
+            .futureTestAuthorized == false and
+            .choiceSetDefinition == "MERGED_TOP_96" and
+            .sequenceOutputDirectory == "recommendation-behavioral-v6-sequence-neural-screen-v1-background" and
+            .outputDirectory == "recommendation-behavioral-v6-latent-state-regime-diagnostic-v1"
+          ' "$request"
+          node --check scripts/diagnose-recommendation-behavioral-v6-latent-state-regimes.mjs
+
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          sample_name='recommendation-behavioral-v5-1-sweep-b-v1'
+          sequence_name='recommendation-behavioral-v6-sequence-neural-screen-v1-background'
+          output_name='recommendation-behavioral-v6-latent-state-regime-diagnostic-v1'
+          sample="$storage/$sample_name/diagnostic-sample.ndjson.gz"
+          sequence="$storage/$sequence_name"
+          output="$storage/$output_name"
+
+          test "$(sudo sha256sum "$sample" | awk '{print $1}')" = '8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac'
+          sudo jq -e '
+            .state == "SUCCEEDED" and
+            .exitCode == 0 and
+            .oomKilled != "true" and
+            .executorVersion == "MERGED_TOP_96_SEQUENCE_NEURAL_SCREEN_1"
+          ' "$sequence/background-status.json"
+          sudo jq -e '
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_SEQUENCE_NEURAL_SCREEN" and
+            .source.futureTestRowCount == 0 and
+            .choiceSet.definition == "MERGED_TOP_96" and
+            .training.tuningUsedForTraining == false and
+            .training.tuningUsedForEarlyStopping == false and
+            .screenPassed == false and
+            .continuationChecks.orderedHistorySignalObserved == true and
+            .nextFamilyRecommended == "LATENT_STATE_MIXTURE_OR_STATE_RECONSTRUCTION" and
+            .trainingArtifactEligible == false
+          ' "$sequence/screen-summary.json"
+          sudo test -s "$sequence/model.json"
+
+          if sudo test -e "$output"; then
+            echo "Refusing destructive reuse of existing latent-state diagnostic output: $output" >&2
+            exit 1
+          fi
+          free_kb="$(df --output=avail -k / | tail -n 1 | tr -d ' ')"
+          mem_available_kb="$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)"
+          test "$free_kb" -ge $((12 * 1024 * 1024))
+          test "$mem_available_kb" -ge $((4 * 1024 * 1024))
+          sudo mkdir "$output"
+          sudo chmod 0777 "$output"
+          echo "storage=$storage" >> "$GITHUB_OUTPUT"
+          echo "sample_name=$sample_name" >> "$GITHUB_OUTPUT"
+          echo "sequence_name=$sequence_name" >> "$GITHUB_OUTPUT"
+          echo "output_name=$output_name" >> "$GITHUB_OUTPUT"
+          echo "output=$output" >> "$GITHUB_OUTPUT"
+
+      - name: Build isolated diagnostic image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo docker build \
+            --label deadlock.recommendation.operation=behavioral-v6-latent-state-regime-diagnostic-v1 \
+            --label deadlock.recommendation.git-sha="$GITHUB_SHA" \
+            -t "deadlock-behavioral-v6-latent-state-diagnostic:$GITHUB_RUN_ID" \
+            .
+
+      - name: Run latent-state regime diagnostic
+        shell: bash
+        run: |
+          set -uo pipefail
+          storage='${{ steps.preflight.outputs.storage }}'
+          sample_name='${{ steps.preflight.outputs.sample_name }}'
+          sequence_name='${{ steps.preflight.outputs.sequence_name }}'
+          output_name='${{ steps.preflight.outputs.output_name }}'
+          output='${{ steps.preflight.outputs.output }}'
+          image="deadlock-behavioral-v6-latent-state-diagnostic:$GITHUB_RUN_ID"
+          staged_log="$RUNNER_TEMP/behavioral-v6-latent-state-$GITHUB_RUN_ID.log"
+
+          if sudo docker run --rm \
+            --network none \
+            --read-only \
+            --memory 4g \
+            --memory-swap 6g \
+            --tmpfs /tmp:rw,nosuid,nodev,size=256m \
+            -e NODE_OPTIONS=--max-old-space-size=3072 \
+            -e BEHAVIORAL_V6_SAMPLE_PATH="/app/apps/api/storage/$sample_name/diagnostic-sample.ndjson.gz" \
+            -e BEHAVIORAL_V6_SEQUENCE_MODEL_PATH="/app/apps/api/storage/$sequence_name/model.json" \
+            -e BEHAVIORAL_V6_SEQUENCE_SUMMARY_PATH="/app/apps/api/storage/$sequence_name/screen-summary.json" \
+            -e BEHAVIORAL_V6_LATENT_STATE_DIAGNOSTIC_REPORT_PATH="/app/apps/api/storage/$output_name/report.json" \
+            -e EXPECTED_DIAGNOSTIC_SAMPLE_SHA256='8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac' \
+            -v "$storage/$sample_name:/app/apps/api/storage/$sample_name:ro" \
+            -v "$storage/$sequence_name:/app/apps/api/storage/$sequence_name:ro" \
+            -v "$storage/$output_name:/app/apps/api/storage/$output_name:rw" \
+            "$image" node /app/scripts/diagnose-recommendation-behavioral-v6-latent-state-regimes.mjs \
+            > "$staged_log" 2>&1; then
+            exit_code=0
+          else
+            exit_code=$?
+          fi
+          sudo install -m 0644 "$staged_log" "$output/diagnostic.log"
+          rm -f "$staged_log"
+          if [ "$exit_code" -ne 0 ]; then
+            echo "Latent-state diagnostic failed with exit code $exit_code" >&2
+            sudo tail -n 160 "$output/diagnostic.log" >&2 || true
+            exit "$exit_code"
+          fi
+
+      - name: Verify latent-state evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          report='${{ steps.preflight.outputs.output }}/report.json'
+          sudo jq -e '
+            .schemaVersion == 1 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_LATENT_STATE_REGIME_DIAGNOSTIC" and
+            .executorVersion == "PREDECISION_REGIME_ENTROPY_DIAGNOSTIC_1" and
+            .source.futureTestRowCount == 0 and
+            .protocol.assignmentUsesObservedAction == false and
+            .protocol.assignmentUsesOutcome == false and
+            .protocol.assignmentUsesFutureState == false and
+            .protocol.observedActionUsedOnlyForDescriptiveConditionalEntropy == true and
+            .partition.decisionCountA >= 2000 and
+            .partition.decisionCountB >= 2000 and
+            .trainingPerformed == false and
+            .valueTrainingPerformed == false and
+            .futureTestEvaluated == false and
+            .fullTrainingAuthorized == false and
+            .valueV8TrainingAuthorized == false
+          ' "$report"
+          sudo jq '{partition,sequenceDiagnostics,qualifiedRegimeIdsInBothPartitions,selectedRegimeId,selectedRegime,diagnosticChecks,latentStateSignalSupported,boundedLatentMixtureScreenRecommended,nextStep}' "$report"
+
+      - name: Stage diagnostic evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          source='${{ steps.preflight.outputs.output }}'
+          stage="$RUNNER_TEMP/recommendation-behavioral-v6-latent-state-$GITHUB_RUN_ID"
+          mkdir -p "$stage"
+          if sudo test -d "$source"; then
+            sudo cp -a "$source/." "$stage/"
+            sudo chown -R "$(id -u):$(id -g)" "$stage"
+          fi
+
+      - name: Upload latent-state diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-behavioral-v6-latent-state-${{ github.run_id }}
+          path: ${{ runner.temp }}/recommendation-behavioral-v6-latent-state-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Cleanup diagnostic image
+        if: always()
+        shell: bash
+        run: |
+          sudo docker image rm "deadlock-behavioral-v6-latent-state-diagnostic:$GITHUB_RUN_ID" >/dev/null 2>&1 || true
