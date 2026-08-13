@@ -1,0 +1,74 @@
+name: Recommendation Behavioral V6 Latent State Mixture Validator
+
+on:
+  pull_request:
+    paths:
+      - 'apps/api/src/deadlock-live/recommendation-behavioral-v6-latent-mixture.ts'
+      - 'apps/api/test/recommendation-behavioral-v6-latent-mixture.spec.ts'
+      - 'scripts/run-recommendation-behavioral-v6-latent-mixture-screen.mjs'
+      - '.github/workflows/recommendation-behavioral-v6-latent-mixture-screen-v1-background.yml'
+      - '.github/training-requests/recommendation-behavioral-v6-latent-mixture-screen-v1-background.json'
+      - '.github/workflows/recommendation-behavioral-v6-latent-mixture-validator.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate latent-mixture contracts and safety
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check scripts/run-recommendation-behavioral-v6-latent-mixture-screen.mjs
+          grep -q 'RECOMMENDATION_BEHAVIORAL_V6_LATENT_STATE_MIXTURE_1_RAW_PROPENSITY' apps/api/src/deadlock-live/recommendation-behavioral-v6-latent-mixture.ts
+          grep -q 'RAW_MIXTURE_OF_WITHIN_DECISION_SOFTMAX_EXPERTS' apps/api/src/deadlock-live/recommendation-behavioral-v6-latent-mixture.ts
+          grep -q 'PREDECISION_HASHED_SOFTMAX_GATE_1' apps/api/src/deadlock-live/recommendation-behavioral-v6-latent-mixture.ts
+          grep -q 'RESPONSIBILITY_WEIGHTED_AGGREGATED_SGD_1' apps/api/src/deadlock-live/recommendation-behavioral-v6-latent-mixture.ts
+          grep -q "expertCount: 4" scripts/run-recommendation-behavioral-v6-latent-mixture-screen.mjs
+          grep -q "historyLength: 8" scripts/run-recommendation-behavioral-v6-latent-mixture-screen.mjs
+          grep -q "epochs: 3" scripts/run-recommendation-behavioral-v6-latent-mixture-screen.mjs
+          grep -q "tuningUsedForTraining: false" scripts/run-recommendation-behavioral-v6-latent-mixture-screen.mjs
+          grep -q "tuningUsedForEarlyStopping: false" scripts/run-recommendation-behavioral-v6-latent-mixture-screen.mjs
+          grep -q "crossFittingPerformed: false" scripts/run-recommendation-behavioral-v6-latent-mixture-screen.mjs
+          grep -q 'latentStateSignalSupported !== true' scripts/run-recommendation-behavioral-v6-latent-mixture-screen.mjs
+          grep -q 'trainingArtifactEligible: false' scripts/run-recommendation-behavioral-v6-latent-mixture-screen.mjs
+          grep -q 'trainingTimeLimit == "NONE"' .github/workflows/recommendation-behavioral-v6-latent-mixture-screen-v1-background.yml
+          grep -q 'latentStateSignalSupported == true' .github/workflows/recommendation-behavioral-v6-latent-mixture-screen-v1-background.yml
+          grep -q 'systemd-run' .github/workflows/recommendation-behavioral-v6-latent-mixture-screen-v1-background.yml
+          ! grep -q 'timeout .*run-recommendation-behavioral-v6-latent-mixture-screen' .github/workflows/recommendation-behavioral-v6-latent-mixture-screen-v1-background.yml
+
+          request='.github/training-requests/recommendation-behavioral-v6-latent-mixture-screen-v1-background.json'
+          if [ -e "$request" ]; then
+            jq -e '
+              .schemaVersion == 1 and
+              .operation == "RECOMMENDATION_BEHAVIORAL_V6_LATENT_STATE_MIXTURE_SCREEN" and
+              .backgroundTraining == true and
+              .trainingTimeLimit == "NONE" and
+              .boundedScreenAuthorized == true and
+              .strictCrossFitAuthorized == false and
+              .fullTrainingAuthorized == false and
+              .valueV8TrainingAuthorized == false and
+              .productionRankingChanged == false and
+              .passiveShadowAuthorized == false and
+              .randomizedCanaryAuthorized == false and
+              .futureTestAuthorized == false and
+              .choiceSetDefinition == "MERGED_TOP_96" and
+              .expertCount == 4 and
+              .historyLength == 8 and
+              .epochs == 3 and
+              .learningRate == 0.03 and
+              .l2 == 0 and
+              .outputDirectory == "recommendation-behavioral-v6-latent-mixture-screen-v1-background"
+            ' "$request"
+          fi
