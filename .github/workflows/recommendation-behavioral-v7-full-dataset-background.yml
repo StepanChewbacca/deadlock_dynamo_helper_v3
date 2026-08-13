@@ -1,0 +1,109 @@
+name: Recommendation Behavioral V7 Full Dataset Background
+
+on:
+  pull_request:
+    paths:
+      - '.github/research-requests/recommendation-behavioral-v7-full-dataset.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v7-full-dataset-background
+  cancel-in-progress: false
+
+jobs:
+  launch:
+    runs-on: self-hosted
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/recommendation-behavioral-v6-feasible-choice-set-1
+      - name: Validate full export prerequisites
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/research-requests/recommendation-behavioral-v7-full-dataset.json'
+          jq -e '.schemaVersion == 1 and .operation == "RECOMMENDATION_PRO_DECISION_DATASET_V7_FULL_EXPORT" and .backgroundJob == true and .jobTimeLimit == "NONE" and .trainingAuthorized == false and .valueTrainingAuthorized == false and .productionChangesAuthorized == false' "$request"
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          crossfit="$storage/recommendation-behavioral-v7-strict-crossfit-v1-background/crossfit-summary.json"
+          source_root="$storage/recommendation-pro-decision-dataset-v6-terminal-5000-v2"
+          temporal="$storage/recommendation-behavioral-v7-temporal-audit-v2/report.json"
+          ledger="$storage/recommendation-behavioral-v7-historical-ledger-v1/ledger.ndjson"
+          output="$storage/recommendation-pro-decision-dataset-v7-full-v1"
+          sudo jq -e '.strictCrossFitPassed == true and .independentTuningPassed == true and .trainingArtifactEligible == true' "$crossfit"
+          sudo test -d "$source_root"
+          sudo test -s "$temporal"
+          sudo test -s "$ledger"
+          sudo test ! -e "$output"
+          mapfile -t sources < <(sudo find "$source_root" -maxdepth 2 -type f \( -name 'dataset.ndjson.gz' -o -name 'dataset.ndjson' -o -name 'decisions.ndjson.gz' -o -name 'decisions.ndjson' \) | sort)
+          test "${#sources[@]}" -eq 1
+          source="${sources[0]}"
+          free_kib="$(df -Pk / | awk 'NR==2 {print $4}')"
+          test "$free_kib" -gt $((10 * 1024 * 1024))
+          if sudo systemctl list-units --type=service --all --no-legend | grep -q 'deadlock-behavioral-v7-full-dataset-'; then exit 1; fi
+          sudo mkdir "$output"
+          echo "source=$source" >> "$GITHUB_OUTPUT"
+          echo "temporal=$temporal" >> "$GITHUB_OUTPUT"
+          echo "ledger=$ledger" >> "$GITHUB_OUTPUT"
+          echo "output=$output" >> "$GITHUB_OUTPUT"
+      - name: Build exporter image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo docker build --target api-builder -t "deadlock-behavioral-v7-dataset:${GITHUB_RUN_ID}" .
+      - name: Launch detached full Dataset V7 export
+        shell: bash
+        run: |
+          set -euo pipefail
+          source='${{ steps.preflight.outputs.source }}'
+          temporal='${{ steps.preflight.outputs.temporal }}'
+          ledger='${{ steps.preflight.outputs.ledger }}'
+          output='${{ steps.preflight.outputs.output }}'
+          image="deadlock-behavioral-v7-dataset:${GITHUB_RUN_ID}"
+          unit="deadlock-behavioral-v7-full-dataset-${GITHUB_RUN_ID}"
+          wrapper="/var/tmp/${unit}.sh"
+          sudo tee "$wrapper" >/dev/null <<EOF
+          #!/usr/bin/env bash
+          set -uo pipefail
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          source='$source'; temporal='$temporal'; ledger='$ledger'; output='$output'; image='$image'; unit='$unit'
+          started="\$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "{\"schemaVersion\":1,\"state\":\"RUNNING\",\"startedAt\":\"\$started\",\"unit\":\"\$unit\",\"jobTimeLimit\":\"NONE\",\"backgroundJob\":true}" > "\$output/background-status.json"
+          source_rel="\${source#\$storage/}"; temporal_rel="\${temporal#\$storage/}"; ledger_rel="\${ledger#\$storage/}"; output_rel="\${output#\$storage/}"
+          set +e
+          sudo docker run --name "\$unit" --network none --memory 6g --memory-swap 10g \
+            --mount type=volume,src=deadlock_dynamo_helper_deadlock-storage,dst=/storage \
+            -e NODE_OPTIONS=--max-old-space-size=4096 \
+            -e BEHAVIORAL_V7_SOURCE_DATASET_V6_PATH="/storage/\$source_rel" \
+            -e BEHAVIORAL_V7_TEMPORAL_AUDIT_PATH="/storage/\$temporal_rel" \
+            -e BEHAVIORAL_V7_HISTORICAL_LEDGER_PATH="/storage/\$ledger_rel" \
+            -e BEHAVIORAL_V7_OUTPUT_DATASET_PATH="/storage/\$output_rel/dataset.ndjson" \
+            -e BEHAVIORAL_V7_OUTPUT_AUDIT_PATH="/storage/\$output_rel/audit.json" \
+            "\$image" node /app/scripts/export-recommendation-pro-decision-dataset-v7.mjs >"\$output/export.log" 2>&1
+          exit_code=\$?
+          set -e
+          sudo docker inspect "\$unit" > "\$output/container-inspect.json" 2>/dev/null || true
+          oom="\$(sudo docker inspect -f '{{.State.OOMKilled}}' "\$unit" 2>/dev/null || echo unknown)"
+          if [ "\$exit_code" -eq 0 ]; then
+            sudo gzip -9 "\$output/dataset.ndjson"
+            sudo sha256sum "\$output/dataset.ndjson.gz" > "\$output/dataset.sha256"
+          fi
+          finished="\$(date -u +%Y-%m-%dT%H:%M:%SZ)"; state=FAILED; [ "\$exit_code" -eq 0 ] && state=SUCCEEDED
+          echo "{\"schemaVersion\":1,\"state\":\"\$state\",\"startedAt\":\"\$started\",\"finishedAt\":\"\$finished\",\"unit\":\"\$unit\",\"exitCode\":\$exit_code,\"oomKilled\":\"\$oom\",\"jobTimeLimit\":\"NONE\",\"backgroundJob\":true}" > "\$output/background-status.json"
+          sudo docker rm "\$unit" >/dev/null 2>&1 || true
+          exit "\$exit_code"
+          EOF
+          sudo chmod 0755 "$wrapper"
+          sudo systemd-run --unit="$unit" --collect "$wrapper" >/dev/null
+      - name: Confirm detached export
+        shell: bash
+        run: |
+          set -euo pipefail
+          output='${{ steps.preflight.outputs.output }}'
+          unit="deadlock-behavioral-v7-full-dataset-${GITHUB_RUN_ID}"
+          sleep 4
+          sudo jq -e '.state == "RUNNING" and .jobTimeLimit == "NONE" and .backgroundJob == true' "$output/background-status.json"
+          sudo systemctl is-active --quiet "$unit"
