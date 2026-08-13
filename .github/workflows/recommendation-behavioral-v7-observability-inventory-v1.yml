@@ -1,0 +1,98 @@
+name: Recommendation Behavioral V7 Observability Inventory V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/research-requests/recommendation-behavioral-v7-observability-inventory-v1.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v7-observability-inventory-v1
+  cancel-in-progress: false
+
+jobs:
+  inventory:
+    runs-on: self-hosted
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate read-only request and inputs
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/research-requests/recommendation-behavioral-v7-observability-inventory-v1.json'
+          jq -e '
+            .schemaVersion == 1 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V7_OBSERVABILITY_INVENTORY" and
+            .trainingAuthorized == false and
+            .valueTrainingAuthorized == false and
+            .productionChangesAuthorized == false and
+            .futureTestAuthorized == false and
+            .outputDirectory == "recommendation-behavioral-v7-observability-inventory-v1"
+          ' "$request"
+          node --check scripts/audit-recommendation-behavioral-v7-observability-v2.mjs
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          timeline="$storage/match-timeline-events-v1"
+          output="$storage/recommendation-behavioral-v7-observability-inventory-v1"
+          sudo test -d "$timeline"
+          test -d apps/api/src/deadlock-live/entities
+          if sudo test -e "$output"; then
+            echo "Refusing destructive reuse of existing output: $output" >&2
+            exit 1
+          fi
+          sudo mkdir "$output"
+          echo "timeline=$timeline" >> "$GITHUB_OUTPUT"
+          echo "output=$output" >> "$GITHUB_OUTPUT"
+
+      - name: Build observability inventory
+        shell: bash
+        env:
+          BEHAVIORAL_V7_TIMELINE_ROOT: ${{ steps.preflight.outputs.timeline }}
+          BEHAVIORAL_V7_ENTITY_SCHEMA_ROOT: apps/api/src/deadlock-live/entities
+          BEHAVIORAL_V7_OBSERVABILITY_REPORT_PATH: ${{ runner.temp }}/behavioral-v7-observability-inventory-${{ github.run_id }}.json
+          BEHAVIORAL_V7_MAX_EVENT_ROWS: '250000'
+        run: |
+          set -euo pipefail
+          node scripts/audit-recommendation-behavioral-v7-observability-v2.mjs
+          report="$BEHAVIORAL_V7_OBSERVABILITY_REPORT_PATH"
+          jq -e '
+            .schemaVersion == 2 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V7_OBSERVABILITY_INVENTORY" and
+            .executorVersion == "TIMELINE_AND_TYPEORM_SCHEMA_INVENTORY_2" and
+            .trainingPerformed == false and
+            .futureTestEvaluated == false and
+            .source.eventRowCountScanned > 0
+          ' "$report"
+          sudo install -m 0644 "$report" '${{ steps.preflight.outputs.output }}/report.json'
+
+      - name: Stage evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          source='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v7-observability-inventory-v1'
+          stage="$RUNNER_TEMP/recommendation-behavioral-v7-observability-inventory-$GITHUB_RUN_ID"
+          mkdir -p "$stage"
+          if sudo test -d "$source"; then
+            sudo cp -a "$source/." "$stage/"
+            sudo chown -R "$(id -u):$(id -g)" "$stage"
+          fi
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-behavioral-v7-observability-inventory-${{ github.run_id }}
+          path: ${{ runner.temp }}/recommendation-behavioral-v7-observability-inventory-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
