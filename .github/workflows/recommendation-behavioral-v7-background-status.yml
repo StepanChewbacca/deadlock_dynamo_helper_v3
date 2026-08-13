@@ -1,0 +1,55 @@
+name: Recommendation Behavioral V7 Background Status
+
+on:
+  pull_request:
+    paths:
+      - '.github/status-requests/recommendation-behavioral-v7-background-status.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v7-background-status
+  cancel-in-progress: false
+
+jobs:
+  status:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read V7 background status
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/status-requests/recommendation-behavioral-v7-background-status.json'
+          jq -e '.schemaVersion == 1 and (.operation == "BOUNDED" or .operation == "STRICT_CROSSFIT" or .operation == "FULL_TRAIN") and .trainingAuthorized == false and .productionChangesAuthorized == false' "$request"
+          operation="$(jq -r '.operation' "$request")"
+          case "$operation" in
+            BOUNDED) directory='recommendation-behavioral-v7-bounded-v1-background' ;;
+            STRICT_CROSSFIT) directory='recommendation-behavioral-v7-strict-crossfit-v1-background' ;;
+            FULL_TRAIN) directory='recommendation-behavioral-v7-full-train-v1-background' ;;
+          esac
+          output="/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/$directory"
+          echo 'Capacity:'
+          df -h /
+          free -h
+          echo 'Persisted files:'
+          sudo find "$output" -maxdepth 1 -type f -printf '%f %s bytes\n' 2>/dev/null | sort || true
+          echo 'Background status:'
+          sudo cat "$output/background-status.json" 2>/dev/null || true
+          echo 'Systemd/container:'
+          sudo systemctl list-units --type=service --all --no-legend | grep 'deadlock-behavioral-v7-' || true
+          sudo docker ps -a --format '{{.Names}} {{.Status}}' | grep '^deadlock-behavioral-v7-' || true
+          container="$(sudo docker ps --format '{{.Names}}' | grep '^deadlock-behavioral-v7-' | head -n 1 || true)"
+          if [ -n "$container" ]; then
+            sudo docker stats --no-stream --format '{{.Name}} CPU={{.CPUPerc}} MEM={{.MemUsage}} MEM_PCT={{.MemPerc}} PIDS={{.PIDs}}' "$container" || true
+          fi
+          echo 'Progress:'
+          sudo tail -n 160 "$output/container.log" 2>/dev/null || true
+          for summary in screen-summary.json crossfit-summary.json train-summary.json; do
+            if sudo test -s "$output/$summary"; then
+              echo "$summary:"
+              sudo jq 'del(.model,.folds,.groups,.majorLowSupportGroups)' "$output/$summary"
+            fi
+          done
