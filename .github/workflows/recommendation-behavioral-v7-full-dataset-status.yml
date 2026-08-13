@@ -1,0 +1,28 @@
+name: Recommendation Behavioral V7 Full Dataset Status
+
+on:
+  pull_request:
+    paths:
+      - '.github/status-requests/recommendation-behavioral-v7-full-dataset-status.json'
+
+permissions:
+  contents: read
+
+jobs:
+  status:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read full Dataset V7 export status
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/status-requests/recommendation-behavioral-v7-full-dataset-status.json'
+          jq -e '.schemaVersion == 1 and .operation == "RECOMMENDATION_PRO_DECISION_DATASET_V7_FULL_EXPORT_STATUS" and .trainingAuthorized == false and .productionChangesAuthorized == false' "$request"
+          output='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-pro-decision-dataset-v7-full-v1'
+          sudo cat "$output/background-status.json" 2>/dev/null || true
+          sudo find "$output" -maxdepth 1 -type f -printf '%f %s bytes\n' 2>/dev/null | sort || true
+          sudo tail -n 120 "$output/export.log" 2>/dev/null || true
+          sudo systemctl list-units --type=service --all --no-legend | grep 'deadlock-behavioral-v7-full-dataset-' || true
+          sudo docker ps -a --format '{{.Names}} {{.Status}}' | grep '^deadlock-behavioral-v7-full-dataset-' || true
