@@ -171,12 +171,25 @@ jobs:
             (.results | all(.decisionCount > 0 and .meanMulticlassBrier >= 0 and .calibration.candidateLevel.expectedCalibrationError >= 0 and .calibration.topLabel.expectedCalibrationError >= 0 and .separation.zeroSeparationRate >= 0))
           ' "$report"
 
+      - name: Stage TUNING evidence for upload
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          source='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v6-tuning-diagnostics-v1'
+          stage="$RUNNER_TEMP/recommendation-behavioral-v6-tuning-diagnostics-$GITHUB_RUN_ID"
+          mkdir -p "$stage"
+          if sudo test -d "$source"; then
+            sudo cp -a "$source/." "$stage/"
+            sudo chown -R "$(id -u):$(id -g)" "$stage"
+          fi
+
       - name: Upload TUNING diagnostic evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: recommendation-behavioral-v6-tuning-diagnostics-${{ github.run_id }}
-          path: /var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v6-tuning-diagnostics-v1
+          path: ${{ runner.temp }}/recommendation-behavioral-v6-tuning-diagnostics-${{ github.run_id }}
           if-no-files-found: warn
           retention-days: 7
 
