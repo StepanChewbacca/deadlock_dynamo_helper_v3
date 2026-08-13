@@ -159,6 +159,8 @@ function row(): RecommendationProDecisionDatasetV6Row {
     observedActionKey: 'BUY:1002',
     observedActionInCandidateSet: true,
     eligibility: {
+      stateModel: true,
+      actionModel: true,
       behavioralModel: true,
       exclusionReasons: [],
     },
