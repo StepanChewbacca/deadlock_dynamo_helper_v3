@@ -1,0 +1,54 @@
+name: Recommendation Behavioral V6 Grouped Boosted Listwise Screen V1 Status
+
+on:
+  pull_request:
+    paths:
+      - '.github/training-requests/recommendation-behavioral-v6-grouped-boosted-listwise-screen-v1-status.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v6-grouped-boosted-listwise-screen-v1-status
+  cancel-in-progress: false
+
+jobs:
+  status:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read boosted-listwise screen status
+        shell: bash
+        run: |
+          set -euo pipefail
+          request='.github/training-requests/recommendation-behavioral-v6-grouped-boosted-listwise-screen-v1-status.json'
+          jq -e '
+            .schemaVersion == 1 and
+            .operation == "RECOMMENDATION_BEHAVIORAL_V6_GROUPED_BOOSTED_LISTWISE_SCREEN_STATUS" and
+            .trainingAuthorized == false and
+            .productionChangesAuthorized == false
+          ' "$request"
+          output='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v6-grouped-boosted-listwise-screen-v1-background'
+          echo 'Capacity:'
+          df -h /
+          free -h
+          echo 'Persisted files:'
+          sudo find "$output" -maxdepth 2 -type f -printf '%P %s bytes\n' 2>/dev/null | sort || true
+          echo 'Background status:'
+          sudo cat "$output/background-status.json" 2>/dev/null || true
+          echo 'Systemd/container:'
+          sudo systemctl list-units --type=service --all --no-legend | grep 'deadlock-behavioral-v6-boosted-screen-' || true
+          sudo docker ps -a --format '{{.Names}} {{.Status}}' | grep 'deadlock-behavioral-v6-boosted-screen-' || true
+          echo 'Progress log tail:'
+          sudo tail -n 160 "$output/container.log" 2>/dev/null || true
+          echo 'Screen summary:'
+          if sudo test -s "$output/screen-summary.json"; then
+            sudo jq '{schemaVersion,operation,executorVersion,runtimeExecution,source,choiceSet,contracts,config,training,tuning,v3LTReference,continuationChecks,screenPassed,strictCrossFitRecommended,currentFamily,nextFamilyRecommended}' "$output/screen-summary.json"
+          fi
+          echo 'Container inspect state:'
+          if sudo test -s "$output/container-inspect.json"; then
+            sudo jq '.[0].State | {Status,Running,OOMKilled,ExitCode,StartedAt,FinishedAt,Error}' "$output/container-inspect.json"
+          fi
