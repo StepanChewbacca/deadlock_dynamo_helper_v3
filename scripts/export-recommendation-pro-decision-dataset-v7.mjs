@@ -9,6 +9,7 @@ const historicalLedgerPath = required('BEHAVIORAL_V7_HISTORICAL_LEDGER_PATH');
 const outputPath = required('BEHAVIORAL_V7_OUTPUT_DATASET_PATH');
 const auditPath = required('BEHAVIORAL_V7_OUTPUT_AUDIT_PATH');
 const telemetryPath = process.env.BEHAVIORAL_V7_TELEMETRY_PATH?.trim();
+const playerIdentityPath = process.env.BEHAVIORAL_V7_PLAYER_IDENTITY_PATH?.trim();
 
 const temporalAudit = JSON.parse(await readFile(temporalAuditPath, 'utf8'));
 if (
@@ -20,11 +21,15 @@ if (
 }
 const historicalLedger = await loadHistoricalLedger(historicalLedgerPath);
 const telemetry = telemetryPath ? await loadTelemetry(telemetryPath) : new Map();
+const playerIdentity = playerIdentityPath
+  ? await loadPlayerIdentity(playerIdentityPath)
+  : new Map();
 const previousDecisionTimeByPlayer = new Map();
 const output = createWriteStream(outputPath, { encoding: 'utf8' });
 const counters = {
   decisionCount: 0,
   futureTestDecisionCount: 0,
+  identityMappedDecisionCount: 0,
   historicalLedgerJoinedDecisionCount: 0,
   telemetryJoinedDecisionCount: 0,
   previousDecisionTimingCount: 0,
@@ -42,20 +47,29 @@ for await (const line of input) {
   assertV6Row(base);
   counters.decisionCount += 1;
   counters.futureTestDecisionCount += base.split === 'FUTURE_TEST' ? 1 : 0;
-  const playerKey = `${base.matchId}:${base.playerId}`;
+  const datasetPlayerKey = `${base.matchId}:${base.playerId}`;
+  const steamId = playerIdentity.get(datasetPlayerKey);
+  const directPlayerKey = steamId === undefined
+    ? undefined
+    : `${base.matchId}:${steamId}`;
+  if (directPlayerKey !== undefined) counters.identityMappedDecisionCount += 1;
   const decisionGameTimeS = Number(base.state.gameTimeS);
-  const historicalEvent = latestAtOrBefore(
-    historicalLedger.get(playerKey) ?? [],
-    decisionGameTimeS,
-  );
-  const telemetryEvent = latestAtOrBefore(
-    telemetry.get(playerKey) ?? [],
-    decisionGameTimeS,
-  );
+  const historicalEvent = directPlayerKey === undefined
+    ? undefined
+    : latestAtOrBefore(
+        historicalLedger.get(directPlayerKey) ?? [],
+        decisionGameTimeS,
+      );
+  const telemetryEvent = directPlayerKey === undefined
+    ? undefined
+    : latestAtOrBefore(
+        telemetry.get(directPlayerKey) ?? [],
+        decisionGameTimeS,
+      );
   if (historicalEvent) counters.historicalLedgerJoinedDecisionCount += 1;
   if (telemetryEvent) counters.telemetryJoinedDecisionCount += 1;
 
-  const previousDecisionTime = previousDecisionTimeByPlayer.get(playerKey);
+  const previousDecisionTime = previousDecisionTimeByPlayer.get(datasetPlayerKey);
   let timeSincePreviousObservedPurchaseDecisionS;
   if (previousDecisionTime !== undefined) {
     if (decisionGameTimeS >= previousDecisionTime) {
@@ -67,7 +81,7 @@ for await (const line of input) {
     }
   }
   if (previousDecisionTime === undefined || decisionGameTimeS >= previousDecisionTime) {
-    previousDecisionTimeByPlayer.set(playerKey, decisionGameTimeS);
+    previousDecisionTimeByPlayer.set(datasetPlayerKey, decisionGameTimeS);
   }
 
   const observability = [
@@ -75,8 +89,9 @@ for await (const line of input) {
       base,
       historicalEvent,
       timeSincePreviousObservedPurchaseDecisionS,
+      directPlayerKey !== undefined,
     ),
-    ...telemetryObservations(base, telemetryEvent),
+    ...telemetryObservations(base, telemetryEvent, directPlayerKey !== undefined),
   ];
   if (observability.some((observation) => !observation.missing)) {
     counters.newObservedDecisionCount += 1;
@@ -141,7 +156,7 @@ await new Promise((resolve, reject) => {
 const audit = {
   schemaVersion: 2,
   operation: 'RECOMMENDATION_PRO_DECISION_DATASET_V7_EXPORT',
-  executorVersion: 'HISTORICAL_PREFIX_OBSERVABILITY_BACKFILL_2',
+  executorVersion: 'HISTORICAL_PREFIX_OBSERVABILITY_BACKFILL_3_EXPLICIT_IDENTITY',
   datasetVersion: 'RECOMMENDATION_PRO_DECISION_DATASET_V7_OBSERVABILITY_1',
   observabilityVersion: 'RECOMMENDATION_OBSERVABILITY_V7_STRICT_PREDECISION_1',
   generatedAt: new Date().toISOString(),
@@ -152,7 +167,23 @@ const audit = {
   temporalAuditPath,
   historicalLedgerPath,
   telemetryPath,
+  playerIdentityPath,
+  identityContracts: {
+    datasetPlayerId: 'DATABASE_SURROGATE_NOT_STEAM_ID',
+    historicalLedgerIdentity: 'MATCH_ID_PLUS_STEAM_ID',
+    telemetryIdentity: 'MATCH_ID_PLUS_STEAM_ID',
+    directJoinIdentity:
+      'EXPLICIT_DATASET_PLAYER_TO_STEAM_ID_SIDECAR_ONLY',
+    historicalIdentityInferencePerformed: false,
+    heroIdentityInferencePerformed: false,
+    teamIdentityInferencePerformed: false,
+    playerPawnIdentityInferencePerformed: false,
+  },
   ...counters,
+  identityMappingCoverage: ratio(
+    counters.identityMappedDecisionCount,
+    counters.decisionCount,
+  ),
   historicalLedgerJoinCoverage: ratio(
     counters.historicalLedgerJoinedDecisionCount,
     counters.decisionCount,
@@ -239,6 +270,34 @@ async function loadTelemetry(path) {
   return byPlayer;
 }
 
+async function loadPlayerIdentity(path) {
+  const byDatasetPlayer = new Map();
+  const input = createInterface({ input: createReadStream(path), crlfDelay: Infinity });
+  for await (const line of input) {
+    if (!line.trim()) continue;
+    const row = JSON.parse(line);
+    if (
+      row?.schemaVersion !== 1 ||
+      row?.identityVersion !==
+        'RECOMMENDATION_OBSERVABILITY_V7_DATASET_PLAYER_IDENTITY_1' ||
+      row?.source !== 'DIRECT_PERSISTED_IDENTITY'
+    ) {
+      continue;
+    }
+    const matchId = String(row.matchId ?? '').trim();
+    const datasetPlayerId = String(row.datasetPlayerId ?? '').trim();
+    const steamId = String(row.steamId ?? '').trim();
+    if (!matchId || !datasetPlayerId || !steamId) continue;
+    const key = `${matchId}:${datasetPlayerId}`;
+    const existing = byDatasetPlayer.get(key);
+    if (existing !== undefined && existing !== steamId) {
+      throw new Error(`Conflicting direct V7 player identity for ${key}.`);
+    }
+    byDatasetPlayer.set(key, steamId);
+  }
+  return byDatasetPlayer;
+}
+
 function latestAtOrBefore(events, decisionGameTimeS) {
   let selected;
   for (const event of events) {
@@ -252,7 +311,11 @@ function historicalObservations(
   base,
   event,
   timeSincePreviousObservedPurchaseDecisionS,
+  directIdentityAvailable,
 ) {
+  const missingReason = directIdentityAvailable
+    ? 'NO_HISTORICAL_EVENT_AT_OR_BEFORE_DECISION'
+    : 'HISTORICAL_IDENTITY_UNAVAILABLE';
   return [
     observation({
       fieldName: 'originalAssignedLane',
@@ -262,8 +325,9 @@ function historicalObservations(
       sourceEntity: 'player_controller',
       sourceField: 'original_assigned_lane',
       sourceGameTimeS: event?.gameTimeS,
-      directlyObserved: true,
+      directlyObserved: event !== undefined,
       reconstructed: false,
+      missingReason,
       provenanceVersion:
         'RECOMMENDATION_BEHAVIORAL_V7_HISTORICAL_LEDGER_1',
       decisionGameTimeS: Number(base.state.gameTimeS),
@@ -279,8 +343,9 @@ function historicalObservations(
       sourceEntity: 'player_controller',
       sourceField: 'upgrades',
       sourceGameTimeS: event?.gameTimeS,
-      directlyObserved: true,
+      directlyObserved: event !== undefined,
       reconstructed: false,
+      missingReason,
       provenanceVersion:
         'RECOMMENDATION_BEHAVIORAL_V7_HISTORICAL_LEDGER_1',
       decisionGameTimeS: Number(base.state.gameTimeS),
@@ -300,13 +365,14 @@ function historicalObservations(
       directlyObserved: false,
       reconstructed: true,
       reconstructionContract: 'MATCH_PLAYER_DECISION_PREFIX_ONLY',
+      missingReason: 'NO_PREVIOUS_DATASET_PLAYER_DECISION',
       provenanceVersion: 'V7_DECISION_PREFIX_1',
       decisionGameTimeS: Number(base.state.gameTimeS),
     }),
   ];
 }
 
-function telemetryObservations(base, event) {
+function telemetryObservations(base, event, directIdentityAvailable) {
   const specs = [
     ['spendableSouls', 'SPENDABLE_CURRENCY'],
     ['shopAvailable', 'SHOP_OPPORTUNITY'],
@@ -318,6 +384,9 @@ function telemetryObservations(base, event) {
     ['rulesetId', 'RULESET_AVAILABILITY'],
     ['itemAvailabilityVersion', 'RULESET_AVAILABILITY'],
   ];
+  const missingReason = directIdentityAvailable
+    ? 'NO_DIRECT_TELEMETRY_AT_OR_BEFORE_DECISION'
+    : 'DIRECT_DATASET_PLAYER_TO_STEAM_ID_IDENTITY_UNAVAILABLE';
   return specs.map(([fieldName, family]) =>
     observation({
       fieldName,
@@ -329,6 +398,7 @@ function telemetryObservations(base, event) {
       sourceGameTimeS: event?.gameTimeS,
       directlyObserved: event !== undefined,
       reconstructed: false,
+      missingReason,
       provenanceVersion: 'RECOMMENDATION_OBSERVABILITY_V7_TELEMETRY_1',
       decisionGameTimeS: Number(base.state.gameTimeS),
     }),
@@ -346,6 +416,7 @@ function observation({
   directlyObserved,
   reconstructed,
   reconstructionContract,
+  missingReason,
   provenanceVersion,
   decisionGameTimeS,
 }) {
@@ -355,11 +426,13 @@ function observation({
   ) {
     throw new Error(`Future V7 observation ${fieldName}.`);
   }
+  const missing = value === undefined || value === null;
   return {
     fieldName,
     family,
-    ...(value === undefined || value === null ? {} : { value }),
-    missing: value === undefined || value === null,
+    ...(missing ? {} : { value }),
+    missing,
+    ...(missing && missingReason ? { missingReason } : {}),
     sourceSystem,
     sourceEntity,
     sourceField,
