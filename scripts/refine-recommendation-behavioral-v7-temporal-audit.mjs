@@ -25,7 +25,7 @@ const acceptedFamilies = [...new Set(acceptedFields.map((field) => field.family)
 const report = {
   schemaVersion: 2,
   operation: 'RECOMMENDATION_BEHAVIORAL_V7_TIMESTAMP_LEAKAGE_AUDIT',
-  executorVersion: 'SEMANTIC_STRICT_PREDECISION_POLICY_2',
+  executorVersion: 'SEMANTIC_STRICT_PREDECISION_POLICY_3_EXPLICIT_IDENTITY',
   generatedAt: new Date().toISOString(),
   sourceInventory: {
     executorVersion: inventory.executorVersion,
@@ -43,6 +43,8 @@ const report = {
     forwardFillAcrossFutureEventsForbidden: true,
     playerPawnIdentityAssumedWithoutProof: false,
     teamIdentityAssumedWithoutProof: false,
+    datasetPlayerIdMayRepresentSteamIdWithoutDirectBridge: false,
+    heroIdMayBridgeDatasetPlayerToSteamId: false,
   },
   acceptedFields,
   rejectedFields,
@@ -92,7 +94,7 @@ function classify(field) {
     return accept(base, {
       timestampContract: 'SOURCE_EVENT_AT_OR_BEFORE_DECISION',
       alignmentContract: 'PLAYER_CONTROLLER_STEAM_ID_LAST_EVENT_NOT_AFTER_DECISION',
-      identityJoinContract: 'STEAM_ID',
+      identityJoinContract: 'MATCH_ID_PLUS_STEAM_ID_DIRECT',
       sourceTimestampRequired: true,
       missingnessIndicatorRequired: true,
       leakageClassification: 'SAFE_PREDECISION_PLAYER_CONTROLLER_EVENT',
@@ -145,7 +147,8 @@ function derived(canonicalFieldName, family, sources, formula) {
     acceptedForDatasetV7: true,
     timestampContract: 'SOURCE_EVENT_AT_OR_BEFORE_DECISION',
     alignmentContract: 'EVENT_LEDGER_PREFIX_ONLY',
-    identityJoinContract: 'MATCH_ID_PLUS_ACCOUNT_ID',
+    identityJoinContract: 'MATCH_PLAYER_DATABASE_SURROGATE_ID',
+    steamIdentityBridgeRequiredForLiveEventJoin: true,
     sourceTimestampRequired: true,
     missingnessIndicatorRequired: true,
     leakageClassification: 'SAFE_PREDECISION_EVENT_LEDGER_RECONSTRUCTION',
