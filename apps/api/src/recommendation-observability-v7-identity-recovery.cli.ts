@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import { readFile } from 'node:fs/promises';
 import { DataSource, IsNull } from 'typeorm';
 import { databaseOptions } from './database/data-source';
 import { MatchPlayer } from './deadlock-live/entities/match-player.entity';
@@ -25,6 +26,8 @@ async function main(): Promise<void> {
   const limit = boundedLimit(
     process.env.DEADLOCK_RECOMMENDATION_OBSERVABILITY_V7_IDENTITY_RECOVERY_LIMIT,
   );
+  const requestedMatchIdsPath =
+    process.env.DEADLOCK_RECOMMENDATION_OBSERVABILITY_V7_IDENTITY_RECOVERY_MATCH_IDS_PATH?.trim();
   const dataSource = new DataSource(databaseOptions);
   await dataSource.initialize();
 
@@ -34,23 +37,28 @@ async function main(): Promise<void> {
       const report = {
         schemaVersion: 1,
         operation: 'RECOMMENDATION_OBSERVABILITY_V7_IDENTITY_RECOVERY',
-        executorVersion: 'IDENTITY_ONLY_RAW_METADATA_ACCOUNT_ID_1',
+        executorVersion: 'IDENTITY_ONLY_RAW_METADATA_ACCOUNT_ID_2_EXPLICIT_SCOPE',
         mode: apply ? 'APPLY' : 'DRY_RUN',
         migrationReady: false,
         requestedLimit: limit,
+        recoveryScope: requestedMatchIdsPath
+          ? 'EXPLICIT_MATCH_ID_FILE'
+          : 'MISSING_IDENTITY_MATCH_PREFIX',
         appliedMatchCount: 0,
         persistedAccountIdCount: 0,
-        nextStep: 'RUN_DATABASE_MIGRATION_BEFORE_IDENTITY_RECOVERY',
+        nextStep: 'RUN_IDENTITY_SCHEMA_STEP_BEFORE_IDENTITY_RECOVERY',
       };
       console.log(JSON.stringify(report, null, 2));
       if (apply) {
-        throw new Error('match_players.accountId migration has not been applied.');
+        throw new Error('match_players.accountId schema has not been applied.');
       }
       return;
     }
 
     const totalMissingPlayerCount = await countMissingPlayers(dataSource);
-    const matchIds = await listMissingIdentityMatchIds(dataSource, limit);
+    const matchIds = requestedMatchIdsPath
+      ? await readRecoveryMatchIds(requestedMatchIdsPath, limit)
+      : await listMissingIdentityMatchIds(dataSource, limit);
     const metadataRepository = dataSource.getRepository(RawMatchMetadata);
     const matchPlayerRepository = dataSource.getRepository(MatchPlayer);
     const candidates: IdentityRecoveryCandidate[] = [];
@@ -140,10 +148,14 @@ async function main(): Promise<void> {
     const report = {
       schemaVersion: 1,
       operation: 'RECOMMENDATION_OBSERVABILITY_V7_IDENTITY_RECOVERY',
-      executorVersion: 'IDENTITY_ONLY_RAW_METADATA_ACCOUNT_ID_1',
+      executorVersion: 'IDENTITY_ONLY_RAW_METADATA_ACCOUNT_ID_2_EXPLICIT_SCOPE',
       mode: apply ? 'APPLY' : 'DRY_RUN',
       migrationReady: true,
       requestedLimit: limit,
+      recoveryScope: requestedMatchIdsPath
+        ? 'EXPLICIT_MATCH_ID_FILE'
+        : 'MISSING_IDENTITY_MATCH_PREFIX',
+      requestedMatchIdsPath,
       totalMissingPlayerCount,
       candidateMatchCount: matchIds.length,
       recoverableMatchCount: recoverableMatchIds.size,
@@ -228,6 +240,18 @@ async function listMissingIdentityMatchIds(
   return rows
     .map((row) => Number(row.matchId))
     .filter((matchId) => Number.isSafeInteger(matchId) && matchId > 0);
+}
+
+async function readRecoveryMatchIds(
+  path: string,
+  limit: number,
+): Promise<number[]> {
+  const content = await readFile(path, 'utf8');
+  const values = content
+    .split(/\r?\n/)
+    .map((value) => Number(value.trim()))
+    .filter((value) => Number.isSafeInteger(value) && value > 0);
+  return [...new Set(values)].slice(0, limit);
 }
 
 function boundedLimit(value: string | undefined): number {
