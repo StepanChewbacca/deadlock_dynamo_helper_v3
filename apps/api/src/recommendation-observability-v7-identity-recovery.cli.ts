@@ -1,16 +1,27 @@
 import 'reflect-metadata';
-import { DataSource } from 'typeorm';
+import { DataSource, IsNull } from 'typeorm';
 import { databaseOptions } from './database/data-source';
+import { MatchPlayer } from './deadlock-live/entities/match-player.entity';
 import { RawMatchMetadata } from './deadlock-live/entities/raw-match-metadata.entity';
-import { RawMatchMetadataNormalizerService } from './deadlock-live/raw-match-metadata-normalizer.service';
-import {
-  RawMatchMetadataService,
-  selectBestRawMatchMetadata,
-} from './deadlock-live/raw-match-metadata.service';
-import { StoredMatchReprocessingService } from './deadlock-live/stored-match-reprocessing.service';
+import { selectBestRawMatchMetadata } from './deadlock-live/raw-match-metadata.service';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 500;
+const MAX_ACCOUNT_ID = 0xffffffff;
+
+interface IdentityRecoveryCandidate {
+  matchPlayerId: number;
+  matchId: number;
+  heroId: number;
+  accountId: number;
+  rawMetadataId: number;
+}
+
+interface DirectIdentityIndex {
+  byHeroId: Map<number, number>;
+  conflictingHeroCount: number;
+  playerWithAccountIdCount: number;
+}
 
 async function main(): Promise<void> {
   const apply =
@@ -29,10 +40,12 @@ async function main(): Promise<void> {
       const report = {
         schemaVersion: 1,
         operation: 'RECOMMENDATION_OBSERVABILITY_V7_IDENTITY_RECOVERY',
+        executorVersion: 'IDENTITY_ONLY_RAW_METADATA_ACCOUNT_ID_1',
         mode: apply ? 'APPLY' : 'DRY_RUN',
         migrationReady: false,
         requestedLimit: limit,
         appliedMatchCount: 0,
+        persistedAccountIdCount: 0,
         nextStep: 'RUN_DATABASE_MIGRATION_BEFORE_IDENTITY_RECOVERY',
       };
       console.log(JSON.stringify(report, null, 2));
@@ -45,46 +58,85 @@ async function main(): Promise<void> {
     const totalMissingPlayerCount = await countMissingPlayers(dataSource);
     const matchIds = await listMissingIdentityMatchIds(dataSource, limit);
     const metadataRepository = dataSource.getRepository(RawMatchMetadata);
-    const recoverableMatchIds: number[] = [];
-    const rawMetadataByMatchId = new Map<number, RawMatchMetadata>();
+    const matchPlayerRepository = dataSource.getRepository(MatchPlayer);
+    const candidates: IdentityRecoveryCandidate[] = [];
+    const recoverableMatchIds = new Set<number>();
+    let missingMetadataMatchCount = 0;
+    let conflictingMetadataHeroCount = 0;
+    let metadataPlayerWithAccountIdCount = 0;
+    let missingDirectAccountIdentityPlayerCount = 0;
 
     for (const matchId of matchIds) {
-      const candidates = await metadataRepository.find({
+      const metadataCandidates = await metadataRepository.find({
         where: { matchId },
         order: { fetchedAt: 'DESC', id: 'DESC' },
       });
-      const selected = selectBestRawMatchMetadata(candidates);
-      if (!selected) continue;
-      recoverableMatchIds.push(matchId);
-      rawMetadataByMatchId.set(matchId, selected);
+      const selected = selectBestRawMatchMetadata(metadataCandidates);
+      if (!selected) {
+        missingMetadataMatchCount += 1;
+        continue;
+      }
+
+      const identityIndex = buildDirectIdentityIndex(selected.payload);
+      conflictingMetadataHeroCount += identityIndex.conflictingHeroCount;
+      metadataPlayerWithAccountIdCount += identityIndex.playerWithAccountIdCount;
+      const missingPlayers = await matchPlayerRepository.find({
+        where: { matchId, accountId: IsNull() },
+        select: { id: true, matchId: true, heroId: true, accountId: true },
+        order: { id: 'ASC' },
+      });
+
+      let recoverablePlayerCount = 0;
+      for (const player of missingPlayers) {
+        const heroId = Number(player.heroId);
+        const accountId = identityIndex.byHeroId.get(heroId);
+        if (accountId === undefined) {
+          missingDirectAccountIdentityPlayerCount += 1;
+          continue;
+        }
+        candidates.push({
+          matchPlayerId: Number(player.id),
+          matchId,
+          heroId,
+          accountId,
+          rawMetadataId: Number(selected.id),
+        });
+        recoverablePlayerCount += 1;
+      }
+      if (recoverablePlayerCount > 0) recoverableMatchIds.add(matchId);
     }
 
     let appliedMatchCount = 0;
     let persistedAccountIdCount = 0;
-    const failures: Array<{ matchId: number; message: string }> = [];
+    const appliedMatchIds = new Set<number>();
+    const failures: Array<{
+      matchPlayerId: number;
+      matchId: number;
+      heroId: number;
+      message: string;
+    }> = [];
+
     if (apply) {
-      const rawMetadataService = new RawMatchMetadataService(
-        metadataRepository,
-        {} as RawMatchMetadataNormalizerService,
-      );
-      const reprocessingService = new StoredMatchReprocessingService(
-        dataSource,
-        rawMetadataService,
-      );
-      for (const matchId of recoverableMatchIds) {
+      for (const candidate of candidates) {
         try {
-          const result = await reprocessingService.reprocessRawMetadata(
-            rawMetadataByMatchId.get(matchId) as RawMatchMetadata,
+          const result = await matchPlayerRepository.update(
+            { id: candidate.matchPlayerId, accountId: IsNull() },
+            { accountId: candidate.accountId },
           );
-          appliedMatchCount += 1;
-          persistedAccountIdCount += result.playerAccountIdsPersisted;
+          if (Number(result.affected ?? 0) === 1) {
+            persistedAccountIdCount += 1;
+            appliedMatchIds.add(candidate.matchId);
+          }
         } catch (error) {
           failures.push({
-            matchId,
+            matchPlayerId: candidate.matchPlayerId,
+            matchId: candidate.matchId,
+            heroId: candidate.heroId,
             message: error instanceof Error ? error.message : String(error),
           });
         }
       }
+      appliedMatchCount = appliedMatchIds.size;
     }
 
     const remainingMissingPlayerCount = apply
@@ -93,14 +145,18 @@ async function main(): Promise<void> {
     const report = {
       schemaVersion: 1,
       operation: 'RECOMMENDATION_OBSERVABILITY_V7_IDENTITY_RECOVERY',
-      executorVersion: 'CANONICAL_STORED_MATCH_REPROCESSING_1',
+      executorVersion: 'IDENTITY_ONLY_RAW_METADATA_ACCOUNT_ID_1',
       mode: apply ? 'APPLY' : 'DRY_RUN',
       migrationReady: true,
       requestedLimit: limit,
       totalMissingPlayerCount,
       candidateMatchCount: matchIds.length,
-      recoverableMatchCount: recoverableMatchIds.length,
-      unrecoverableMatchCount: matchIds.length - recoverableMatchIds.length,
+      recoverableMatchCount: recoverableMatchIds.size,
+      recoverablePlayerCount: candidates.length,
+      missingMetadataMatchCount,
+      conflictingMetadataHeroCount,
+      metadataPlayerWithAccountIdCount,
+      missingDirectAccountIdentityPlayerCount,
       appliedMatchCount,
       persistedAccountIdCount,
       remainingMissingPlayerCount,
@@ -108,10 +164,16 @@ async function main(): Promise<void> {
       failures,
       contracts: {
         source: 'RAW_MATCH_METADATA_MATCH_INFO_PLAYERS_ACCOUNT_ID',
-        persistencePath: 'STORED_MATCH_REPROCESSING_SERVICE',
+        persistencePath: 'MATCH_PLAYERS_ACCOUNT_ID_ONLY',
+        canonicalRecordLocator: 'MATCH_ID_PLUS_HERO_ID_EXISTING_INGEST_KEY',
+        matchPlayerNonIdentityFieldsModified: false,
+        matchPlayerItemsModified: false,
+        matchPlayerSkillUpgradesModified: false,
+        matchRowsModified: false,
+        rawMetadataRowsModified: false,
         netWorthMayRepresentWallet: false,
         historicalIdentityInferencePerformed: false,
-        liveEventHeroIdentityJoinPerformed: false,
+        crossStreamHeroIdentityInferencePerformed: false,
         liveEventTeamIdentityJoinPerformed: false,
         playerPawnIdentityJoinPerformed: false,
         futureTestEvaluated: false,
@@ -119,16 +181,54 @@ async function main(): Promise<void> {
       },
       nextStep:
         apply && failures.length === 0
-          ? 'REFRESH_DIRECT_IDENTITY_SIDECAR_AND_REAUDIT_STAGE_J'
+          ? 'EXPORT_DIRECT_IDENTITY_SIDECAR_AND_REAUDIT_STAGE_J'
           : apply
-            ? 'REVIEW_RECOVERY_FAILURES_BEFORE_RETRY'
-            : 'SET_APPLY_TRUE_ONLY_AFTER_REVIEWING_DRY_RUN_SCOPE',
+            ? 'REVIEW_IDENTITY_ONLY_RECOVERY_FAILURES_BEFORE_RETRY'
+            : 'APPLY_BOUNDED_IDENTITY_ONLY_RECOVERY_AFTER_DRY_RUN_REVIEW',
     };
     console.log(JSON.stringify(report, null, 2));
     if (apply && failures.length > 0) process.exitCode = 1;
   } finally {
     await dataSource.destroy();
   }
+}
+
+export function buildDirectIdentityIndex(
+  payload: Record<string, unknown>,
+): DirectIdentityIndex {
+  const matchInfo = toRecord(payload.match_info);
+  const players = Array.isArray(matchInfo?.players) ? matchInfo.players : [];
+  const identitiesByHero = new Map<number, Set<number>>();
+  let playerWithAccountIdCount = 0;
+
+  for (const entry of players) {
+    const player = toRecord(entry);
+    const heroId = getPositiveSafeInteger(player, 'hero_id');
+    const accountId = getPositiveSafeInteger(player, 'account_id');
+    if (
+      heroId === undefined ||
+      accountId === undefined ||
+      accountId > MAX_ACCOUNT_ID
+    ) {
+      continue;
+    }
+    playerWithAccountIdCount += 1;
+    const values = identitiesByHero.get(heroId) ?? new Set<number>();
+    values.add(accountId);
+    identitiesByHero.set(heroId, values);
+  }
+
+  const byHeroId = new Map<number, number>();
+  let conflictingHeroCount = 0;
+  for (const [heroId, accountIds] of identitiesByHero) {
+    if (accountIds.size !== 1) {
+      conflictingHeroCount += 1;
+      continue;
+    }
+    byHeroId.set(heroId, [...accountIds][0]);
+  }
+
+  return { byHeroId, conflictingHeroCount, playerWithAccountIdCount };
 }
 
 async function accountIdColumnExists(dataSource: DataSource): Promise<boolean> {
@@ -177,6 +277,27 @@ function boundedLimit(value: string | undefined): number {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) return DEFAULT_LIMIT;
   return Math.min(parsed, MAX_LIMIT);
+}
+
+function toRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function getPositiveSafeInteger(
+  record: Record<string, unknown> | undefined,
+  key: string,
+): number | undefined {
+  if (!record) return undefined;
+  const value = record[key];
+  const parsed =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim()
+        ? Number(value)
+        : Number.NaN;
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 void main().catch((error) => {
