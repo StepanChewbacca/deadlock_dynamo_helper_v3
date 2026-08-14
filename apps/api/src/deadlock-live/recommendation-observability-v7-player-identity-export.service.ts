@@ -11,7 +11,7 @@ const DEFAULT_OBSERVABILITY_ROOT =
 const IDENTITY_FILE = 'player-identities.ndjson';
 const MANIFEST_FILE = 'player-identities.manifest.json';
 
-interface RecommendationObservabilityV7PlayerIdentityRow {
+export interface RecommendationObservabilityV7PlayerIdentityRow {
   schemaVersion: 1;
   identityVersion: 'RECOMMENDATION_OBSERVABILITY_V7_DATASET_PLAYER_IDENTITY_1';
   matchId: string;
@@ -48,7 +48,9 @@ export class RecommendationObservabilityV7PlayerIdentityExportService
     });
   }
 
-  @Cron('15 * * * * *', { name: 'recommendation-observability-v7-player-identity-export' })
+  @Cron('15 * * * * *', {
+    name: 'recommendation-observability-v7-player-identity-export',
+  })
   async scheduledRefresh(): Promise<void> {
     try {
       await this.refresh();
@@ -67,7 +69,7 @@ export class RecommendationObservabilityV7PlayerIdentityExportService
         order: { matchId: 'ASC', id: 'ASC' },
       });
       const rows = players
-        .map(toIdentityRow)
+        .map(buildRecommendationObservabilityV7PlayerIdentityRow)
         .filter(
           (row): row is RecommendationObservabilityV7PlayerIdentityRow =>
             row !== undefined,
@@ -115,7 +117,7 @@ export class RecommendationObservabilityV7PlayerIdentityExportService
   }
 }
 
-function toIdentityRow(
+export function buildRecommendationObservabilityV7PlayerIdentityRow(
   player: Pick<MatchPlayer, 'id' | 'matchId' | 'accountId'>,
 ): RecommendationObservabilityV7PlayerIdentityRow | undefined {
   const id = Number(player.id);
