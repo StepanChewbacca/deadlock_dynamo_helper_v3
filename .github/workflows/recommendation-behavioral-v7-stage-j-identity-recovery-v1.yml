@@ -1,0 +1,243 @@
+name: Recommendation Behavioral V7 Stage J Identity Recovery V1
+
+on:
+  pull_request:
+    paths:
+      - 'apps/api/src/recommendation-observability-v7-identity-schema.cli.ts'
+      - 'apps/api/src/recommendation-observability-v7-identity-recovery.cli.ts'
+      - 'apps/api/src/recommendation-observability-v7-player-identity-export.cli.ts'
+      - 'apps/api/src/deadlock-live/recommendation-observability-v7-direct-identity.ts'
+      - 'apps/api/src/deadlock-live/recommendation-observability-v7-player-identity-export.service.ts'
+      - 'apps/api/src/deadlock-live/entities/match-player.entity.ts'
+      - 'apps/api/test/recommendation-observability-v7.spec.ts'
+      - '.github/workflows/recommendation-behavioral-v7-stage-j-identity-recovery-v1.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v7-stage-j-identity-recovery-v1
+  cancel-in-progress: false
+
+jobs:
+  recover-and-reaudit:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'agent/recommendation-behavioral-v6-feasible-choice-set-1'
+    runs-on: self-hosted
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Prepare exact frozen Stage E match scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          sample="$storage/recommendation-behavioral-v5-1-sweep-b-v1/diagnostic-sample.ndjson.gz"
+          sudo test -s "$sample"
+          sudo cp "$sample" "$RUNNER_TEMP/v7-source.ndjson.gz"
+          sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/v7-source.ndjson.gz"
+          SOURCE="$RUNNER_TEMP/v7-source.ndjson.gz" \
+          OUTPUT="$RUNNER_TEMP/frozen-match-ids.txt" \
+            python3 - <<'PY'
+          import gzip
+          import json
+          import os
+
+          source = os.environ['SOURCE']
+          output = os.environ['OUTPUT']
+          match_ids = set()
+          with gzip.open(source, 'rt', encoding='utf-8') as handle:
+              for line in handle:
+                  if not line.strip():
+                      continue
+                  row = json.loads(line)
+                  match_id = int(row['matchId'])
+                  if match_id > 0:
+                      match_ids.add(match_id)
+          if not match_ids:
+              raise SystemExit('Frozen Dataset V6 sample contains no match IDs.')
+          with open(output, 'w', encoding='utf-8') as handle:
+              for match_id in sorted(match_ids):
+                  handle.write(f'{match_id}\n')
+          print(json.dumps({'frozenMatchCount': len(match_ids)}))
+          PY
+          test -s "$RUNNER_TEMP/frozen-match-ids.txt"
+
+      - name: Build isolated recovery image
+        shell: bash
+        run: |
+          set -euo pipefail
+          env_file='/home/ubuntu/apps/deadlock_dynamo_helper/.env'
+          test -r "$env_file"
+          sudo docker compose --env-file "$env_file" build api
+
+      - name: Apply only the Stage J identity schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          env_file='/home/ubuntu/apps/deadlock_dynamo_helper/.env'
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          sudo docker compose --env-file "$env_file" run --rm --no-deps \
+            -v "$storage:/app/apps/api/storage" \
+            api node dist/src/recommendation-observability-v7-identity-schema.cli.js \
+            > "$RUNNER_TEMP/identity-schema.json"
+          jq -e '.schemaVersion == 1 and .columnReady == true and .indexReady == true and .otherMigrationsExecuted == false and .trainingPerformed == false and .futureTestEvaluated == false' \
+            "$RUNNER_TEMP/identity-schema.json"
+
+      - name: Dry-run exact-scope identity recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          env_file='/home/ubuntu/apps/deadlock_dynamo_helper/.env'
+          sudo docker compose --env-file "$env_file" run --rm --no-deps \
+            -v "$RUNNER_TEMP:/stage-j:ro" \
+            -e DEADLOCK_RECOMMENDATION_OBSERVABILITY_V7_IDENTITY_RECOVERY_APPLY=false \
+            -e DEADLOCK_RECOMMENDATION_OBSERVABILITY_V7_IDENTITY_RECOVERY_LIMIT=500 \
+            -e DEADLOCK_RECOMMENDATION_OBSERVABILITY_V7_IDENTITY_RECOVERY_MATCH_IDS_PATH=/stage-j/frozen-match-ids.txt \
+            api node dist/src/recommendation-observability-v7-identity-recovery.cli.js \
+            > "$RUNNER_TEMP/identity-recovery-dry-run.json"
+          jq -e '.schemaVersion == 1 and .mode == "DRY_RUN" and .migrationReady == true and .recoveryScope == "EXPLICIT_MATCH_ID_FILE" and .candidateMatchCount > 0 and .contracts.persistencePath == "MATCH_PLAYERS_ACCOUNT_ID_ONLY" and .contracts.matchPlayerNonIdentityFieldsModified == false and .contracts.matchPlayerItemsModified == false and .contracts.matchPlayerSkillUpgradesModified == false and .contracts.matchRowsModified == false and .contracts.rawMetadataRowsModified == false and .contracts.historicalIdentityInferencePerformed == false and .contracts.playerPawnIdentityJoinPerformed == false and .contracts.trainingPerformed == false and .contracts.futureTestEvaluated == false' \
+            "$RUNNER_TEMP/identity-recovery-dry-run.json"
+
+      - name: Apply bounded identity-only recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          env_file='/home/ubuntu/apps/deadlock_dynamo_helper/.env'
+          if jq -e '.recoverablePlayerCount > 0' "$RUNNER_TEMP/identity-recovery-dry-run.json" >/dev/null; then
+            sudo docker compose --env-file "$env_file" run --rm --no-deps \
+              -v "$RUNNER_TEMP:/stage-j:ro" \
+              -e DEADLOCK_RECOMMENDATION_OBSERVABILITY_V7_IDENTITY_RECOVERY_APPLY=true \
+              -e DEADLOCK_RECOMMENDATION_OBSERVABILITY_V7_IDENTITY_RECOVERY_LIMIT=500 \
+              -e DEADLOCK_RECOMMENDATION_OBSERVABILITY_V7_IDENTITY_RECOVERY_MATCH_IDS_PATH=/stage-j/frozen-match-ids.txt \
+              api node dist/src/recommendation-observability-v7-identity-recovery.cli.js \
+              > "$RUNNER_TEMP/identity-recovery-apply.json"
+            jq -e '.schemaVersion == 1 and .mode == "APPLY" and .failureCount == 0 and .persistedAccountIdCount > 0 and .contracts.persistencePath == "MATCH_PLAYERS_ACCOUNT_ID_ONLY" and .contracts.matchPlayerNonIdentityFieldsModified == false and .contracts.matchPlayerItemsModified == false and .contracts.matchPlayerSkillUpgradesModified == false and .contracts.matchRowsModified == false and .contracts.rawMetadataRowsModified == false and .contracts.trainingPerformed == false and .contracts.futureTestEvaluated == false' \
+              "$RUNNER_TEMP/identity-recovery-apply.json"
+          else
+            cp "$RUNNER_TEMP/identity-recovery-dry-run.json" "$RUNNER_TEMP/identity-recovery-apply.json"
+          fi
+
+      - name: Export direct persisted identity sidecar
+        shell: bash
+        run: |
+          set -euo pipefail
+          env_file='/home/ubuntu/apps/deadlock_dynamo_helper/.env'
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          sudo docker compose --env-file "$env_file" run --rm --no-deps \
+            -v "$storage:/app/apps/api/storage" \
+            -e DEADLOCK_RECOMMENDATION_OBSERVABILITY_V7_DIR=/app/apps/api/storage/recommendation-observability-v7 \
+            api node dist/src/recommendation-observability-v7-player-identity-export.cli.js \
+            > "$RUNNER_TEMP/identity-export.json"
+          jq -e '.schemaVersion == 1 and .rowCount > 0 and .historicalIdentityInferencePerformed == false and .heroIdentityInferencePerformed == false and .teamIdentityInferencePerformed == false and .playerPawnIdentityInferencePerformed == false' \
+            "$RUNNER_TEMP/identity-export.json"
+          sudo test -s "$storage/recommendation-observability-v7/player-identities.ndjson"
+
+      - name: Reaudit Stage J completeness
+        shell: bash
+        run: |
+          set -euo pipefail
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          identity="$storage/recommendation-observability-v7/player-identities.ndjson"
+          telemetry="$storage/recommendation-observability-v7/events.ndjson"
+          sudo cp "$identity" "$RUNNER_TEMP/v7-player-identities.ndjson"
+          if sudo test -s "$telemetry"; then
+            sudo cp "$telemetry" "$RUNNER_TEMP/v7-telemetry.ndjson"
+          else
+            sudo touch "$RUNNER_TEMP/v7-telemetry.ndjson"
+          fi
+          sudo chown "$(id -u):$(id -g)" \
+            "$RUNNER_TEMP/v7-player-identities.ndjson" \
+            "$RUNNER_TEMP/v7-telemetry.ndjson"
+          BEHAVIORAL_V7_TELEMETRY_PATH="$RUNNER_TEMP/v7-telemetry.ndjson" \
+          BEHAVIORAL_V7_PLAYER_IDENTITY_PATH="$RUNNER_TEMP/v7-player-identities.ndjson" \
+          BEHAVIORAL_V7_TELEMETRY_COMPLETENESS_PATH="$RUNNER_TEMP/stage-j-completeness.json" \
+            node scripts/audit-recommendation-observability-v7-telemetry-completeness.mjs
+          jq -e '.schemaVersion == 1 and .trainingPerformed == false and .futureTestEvaluated == false and .contracts.historicalIdentityInferencePerformed == false and .identity.validRowCount > 0 and .identity.conflictingDatasetPlayerKeyCount == 0 and .summary.directDatasetIdentityBridgeObserved == true' \
+            "$RUNNER_TEMP/stage-j-completeness.json"
+
+      - name: Reexport Dataset V7 with recovered direct identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          ledger="$storage/recommendation-behavioral-v7-historical-ledger-v1/ledger.ndjson"
+          temporal="$storage/recommendation-behavioral-v7-temporal-audit-v2/report.json"
+          sudo test -s "$ledger"
+          sudo test -s "$temporal"
+          sudo cp "$ledger" "$RUNNER_TEMP/v7-ledger.ndjson"
+          sudo cp "$temporal" "$RUNNER_TEMP/v7-temporal.json"
+          sudo chown "$(id -u):$(id -g)" \
+            "$RUNNER_TEMP/v7-ledger.ndjson" \
+            "$RUNNER_TEMP/v7-temporal.json"
+          echo '8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac  '"$RUNNER_TEMP/v7-source.ndjson.gz" | sha256sum -c -
+          BEHAVIORAL_V7_SOURCE_DATASET_V6_PATH="$RUNNER_TEMP/v7-source.ndjson.gz" \
+          BEHAVIORAL_V7_TEMPORAL_AUDIT_PATH="$RUNNER_TEMP/v7-temporal.json" \
+          BEHAVIORAL_V7_HISTORICAL_LEDGER_PATH="$RUNNER_TEMP/v7-ledger.ndjson" \
+          BEHAVIORAL_V7_TELEMETRY_PATH="$RUNNER_TEMP/v7-telemetry.ndjson" \
+          BEHAVIORAL_V7_PLAYER_IDENTITY_PATH="$RUNNER_TEMP/v7-player-identities.ndjson" \
+          BEHAVIORAL_V7_OUTPUT_DATASET_PATH="$RUNNER_TEMP/dataset-v7.ndjson" \
+          BEHAVIORAL_V7_OUTPUT_AUDIT_PATH="$RUNNER_TEMP/dataset-v7-audit.json" \
+            node scripts/export-recommendation-pro-decision-dataset-v7.mjs
+          jq -e '.schemaVersion == 2 and .stageCExportPassed == true and .futureTestDecisionCount == 0 and .futureTestEvaluated == false and .identityMappingCoverage > 0 and .historicalLedgerJoinCoverage > 0 and .identityContracts.historicalIdentityInferencePerformed == false and .identityContracts.heroIdentityInferencePerformed == false and .observedActionInjectedCount == 0' \
+            "$RUNNER_TEMP/dataset-v7-audit.json"
+          gzip -9 "$RUNNER_TEMP/dataset-v7.ndjson"
+
+      - name: Reaudit Stage D
+        shell: bash
+        env:
+          BEHAVIORAL_V7_DATASET_PATH: ${{ runner.temp }}/dataset-v7.ndjson.gz
+          BEHAVIORAL_V7_CHOICE_SET_REPORT_PATH: ${{ runner.temp }}/stage-d.json
+        run: |
+          set -euo pipefail
+          node scripts/audit-recommendation-behavioral-v7-choice-set.mjs
+          jq -e '.schemaVersion == 2 and .stageDGatePassed == true and .futureTestEvaluated == false' "$BEHAVIORAL_V7_CHOICE_SET_REPORT_PATH"
+
+      - name: Recompute Stage E information gain
+        shell: bash
+        env:
+          BEHAVIORAL_V7_DATASET_PATH: ${{ runner.temp }}/dataset-v7.ndjson.gz
+          BEHAVIORAL_V7_INFORMATION_GAIN_REPORT_PATH: ${{ runner.temp }}/stage-e.json
+        run: |
+          set -euo pipefail
+          node scripts/diagnose-recommendation-behavioral-v7-information-gain.mjs
+          jq -e '.behavioralModelTrainingPerformed == false and .futureTestEvaluated == false and .tuningUsedForDiagnostic == false' "$BEHAVIORAL_V7_INFORMATION_GAIN_REPORT_PATH"
+
+      - name: Persist immutable Stage J recovery evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          output="$storage/recommendation-behavioral-v7-stage-j-identity-recovery-v1/runs/${{ github.run_id }}-${{ github.run_attempt }}"
+          sudo mkdir -p "$output"
+          for file in \
+            identity-schema.json \
+            identity-recovery-dry-run.json \
+            identity-recovery-apply.json \
+            identity-export.json \
+            stage-j-completeness.json \
+            dataset-v7-audit.json \
+            stage-d.json \
+            stage-e.json; do
+            sudo install -m 0644 "$RUNNER_TEMP/$file" "$output/$file"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-behavioral-v7-stage-j-identity-recovery-v1-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/identity-schema.json
+            ${{ runner.temp }}/identity-recovery-dry-run.json
+            ${{ runner.temp }}/identity-recovery-apply.json
+            ${{ runner.temp }}/identity-export.json
+            ${{ runner.temp }}/stage-j-completeness.json
+            ${{ runner.temp }}/dataset-v7-audit.json
+            ${{ runner.temp }}/stage-d.json
+            ${{ runner.temp }}/stage-e.json
+          retention-days: 14
