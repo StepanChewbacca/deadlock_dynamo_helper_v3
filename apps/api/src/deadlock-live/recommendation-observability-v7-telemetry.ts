@@ -34,6 +34,7 @@ export interface RecommendationObservabilityV7SnapshotInput {
   heroId: number;
   gameTimeS: number;
   source: RecommendationObservabilityV7Source;
+  sourceEventId?: string;
   sourceOccurredAt?: string;
   spendableSouls?: number;
   shopAvailable?: boolean;
@@ -162,6 +163,9 @@ function validateSnapshot(input: RecommendationObservabilityV7SnapshotInput): vo
   if (!['LIVE_CLIENT_DIRECT', 'OVERWOLF_GAME_EVENT', 'SERVER_STATE_DIRECT'].includes(input.source)) {
     throw new Error('Unsupported V7 observability source.');
   }
+  if (input.sourceEventId !== undefined && !input.sourceEventId.trim()) {
+    throw new Error('sourceEventId must be non-empty when provided.');
+  }
   if (
     input.spendableSouls !== undefined &&
     (!Number.isSafeInteger(input.spendableSouls) || input.spendableSouls < 0)
@@ -229,6 +233,7 @@ function cloneSnapshot(
     ...input,
     matchId: input.matchId.trim(),
     steamId: input.steamId.trim(),
+    sourceEventId: input.sourceEventId?.trim(),
     sourceOccurredAt: input.sourceOccurredAt?.trim(),
     rulesetId: input.rulesetId?.trim(),
     itemAvailabilityVersion: input.itemAvailabilityVersion?.trim(),
