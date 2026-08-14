@@ -26,7 +26,7 @@ export function extractRecommendationObservabilityV7FromTimelinePayload(
 ): RecommendationObservabilityV7SnapshotInput | undefined {
   if (
     !matchId.trim() ||
-    !['player_controller', 'player_pawn'].includes(payload.entity_type ?? '') ||
+    payload.entity_type !== 'player_controller' ||
     payload.steam_id === undefined ||
     !Number.isSafeInteger(payload.hero_id) ||
     (payload.hero_id ?? 0) <= 0 ||
