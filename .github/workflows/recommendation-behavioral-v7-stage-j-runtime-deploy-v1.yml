@@ -1,0 +1,158 @@
+name: Recommendation Behavioral V7 Stage J Runtime Deploy V1
+
+on:
+  pull_request:
+    paths:
+      - 'apps/api/src/app.module.ts'
+      - 'apps/api/src/deadlock-live/hero-build-decision-dataset-v3.service.ts'
+      - 'apps/api/src/deadlock-live/recommendation-observability-v7-*.ts'
+      - 'apps/api/src/deadlock-live/recommendation-historical-pro-replay.ts'
+      - 'apps/api/src/deadlock-live/recommendation-pro-decision-dataset-v6.ts'
+      - 'apps/api/src/deadlock-live/entities/match-player.entity.ts'
+      - 'apps/api/src/recommendation-observability-v7-identity-schema.cli.ts'
+      - 'docker-compose.yml'
+      - '.github/workflows/recommendation-behavioral-v7-stage-j-runtime-deploy-v1.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-v7-stage-j-runtime-deploy-v1
+  cancel-in-progress: false
+
+jobs:
+  deploy-stage-j-runtime:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'agent/recommendation-behavioral-v6-feasible-choice-set-1'
+    runs-on: self-hosted
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+
+      - name: Verify deployment source
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          expected='${{ github.event.pull_request.head.sha }}'
+          test "$actual" = "$expected"
+          echo "$actual" > "$RUNNER_TEMP/deployed-head.txt"
+
+      - name: Copy exact head to deployment directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          target='/home/ubuntu/apps/deadlock_dynamo_helper'
+          test -r "$target/.env"
+          rsync -avz --delete \
+            --exclude 'node_modules' \
+            --exclude '.env' \
+            --exclude 'storage' \
+            ./ "$target/"
+
+      - name: Build API and enforce isolated Stage J schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /home/ubuntu/apps/deadlock_dynamo_helper
+          sudo docker compose --env-file .env build api
+          sudo docker compose --env-file .env run --rm --no-deps \
+            api node dist/src/recommendation-observability-v7-identity-schema.cli.js \
+            > "$RUNNER_TEMP/identity-schema.json"
+          jq -e '.schemaVersion == 1 and .columnReady == true and .indexReady == true and .otherMigrationsExecuted == false and .trainingPerformed == false and .futureTestEvaluated == false' \
+            "$RUNNER_TEMP/identity-schema.json"
+
+      - name: Restart API with Stage J runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /home/ubuntu/apps/deadlock_dynamo_helper
+          sudo docker compose --env-file .env up -d api
+          container_id="$(sudo docker compose --env-file .env ps -q api)"
+          test -n "$container_id"
+          for attempt in $(seq 1 40); do
+            status="$(sudo docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$container_id")"
+            echo "API health status: $status ($attempt/40)"
+            if [ "$status" = 'healthy' ]; then
+              exit 0
+            fi
+            if [ "$status" = 'unhealthy' ]; then
+              sudo docker compose --env-file .env logs --tail=250 api
+              exit 1
+            fi
+            sleep 5
+          done
+          sudo docker compose --env-file .env logs --tail=250 api
+          exit 1
+
+      - name: Verify existing production recommendation remains ready
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /home/ubuntu/apps/deadlock_dynamo_helper
+          sudo docker compose --env-file .env exec -T api node -e "fetch('http://127.0.0.1:3000/deadlock/analysis/contextual-v3-live/status').then(async (response) => { const status = await response.json(); console.log(JSON.stringify(status)); if (!response.ok || status.mode !== 'PRODUCTION' || status.model?.state !== 'READY') process.exit(1); }).catch((error) => { console.error(error); process.exit(1); });"
+          sudo docker compose --env-file .env exec -T api node -e "fetch('http://127.0.0.1:3000/deadlock/live/build-recommendations/status').then(async (response) => { const status = await response.json(); console.log(JSON.stringify(status)); if (!response.ok || typeof status.trackedMatchCount !== 'number') process.exit(1); }).catch((error) => { console.error(error); process.exit(1); });"
+
+      - name: Verify Stage J runtime artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          root='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-observability-v7'
+          for attempt in $(seq 1 20); do
+            if sudo test -s "$root/player-identities.manifest.json" && sudo test -s "$root/timeline-cursors.json"; then
+              break
+            fi
+            echo "Waiting for Stage J runtime artifacts ($attempt/20)."
+            sleep 3
+          done
+          sudo test -s "$root/player-identities.manifest.json"
+          sudo test -s "$root/timeline-cursors.json"
+          sudo cp "$root/player-identities.manifest.json" "$RUNNER_TEMP/player-identities.manifest.json"
+          sudo cp "$root/timeline-cursors.json" "$RUNNER_TEMP/timeline-cursors.json"
+          sudo chown "$(id -u):$(id -g)" \
+            "$RUNNER_TEMP/player-identities.manifest.json" \
+            "$RUNNER_TEMP/timeline-cursors.json"
+          jq -e '.schemaVersion == 1 and .identityVersion == "RECOMMENDATION_OBSERVABILITY_V7_DATASET_PLAYER_IDENTITY_1" and .identityDomain == "STEAM_ACCOUNT_ID_U32" and .historicalIdentityInferencePerformed == false and .heroIdentityInferencePerformed == false and .teamIdentityInferencePerformed == false and .playerPawnIdentityInferencePerformed == false' \
+            "$RUNNER_TEMP/player-identities.manifest.json"
+          jq -e '.schemaVersion == 1 and (.cursors | type == "object")' \
+            "$RUNNER_TEMP/timeline-cursors.json"
+
+      - name: Persist immutable deployment evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          output="$storage/recommendation-behavioral-v7-stage-j-runtime-deploy-v1/runs/${{ github.run_id }}-${{ github.run_attempt }}"
+          head="$(cat "$RUNNER_TEMP/deployed-head.txt")"
+          jq -n \
+            --arg head "$head" \
+            --arg generatedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{schemaVersion:1,operation:"RECOMMENDATION_BEHAVIORAL_V7_STAGE_J_RUNTIME_DEPLOY",deployedHeadSha:$head,generatedAt:$generatedAt,apiHealthy:true,contextualV3ProductionReady:true,stageJIdentityManifestObserved:true,stageJTimelineCursorObserved:true,fullMigrationRunnerUsed:false,trainingPerformed:false,valueTrainingPerformed:false,futureTestEvaluated:false}' \
+            > "$RUNNER_TEMP/stage-j-runtime-deploy.json"
+          sudo mkdir -p "$output"
+          for file in identity-schema.json player-identities.manifest.json timeline-cursors.json stage-j-runtime-deploy.json; do
+            sudo install -m 0644 "$RUNNER_TEMP/$file" "$output/$file"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-behavioral-v7-stage-j-runtime-deploy-v1-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/identity-schema.json
+            ${{ runner.temp }}/player-identities.manifest.json
+            ${{ runner.temp }}/timeline-cursors.json
+            ${{ runner.temp }}/stage-j-runtime-deploy.json
+          retention-days: 14
+
+      - name: Show API logs on failure
+        if: failure()
+        shell: bash
+        run: |
+          cd /home/ubuntu/apps/deadlock_dynamo_helper
+          sudo docker compose --env-file .env ps
+          sudo docker compose --env-file .env logs --tail=300 api
