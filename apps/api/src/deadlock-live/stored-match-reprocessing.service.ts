@@ -10,7 +10,7 @@ import { RawMatchMetadata } from './entities/raw-match-metadata.entity';
 import { RawMatchMetadataService } from './raw-match-metadata.service';
 
 export const MATCH_METADATA_PROCESSING_VERSION =
-  'match-metadata-v3-version-independent';
+  'match-metadata-v4-direct-account-identity';
 
 interface ParsedBuildItem {
   itemId: number;
@@ -42,6 +42,7 @@ export interface StoredMatchReprocessingResult {
   matchId: number;
   rawMetadataId: number;
   playersProcessed: number;
+  playerAccountIdsPersisted: number;
   itemEventsProcessed: number;
   skillEventsProcessed: number;
   unknownItemEventsSkipped: number;
@@ -139,6 +140,7 @@ export class StoredMatchReprocessingService {
       where: { matchId },
     });
     let playersProcessed = 0;
+    let playerAccountIdsPersisted = 0;
     let itemEventsProcessed = 0;
     let skillEventsProcessed = 0;
     let unknownItemEventsSkipped = 0;
@@ -152,6 +154,7 @@ export class StoredMatchReprocessingService {
       processedHeroIds.add(heroId);
 
       const team = getNumericValue(playerPayload, 'team') ?? 0;
+      const accountId = getPositiveSafeIntegerValue(playerPayload, 'account_id');
       const parsedItems = this.parseItems(playerPayload, heroId, knownItems.itemIds);
 
       let player = await matchPlayerRepository.findOne({
@@ -161,6 +164,10 @@ export class StoredMatchReprocessingService {
         player = matchPlayerRepository.create({ matchId, heroId });
       }
 
+      if (accountId !== undefined) {
+        player.accountId = accountId;
+        playerAccountIdsPersisted += 1;
+      }
       player.team = team;
       player.won = team === winningTeam;
       player.kills = getNumericValue(playerPayload, 'kills') ?? 0;
@@ -228,6 +235,7 @@ export class StoredMatchReprocessingService {
 
     return {
       playersProcessed,
+      playerAccountIdsPersisted,
       itemEventsProcessed,
       skillEventsProcessed,
       unknownItemEventsSkipped,
@@ -312,4 +320,14 @@ function getNumericValue(
     return Number.isFinite(parsed) ? parsed : undefined;
   }
   return undefined;
+}
+
+function getPositiveSafeIntegerValue(
+  record: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const value = getNumericValue(record, key);
+  return value !== undefined && Number.isSafeInteger(value) && value > 0
+    ? value
+    : undefined;
 }
