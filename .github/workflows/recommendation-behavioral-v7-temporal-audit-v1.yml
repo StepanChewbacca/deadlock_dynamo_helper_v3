@@ -36,10 +36,16 @@ jobs:
           sudo chown "$(id -u):$(id -g)" "$stage"
           BEHAVIORAL_V7_OBSERVABILITY_INVENTORY_PATH="$stage" node scripts/refine-recommendation-behavioral-v7-temporal-audit.mjs
           jq -e '.schemaVersion == 2 and .summary.stageBGatePassed == true and .contracts.futureTestEvaluated == false and .contracts.netWorthMayRepresentWallet == false' "$BEHAVIORAL_V7_TEMPORAL_AUDIT_PATH"
-          output='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data/recommendation-behavioral-v7-temporal-audit-v2'
-          sudo test ! -e "$output"
-          sudo mkdir "$output"
-          sudo install -m 0644 "$BEHAVIORAL_V7_TEMPORAL_AUDIT_PATH" "$output/report.json"
+
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          canonical="$storage/recommendation-behavioral-v7-temporal-audit-v2"
+          run_output="$canonical/runs/${{ github.run_id }}-${{ github.run_attempt }}"
+          sudo mkdir -p "$run_output"
+          sudo install -m 0644 "$BEHAVIORAL_V7_TEMPORAL_AUDIT_PATH" "$run_output/report.json"
+          if ! sudo test -s "$canonical/report.json"; then
+            sudo mkdir -p "$canonical"
+            sudo install -m 0644 "$BEHAVIORAL_V7_TEMPORAL_AUDIT_PATH" "$canonical/report.json"
+          fi
 
       - name: Upload temporal evidence
         uses: actions/upload-artifact@v4
