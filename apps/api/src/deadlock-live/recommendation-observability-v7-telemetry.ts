@@ -1,3 +1,4 @@
+import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -71,6 +72,7 @@ export interface RecommendationObservabilityV7TelemetryStatus {
   lastWriteError?: string;
 }
 
+@Injectable()
 export class RecommendationObservabilityV7TelemetryStore {
   private readonly outputDirectory =
     process.env.DEADLOCK_RECOMMENDATION_OBSERVABILITY_V7_DIR?.trim() ||
@@ -205,6 +207,7 @@ function validateSnapshot(input: RecommendationObservabilityV7SnapshotInput): vo
   const usefulFieldCount = [
     input.spendableSouls,
     input.shopAvailable,
+    input.shopType,
     input.alive,
     input.occupiedSlots,
     input.flexSlotsUnlocked,
