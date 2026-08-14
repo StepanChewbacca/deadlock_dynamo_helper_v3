@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { buildRecommendationObservabilityV7DirectIdentityIndex } from '../src/deadlock-live/recommendation-observability-v7-direct-identity';
 import { buildRecommendationObservabilityV7PlayerIdentityRow } from '../src/deadlock-live/recommendation-observability-v7-player-identity-export.service';
 import { extractRecommendationObservabilityV7FromTimelinePayload } from '../src/deadlock-live/recommendation-observability-v7-raw-extractor';
 import { findRecommendationObservabilityV7CompleteEndExclusive } from '../src/deadlock-live/recommendation-observability-v7-timeline-tail.service';
@@ -67,6 +68,27 @@ describe('Recommendation Observability V7 direct contracts', () => {
     );
 
     expect(snapshot).toBeUndefined();
+  });
+
+  it('builds direct metadata account identity only for unambiguous hero records', () => {
+    const index = buildRecommendationObservabilityV7DirectIdentityIndex({
+      match_info: {
+        players: [
+          { hero_id: 7, account_id: 42 },
+          { hero_id: 8, account_id: '4294967295' },
+          { hero_id: 9, account_id: 100 },
+          { hero_id: 9, account_id: 101 },
+          { hero_id: 10, account_id: 4294967296 },
+        ],
+      },
+    });
+
+    expect([...index.byHeroId.entries()]).toEqual([
+      [7, 42],
+      [8, 4294967295],
+    ]);
+    expect(index.conflictingHeroCount).toBe(1);
+    expect(index.playerWithAccountIdCount).toBe(4);
   });
 
   it('exports the persisted u32 account identity without conversion', () => {
