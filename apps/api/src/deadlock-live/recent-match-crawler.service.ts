@@ -565,12 +565,16 @@ export class RecentMatchCrawlerService implements OnModuleInit {
         }
         processedHeroIds.add(heroId);
 
+        const accountId = toPositiveSafeInteger(playerPayload?.account_id);
         const team = Number(playerPayload?.team ?? 0);
         const parsedItems = this.parsePlayerItems(playerPayload, heroId);
 
         let player = await playerRepository.findOne({ where: { matchId, heroId } });
         if (!player) {
           player = playerRepository.create({ matchId, heroId });
+        }
+        if (accountId !== undefined) {
+          player.accountId = accountId;
         }
         player.team = team;
         player.won = team === winningTeam;
