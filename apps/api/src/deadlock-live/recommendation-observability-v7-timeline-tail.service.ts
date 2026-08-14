@@ -3,6 +3,7 @@ import { Cron } from '@nestjs/schedule';
 import { createReadStream } from 'node:fs';
 import {
   mkdir,
+  open,
   readFile,
   readdir,
   rename,
@@ -19,6 +20,7 @@ const DEFAULT_TIMELINE_ROOT = '/app/apps/api/storage/match-timeline-events-v1';
 const DEFAULT_OBSERVABILITY_ROOT =
   '/app/apps/api/storage/recommendation-observability-v7';
 const CURSOR_FILE = 'timeline-cursors.json';
+const SAFE_TAIL_SCAN_CHUNK_BYTES = 64 * 1024;
 
 interface TimelineCursorState {
   schemaVersion: 1;
@@ -71,7 +73,9 @@ export class RecommendationObservabilityV7TimelineTailService
     });
   }
 
-  @Cron('45 * * * * *', { name: 'recommendation-observability-v7-timeline-tail' })
+  @Cron('45 * * * * *', {
+    name: 'recommendation-observability-v7-timeline-tail',
+  })
   async scheduledScan(): Promise<void> {
     if (this.enabled) {
       await this.scan();
@@ -90,33 +94,47 @@ export class RecommendationObservabilityV7TimelineTailService
         const metadata = await stat(file.path);
         const previousOffset = this.cursors.get(file.path);
         if (previousOffset === undefined) {
-          this.cursors.set(file.path, this.backfillExisting ? 0 : metadata.size);
+          const initialOffset = this.backfillExisting
+            ? 0
+            : await findCompleteEndExclusive(file.path, 0, metadata.size);
+          this.cursors.set(file.path, initialOffset);
           cursorChanged = true;
           if (!this.backfillExisting) continue;
         }
 
         let start = this.cursors.get(file.path) ?? 0;
         if (metadata.size < start) {
-          start = this.backfillExisting ? 0 : metadata.size;
+          start = this.backfillExisting
+            ? 0
+            : await findCompleteEndExclusive(file.path, 0, metadata.size);
           this.cursors.set(file.path, start);
           cursorChanged = true;
         }
-        if (metadata.size === start) continue;
+        if (metadata.size <= start) continue;
+
+        const completeEndExclusive = await findCompleteEndExclusive(
+          file.path,
+          start,
+          metadata.size,
+        );
+        if (completeEndExclusive <= start) continue;
 
         accepted += await this.consumeFile(
           file.matchId,
           file.path,
           start,
-          metadata.size - 1,
+          completeEndExclusive - 1,
         );
-        this.cursors.set(file.path, metadata.size);
+        this.cursors.set(file.path, completeEndExclusive);
         cursorChanged = true;
       }
 
       await this.telemetryStore.waitForIdle();
       if (cursorChanged) await this.persistCursors();
       if (accepted > 0) {
-        this.logger.log(`Persisted ${accepted} direct Behavioral V7 observability events.`);
+        this.logger.log(
+          `Persisted ${accepted} direct Behavioral V7 observability events.`,
+        );
       }
     } finally {
       this.running = false;
@@ -128,7 +146,10 @@ export class RecommendationObservabilityV7TimelineTailService
     for (const file of await this.listTimelineFiles()) {
       if (this.cursors.has(file.path)) continue;
       const metadata = await stat(file.path);
-      this.cursors.set(file.path, this.backfillExisting ? 0 : metadata.size);
+      const initialOffset = this.backfillExisting
+        ? 0
+        : await findCompleteEndExclusive(file.path, 0, metadata.size);
+      this.cursors.set(file.path, initialOffset);
       changed = true;
     }
     if (changed) await this.persistCursors();
@@ -171,7 +192,9 @@ export class RecommendationObservabilityV7TimelineTailService
     return accepted;
   }
 
-  private async listTimelineFiles(): Promise<Array<{ matchId: string; path: string }>> {
+  private async listTimelineFiles(): Promise<
+    Array<{ matchId: string; path: string }>
+  > {
     let entries;
     try {
       entries = await readdir(this.timelineRoot, { withFileTypes: true });
@@ -198,14 +221,20 @@ export class RecommendationObservabilityV7TimelineTailService
 
   private async loadCursors(): Promise<void> {
     try {
-      const state = JSON.parse(await readFile(this.cursorPath, 'utf8')) as TimelineCursorState;
+      const state = JSON.parse(
+        await readFile(this.cursorPath, 'utf8'),
+      ) as TimelineCursorState;
       if (state?.schemaVersion !== 1 || !isRecord(state.cursors)) return;
       for (const [path, value] of Object.entries(state.cursors)) {
-        if (Number.isSafeInteger(value) && value >= 0) this.cursors.set(path, value);
+        if (Number.isSafeInteger(value) && value >= 0) {
+          this.cursors.set(path, value);
+        }
       }
     } catch (error) {
       if (errorCode(error) !== 'ENOENT') {
-        this.logger.warn(`Ignored invalid V7 observability cursor state: ${errorMessage(error)}`);
+        this.logger.warn(
+          `Ignored invalid V7 observability cursor state: ${errorMessage(error)}`,
+        );
       }
     }
   }
@@ -216,11 +245,56 @@ export class RecommendationObservabilityV7TimelineTailService
       schemaVersion: 1,
       updatedAt: new Date().toISOString(),
       cursors: Object.fromEntries(
-        [...this.cursors.entries()].sort(([left], [right]) => left.localeCompare(right)),
+        [...this.cursors.entries()].sort(([left], [right]) =>
+          left.localeCompare(right),
+        ),
       ),
     };
     await writeFile(partial, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
     await rename(partial, this.cursorPath);
+  }
+}
+
+export async function findRecommendationObservabilityV7CompleteEndExclusive(
+  path: string,
+  start: number,
+  fileSize: number,
+): Promise<number> {
+  return findCompleteEndExclusive(path, start, fileSize);
+}
+
+async function findCompleteEndExclusive(
+  path: string,
+  start: number,
+  fileSize: number,
+): Promise<number> {
+  if (fileSize <= start) return start;
+  const handle = await open(path, 'r');
+  try {
+    let cursor = fileSize;
+    while (cursor > start) {
+      const chunkStart = Math.max(
+        start,
+        cursor - SAFE_TAIL_SCAN_CHUNK_BYTES,
+      );
+      const length = cursor - chunkStart;
+      const buffer = Buffer.allocUnsafe(length);
+      const { bytesRead } = await handle.read(
+        buffer,
+        0,
+        length,
+        chunkStart,
+      );
+      for (let index = bytesRead - 1; index >= 0; index -= 1) {
+        if (buffer[index] === 0x0a) {
+          return chunkStart + index + 1;
+        }
+      }
+      cursor = chunkStart;
+    }
+    return start;
+  } finally {
+    await handle.close();
   }
 }
 
@@ -229,7 +303,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function errorCode(error: unknown): string | undefined {
-  return isRecord(error) && typeof error.code === 'string' ? error.code : undefined;
+  return isRecord(error) && typeof error.code === 'string'
+    ? error.code
+    : undefined;
 }
 
 function errorMessage(error: unknown): string {
