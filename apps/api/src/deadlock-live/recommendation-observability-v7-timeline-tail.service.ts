@@ -11,10 +11,8 @@ import {
 } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import {
-  extractRecommendationObservabilityV7FromTimelinePayload,
-  RecommendationObservabilityV7RawTimelinePayload,
-} from './recommendation-observability-v7-raw-extractor';
+import { extractRecommendationObservabilityV7FromTimelinePayload } from './recommendation-observability-v7-raw-extractor';
+import type { RecommendationObservabilityV7RawTimelinePayload } from './recommendation-observability-v7-raw-extractor';
 import { RecommendationObservabilityV7TelemetryStore } from './recommendation-observability-v7-telemetry';
 
 const DEFAULT_TIMELINE_ROOT = '/app/apps/api/storage/match-timeline-events-v1';
@@ -30,8 +28,6 @@ interface TimelineCursorState {
 
 interface TimelineRawEvent {
   eventId?: string;
-  matchId?: number;
-  receivedAt?: string;
   payload?: Record<string, unknown>;
 }
 
@@ -107,7 +103,12 @@ export class RecommendationObservabilityV7TimelineTailService
         }
         if (metadata.size === start) continue;
 
-        accepted += await this.consumeFile(file.matchId, file.path, start);
+        accepted += await this.consumeFile(
+          file.matchId,
+          file.path,
+          start,
+          metadata.size - 1,
+        );
         this.cursors.set(file.path, metadata.size);
         cursorChanged = true;
       }
@@ -137,10 +138,11 @@ export class RecommendationObservabilityV7TimelineTailService
     matchId: string,
     path: string,
     start: number,
+    end: number,
   ): Promise<number> {
     let accepted = 0;
     const lines = createInterface({
-      input: createReadStream(path, { encoding: 'utf8', start }),
+      input: createReadStream(path, { encoding: 'utf8', start, end }),
       crlfDelay: Infinity,
     });
 
@@ -158,7 +160,12 @@ export class RecommendationObservabilityV7TimelineTailService
         event.payload as RecommendationObservabilityV7RawTimelinePayload,
       );
       if (!snapshot) continue;
-      this.telemetryStore.record(snapshot);
+      this.telemetryStore.record({
+        ...snapshot,
+        ...(typeof event.eventId === 'string' && event.eventId.trim()
+          ? { sourceEventId: event.eventId.trim() }
+          : {}),
+      });
       accepted += 1;
     }
     return accepted;
