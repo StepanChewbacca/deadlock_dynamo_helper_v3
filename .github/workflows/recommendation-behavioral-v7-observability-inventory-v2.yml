@@ -4,6 +4,10 @@ on:
   pull_request:
     paths:
       - 'apps/api/src/app.module.ts'
+      - 'apps/api/src/database/migrations/*match-player-account-identity.ts'
+      - 'apps/api/src/deadlock-live/entities/match-player.entity.ts'
+      - 'apps/api/src/deadlock-live/recent-match-crawler.service.ts'
+      - 'apps/api/src/deadlock-live/stored-match-reprocessing.service.ts'
       - 'apps/api/src/deadlock-live/recommendation-observability-v7-*.ts'
       - 'scripts/audit-recommendation-behavioral-v7-observability-root.py'
       - 'scripts/audit-recommendation-observability-v7-telemetry-completeness.mjs'
@@ -36,7 +40,9 @@ jobs:
           canonical="$storage/recommendation-behavioral-v7-observability-inventory-v2"
           run_output="$canonical/runs/${{ github.run_id }}-${{ github.run_attempt }}"
           telemetry="$storage/recommendation-observability-v7/events.ndjson"
+          identity="$storage/recommendation-observability-v7/player-identities.ndjson"
           telemetry_stage="$RUNNER_TEMP/recommendation-observability-v7-events.ndjson"
+          identity_stage="$RUNNER_TEMP/recommendation-observability-v7-player-identities.ndjson"
           report="$RUNNER_TEMP/recommendation-behavioral-v7-observability-v2.json"
           completeness="$RUNNER_TEMP/recommendation-observability-v7-telemetry-completeness.json"
 
@@ -56,10 +62,17 @@ jobs:
           else
             : > "$telemetry_stage"
           fi
+          if sudo test -s "$identity"; then
+            sudo cp "$identity" "$identity_stage"
+            sudo chown "$(id -u):$(id -g)" "$identity_stage"
+          else
+            : > "$identity_stage"
+          fi
           BEHAVIORAL_V7_TELEMETRY_PATH="$telemetry_stage" \
+          BEHAVIORAL_V7_PLAYER_IDENTITY_PATH="$identity_stage" \
           BEHAVIORAL_V7_TELEMETRY_COMPLETENESS_PATH="$completeness" \
             node scripts/audit-recommendation-observability-v7-telemetry-completeness.mjs
-          jq -e '.schemaVersion == 1 and .trainingPerformed == false and .futureTestEvaluated == false and .contracts.netWorthMayRepresentWallet == false and .contracts.historicalIdentityInferencePerformed == false' "$completeness"
+          jq -e '.schemaVersion == 1 and .trainingPerformed == false and .futureTestEvaluated == false and .contracts.netWorthMayRepresentWallet == false and .contracts.historicalIdentityInferencePerformed == false and .identity.conflictingDatasetPlayerKeyCount == 0' "$completeness"
 
           sudo mkdir -p "$run_output"
           sudo install -m 0644 "$report" "$run_output/report.json"
