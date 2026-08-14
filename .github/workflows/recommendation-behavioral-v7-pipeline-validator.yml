@@ -5,10 +5,11 @@ on:
     paths:
       - 'apps/api/src/deadlock-live/recommendation-pro-decision-dataset-v7.ts'
       - 'apps/api/src/deadlock-live/recommendation-pro-decision-dataset-v7.spec.ts'
-      - 'apps/api/src/deadlock-live/recommendation-observability-v7-telemetry.ts'
+      - 'apps/api/src/deadlock-live/recommendation-observability-v7-*.ts'
       - 'apps/api/src/deadlock-live/recommendation-behavioral-v7-choice-set.ts'
       - 'apps/api/src/deadlock-live/recommendation-behavioral-v7.ts'
       - 'apps/api/test/recommendation-behavioral-v7.spec.ts'
+      - 'apps/api/test/recommendation-observability-v7.spec.ts'
       - 'scripts/audit-recommendation-behavioral-v7-observability-v2.mjs'
       - 'scripts/refine-recommendation-behavioral-v7-temporal-audit.mjs'
       - 'scripts/export-recommendation-pro-decision-dataset-v7.mjs'
@@ -45,8 +46,11 @@ jobs:
           grep -q 'sourceGameTimeS > decisionGameTimeS' apps/api/src/deadlock-live/recommendation-pro-decision-dataset-v7.ts
           grep -q 'netWorthMayRepresentWallet: false' scripts/refine-recommendation-behavioral-v7-temporal-audit.mjs
           grep -q 'EVENT_LEDGER_PREFIX_ONLY' scripts/refine-recommendation-behavioral-v7-temporal-audit.mjs
+          grep -q 'datasetPlayerIdMayRepresentSteamIdWithoutDirectBridge: false' scripts/refine-recommendation-behavioral-v7-temporal-audit.mjs
           grep -q 'latestAtOrBefore' scripts/export-recommendation-pro-decision-dataset-v7.mjs
-          grep -q 'HISTORICAL_PREFIX_OBSERVABILITY_BACKFILL_2' scripts/export-recommendation-pro-decision-dataset-v7.mjs
+          grep -q 'HISTORICAL_PREFIX_OBSERVABILITY_BACKFILL_3_EXPLICIT_IDENTITY' scripts/export-recommendation-pro-decision-dataset-v7.mjs
+          grep -q 'EXPLICIT_DATASET_PLAYER_TO_STEAM_ID_SIDECAR_ONLY' scripts/export-recommendation-pro-decision-dataset-v7.mjs
+          grep -q "payload.entity_type !== 'player_controller'" apps/api/src/deadlock-live/recommendation-observability-v7-raw-extractor.ts
           grep -q 'unknownAvailabilityRetained: true' scripts/audit-recommendation-behavioral-v7-choice-set.mjs
           grep -q 'sameChoiceSetUsedForBaselineAndEnriched: true' scripts/diagnose-recommendation-behavioral-v7-information-gain.mjs
           grep -q 'tuningUsedForDiagnostic: false' scripts/diagnose-recommendation-behavioral-v7-information-gain.mjs
