@@ -3,11 +3,11 @@ import { DataSource, IsNull } from 'typeorm';
 import { databaseOptions } from './database/data-source';
 import { MatchPlayer } from './deadlock-live/entities/match-player.entity';
 import { RawMatchMetadata } from './deadlock-live/entities/raw-match-metadata.entity';
+import { buildRecommendationObservabilityV7DirectIdentityIndex } from './deadlock-live/recommendation-observability-v7-direct-identity';
 import { selectBestRawMatchMetadata } from './deadlock-live/raw-match-metadata.service';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 500;
-const MAX_ACCOUNT_ID = 0xffffffff;
 
 interface IdentityRecoveryCandidate {
   matchPlayerId: number;
@@ -15,12 +15,6 @@ interface IdentityRecoveryCandidate {
   heroId: number;
   accountId: number;
   rawMetadataId: number;
-}
-
-interface DirectIdentityIndex {
-  byHeroId: Map<number, number>;
-  conflictingHeroCount: number;
-  playerWithAccountIdCount: number;
 }
 
 async function main(): Promise<void> {
@@ -77,7 +71,8 @@ async function main(): Promise<void> {
         continue;
       }
 
-      const identityIndex = buildDirectIdentityIndex(selected.payload);
+      const identityIndex =
+        buildRecommendationObservabilityV7DirectIdentityIndex(selected.payload);
       conflictingMetadataHeroCount += identityIndex.conflictingHeroCount;
       metadataPlayerWithAccountIdCount += identityIndex.playerWithAccountIdCount;
       const missingPlayers = await matchPlayerRepository.find({
@@ -193,44 +188,6 @@ async function main(): Promise<void> {
   }
 }
 
-export function buildDirectIdentityIndex(
-  payload: Record<string, unknown>,
-): DirectIdentityIndex {
-  const matchInfo = toRecord(payload.match_info);
-  const players = Array.isArray(matchInfo?.players) ? matchInfo.players : [];
-  const identitiesByHero = new Map<number, Set<number>>();
-  let playerWithAccountIdCount = 0;
-
-  for (const entry of players) {
-    const player = toRecord(entry);
-    const heroId = getPositiveSafeInteger(player, 'hero_id');
-    const accountId = getPositiveSafeInteger(player, 'account_id');
-    if (
-      heroId === undefined ||
-      accountId === undefined ||
-      accountId > MAX_ACCOUNT_ID
-    ) {
-      continue;
-    }
-    playerWithAccountIdCount += 1;
-    const values = identitiesByHero.get(heroId) ?? new Set<number>();
-    values.add(accountId);
-    identitiesByHero.set(heroId, values);
-  }
-
-  const byHeroId = new Map<number, number>();
-  let conflictingHeroCount = 0;
-  for (const [heroId, accountIds] of identitiesByHero) {
-    if (accountIds.size !== 1) {
-      conflictingHeroCount += 1;
-      continue;
-    }
-    byHeroId.set(heroId, [...accountIds][0]);
-  }
-
-  return { byHeroId, conflictingHeroCount, playerWithAccountIdCount };
-}
-
 async function accountIdColumnExists(dataSource: DataSource): Promise<boolean> {
   const rows = (await dataSource.query(`
     SELECT EXISTS (
@@ -277,27 +234,6 @@ function boundedLimit(value: string | undefined): number {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) return DEFAULT_LIMIT;
   return Math.min(parsed, MAX_LIMIT);
-}
-
-function toRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function getPositiveSafeInteger(
-  record: Record<string, unknown> | undefined,
-  key: string,
-): number | undefined {
-  if (!record) return undefined;
-  const value = record[key];
-  const parsed =
-    typeof value === 'number'
-      ? value
-      : typeof value === 'string' && value.trim()
-        ? Number(value)
-        : Number.NaN;
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 void main().catch((error) => {
