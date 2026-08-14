@@ -87,6 +87,7 @@ jobs:
             -v "$storage:/app/apps/api/storage" \
             api node dist/src/recommendation-observability-v7-identity-schema.cli.js \
             > "$RUNNER_TEMP/identity-schema.json"
+          cat "$RUNNER_TEMP/identity-schema.json"
           jq -e '.schemaVersion == 1 and .columnReady == true and .indexReady == true and .otherMigrationsExecuted == false and .trainingPerformed == false and .futureTestEvaluated == false' \
             "$RUNNER_TEMP/identity-schema.json"
 
@@ -100,9 +101,11 @@ jobs:
             -e DEADLOCK_RECOMMENDATION_OBSERVABILITY_V7_IDENTITY_RECOVERY_APPLY=false \
             -e DEADLOCK_RECOMMENDATION_OBSERVABILITY_V7_IDENTITY_RECOVERY_LIMIT=500 \
             -e DEADLOCK_RECOMMENDATION_OBSERVABILITY_V7_IDENTITY_RECOVERY_MATCH_IDS_PATH=/stage-j/frozen-match-ids.txt \
+            -e DEADLOCK_RECOMMENDATION_OBSERVABILITY_V7_IDENTITY_RECOVERY_BULK_FETCH_MISSING=true \
             api node dist/src/recommendation-observability-v7-identity-recovery.cli.js \
             > "$RUNNER_TEMP/identity-recovery-dry-run.json"
-          jq -e '.schemaVersion == 1 and .mode == "DRY_RUN" and .migrationReady == true and .recoveryScope == "EXPLICIT_MATCH_ID_FILE" and .candidateMatchCount > 0 and .contracts.persistencePath == "MATCH_PLAYERS_ACCOUNT_ID_ONLY" and .contracts.matchPlayerNonIdentityFieldsModified == false and .contracts.matchPlayerItemsModified == false and .contracts.matchPlayerSkillUpgradesModified == false and .contracts.matchRowsModified == false and .contracts.rawMetadataRowsModified == false and .contracts.historicalIdentityInferencePerformed == false and .contracts.playerPawnIdentityJoinPerformed == false and .contracts.trainingPerformed == false and .contracts.futureTestEvaluated == false' \
+          cat "$RUNNER_TEMP/identity-recovery-dry-run.json"
+          jq -e '.schemaVersion == 1 and .mode == "DRY_RUN" and .migrationReady == true and .bulkFetchMissing == true and .recoveryScope == "EXPLICIT_MATCH_ID_FILE" and .candidateMatchCount > 0 and .recoverablePlayerCount > 0 and .contracts.persistencePath == "MATCH_PLAYERS_ACCOUNT_ID_ONLY" and .contracts.matchPlayerNonIdentityFieldsModified == false and .contracts.matchPlayerItemsModified == false and .contracts.matchPlayerSkillUpgradesModified == false and .contracts.matchRowsModified == false and .contracts.rawMetadataRowsModified == false and .contracts.historicalIdentityInferencePerformed == false and .contracts.playerPawnIdentityJoinPerformed == false and .contracts.trainingPerformed == false and .contracts.futureTestEvaluated == false' \
             "$RUNNER_TEMP/identity-recovery-dry-run.json"
 
       - name: Apply bounded identity-only recovery
@@ -110,19 +113,17 @@ jobs:
         run: |
           set -euo pipefail
           env_file='/home/ubuntu/apps/deadlock_dynamo_helper/.env'
-          if jq -e '.recoverablePlayerCount > 0' "$RUNNER_TEMP/identity-recovery-dry-run.json" >/dev/null; then
-            sudo docker compose --env-file "$env_file" run --rm --no-deps \
-              -v "$RUNNER_TEMP:/stage-j:ro" \
-              -e DEADLOCK_RECOMMENDATION_OBSERVABILITY_V7_IDENTITY_RECOVERY_APPLY=true \
-              -e DEADLOCK_RECOMMENDATION_OBSERVABILITY_V7_IDENTITY_RECOVERY_LIMIT=500 \
-              -e DEADLOCK_RECOMMENDATION_OBSERVABILITY_V7_IDENTITY_RECOVERY_MATCH_IDS_PATH=/stage-j/frozen-match-ids.txt \
-              api node dist/src/recommendation-observability-v7-identity-recovery.cli.js \
-              > "$RUNNER_TEMP/identity-recovery-apply.json"
-            jq -e '.schemaVersion == 1 and .mode == "APPLY" and .failureCount == 0 and .persistedAccountIdCount > 0 and .contracts.persistencePath == "MATCH_PLAYERS_ACCOUNT_ID_ONLY" and .contracts.matchPlayerNonIdentityFieldsModified == false and .contracts.matchPlayerItemsModified == false and .contracts.matchPlayerSkillUpgradesModified == false and .contracts.matchRowsModified == false and .contracts.rawMetadataRowsModified == false and .contracts.trainingPerformed == false and .contracts.futureTestEvaluated == false' \
-              "$RUNNER_TEMP/identity-recovery-apply.json"
-          else
-            cp "$RUNNER_TEMP/identity-recovery-dry-run.json" "$RUNNER_TEMP/identity-recovery-apply.json"
-          fi
+          sudo docker compose --env-file "$env_file" run --rm --no-deps \
+            -v "$RUNNER_TEMP:/stage-j:ro" \
+            -e DEADLOCK_RECOMMENDATION_OBSERVABILITY_V7_IDENTITY_RECOVERY_APPLY=true \
+            -e DEADLOCK_RECOMMENDATION_OBSERVABILITY_V7_IDENTITY_RECOVERY_LIMIT=500 \
+            -e DEADLOCK_RECOMMENDATION_OBSERVABILITY_V7_IDENTITY_RECOVERY_MATCH_IDS_PATH=/stage-j/frozen-match-ids.txt \
+            -e DEADLOCK_RECOMMENDATION_OBSERVABILITY_V7_IDENTITY_RECOVERY_BULK_FETCH_MISSING=true \
+            api node dist/src/recommendation-observability-v7-identity-recovery.cli.js \
+            > "$RUNNER_TEMP/identity-recovery-apply.json"
+          cat "$RUNNER_TEMP/identity-recovery-apply.json"
+          jq -e '.schemaVersion == 1 and .mode == "APPLY" and .failureCount == 0 and .persistedAccountIdCount > 0 and .contracts.persistencePath == "MATCH_PLAYERS_ACCOUNT_ID_ONLY" and .contracts.matchPlayerNonIdentityFieldsModified == false and .contracts.matchPlayerItemsModified == false and .contracts.matchPlayerSkillUpgradesModified == false and .contracts.matchRowsModified == false and .contracts.rawMetadataRowsModified == false and .contracts.trainingPerformed == false and .contracts.futureTestEvaluated == false' \
+            "$RUNNER_TEMP/identity-recovery-apply.json"
 
       - name: Export direct persisted identity sidecar
         shell: bash
@@ -135,6 +136,7 @@ jobs:
             -e DEADLOCK_RECOMMENDATION_OBSERVABILITY_V7_DIR=/app/apps/api/storage/recommendation-observability-v7 \
             api node dist/src/recommendation-observability-v7-player-identity-export.cli.js \
             > "$RUNNER_TEMP/identity-export.json"
+          cat "$RUNNER_TEMP/identity-export.json"
           jq -e '.schemaVersion == 1 and .rowCount > 0 and .historicalIdentityInferencePerformed == false and .heroIdentityInferencePerformed == false and .teamIdentityInferencePerformed == false and .playerPawnIdentityInferencePerformed == false' \
             "$RUNNER_TEMP/identity-export.json"
           sudo test -s "$storage/recommendation-observability-v7/player-identities.ndjson"
@@ -210,6 +212,7 @@ jobs:
           jq -e '.behavioralModelTrainingPerformed == false and .futureTestEvaluated == false and .tuningUsedForDiagnostic == false' "$BEHAVIORAL_V7_INFORMATION_GAIN_REPORT_PATH"
 
       - name: Persist immutable Stage J recovery evidence
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
@@ -225,10 +228,13 @@ jobs:
             dataset-v7-audit.json \
             stage-d.json \
             stage-e.json; do
-            sudo install -m 0644 "$RUNNER_TEMP/$file" "$output/$file"
+            if test -s "$RUNNER_TEMP/$file"; then
+              sudo install -m 0644 "$RUNNER_TEMP/$file" "$output/$file"
+            fi
           done
 
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: recommendation-behavioral-v7-stage-j-identity-recovery-v1-${{ github.run_id }}
           path: |
@@ -240,4 +246,5 @@ jobs:
             ${{ runner.temp }}/dataset-v7-audit.json
             ${{ runner.temp }}/stage-d.json
             ${{ runner.temp }}/stage-e.json
+          if-no-files-found: warn
           retention-days: 14
