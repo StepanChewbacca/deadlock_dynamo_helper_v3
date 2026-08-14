@@ -36,12 +36,15 @@ export const HERO_BUILD_DECISION_DATASET_V3_MIN_BATCH_SIZE = 10;
 export const HERO_BUILD_DECISION_DATASET_V3_MAX_BATCH_SIZE = 500;
 export const HERO_BUILD_DECISION_DATASET_V3_PERSISTENCE_MODE =
   'CHECKPOINT_PER_HERO' as const;
+export const HERO_BUILD_DECISION_DATASET_V3_PLAYER_IDENTITY_SOURCE =
+  'MATCH_PLAYER_ACCOUNT_ID_DIRECT' as const;
 
 const DEFAULT_STORAGE_DIRECTORY =
   '/app/apps/api/storage/build-decision-dataset-v3';
 const STORAGE_DIRECTORY_ENV = 'DEADLOCK_BUILD_DECISION_DATASET_V3_STORAGE_DIR';
 const AUTO_RESUME_ENV = 'DEADLOCK_BUILD_DECISION_DATASET_V3_AUTO_RESUME';
 const NDJSON_BUFFER_LIMIT_BYTES = 1024 * 1024;
+const MAX_ACCOUNT_ID = 0xffffffff;
 
 export type HeroBuildDecisionDatasetV3RunState =
   | 'IDLE'
@@ -75,6 +78,8 @@ export interface HeroBuildDecisionDatasetV3Row {
   matchId: number;
   matchStartTime: string;
   playerId: number;
+  accountId?: string;
+  playerIdentitySource?: typeof HERO_BUILD_DECISION_DATASET_V3_PLAYER_IDENTITY_SOURCE;
   heroId: number;
   team: number;
   gameTimeS: number;
@@ -430,8 +435,9 @@ export class HeroBuildDecisionDatasetV3Service implements OnModuleInit {
               }
               checkpoint.audit.includedPlayerCount += 1;
               heroAudit.playerCount += 1;
+              const matchRoster = rosterByMatchId.get(sample.descriptor.matchId) ?? [];
               const alliedHeroIds = normalizeHeroIds(
-                (rosterByMatchId.get(sample.descriptor.matchId) ?? [])
+                matchRoster
                   .filter(
                     (player) =>
                       Number(player.team) === sample.player.team &&
@@ -439,10 +445,15 @@ export class HeroBuildDecisionDatasetV3Service implements OnModuleInit {
                   )
                   .map((player) => Number(player.heroId)),
               );
+              const canonicalPlayer = matchRoster.find(
+                (player) => Number(player.id) === sample.player.id,
+              );
+              const accountId = normalizeDirectAccountId(canonicalPlayer?.accountId);
               const extracted = createHeroBuildDecisionRows(
                 sample,
                 alliedHeroIds,
                 checkpoint.options.includeSellActions,
+                accountId,
               );
               checkpoint.audit.excludedSellActionCount +=
                 extracted.excludedSellActionCount;
@@ -626,11 +637,13 @@ export function createHeroBuildDecisionRows(
   sample: HeroBuildOfflineLoadedHeroSample,
   alliedHeroIds: readonly number[],
   includeSellActions: boolean,
+  accountId?: number,
 ): {
   rows: HeroBuildDecisionDatasetV3Row[];
   excludedSellActionCount: number;
   nonMonotonicGameTimeCount: number;
 } {
+  const normalizedAccountId = normalizeDirectAccountId(accountId);
   const rows: HeroBuildDecisionDatasetV3Row[] = [];
   const previousActionKeys: string[] = [];
   let excludedSellActionCount = 0;
@@ -646,7 +659,15 @@ export function createHeroBuildDecisionRows(
       previousActionKeys.push(step.actionKey);
       continue;
     }
-    rows.push(createDecisionRow(sample, alliedHeroIds, step, previousActionKeys));
+    rows.push(
+      createDecisionRow(
+        sample,
+        alliedHeroIds,
+        step,
+        previousActionKeys,
+        normalizedAccountId,
+      ),
+    );
     previousActionKeys.push(step.actionKey);
   }
   return { rows, excludedSellActionCount, nonMonotonicGameTimeCount };
@@ -657,6 +678,7 @@ function createDecisionRow(
   alliedHeroIds: readonly number[],
   step: CanonicalBuildStep,
   previousActionKeys: readonly string[],
+  accountId?: number,
 ): HeroBuildDecisionDatasetV3Row {
   return {
     schemaVersion: HERO_BUILD_DECISION_DATASET_V3_SCHEMA_VERSION,
@@ -664,6 +686,13 @@ function createDecisionRow(
     matchId: sample.descriptor.matchId,
     matchStartTime: sample.descriptor.startTime.toISOString(),
     playerId: sample.player.id,
+    ...(accountId === undefined
+      ? {}
+      : {
+          accountId: String(accountId),
+          playerIdentitySource:
+            HERO_BUILD_DECISION_DATASET_V3_PLAYER_IDENTITY_SOURCE,
+        }),
     heroId: sample.sequence.heroId,
     team: sample.player.team,
     gameTimeS: step.gameTimeS,
@@ -1028,6 +1057,13 @@ function normalizeHeroIds(heroIds: readonly number[]): number[] {
       heroIds.filter((heroId) => Number.isSafeInteger(heroId) && heroId > 0),
     ),
   ].sort((left, right) => left - right);
+}
+
+function normalizeDirectAccountId(value: unknown): number | undefined {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= MAX_ACCOUNT_ID
+    ? parsed
+    : undefined;
 }
 
 function groupBy<T, K>(values: readonly T[], keyOf: (value: T) => K): Map<K, T[]> {

@@ -11,6 +11,9 @@ export const RECOMMENDATION_PRO_DECISION_DATASET_V6_VERSION =
 export const RECOMMENDATION_STATE_FEATURE_VERSION_V6 =
   'RECOMMENDATION_STATE_FEATURES_V6_2_FUTURE_TIMELINE_FALLBACK' as const;
 
+const DIRECT_PLAYER_IDENTITY_SOURCE = 'MATCH_PLAYER_ACCOUNT_ID_DIRECT' as const;
+const MAX_ACCOUNT_ID = 0xffffffff;
+
 export type RecommendationDatasetV6Split =
   | 'TRAIN'
   | 'TUNING'
@@ -100,6 +103,8 @@ export interface RecommendationProDecisionDatasetV6Row {
   matchId: string;
   matchStartTime: string;
   playerId: string;
+  accountId?: string;
+  playerIdentitySource?: typeof DIRECT_PLAYER_IDENTITY_SOURCE;
   split: RecommendationDatasetV6Split;
   state: RecommendationDatasetV6StateFeatures;
   candidates: RecommendationDatasetV6CandidateFeatures[];
@@ -202,6 +207,12 @@ export function createRecommendationProDecisionDatasetV6Row(
     matchId: replayRow.matchId,
     matchStartTime: replayRow.matchStartTime,
     playerId: replayRow.playerId,
+    ...(replayRow.accountId === undefined
+      ? {}
+      : {
+          accountId: replayRow.accountId,
+          playerIdentitySource: replayRow.playerIdentitySource,
+        }),
     split: input.split,
     state: {
       heroId: replayRow.heroId,
@@ -556,6 +567,7 @@ function validateReplayRow(row: RecommendationHistoricalProReplayRow): void {
   if (!row.decisionId.trim() || !row.matchId.trim() || !row.playerId.trim()) {
     throw new Error('Replay identity fields are required.');
   }
+  validateDirectPlayerIdentity(row.accountId, row.playerIdentitySource, 'Replay');
   if (row.dataSource !== 'PRO_HISTORICAL') {
     throw new Error('Dataset V6 accepts only PRO_HISTORICAL replay rows.');
   }
@@ -595,8 +607,33 @@ function validateDatasetRow(row: RecommendationProDecisionDatasetV6Row): void {
   if (row.dataSource !== 'PRO_HISTORICAL') {
     throw new Error('Recommendation Dataset V6 contains a non-pro source.');
   }
+  validateDirectPlayerIdentity(
+    row.accountId,
+    row.playerIdentitySource,
+    'Dataset V6',
+  );
   if (!Number.isFinite(Date.parse(row.matchStartTime))) {
     throw new Error('Recommendation Dataset V6 contains an invalid match time.');
+  }
+}
+
+function validateDirectPlayerIdentity(
+  accountId: string | undefined,
+  source: string | undefined,
+  context: string,
+): void {
+  if (accountId === undefined && source === undefined) return;
+  if (source !== DIRECT_PLAYER_IDENTITY_SOURCE) {
+    throw new Error(
+      `${context} direct player identity requires ${DIRECT_PLAYER_IDENTITY_SOURCE}.`,
+    );
+  }
+  if (accountId === undefined || !/^[1-9]\d*$/.test(accountId)) {
+    throw new Error(`${context} accountId must be a positive u32 decimal string.`);
+  }
+  const parsed = Number(accountId);
+  if (!Number.isSafeInteger(parsed) || parsed > MAX_ACCOUNT_ID) {
+    throw new Error(`${context} accountId must be within the u32 domain.`);
   }
 }
 

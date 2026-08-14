@@ -4,6 +4,10 @@ on:
   pull_request:
     paths:
       - '.github/workflows/recommendation-behavioral-v7-historical-ledger-v1.yml'
+      - 'apps/api/src/deadlock-live/hero-build-decision-dataset-v3.service.ts'
+      - 'apps/api/src/deadlock-live/recommendation-historical-pro-replay.ts'
+      - 'apps/api/src/deadlock-live/recommendation-pro-decision-dataset-v6.ts'
+      - 'scripts/resolve-recommendation-behavioral-v7-player-identity.mjs'
       - 'scripts/export-recommendation-pro-decision-dataset-v7.mjs'
       - 'scripts/audit-recommendation-behavioral-v7-choice-set.mjs'
       - 'scripts/diagnose-recommendation-behavioral-v7-information-gain.mjs'
@@ -47,17 +51,30 @@ jobs:
             sudo touch "$RUNNER_TEMP/v7-telemetry.ndjson"
           fi
           if sudo test -s "$identity"; then
-            sudo cp "$identity" "$RUNNER_TEMP/v7-player-identities.ndjson"
+            sudo cp "$identity" "$RUNNER_TEMP/v7-external-player-identities.ndjson"
           else
-            sudo touch "$RUNNER_TEMP/v7-player-identities.ndjson"
+            sudo touch "$RUNNER_TEMP/v7-external-player-identities.ndjson"
           fi
           sudo chown "$(id -u):$(id -g)" \
             "$RUNNER_TEMP/v7-ledger.ndjson" \
             "$RUNNER_TEMP/v7-temporal.json" \
             "$RUNNER_TEMP/v7-source.ndjson.gz" \
             "$RUNNER_TEMP/v7-telemetry.ndjson" \
-            "$RUNNER_TEMP/v7-player-identities.ndjson"
+            "$RUNNER_TEMP/v7-external-player-identities.ndjson"
           echo '8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac  '"$RUNNER_TEMP/v7-source.ndjson.gz" | sha256sum -c -
+
+      - name: Resolve direct player identity
+        shell: bash
+        env:
+          BEHAVIORAL_V7_SOURCE_DATASET_V6_PATH: ${{ runner.temp }}/v7-source.ndjson.gz
+          BEHAVIORAL_V7_EXTERNAL_PLAYER_IDENTITY_PATH: ${{ runner.temp }}/v7-external-player-identities.ndjson
+          BEHAVIORAL_V7_RESOLVED_PLAYER_IDENTITY_PATH: ${{ runner.temp }}/v7-player-identities.ndjson
+          BEHAVIORAL_V7_RESOLVED_PLAYER_IDENTITY_AUDIT_PATH: ${{ runner.temp }}/identity-resolution.json
+        run: |
+          set -euo pipefail
+          node scripts/resolve-recommendation-behavioral-v7-player-identity.mjs
+          jq -e '.schemaVersion == 1 and .passed == true and .trainingPerformed == false and .futureTestEvaluated == false and .identityConflictCount == 0 and .contracts.identityConflictAccepted == false and .contracts.databaseSurrogateMayRepresentSteamId == false and .contracts.heroIdentityInferencePerformed == false' \
+            "$BEHAVIORAL_V7_RESOLVED_PLAYER_IDENTITY_AUDIT_PATH"
 
       - name: Export pinned Dataset V7
         shell: bash
@@ -104,6 +121,7 @@ jobs:
           canonical="$storage/recommendation-behavioral-v7-pinned-data-gates-v1"
           output="$canonical/runs/${{ github.run_id }}-${{ github.run_attempt }}"
           sudo mkdir -p "$output"
+          sudo install -m 0644 "$RUNNER_TEMP/identity-resolution.json" "$output/identity-resolution.json"
           sudo install -m 0644 "$RUNNER_TEMP/dataset-v7.ndjson.gz" "$output/dataset.ndjson.gz"
           sudo install -m 0644 "$RUNNER_TEMP/dataset-v7.sha256" "$output/dataset.sha256"
           sudo install -m 0644 "$RUNNER_TEMP/dataset-v7-audit.json" "$output/dataset-audit.json"
@@ -114,6 +132,7 @@ jobs:
         with:
           name: recommendation-behavioral-v7-pinned-data-gates-v1-${{ github.run_id }}
           path: |
+            ${{ runner.temp }}/identity-resolution.json
             ${{ runner.temp }}/dataset-v7-audit.json
             ${{ runner.temp }}/dataset-v7.sha256
             ${{ runner.temp }}/stage-d.json

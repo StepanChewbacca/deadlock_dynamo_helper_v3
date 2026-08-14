@@ -13,6 +13,9 @@ export const RECOMMENDATION_HISTORICAL_PRO_REPLAY_SCHEMA_VERSION = 1;
 export const RECOMMENDATION_HISTORICAL_PRO_REPLAY_VERSION =
   'RECOMMENDATION_HISTORICAL_PRO_REPLAY_2' as const;
 
+const DIRECT_PLAYER_IDENTITY_SOURCE = 'MATCH_PLAYER_ACCOUNT_ID_DIRECT' as const;
+const MAX_ACCOUNT_ID = 0xffffffff;
+
 export interface RecommendationHistoricalProReplayThresholds {
   minimumTimelineCoverage: number;
   minimumCandidateMetadataCoverage: number;
@@ -100,6 +103,8 @@ export interface RecommendationHistoricalProReplayRow {
   matchId: string;
   matchStartTime: string;
   playerId: string;
+  accountId?: string;
+  playerIdentitySource?: typeof DIRECT_PLAYER_IDENTITY_SOURCE;
   heroId: number;
   team: number;
   decisionGameTimeS: number;
@@ -248,6 +253,12 @@ export function createRecommendationHistoricalProReplayRow(
     matchId: String(input.decision.matchId),
     matchStartTime: input.decision.matchStartTime,
     playerId: String(input.decision.playerId),
+    ...(input.decision.accountId === undefined
+      ? {}
+      : {
+          accountId: input.decision.accountId,
+          playerIdentitySource: input.decision.playerIdentitySource,
+        }),
     heroId: input.decision.heroId,
     team: input.decision.team,
     decisionGameTimeS: input.decision.gameTimeS,
@@ -571,6 +582,11 @@ function validateDecision(decision: HeroBuildDecisionDatasetV3Row): void {
   positiveInteger(decision.matchId, 'matchId');
   parseTimestamp(decision.matchStartTime, 'matchStartTime');
   positiveInteger(decision.playerId, 'playerId');
+  validateDirectPlayerIdentity(
+    decision.accountId,
+    decision.playerIdentitySource,
+    'decision',
+  );
   positiveInteger(decision.heroId, 'heroId');
   nonNegativeInteger(decision.gameTimeS, 'gameTimeS');
   requiredText(decision.inventoryBeforeStateKey, 'inventoryBeforeStateKey');
@@ -674,6 +690,25 @@ function cloneSnapshot(
   return { ...snapshot };
 }
 
+function validateDirectPlayerIdentity(
+  accountId: string | undefined,
+  source: string | undefined,
+  context: string,
+): void {
+  if (accountId === undefined && source === undefined) return;
+  if (source !== DIRECT_PLAYER_IDENTITY_SOURCE) {
+    throw new Error(
+      `${context} direct player identity requires ${DIRECT_PLAYER_IDENTITY_SOURCE}.`,
+    );
+  }
+  if (accountId === undefined || !/^[1-9]\d*$/.test(accountId)) {
+    throw new Error(`${context} accountId must be a positive u32 decimal string.`);
+  }
+  const parsed = Number(accountId);
+  if (!Number.isSafeInteger(parsed) || parsed > MAX_ACCOUNT_ID) {
+    throw new Error(`${context} accountId must be within the u32 domain.`);
+  }
+}
 
 function ratio(numerator: number, denominator: number): number {
   return denominator > 0 ? numerator / denominator : 0;
