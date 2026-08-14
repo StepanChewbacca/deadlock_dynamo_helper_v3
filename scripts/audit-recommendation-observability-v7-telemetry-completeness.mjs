@@ -20,7 +20,9 @@ const fields = [
 
 let eventCount = 0;
 let invalidEventCount = 0;
-const eventIds = new Set();
+const telemetryEventIds = new Set();
+const sourceEventIds = new Set();
+let sourceEventIdentityCount = 0;
 const playerKeys = new Set();
 const matchIds = new Set();
 const sourceCounts = new Map();
@@ -52,7 +54,17 @@ for await (const line of input) {
   }
 
   eventCount += 1;
-  eventIds.add(String(event.eventId ?? `${event.matchId}:${event.steamId}:${event.gameTimeS}:${eventCount}`));
+  telemetryEventIds.add(
+    String(
+      event.eventId ??
+        `${event.matchId}:${event.steamId}:${event.gameTimeS}:${eventCount}`,
+    ),
+  );
+  const sourceEventId = String(event.sourceEventId ?? '').trim();
+  if (sourceEventId) {
+    sourceEventIdentityCount += 1;
+    sourceEventIds.add(sourceEventId);
+  }
   matchIds.add(String(event.matchId));
   playerKeys.add(`${event.matchId}:${event.steamId}`);
   const source = String(event.source ?? 'UNKNOWN');
@@ -79,7 +91,7 @@ const fieldCompleteness = Object.fromEntries(
 const report = {
   schemaVersion: 1,
   operation: 'RECOMMENDATION_OBSERVABILITY_V7_TELEMETRY_COMPLETENESS_AUDIT',
-  executorVersion: 'DIRECT_PLAYER_CONTROLLER_TELEMETRY_COMPLETENESS_1',
+  executorVersion: 'DIRECT_PLAYER_CONTROLLER_TELEMETRY_COMPLETENESS_2_SOURCE_EVENT_ID',
   generatedAt: new Date().toISOString(),
   trainingPerformed: false,
   valueTrainingPerformed: false,
@@ -98,12 +110,20 @@ const report = {
   source: {
     telemetryPath: inputPath,
     eventCount,
-    uniqueEventCount: eventIds.size,
-    duplicateEventCount: Math.max(0, eventCount - eventIds.size),
+    uniqueTelemetryEventCount: telemetryEventIds.size,
+    duplicateTelemetryEventCount: Math.max(0, eventCount - telemetryEventIds.size),
+    sourceEventIdentityCount,
+    uniqueSourceEventCount: sourceEventIds.size,
+    duplicateSourceEventCount: Math.max(
+      0,
+      sourceEventIdentityCount - sourceEventIds.size,
+    ),
     invalidEventCount,
     matchCount: matchIds.size,
     playerKeyCount: playerKeys.size,
-    sourceCounts: Object.fromEntries([...sourceCounts.entries()].sort(([a], [b]) => a.localeCompare(b))),
+    sourceCounts: Object.fromEntries(
+      [...sourceCounts.entries()].sort(([a], [b]) => a.localeCompare(b)),
+    ),
   },
   fieldCompleteness,
   summary: {
@@ -119,6 +139,9 @@ const report = {
       (fieldCounts.get('rulesetId') ?? 0) > 0 ||
       (fieldCounts.get('itemAvailabilityVersion') ?? 0) > 0,
     positionObserved: (fieldCounts.get('position') ?? 0) > 0,
+    sourceEventIdentityObserved: sourceEventIdentityCount > 0,
+    sourceEventDuplicatesObserved:
+      sourceEventIdentityCount - sourceEventIds.size > 0,
     readyForDirectSteamIdJoin: eventCount > 0 && playerKeys.size > 0,
     historicalDatasetIdentityBridgeAvailable: false,
     nextStep:
