@@ -1,8 +1,12 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { buildRecommendationObservabilityV7PlayerIdentityRow } from '../src/deadlock-live/recommendation-observability-v7-player-identity-export.service';
 import { extractRecommendationObservabilityV7FromTimelinePayload } from '../src/deadlock-live/recommendation-observability-v7-raw-extractor';
+import { findRecommendationObservabilityV7CompleteEndExclusive } from '../src/deadlock-live/recommendation-observability-v7-timeline-tail.service';
 
 describe('Recommendation Observability V7 direct contracts', () => {
-  it('accepts direct player-controller currency without using net worth', () => {
+  it('accepts only explicitly spendable player-controller currency', () => {
     const snapshot = extractRecommendationObservabilityV7FromTimelinePayload(
       '123',
       {
@@ -10,7 +14,7 @@ describe('Recommendation Observability V7 direct contracts', () => {
         steam_id: 4294967295,
         hero_id: 7,
         game_time: 321,
-        current_souls: 1750,
+        spendable_souls: 1750,
       },
     );
 
@@ -24,19 +28,30 @@ describe('Recommendation Observability V7 direct contracts', () => {
     });
   });
 
-  it('does not treat net worth as spendable currency', () => {
-    const snapshot = extractRecommendationObservabilityV7FromTimelinePayload(
-      '123',
+  it('does not treat current souls or net worth as spendable currency', () => {
+    for (const payload of [
+      {
+        entity_type: 'player_controller',
+        steam_id: 42,
+        hero_id: 7,
+        game_time: 321,
+        current_souls: 1750,
+      },
       {
         entity_type: 'player_controller',
         steam_id: 42,
         hero_id: 7,
         game_time: 321,
         net_worth: 25000,
-      } as never,
-    );
-
-    expect(snapshot).toBeUndefined();
+      },
+    ]) {
+      expect(
+        extractRecommendationObservabilityV7FromTimelinePayload(
+          '123',
+          payload as never,
+        ),
+      ).toBeUndefined();
+    }
   });
 
   it('rejects player-pawn observations even with otherwise usable values', () => {
@@ -47,7 +62,7 @@ describe('Recommendation Observability V7 direct contracts', () => {
         steam_id: 42,
         hero_id: 7,
         game_time: 321,
-        current_souls: 1750,
+        spendable_souls: 1750,
       },
     );
 
@@ -83,5 +98,38 @@ describe('Recommendation Observability V7 direct contracts', () => {
         accountId: 4294967296,
       }),
     ).toBeUndefined();
+  });
+
+  it('keeps an incomplete final NDJSON line behind the persisted cursor', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'v7-observability-tail-'));
+    const path = join(directory, 'events.ndjson');
+    const completeLine = '{"eventId":"complete"}\n';
+    const incompleteLine = '{"eventId":"partial"';
+    try {
+      await writeFile(path, `${completeLine}${incompleteLine}`, 'utf8');
+      const partialSize = Buffer.byteLength(
+        `${completeLine}${incompleteLine}`,
+        'utf8',
+      );
+      expect(
+        await findRecommendationObservabilityV7CompleteEndExclusive(
+          path,
+          0,
+          partialSize,
+        ),
+      ).toBe(Buffer.byteLength(completeLine, 'utf8'));
+
+      const completedContent = `${completeLine}${incompleteLine}}\n`;
+      await writeFile(path, completedContent, 'utf8');
+      expect(
+        await findRecommendationObservabilityV7CompleteEndExclusive(
+          path,
+          Buffer.byteLength(completeLine, 'utf8'),
+          Buffer.byteLength(completedContent, 'utf8'),
+        ),
+      ).toBe(Buffer.byteLength(completedContent, 'utf8'));
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });
