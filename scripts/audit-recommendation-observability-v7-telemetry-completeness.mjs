@@ -4,6 +4,7 @@ import { createInterface } from 'node:readline';
 
 const inputPath = required('BEHAVIORAL_V7_TELEMETRY_PATH');
 const outputPath = required('BEHAVIORAL_V7_TELEMETRY_COMPLETENESS_PATH');
+const identityPath = process.env.BEHAVIORAL_V7_PLAYER_IDENTITY_PATH?.trim();
 const fields = [
   'spendableSouls',
   'shopAvailable',
@@ -76,6 +77,7 @@ for await (const line of input) {
   }
 }
 
+const identityAudit = await auditIdentity(identityPath);
 const fieldCompleteness = Object.fromEntries(
   fields.map((field) => {
     const observedCount = fieldCounts.get(field) ?? 0;
@@ -91,20 +93,25 @@ const fieldCompleteness = Object.fromEntries(
 const report = {
   schemaVersion: 1,
   operation: 'RECOMMENDATION_OBSERVABILITY_V7_TELEMETRY_COMPLETENESS_AUDIT',
-  executorVersion: 'DIRECT_PLAYER_CONTROLLER_TELEMETRY_COMPLETENESS_2_SOURCE_EVENT_ID',
+  executorVersion:
+    'DIRECT_PLAYER_CONTROLLER_TELEMETRY_COMPLETENESS_3_PERSISTED_IDENTITY',
   generatedAt: new Date().toISOString(),
   trainingPerformed: false,
   valueTrainingPerformed: false,
   futureTestEvaluated: false,
   tuningUsed: false,
   contracts: {
-    identityJoinContract: 'MATCH_ID_PLUS_STEAM_ID_DIRECT',
+    identityJoinContract: 'MATCH_ID_PLUS_STEAM_ACCOUNT_ID_U32_DIRECT',
+    datasetIdentityContract:
+      'MATCH_PLAYERS_ID_TO_ACCOUNT_ID_DIRECT_PERSISTED_SIDECAR',
     acceptedSourceEntity: 'player_controller',
     netWorthMayRepresentWallet: false,
     observedActionMayCreateObservability: false,
     historicalIdentityInferencePerformed: false,
     heroIdentityInferencePerformed: false,
+    teamIdentityInferencePerformed: false,
     playerPawnIdentityInferencePerformed: false,
+    steamIdConversionPerformedByThisAudit: false,
     backfillRequiredForExistingDatasetV6Players: true,
   },
   source: {
@@ -125,6 +132,7 @@ const report = {
       [...sourceCounts.entries()].sort(([a], [b]) => a.localeCompare(b)),
     ),
   },
+  identity: identityAudit,
   fieldCompleteness,
   summary: {
     directTelemetryObserved: eventCount > 0,
@@ -142,17 +150,106 @@ const report = {
     sourceEventIdentityObserved: sourceEventIdentityCount > 0,
     sourceEventDuplicatesObserved:
       sourceEventIdentityCount - sourceEventIds.size > 0,
+    directDatasetIdentityBridgeObserved: identityAudit.validRowCount > 0,
+    historicalDatasetIdentityBridgeAvailable: identityAudit.validRowCount > 0,
     readyForDirectSteamIdJoin: eventCount > 0 && playerKeys.size > 0,
-    historicalDatasetIdentityBridgeAvailable: false,
-    nextStep:
-      eventCount > 0
-        ? 'COLLECT_DIRECT_DATASET_PLAYER_IDENTITY_BRIDGE_BEFORE_DATASET_V7_REEXPORT'
-        : 'DEPLOY_AND_COLLECT_NEW_DIRECT_PLAYER_CONTROLLER_TELEMETRY',
+    readyForDirectDatasetTelemetryJoin:
+      eventCount > 0 && identityAudit.validRowCount > 0,
+    nextStep: nextStep(eventCount, identityAudit.validRowCount),
   },
 };
 
 await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
 console.log(JSON.stringify(report.summary, null, 2));
+
+async function auditIdentity(path) {
+  if (!path) {
+    return {
+      path: undefined,
+      rowCount: 0,
+      validRowCount: 0,
+      invalidRowCount: 0,
+      duplicateDatasetPlayerKeyCount: 0,
+      conflictingDatasetPlayerKeyCount: 0,
+      directPersistedIdentityObserved: false,
+    };
+  }
+
+  let rowCount = 0;
+  let validRowCount = 0;
+  let invalidRowCount = 0;
+  let duplicateDatasetPlayerKeyCount = 0;
+  let conflictingDatasetPlayerKeyCount = 0;
+  const mapping = new Map();
+  const input = createInterface({
+    input: createReadStream(path, { encoding: 'utf8' }),
+    crlfDelay: Infinity,
+  });
+  for await (const line of input) {
+    if (!line.trim()) continue;
+    rowCount += 1;
+    let row;
+    try {
+      row = JSON.parse(line);
+    } catch {
+      invalidRowCount += 1;
+      continue;
+    }
+    const matchId = String(row?.matchId ?? '').trim();
+    const datasetPlayerId = String(row?.datasetPlayerId ?? '').trim();
+    const accountId = String(row?.accountId ?? '').trim();
+    const steamId = String(row?.steamId ?? '').trim();
+    if (
+      row?.schemaVersion !== 1 ||
+      row?.identityVersion !==
+        'RECOMMENDATION_OBSERVABILITY_V7_DATASET_PLAYER_IDENTITY_1' ||
+      row?.source !== 'DIRECT_PERSISTED_IDENTITY' ||
+      row?.sourceField !== 'match_players.accountId' ||
+      row?.identityDomain !== 'STEAM_ACCOUNT_ID_U32' ||
+      !matchId ||
+      !datasetPlayerId ||
+      !isU32AccountId(accountId) ||
+      accountId !== steamId
+    ) {
+      invalidRowCount += 1;
+      continue;
+    }
+    const key = `${matchId}:${datasetPlayerId}`;
+    const previous = mapping.get(key);
+    if (previous !== undefined) {
+      duplicateDatasetPlayerKeyCount += 1;
+      if (previous !== accountId) conflictingDatasetPlayerKeyCount += 1;
+      continue;
+    }
+    mapping.set(key, accountId);
+    validRowCount += 1;
+  }
+  return {
+    path,
+    rowCount,
+    validRowCount,
+    invalidRowCount,
+    duplicateDatasetPlayerKeyCount,
+    conflictingDatasetPlayerKeyCount,
+    directPersistedIdentityObserved: validRowCount > 0,
+  };
+}
+
+function isU32AccountId(value) {
+  if (!/^\d+$/.test(value)) return false;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= 0xffffffff;
+}
+
+function nextStep(eventCount, identityRowCount) {
+  if (identityRowCount === 0) {
+    return 'DEPLOY_MIGRATION_AND_BACKFILL_DIRECT_MATCH_PLAYER_ACCOUNT_IDENTITY';
+  }
+  if (eventCount === 0) {
+    return 'DEPLOY_AND_COLLECT_NEW_DIRECT_PLAYER_CONTROLLER_TELEMETRY';
+  }
+  return 'REEXPORT_DATASET_V7_WITH_DIRECT_IDENTITY_AND_TELEMETRY';
+}
 
 function ratio(numerator, denominator) {
   return denominator > 0 ? numerator / denominator : 0;
