@@ -6,8 +6,6 @@ export interface RecommendationObservabilityV7RawTimelinePayload {
   hero_id?: number;
   game_time?: number;
   spendable_souls?: number;
-  current_souls?: number;
-  unspent_souls?: number;
   shop_available?: boolean;
   shop_type?: string;
   alive?: boolean;
@@ -36,7 +34,7 @@ export function extractRecommendationObservabilityV7FromTimelinePayload(
     return undefined;
   }
 
-  const spendableSouls = firstDirectCurrency(payload);
+  const spendableSouls = directSpendableSouls(payload.spendable_souls);
   const occupiedSlots = normalizeOccupiedSlots(payload.occupied_slots);
   const position = normalizePosition(payload.position);
   const snapshot: RecommendationObservabilityV7SnapshotInput = {
@@ -82,17 +80,8 @@ export function extractRecommendationObservabilityV7FromTimelinePayload(
   return hasUsefulObservation(snapshot) ? snapshot : undefined;
 }
 
-function firstDirectCurrency(
-  payload: RecommendationObservabilityV7RawTimelinePayload,
-): number | undefined {
-  for (const value of [
-    payload.spendable_souls,
-    payload.current_souls,
-    payload.unspent_souls,
-  ]) {
-    if (Number.isSafeInteger(value) && (value ?? -1) >= 0) return value;
-  }
-  return undefined;
+function directSpendableSouls(value: number | undefined): number | undefined {
+  return Number.isSafeInteger(value) && (value ?? -1) >= 0 ? value : undefined;
 }
 
 function normalizeShopType(value: string): 'BASE' | 'SECRET' | 'ANY' | 'UNKNOWN' {
