@@ -1,0 +1,43 @@
+name: Cancel Obsolete Stage J Identity Recovery V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/cancel-obsolete-stage-j-identity-recovery-v1.yml'
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cancel-obsolete-run:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'agent/recommendation-behavioral-v6-feasible-choice-set-1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Cancel only the obsolete historical recovery run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          OBSOLETE_RUN_ID: '31893277385'
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(gh api "repos/$REPO/actions/runs/$OBSOLETE_RUN_ID" --jq '.status')"
+          conclusion="$(gh api "repos/$REPO/actions/runs/$OBSOLETE_RUN_ID" --jq '.conclusion // ""')"
+          echo "obsoleteRunStatus=$status"
+          echo "obsoleteRunConclusion=$conclusion"
+          case "$status" in
+            queued|in_progress|pending|waiting|requested)
+              gh api --method POST "repos/$REPO/actions/runs/$OBSOLETE_RUN_ID/cancel"
+              echo 'cancelRequested=true'
+              ;;
+            *)
+              echo 'cancelRequested=false'
+              ;;
+          esac
+          echo 'productionMutationPerformed=false'
+          echo 'trainingPerformed=false'
+          echo 'futureTestEvaluated=false'
