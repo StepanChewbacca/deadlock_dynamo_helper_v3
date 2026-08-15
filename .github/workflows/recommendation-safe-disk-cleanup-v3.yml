@@ -30,48 +30,49 @@ jobs:
           evidence="$RUNNER_TEMP/recommendation-safe-disk-cleanup-$GITHUB_RUN_ID"
           mkdir -p "$evidence"
           summary="$evidence/summary.txt"
+          exec > >(tee -a "$summary") 2>&1
 
           deploy='/home/ubuntu/apps/deadlock_dynamo_helper'
           training='/home/ubuntu/apps/deadlock_dynamo_helper-training'
-          pause_marker="$training/PAUSED_BY_USER"
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          api_name='deadlock_dynamo_helper-api-1'
 
-          test -s "$pause_marker"
-          cd "$deploy"
-
-          api_container="$(sudo docker compose ps -q api)"
-          test -n "$api_container"
-          storage="$(sudo docker inspect --format='{{range .Mounts}}{{if eq .Destination "/app/apps/api/storage"}}{{.Source}}{{end}}{{end}}' "$api_container")"
-          test -n "$storage"
+          echo "generatedAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          test -d "$deploy"
           test -d "$storage"
 
-          case "$storage" in
-            /var/lib/docker/volumes/*/_data) ;;
-            *) echo "Refusing unexpected production storage: $storage" >&2; exit 1 ;;
-          esac
+          api_container="$(sudo docker ps --filter "name=^/${api_name}$" --format '{{.ID}}')"
+          test -n "$api_container"
+          mounted_storage="$(sudo docker inspect --format='{{range .Mounts}}{{if eq .Destination "/app/apps/api/storage"}}{{.Source}}{{end}}{{end}}' "$api_container")"
+          test "$mounted_storage" = "$storage"
+          echo "productionApiContainer=$api_container"
+          echo "productionStorage=$storage"
 
           running_training_containers="$(sudo docker ps --format '{{.Names}}' | grep -Ei '(training|trainer|ablation)' || true)"
           running_training_services="$(sudo systemctl list-units --type=service --state=running --no-legend 2>/dev/null | grep -Ei '(training|trainer|ablation)' || true)"
           running_training_timers="$(sudo systemctl list-units --type=timer --state=active --no-legend 2>/dev/null | grep -Ei '(training|trainer|ablation)' || true)"
           running_training_processes="$(ps -eo pid=,args= --width 300 | grep -E '/home/ubuntu/apps/deadlock_dynamo_helper-training|run-[^ ]*training|train-[^ ]*recommendation|behavioral[^ ]*ablation' | grep -Ev 'grep -E|actions-runner|Runner\.(Listener|Worker)|recommendation-safe-disk-cleanup' || true)"
 
+          echo '=== active training check ==='
+          printf 'containers=%s\nservices=%s\ntimers=%s\nprocesses=%s\n' "$running_training_containers" "$running_training_services" "$running_training_timers" "$running_training_processes"
           test -z "$running_training_containers"
           test -z "$running_training_services"
           test -z "$running_training_timers"
           test -z "$running_training_processes"
 
+          sudo mkdir -p "$training"
+          printf 'pausedAt=%s\npausedBy=github-actions\nreason=user-requested-emergency-stop\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | sudo tee "$training/PAUSED_BY_USER" >/dev/null
+
           before_avail="$(df --output=avail -B1 / | tail -1 | tr -d ' ')"
-          {
-            echo "generatedAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            echo "productionApiContainer=$api_container"
-            echo "productionStorage=$storage"
-            echo "beforeAvailableBytes=$before_avail"
-            echo '=== df before ==='
-            df -hT /
-            echo '=== storage top-level before ==='
-            sudo du -xhd1 "$storage" 2>/dev/null | sort -h | tail -n 80 || true
-            echo '=== docker before ==='
-            sudo docker system df || true
-          } | tee "$summary"
+          echo "beforeAvailableBytes=$before_avail"
+          echo '=== df before ==='
+          df -hT /
+          echo '=== storage top-level before ==='
+          sudo du -xhd1 "$storage" 2>/dev/null | sort -h | tail -n 100 || true
+          echo '=== training workspace before ==='
+          sudo du -xhd1 "$training" 2>/dev/null | sort -h || true
+          echo '=== docker before ==='
+          sudo docker system df || true
 
           protected=' build-decision-dataset-v3 match-timeline-events-v1 recommendation-decision-telemetry contextual-v3-training contextual-v3-candidate-evaluation-v2 contextual-v3-final-test recommendation-value-v6-training recommendation-value-v6-live-candidates recommendation-value-v6-user-live-telemetry item-catalog-snapshots deadlock-live recommendation-candidate-generator-snapshots recommendation-historical-pro-replay-v1 recommendation-pro-decision-dataset-v6-1 recommendation-behavioral-v5-1 recommendation-value-v8-diagnostic-1 recommendation-v6-short-only-dataset-v6-baseline-1 recommendation-value-v8-full-evaluation-1 recommendation-value-v8-passive-shadow-1 recommendation-behavioral-v7-historical-ledger-v1 recommendation-behavioral-v7-temporal-audit-v2 recommendation-observability-v7 recommendation-behavioral-v5-1-sweep-b-v1 '
 
@@ -115,10 +116,10 @@ jobs:
             base="$(basename "$path")"
             case "$path" in
               "$storage"/*|"$training"/*) ;;
-              *) echo "REFUSE outside cleanup roots: $path" | tee -a "$summary"; return 1 ;;
+              *) echo "REFUSE outside cleanup roots: $path"; return 1 ;;
             esac
             if [[ "$path" == "$storage"/* ]] && [[ "$protected" == *" $base "* ]]; then
-              echo "REFUSE protected: $path" | tee -a "$summary"
+              echo "REFUSE protected: $path"
               return 1
             fi
             [ -e "$path" ] || return 0
@@ -126,26 +127,21 @@ jobs:
             bytes="$(sudo du -sb "$path" 2>/dev/null | awk '{print $1}')"
             bytes="${bytes:-0}"
             estimated_bytes=$((estimated_bytes + bytes))
-            echo "DELETE [$reason] $path bytes=$bytes" | tee -a "$summary"
+            echo "DELETE [$reason] $path bytes=$bytes"
             sudo rm -rf --one-file-system "$path"
             test ! -e "$path"
             deleted_paths=$((deleted_paths + 1))
           }
 
           for name in "${obsolete[@]}"; do
-            if [[ "$protected" == *" $name "* ]]; then
-              echo "REFUSE obsolete/protected collision: $name" >&2
-              exit 1
-            fi
+            [[ "$protected" != *" $name "* ]] || { echo "REFUSE obsolete/protected collision: $name"; exit 1; }
             delete_path "$storage/$name" 'audited-obsolete-exact-name'
           done
 
-          if [ -d "$training" ]; then
-            while IFS= read -r -d '' entry; do
-              [ "$(basename "$entry")" = 'PAUSED_BY_USER' ] && continue
-              delete_path "$entry" 'stopped-training-workspace'
-            done < <(sudo find "$training" -mindepth 1 -maxdepth 1 -print0)
-          fi
+          while IFS= read -r -d '' entry; do
+            [ "$(basename "$entry")" = 'PAUSED_BY_USER' ] && continue
+            delete_path "$entry" 'stopped-training-workspace'
+          done < <(sudo find "$training" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
 
           while IFS= read -r -d '' path; do
             base="$(basename "$path")"
@@ -157,7 +153,6 @@ jobs:
             root="$(dirname "$(dirname "$run_dir")")"
             root_base="$(basename "$root")"
             [[ "$protected" == *" $root_base "* ]] && continue
-
             explicit_failure='false'
             while IFS= read -r -d '' json; do
               if sudo jq -e '((.state? // .status? // .conclusion? // "") | ascii_upcase) as $s | ($s == "FAILED" or $s == "FAILURE" or $s == "CANCELLED" or $s == "CANCELED" or $s == "ABORTED" or $s == "ERROR")' "$json" >/dev/null 2>&1; then
@@ -165,10 +160,7 @@ jobs:
                 break
               fi
             done < <(sudo find "$run_dir" -maxdepth 2 -type f \( -name 'status.json' -o -name 'manifest.json' -o -name 'summary.json' -o -name 'result.json' \) -print0 2>/dev/null)
-
-            if [ "$explicit_failure" = 'true' ]; then
-              delete_path "$run_dir" 'explicit-failed-run'
-            fi
+            [ "$explicit_failure" = 'false' ] || delete_path "$run_dir" 'explicit-failed-run'
           done < <(sudo find "$storage" -mindepth 3 -maxdepth 3 -type d -path '*/runs/*' -print0 2>/dev/null)
 
           mapfile -t stopped_training_containers < <(
@@ -178,32 +170,30 @@ jobs:
           for cid in "${stopped_training_containers[@]}"; do
             [ -n "$cid" ] || continue
             name="$(sudo docker inspect --format='{{.Name}}' "$cid" | sed 's#^/##')"
-            echo "DELETE [stopped-training-container] $name $cid" | tee -a "$summary"
+            echo "DELETE [stopped-training-container] $name $cid"
             sudo docker rm -f "$cid"
           done
 
-          echo 'PRUNE [dangling-images]' | tee -a "$summary"
-          sudo docker image prune -f | tee -a "$summary"
-          echo 'PRUNE [build-cache-older-than-24h]' | tee -a "$summary"
-          sudo docker builder prune -af --filter 'until=24h' | tee -a "$summary"
+          echo 'PRUNE [dangling-images]'
+          sudo docker image prune -f
+          echo 'PRUNE [build-cache-older-than-24h]'
+          sudo docker builder prune -af --filter 'until=24h'
 
           after_avail="$(df --output=avail -B1 / | tail -1 | tr -d ' ')"
           reclaimed=$((after_avail - before_avail))
-          {
-            echo '=== df after ==='
-            df -hT /
-            echo '=== storage top-level after ==='
-            sudo du -xhd1 "$storage" 2>/dev/null | sort -h | tail -n 80 || true
-            echo '=== docker after ==='
-            sudo docker system df || true
-            echo "deletedPaths=$deleted_paths"
-            echo "estimatedBytesRemoved=$estimated_bytes"
-            echo "afterAvailableBytes=$after_avail"
-            echo "actualAvailableBytesIncrease=$reclaimed"
-            echo 'dockerVolumesPruned=false'
-            echo 'dockerSystemPruneA=false'
-            echo 'productionRuntimeRestarted=false'
-          } | tee -a "$summary"
+          echo '=== df after ==='
+          df -hT /
+          echo '=== storage top-level after ==='
+          sudo du -xhd1 "$storage" 2>/dev/null | sort -h | tail -n 100 || true
+          echo '=== docker after ==='
+          sudo docker system df || true
+          echo "deletedPaths=$deleted_paths"
+          echo "estimatedBytesRemoved=$estimated_bytes"
+          echo "afterAvailableBytes=$after_avail"
+          echo "actualAvailableBytesIncrease=$reclaimed"
+          echo 'dockerVolumesPruned=false'
+          echo 'dockerSystemPruneA=false'
+          echo 'productionRuntimeRestarted=false'
 
           sudo docker inspect "$api_container" > "$evidence/production-api-after.json"
           test "$(sudo docker inspect --format='{{.State.Running}}' "$api_container")" = 'true'
