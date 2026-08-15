@@ -1,0 +1,71 @@
+name: Recommendation Production Read-Only Probe
+
+on:
+  push:
+    branches:
+      - agent/recommendation-behavioral-v6-feasible-choice-set-1
+    paths:
+      - .github/workflows/recommendation-production-readonly-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  production-readonly-probe:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - name: Probe runner and production state without mutations
+        shell: bash
+        run: |
+          set -u
+          echo "probe_started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "runner_host=$(hostname)"
+          echo "runner_user=$(whoami)"
+
+          APP_DIR=/home/ubuntu/apps/deadlock_dynamo_helper
+          if [ -d "$APP_DIR" ]; then
+            echo "app_dir_present=true"
+            if [ -d "$APP_DIR/.git" ]; then
+              echo "source_sha=$(git -C "$APP_DIR" rev-parse HEAD 2>/dev/null || true)"
+              echo "source_branch=$(git -C "$APP_DIR" branch --show-current 2>/dev/null || true)"
+              echo "source_status_begin"
+              git -C "$APP_DIR" status --short 2>/dev/null || true
+              echo "source_status_end"
+            else
+              echo "source_git_metadata=false"
+            fi
+          else
+            echo "app_dir_present=false"
+          fi
+
+          echo "docker_ps_begin"
+          sudo docker ps --no-trunc --format '{{.ID}}\t{{.Image}}\t{{.Names}}\t{{.Status}}' || true
+          echo "docker_ps_end"
+
+          if [ -d "$APP_DIR" ] && [ -f "$APP_DIR/docker-compose.yml" ]; then
+            echo "compose_ps_begin"
+            (cd "$APP_DIR" && sudo docker compose --env-file .env ps) || true
+            echo "compose_ps_end"
+          fi
+
+          probe_url() {
+            local name="$1"
+            local url="$2"
+            local body_file
+            body_file=$(mktemp)
+            local code
+            code=$(curl -sS --max-time 10 -o "$body_file" -w '%{http_code}' "$url" 2>&1) || true
+            echo "${name}_http_code=$code"
+            echo "${name}_body_begin"
+            cat "$body_file" 2>/dev/null || true
+            echo
+            echo "${name}_body_end"
+            rm -f "$body_file"
+          }
+
+          probe_url contextual_v3_live_status http://127.0.0.1:3000/deadlock/analysis/contextual-v3-live/status
+          probe_url build_recommendations_status http://127.0.0.1:3000/deadlock/live/build-recommendations/status
+
+          echo "probe_completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
