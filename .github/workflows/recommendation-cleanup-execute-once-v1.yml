@@ -36,7 +36,7 @@ jobs:
           mount="$(sudo docker inspect -f '{{range .Mounts}}{{if eq .Destination "/app/apps/api/storage"}}{{.Source}}{{end}}{{end}}' "$api")"
           echo "productionStorage=$mount"
           test "$mount" = "$storage"
-          test -d "$storage"
+          sudo test -d "$storage"
 
           active_containers="$(sudo docker ps --format '{{.Names}}' | grep -Ei '(training|trainer|ablation)' || true)"
           active_services="$(sudo systemctl list-units --type=service --state=running --no-legend 2>/dev/null | grep -Ei '(training|trainer|ablation)' || true)"
@@ -96,14 +96,14 @@ jobs:
           deleted_bytes=0
           remove_dir() {
             local path="$1" reason="$2" base bytes
-            [ -d "$path" ] || return 0
+            sudo test -d "$path" || return 0
             base="$(basename "$path")"
             case "$path" in "$storage"/*|"$training"/*) ;; *) echo "REFUSE outside roots $path"; exit 1;; esac
             if [[ "$path" == "$storage"/* ]] && [[ "$protected" == *" $base "* ]]; then echo "REFUSE protected $base"; exit 1; fi
             bytes="$(sudo du -sb "$path" 2>/dev/null | awk '{print $1}')"; bytes="${bytes:-0}"
             echo "DELETE reason=$reason bytes=$bytes path=$path"
             sudo rm -rf --one-file-system "$path"
-            test ! -e "$path"
+            sudo test ! -e "$path"
             deleted=$((deleted+1)); deleted_bytes=$((deleted_bytes+bytes))
           }
 
@@ -114,7 +114,7 @@ jobs:
 
           while IFS= read -r -d '' p; do
             [ "$(basename "$p")" = PAUSED_BY_USER ] && continue
-            if [ -d "$p" ]; then remove_dir "$p" stopped-training-workspace; else
+            if sudo test -d "$p"; then remove_dir "$p" stopped-training-workspace; else
               bytes="$(sudo stat -c %s "$p" 2>/dev/null || echo 0)"
               echo "DELETE reason=stopped-training-workspace bytes=$bytes path=$p"
               sudo rm -f "$p"; deleted=$((deleted+1)); deleted_bytes=$((deleted_bytes+bytes))
