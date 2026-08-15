@@ -4,137 +4,17 @@ on:
   pull_request:
     paths:
       - '.github/workflows/recommendation-behavioral-v7-historical-ledger-v1.yml'
-      - 'apps/api/src/deadlock-live/hero-build-decision-dataset-v3.service.ts'
-      - 'apps/api/src/deadlock-live/recommendation-historical-pro-replay.ts'
-      - 'apps/api/src/deadlock-live/recommendation-pro-decision-dataset-v6.ts'
-      - 'scripts/resolve-recommendation-behavioral-v7-player-identity.mjs'
-      - 'scripts/export-recommendation-pro-decision-dataset-v7.mjs'
-      - 'scripts/audit-recommendation-behavioral-v7-choice-set.mjs'
-      - 'scripts/diagnose-recommendation-behavioral-v7-information-gain.mjs'
 
 permissions:
   contents: read
 
 concurrency:
   group: recommendation-behavioral-v7-pinned-data-gates-v1
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
-  gates:
-    runs-on: self-hosted
-    timeout-minutes: 25
+  paused:
+    if: ${{ false }}
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Reuse immutable historical ledger and stage inputs
-        shell: bash
-        run: |
-          set -euo pipefail
-          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
-          ledger="$storage/recommendation-behavioral-v7-historical-ledger-v1/ledger.ndjson"
-          temporal="$storage/recommendation-behavioral-v7-temporal-audit-v2/report.json"
-          sample="$storage/recommendation-behavioral-v5-1-sweep-b-v1/diagnostic-sample.ndjson.gz"
-          telemetry="$storage/recommendation-observability-v7/events.ndjson"
-          identity="$storage/recommendation-observability-v7/player-identities.ndjson"
-          sudo test -s "$ledger"
-          sudo test -s "$temporal"
-          sudo test -s "$sample"
-          sudo cp "$ledger" "$RUNNER_TEMP/v7-ledger.ndjson"
-          sudo cp "$temporal" "$RUNNER_TEMP/v7-temporal.json"
-          sudo cp "$sample" "$RUNNER_TEMP/v7-source.ndjson.gz"
-          if sudo test -s "$telemetry"; then
-            sudo cp "$telemetry" "$RUNNER_TEMP/v7-telemetry.ndjson"
-          else
-            sudo touch "$RUNNER_TEMP/v7-telemetry.ndjson"
-          fi
-          if sudo test -s "$identity"; then
-            sudo cp "$identity" "$RUNNER_TEMP/v7-external-player-identities.ndjson"
-          else
-            sudo touch "$RUNNER_TEMP/v7-external-player-identities.ndjson"
-          fi
-          sudo chown "$(id -u):$(id -g)" \
-            "$RUNNER_TEMP/v7-ledger.ndjson" \
-            "$RUNNER_TEMP/v7-temporal.json" \
-            "$RUNNER_TEMP/v7-source.ndjson.gz" \
-            "$RUNNER_TEMP/v7-telemetry.ndjson" \
-            "$RUNNER_TEMP/v7-external-player-identities.ndjson"
-          echo '8d87519d797b54fc3f726837e80bb79968b44dc59960dadcb934261f329ce1ac  '"$RUNNER_TEMP/v7-source.ndjson.gz" | sha256sum -c -
-
-      - name: Resolve direct player identity
-        shell: bash
-        env:
-          BEHAVIORAL_V7_SOURCE_DATASET_V6_PATH: ${{ runner.temp }}/v7-source.ndjson.gz
-          BEHAVIORAL_V7_EXTERNAL_PLAYER_IDENTITY_PATH: ${{ runner.temp }}/v7-external-player-identities.ndjson
-          BEHAVIORAL_V7_RESOLVED_PLAYER_IDENTITY_PATH: ${{ runner.temp }}/v7-player-identities.ndjson
-          BEHAVIORAL_V7_RESOLVED_PLAYER_IDENTITY_AUDIT_PATH: ${{ runner.temp }}/identity-resolution.json
-        run: |
-          set -euo pipefail
-          node scripts/resolve-recommendation-behavioral-v7-player-identity.mjs
-          jq -e '.schemaVersion == 1 and .passed == true and .trainingPerformed == false and .futureTestEvaluated == false and .identityConflictCount == 0 and .contracts.identityConflictAccepted == false and .contracts.databaseSurrogateMayRepresentSteamId == false and .contracts.heroIdentityInferencePerformed == false' \
-            "$BEHAVIORAL_V7_RESOLVED_PLAYER_IDENTITY_AUDIT_PATH"
-
-      - name: Export pinned Dataset V7
-        shell: bash
-        env:
-          BEHAVIORAL_V7_SOURCE_DATASET_V6_PATH: ${{ runner.temp }}/v7-source.ndjson.gz
-          BEHAVIORAL_V7_TEMPORAL_AUDIT_PATH: ${{ runner.temp }}/v7-temporal.json
-          BEHAVIORAL_V7_HISTORICAL_LEDGER_PATH: ${{ runner.temp }}/v7-ledger.ndjson
-          BEHAVIORAL_V7_TELEMETRY_PATH: ${{ runner.temp }}/v7-telemetry.ndjson
-          BEHAVIORAL_V7_PLAYER_IDENTITY_PATH: ${{ runner.temp }}/v7-player-identities.ndjson
-          BEHAVIORAL_V7_OUTPUT_DATASET_PATH: ${{ runner.temp }}/dataset-v7.ndjson
-          BEHAVIORAL_V7_OUTPUT_AUDIT_PATH: ${{ runner.temp }}/dataset-v7-audit.json
-        run: |
-          set -euo pipefail
-          node scripts/export-recommendation-pro-decision-dataset-v7.mjs
-          jq -e '.schemaVersion == 2 and .stageCExportPassed == true and .futureTestDecisionCount == 0 and .futureTestEvaluated == false and .newObservedDecisionCount > 0 and .observedActionInjectedCount == 0 and .identityContracts.historicalIdentityInferencePerformed == false and .identityContracts.heroIdentityInferencePerformed == false' "$BEHAVIORAL_V7_OUTPUT_AUDIT_PATH"
-          gzip -9 "$BEHAVIORAL_V7_OUTPUT_DATASET_PATH"
-          sha256sum "$RUNNER_TEMP/dataset-v7.ndjson.gz" > "$RUNNER_TEMP/dataset-v7.sha256"
-
-      - name: Audit V7 choice set
-        shell: bash
-        env:
-          BEHAVIORAL_V7_DATASET_PATH: ${{ runner.temp }}/dataset-v7.ndjson.gz
-          BEHAVIORAL_V7_CHOICE_SET_REPORT_PATH: ${{ runner.temp }}/stage-d.json
-        run: |
-          set -euo pipefail
-          node scripts/audit-recommendation-behavioral-v7-choice-set.mjs
-          jq -e '.schemaVersion == 2 and .stageDGatePassed == true and .futureTestEvaluated == false' "$BEHAVIORAL_V7_CHOICE_SET_REPORT_PATH"
-
-      - name: Measure incremental information gain
-        shell: bash
-        env:
-          BEHAVIORAL_V7_DATASET_PATH: ${{ runner.temp }}/dataset-v7.ndjson.gz
-          BEHAVIORAL_V7_INFORMATION_GAIN_REPORT_PATH: ${{ runner.temp }}/stage-e.json
-        run: |
-          set -euo pipefail
-          node scripts/diagnose-recommendation-behavioral-v7-information-gain.mjs
-          jq -e '.behavioralModelTrainingPerformed == false and .futureTestEvaluated == false and .tuningUsedForDiagnostic == false' "$BEHAVIORAL_V7_INFORMATION_GAIN_REPORT_PATH"
-
-      - name: Persist immutable data-gate evidence
-        shell: bash
-        run: |
-          set -euo pipefail
-          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
-          canonical="$storage/recommendation-behavioral-v7-pinned-data-gates-v1"
-          output="$canonical/runs/${{ github.run_id }}-${{ github.run_attempt }}"
-          sudo mkdir -p "$output"
-          sudo install -m 0644 "$RUNNER_TEMP/identity-resolution.json" "$output/identity-resolution.json"
-          sudo install -m 0644 "$RUNNER_TEMP/dataset-v7.ndjson.gz" "$output/dataset.ndjson.gz"
-          sudo install -m 0644 "$RUNNER_TEMP/dataset-v7.sha256" "$output/dataset.sha256"
-          sudo install -m 0644 "$RUNNER_TEMP/dataset-v7-audit.json" "$output/dataset-audit.json"
-          sudo install -m 0644 "$RUNNER_TEMP/stage-d.json" "$output/stage-d.json"
-          sudo install -m 0644 "$RUNNER_TEMP/stage-e.json" "$output/stage-e.json"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: recommendation-behavioral-v7-pinned-data-gates-v1-${{ github.run_id }}
-          path: |
-            ${{ runner.temp }}/identity-resolution.json
-            ${{ runner.temp }}/dataset-v7-audit.json
-            ${{ runner.temp }}/dataset-v7.sha256
-            ${{ runner.temp }}/stage-d.json
-            ${{ runner.temp }}/stage-e.json
-          retention-days: 14
+      - run: echo 'Recommendation Behavioral V7 data gates are paused.'
