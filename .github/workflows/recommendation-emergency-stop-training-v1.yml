@@ -76,16 +76,17 @@ jobs:
           done
 
           mapfile -t pids < <(
-            sudo pgrep -f '/home/ubuntu/apps/deadlock_dynamo_helper-training|run-[^ ]*training|train-[^ ]*recommendation|behavioral[^ ]*ablation' || true
+            ps -eo pid=,args= --width 300 \
+              | grep -E '/home/ubuntu/apps/deadlock_dynamo_helper-training|run-[^ ]*training|train-[^ ]*recommendation|behavioral[^ ]*ablation' \
+              | grep -Ev 'grep -E|actions-runner|Runner\.(Listener|Worker)' \
+              | awk '{print $1}' || true
           )
           for pid in "${pids[@]}"; do
             [ -n "$pid" ] || continue
             [ "$pid" != "$$" ] || continue
             [ "$pid" != "$PPID" ] || continue
             cmd="$(sudo ps -p "$pid" -o args= 2>/dev/null || true)"
-            case "$cmd" in
-              *actions-runner*|*Runner.Listener*|*Runner.Worker*) continue ;;
-            esac
+            [ -n "$cmd" ] || continue
             echo "TERM process $pid $cmd" | tee -a "$evidence/summary.txt"
             sudo kill -TERM "$pid" 2>/dev/null || true
           done
@@ -97,9 +98,7 @@ jobs:
             [ "$pid" != "$PPID" ] || continue
             if sudo kill -0 "$pid" 2>/dev/null; then
               cmd="$(sudo ps -p "$pid" -o args= 2>/dev/null || true)"
-              case "$cmd" in
-                *actions-runner*|*Runner.Listener*|*Runner.Worker*) continue ;;
-              esac
+              [ -n "$cmd" ] || continue
               echo "KILL process $pid $cmd" | tee -a "$evidence/summary.txt"
               sudo kill -KILL "$pid" 2>/dev/null || true
             fi
@@ -114,7 +113,7 @@ jobs:
           running_training_containers="$(sudo docker ps --format '{{.Names}}' | grep -Ei '(training|trainer|ablation)' || true)"
           running_training_services="$(sudo systemctl list-units --type=service --state=running --no-legend 2>/dev/null | grep -Ei '(training|trainer|ablation)' || true)"
           running_training_timers="$(sudo systemctl list-units --type=timer --state=active --no-legend 2>/dev/null | grep -Ei '(training|trainer|ablation)' || true)"
-          running_training_processes="$(sudo pgrep -af '/home/ubuntu/apps/deadlock_dynamo_helper-training|run-[^ ]*training|train-[^ ]*recommendation|behavioral[^ ]*ablation' | grep -Ev 'actions-runner|Runner\.(Listener|Worker)' || true)"
+          running_training_processes="$(ps -eo pid=,args= --width 300 | grep -E '/home/ubuntu/apps/deadlock_dynamo_helper-training|run-[^ ]*training|train-[^ ]*recommendation|behavioral[^ ]*ablation' | grep -Ev 'grep -E|actions-runner|Runner\.(Listener|Worker)' || true)"
 
           {
             echo '--- remaining matching containers ---'
