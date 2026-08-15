@@ -1,0 +1,142 @@
+name: Recommendation Emergency Stop Training V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/recommendation-emergency-stop-training-v1.yml'
+      - '.github/training-requests/recommendation-emergency-stop-training-v1.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-emergency-stop-training-v1
+  cancel-in-progress: true
+
+jobs:
+  stop-training:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'agent/recommendation-behavioral-v6-feasible-choice-set-1'
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stop all recommendation training workloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/recommendation-emergency-stop-training-$GITHUB_RUN_ID"
+          mkdir -p "$evidence"
+
+          echo "generatedAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee "$evidence/summary.txt"
+          df -h | tee "$evidence/df-before.txt"
+          sudo docker ps --no-trunc | tee "$evidence/docker-before.txt"
+          sudo systemctl list-units --type=service --all --no-legend | tee "$evidence/systemd-services-before.txt" >/dev/null
+          sudo systemctl list-units --type=timer --all --no-legend | tee "$evidence/systemd-timers-before.txt" >/dev/null
+          ps -eo pid,ppid,user,etime,args --width 300 | tee "$evidence/processes-before.txt" >/dev/null
+
+          sudo mkdir -p /home/ubuntu/apps/deadlock_dynamo_helper-training
+          printf 'pausedAt=%s\npausedBy=github-actions\nreason=user-requested-emergency-stop\n' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            | sudo tee /home/ubuntu/apps/deadlock_dynamo_helper-training/PAUSED_BY_USER >/dev/null
+
+          mapfile -t timers < <(
+            sudo systemctl list-units --type=timer --all --no-legend 2>/dev/null \
+              | awk '{print $1}' \
+              | grep -Ei '(training|trainer|ablation)' || true
+          )
+          for unit in "${timers[@]}"; do
+            [ -n "$unit" ] || continue
+            echo "STOP timer $unit" | tee -a "$evidence/summary.txt"
+            sudo systemctl stop "$unit" || true
+          done
+
+          mapfile -t services < <(
+            sudo systemctl list-units --type=service --all --no-legend 2>/dev/null \
+              | awk '{print $1}' \
+              | grep -Ei '(training|trainer|ablation)' || true
+          )
+          for unit in "${services[@]}"; do
+            [ -n "$unit" ] || continue
+            echo "STOP service $unit" | tee -a "$evidence/summary.txt"
+            sudo systemctl stop "$unit" || true
+          done
+
+          mapfile -t containers < <(
+            sudo docker ps --format '{{.ID}} {{.Names}}' \
+              | awk 'BEGIN{IGNORECASE=1} $0 ~ /(training|trainer|ablation)/ {print $1}' || true
+          )
+          for cid in "${containers[@]}"; do
+            [ -n "$cid" ] || continue
+            name="$(sudo docker inspect --format='{{.Name}}' "$cid" | sed 's#^/##')"
+            echo "STOP container $name ($cid)" | tee -a "$evidence/summary.txt"
+            sudo docker stop -t 20 "$cid" || true
+          done
+
+          mapfile -t pids < <(
+            sudo pgrep -f '/home/ubuntu/apps/deadlock_dynamo_helper-training|run-[^ ]*training|train-[^ ]*recommendation|behavioral[^ ]*ablation' || true
+          )
+          for pid in "${pids[@]}"; do
+            [ -n "$pid" ] || continue
+            [ "$pid" != "$$" ] || continue
+            [ "$pid" != "$PPID" ] || continue
+            cmd="$(sudo ps -p "$pid" -o args= 2>/dev/null || true)"
+            case "$cmd" in
+              *actions-runner*|*Runner.Listener*|*Runner.Worker*) continue ;;
+            esac
+            echo "TERM process $pid $cmd" | tee -a "$evidence/summary.txt"
+            sudo kill -TERM "$pid" 2>/dev/null || true
+          done
+
+          sleep 3
+          for pid in "${pids[@]}"; do
+            [ -n "$pid" ] || continue
+            [ "$pid" != "$$" ] || continue
+            [ "$pid" != "$PPID" ] || continue
+            if sudo kill -0 "$pid" 2>/dev/null; then
+              cmd="$(sudo ps -p "$pid" -o args= 2>/dev/null || true)"
+              case "$cmd" in
+                *actions-runner*|*Runner.Listener*|*Runner.Worker*) continue ;;
+              esac
+              echo "KILL process $pid $cmd" | tee -a "$evidence/summary.txt"
+              sudo kill -KILL "$pid" 2>/dev/null || true
+            fi
+          done
+
+          sudo docker ps --no-trunc | tee "$evidence/docker-after.txt"
+          sudo systemctl list-units --type=service --state=running --no-legend | tee "$evidence/systemd-services-after.txt" >/dev/null
+          sudo systemctl list-units --type=timer --state=active --no-legend | tee "$evidence/systemd-timers-after.txt" >/dev/null
+          ps -eo pid,ppid,user,etime,args --width 300 | tee "$evidence/processes-after.txt" >/dev/null
+          df -h | tee "$evidence/df-after.txt"
+
+          running_training_containers="$(sudo docker ps --format '{{.Names}}' | grep -Ei '(training|trainer|ablation)' || true)"
+          running_training_services="$(sudo systemctl list-units --type=service --state=running --no-legend 2>/dev/null | grep -Ei '(training|trainer|ablation)' || true)"
+          running_training_timers="$(sudo systemctl list-units --type=timer --state=active --no-legend 2>/dev/null | grep -Ei '(training|trainer|ablation)' || true)"
+          running_training_processes="$(sudo pgrep -af '/home/ubuntu/apps/deadlock_dynamo_helper-training|run-[^ ]*training|train-[^ ]*recommendation|behavioral[^ ]*ablation' | grep -Ev 'actions-runner|Runner\.(Listener|Worker)' || true)"
+
+          {
+            echo '--- remaining matching containers ---'
+            printf '%s\n' "$running_training_containers"
+            echo '--- remaining matching services ---'
+            printf '%s\n' "$running_training_services"
+            echo '--- remaining matching timers ---'
+            printf '%s\n' "$running_training_timers"
+            echo '--- remaining matching processes ---'
+            printf '%s\n' "$running_training_processes"
+          } | tee -a "$evidence/summary.txt"
+
+          test -z "$running_training_containers"
+          test -z "$running_training_services"
+          test -z "$running_training_timers"
+          test -z "$running_training_processes"
+
+      - name: Upload emergency stop evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-emergency-stop-training-${{ github.run_id }}
+          path: ${{ runner.temp }}/recommendation-emergency-stop-training-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
