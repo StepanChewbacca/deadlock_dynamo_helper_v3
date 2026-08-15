@@ -10,34 +10,35 @@ permissions:
   contents: read
 
 jobs:
-  cancel-obsolete-run:
+  cancel-obsolete-runs:
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.head.ref == 'agent/recommendation-behavioral-v6-feasible-choice-set-1'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Force-cancel only the stuck obsolete historical recovery run
+      - name: Force-cancel only known obsolete runs
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          OBSOLETE_RUN_ID: '31893277385'
+          OBSOLETE_RUN_IDS: '31893277385 31898129265'
         shell: bash
         run: |
           set -euo pipefail
-          status="$(gh api "repos/$REPO/actions/runs/$OBSOLETE_RUN_ID" --jq '.status')"
-          conclusion="$(gh api "repos/$REPO/actions/runs/$OBSOLETE_RUN_ID" --jq '.conclusion // ""')"
-          echo "obsoleteRunStatus=$status"
-          echo "obsoleteRunConclusion=$conclusion"
-          case "$status" in
-            queued|in_progress|pending|waiting|requested)
-              gh api --method POST "repos/$REPO/actions/runs/$OBSOLETE_RUN_ID/force-cancel"
-              echo 'forceCancelRequested=true'
-              ;;
-            *)
-              echo 'forceCancelRequested=false'
-              ;;
-          esac
+          for run_id in $OBSOLETE_RUN_IDS; do
+            status="$(gh api "repos/$REPO/actions/runs/$run_id" --jq '.status')"
+            conclusion="$(gh api "repos/$REPO/actions/runs/$run_id" --jq '.conclusion // ""')"
+            echo "runId=$run_id status=$status conclusion=$conclusion"
+            case "$status" in
+              queued|in_progress|pending|waiting|requested)
+                gh api --method POST "repos/$REPO/actions/runs/$run_id/force-cancel"
+                echo "runId=$run_id forceCancelRequested=true"
+                ;;
+              *)
+                echo "runId=$run_id forceCancelRequested=false"
+                ;;
+            esac
+          done
           echo 'productionMutationPerformed=false'
           echo 'trainingPerformed=false'
           echo 'futureTestEvaluated=false'
