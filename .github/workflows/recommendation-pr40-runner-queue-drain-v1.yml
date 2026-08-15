@@ -6,11 +6,54 @@ on:
       - '.github/workflows/recommendation-pr40-runner-queue-drain-v1.yml'
 
 permissions:
+  actions: write
   contents: read
 
 jobs:
-  paused:
-    if: ${{ false }}
+  drain:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'agent/recommendation-behavioral-v6-feasible-choice-set-1'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - run: echo 'PR40 runner queue drain is disabled.'
+      - name: Cancel all branch runs except cleanup and CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: agent/recommendation-behavioral-v6-feasible-choice-set-1
+          CURRENT_RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          preserve_name() {
+            case "$1" in
+              'Recommendation PR40 Runner Queue Drain V1'|\
+              'Recommendation Cleanup Execute Once V1'|\
+              'CI') return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+          cancelled=0
+          for status in queued in_progress waiting pending requested; do
+            page=1
+            while :; do
+              response="$(gh api "repos/$REPO/actions/runs?branch=$BRANCH&status=$status&per_page=100&page=$page")"
+              count="$(jq '.workflow_runs | length' <<<"$response")"
+              [ "$count" -gt 0 ] || break
+              while IFS=$'\t' read -r run_id name; do
+                [ -n "$run_id" ] || continue
+                if [ "$run_id" = "$CURRENT_RUN_ID" ] || preserve_name "$name"; then
+                  echo "PRESERVE $run_id $name"
+                  continue
+                fi
+                echo "CANCEL $run_id $name"
+                gh api --method POST "repos/$REPO/actions/runs/$run_id/force-cancel" >/dev/null 2>&1 || \
+                  gh api --method POST "repos/$REPO/actions/runs/$run_id/cancel" >/dev/null 2>&1 || true
+                cancelled=$((cancelled+1))
+              done < <(jq -r '.workflow_runs[] | [.id,.name] | @tsv' <<<"$response")
+              [ "$count" -eq 100 ] || break
+              page=$((page+1))
+            done
+          done
+          echo "cancelledRunCount=$cancelled"
