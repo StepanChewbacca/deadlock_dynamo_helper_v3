@@ -6,79 +6,11 @@ on:
       - '.github/workflows/recommendation-pr40-runner-queue-drain-v1.yml'
 
 permissions:
-  actions: write
   contents: read
 
 jobs:
-  drain:
-    if: >-
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.head.ref == 'agent/recommendation-behavioral-v6-feasible-choice-set-1'
+  paused:
+    if: ${{ false }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
     steps:
-      - name: Cancel stale branch runs except P0 recovery and CI
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          BRANCH: agent/recommendation-behavioral-v6-feasible-choice-set-1
-          CURRENT_RUN_ID: ${{ github.run_id }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/queue-drain"
-          : > "$RUNNER_TEMP/queue-drain/cancelled.tsv"
-          : > "$RUNNER_TEMP/queue-drain/preserved.tsv"
-
-          preserve_name() {
-            case "$1" in
-              'Recommendation PR40 Runner Queue Drain V1'|\
-              'Recommendation Production Recovery Inventory V1'|\
-              'Recommendation Production Readiness Probe V1'|\
-              'Cancel Obsolete Stage J Identity Recovery V1'|\
-              'CI') return 0 ;;
-              *) return 1 ;;
-            esac
-          }
-
-          for status in queued in_progress waiting pending requested; do
-            page=1
-            while :; do
-              response="$(gh api "repos/$REPO/actions/runs?branch=$BRANCH&status=$status&per_page=100&page=$page")"
-              count="$(jq '.workflow_runs | length' <<<"$response")"
-              [ "$count" -gt 0 ] || break
-              while IFS=$'\t' read -r run_id name head_sha run_status; do
-                [ -n "$run_id" ] || continue
-                if [ "$run_id" = "$CURRENT_RUN_ID" ] || preserve_name "$name"; then
-                  printf '%s\t%s\t%s\t%s\n' "$run_id" "$name" "$head_sha" "$run_status" >> "$RUNNER_TEMP/queue-drain/preserved.tsv"
-                  continue
-                fi
-                gh api --method POST "repos/$REPO/actions/runs/$run_id/force-cancel" >/dev/null 2>&1 || \
-                  gh api --method POST "repos/$REPO/actions/runs/$run_id/cancel" >/dev/null 2>&1 || true
-                printf '%s\t%s\t%s\t%s\n' "$run_id" "$name" "$head_sha" "$run_status" >> "$RUNNER_TEMP/queue-drain/cancelled.tsv"
-              done < <(jq -r '.workflow_runs[] | [.id,.name,.head_sha,.status] | @tsv' <<<"$response")
-              [ "$count" -eq 100 ] || break
-              page=$((page + 1))
-            done
-          done
-
-          cancelled_count="$(wc -l < "$RUNNER_TEMP/queue-drain/cancelled.tsv")"
-          preserved_count="$(wc -l < "$RUNNER_TEMP/queue-drain/preserved.tsv")"
-          echo "cancelledRunCount=$cancelled_count"
-          echo "preservedRunCount=$preserved_count"
-          echo '--- preserved ---'
-          cat "$RUNNER_TEMP/queue-drain/preserved.tsv"
-          echo '--- cancelled ---'
-          cat "$RUNNER_TEMP/queue-drain/cancelled.tsv"
-          echo 'productionMutationPerformed=false'
-          echo 'trainingPerformed=false'
-          echo 'futureTestEvaluated=false'
-
-      - name: Upload queue-drain evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: recommendation-pr40-runner-queue-drain-v1-${{ github.run_id }}
-          path: ${{ runner.temp }}/queue-drain
-          if-no-files-found: warn
-          retention-days: 7
+      - run: echo 'PR40 runner queue drain is disabled.'
