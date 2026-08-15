@@ -31,8 +31,8 @@ jobs:
           exec > >(tee "$report") 2>&1
 
           echo "startedAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          echo "apiRunning=$(sudo docker inspect -f '{{.State.Running}}' "$api")"
-          test "$(sudo docker inspect -f '{{.State.Running}}' "$api")" = true
+          api_running_before="$(sudo docker inspect -f '{{.State.Running}}' "$api")"
+          echo "apiRunningBefore=$api_running_before"
           mount="$(sudo docker inspect -f '{{range .Mounts}}{{if eq .Destination "/app/apps/api/storage"}}{{.Source}}{{end}}{{end}}' "$api")"
           echo "productionStorage=$mount"
           test "$mount" = "$storage"
@@ -148,10 +148,13 @@ jobs:
           sudo docker builder prune -af --filter 'until=24h'
 
           after="$(df --output=avail -B1 / | tail -1 | tr -d ' ')"; reclaimed=$((after-before))
+          api_running_after="$(sudo docker inspect -f '{{.State.Running}}' "$api")"
           echo "deletedPaths=$deleted"
           echo "deletedPathBytes=$deleted_bytes"
           echo "availableAfterBytes=$after"
           echo "availableIncreaseBytes=$reclaimed"
+          echo "apiRunningAfter=$api_running_after"
+          test "$api_running_after" = "$api_running_before"
           echo 'dockerVolumesPruned=false'
           echo 'dockerSystemPruneA=false'
           echo 'productionRuntimeRestarted=false'
@@ -159,7 +162,6 @@ jobs:
           sudo docker system df || true
           echo '--- storage after ---'
           sudo du -xhd1 "$storage" 2>/dev/null | sort -h | tail -n 100 || true
-          test "$(sudo docker inspect -f '{{.State.Running}}' "$api")" = true
           echo "finishedAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
       - name: Upload cleanup report
