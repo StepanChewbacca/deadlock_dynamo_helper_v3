@@ -18,150 +18,71 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.head.ref == 'agent/recommendation-behavioral-v6-feasible-choice-set-1'
     runs-on: self-hosted
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
-      - name: Clean stopped recommendation training garbage
+      - name: Inventory remaining recommendation garbage candidates
         shell: bash
         run: |
           set -euo pipefail
           storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
           training='/home/ubuntu/apps/deadlock_dynamo_helper-training'
-          api='deadlock_dynamo_helper-api-1'
           report="$RUNNER_TEMP/recommendation-cleanup-execute-once-$GITHUB_RUN_ID.txt"
           exec > >(tee "$report") 2>&1
 
           echo "startedAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          api_running_before="$(sudo docker inspect -f '{{.State.Running}}' "$api")"
-          echo "apiRunningBefore=$api_running_before"
-          mount="$(sudo docker inspect -f '{{range .Mounts}}{{if eq .Destination "/app/apps/api/storage"}}{{.Source}}{{end}}{{end}}' "$api")"
-          echo "productionStorage=$mount"
-          test "$mount" = "$storage"
-          sudo test -d "$storage"
+          echo '--- filesystem ---'
+          df -hT /
+          echo "availableBytes=$(df --output=avail -B1 / | tail -1 | tr -d ' ')"
 
           active_containers="$(sudo docker ps --format '{{.Names}}' | grep -Ei '(training|trainer|ablation)' || true)"
           active_services="$(sudo systemctl list-units --type=service --state=running --no-legend 2>/dev/null | grep -Ei '(training|trainer|ablation)' || true)"
           active_timers="$(sudo systemctl list-units --type=timer --state=active --no-legend 2>/dev/null | grep -Ei '(training|trainer|ablation)' || true)"
-          active_processes="$(ps -eo pid=,args= --width 400 | grep -E '[d]eadlock_dynamo_helper-training|[r]un-[^ ]*training|[t]rain-[^ ]*recommendation|[b]ehavioral[^ ]*ablation' | grep -Ev 'Runner\.(Listener|Worker)|actions-runner|recommendation-cleanup-execute' || true)"
+          active_processes="$(ps -eo pid=,args= --width 400 | grep -E '[d]eadlock_dynamo_helper-training|[r]un-[^ ]*training|[t]rain-[^ ]*recommendation|[b]ehavioral[^ ]*ablation' | grep -Ev 'Runner\\.(Listener|Worker)|actions-runner|recommendation-cleanup-execute' || true)"
           printf 'activeTrainingContainers=%s\nactiveTrainingServices=%s\nactiveTrainingTimers=%s\nactiveTrainingProcesses=%s\n' "${active_containers:-none}" "${active_services:-none}" "${active_timers:-none}" "${active_processes:-none}"
           test -z "$active_containers"
           test -z "$active_services"
           test -z "$active_timers"
           test -z "$active_processes"
 
-          sudo mkdir -p "$training"
-          printf 'pausedAt=%s\npausedBy=github-actions\nreason=user-requested-emergency-stop\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | sudo tee "$training/PAUSED_BY_USER" >/dev/null
-
-          before="$(df --output=avail -B1 / | tail -1 | tr -d ' ')"
-          echo "availableBeforeBytes=$before"
-          df -hT /
-          echo '--- docker usage before ---'
+          echo '--- docker usage ---'
           sudo docker system df || true
-          echo '--- storage before ---'
-          sudo du -xhd1 "$storage" 2>/dev/null | sort -h | tail -n 100 || true
-          echo '--- training workspace before ---'
+          echo '--- training workspace ---'
           sudo du -xhd1 "$training" 2>/dev/null | sort -h || true
+          echo '--- storage top level ---'
+          sudo du -xhd1 "$storage" 2>/dev/null | sort -h | tail -n 120 || true
 
-          protected=' build-decision-dataset-v3 match-timeline-events-v1 recommendation-decision-telemetry contextual-v3-training contextual-v3-candidate-evaluation-v2 contextual-v3-final-test recommendation-value-v6-training recommendation-value-v6-live-candidates recommendation-value-v6-user-live-telemetry item-catalog-snapshots deadlock-live recommendation-candidate-generator-snapshots recommendation-historical-pro-replay-v1 recommendation-pro-decision-dataset-v6-1 recommendation-behavioral-v5-1 recommendation-value-v8-diagnostic-1 recommendation-v6-short-only-dataset-v6-baseline-1 recommendation-value-v8-full-evaluation-1 recommendation-value-v8-passive-shadow-1 recommendation-behavioral-v7-historical-ledger-v1 recommendation-behavioral-v7-temporal-audit-v2 recommendation-observability-v7 recommendation-behavioral-v5-1-sweep-b-v1 '
-          obsolete=(
-            recommendation-value-v5-scale-sweep-full-crawler-20260725
-            recommendation-value-v5-full-crawler-recovery-v3-20260725
-            recommendation-value-v4-training-historical-bootstrap
-            recommendation-value-v4-training-historical-bootstrap-tuning
-            recommendation-value-v4-full-crawler-20260724
-            recommendation-value-v4-training-historical-bootstrap-v2
-            contextual-v3-candidate-evaluation-full-crawler-20260724
-            match-timeline-events-v1-historical-db-20260726
-            recommendation-value-v4-full-crawler-recovery-v3-20260725
-            recommendation-behavioral-v4-full-crawler-20260724
-            recommendation-behavioral-v4-training-historical-bootstrap
-            recommendation-decision-dataset-v5-full-crawler-20260726
-            recommendation-decision-dataset-v5-full-crawler-db-timeline-20260726
-            recommendation-policy-v4-evaluation-historical-bootstrap
-            recommendation-policy-v7-catboost-db-timeline-20260726
-            contextual-v3-candidate-evaluation-full-crawler-recovery-v3-20260725
-            contextual-v3-training-full-crawler-20260724
-            recommendation-policy-v6-prior-sweep-db-timeline-20260726
-            recommendation-value-v6-full-crawler-20260726
-            recommendation-value-v6-full-crawler-db-timeline-20260726
-            build-decision-dataset-v3-full-crawler-20260724
-            recommendation-behavioral-v4-full-crawler-recovery-v3-20260725
-            recommendation-policy-v6-full-crawler-20260726
-            recommendation-policy-v6-full-crawler-db-timeline-20260726
-            recommendation-value-v7-catboost-db-timeline-20260726
-            recommendation-value-v6-prior-sweep-db-timeline-20260726
-            recommendation-decision-dataset-v4-full-crawler-recovery-v3-20260725
-          )
-
-          deleted=0
-          deleted_bytes=0
-          remove_dir() {
-            local path="$1" reason="$2" base bytes
-            sudo test -d "$path" || return 0
-            base="$(basename "$path")"
-            case "$path" in "$storage"/*|"$training"/*) ;; *) echo "REFUSE outside roots $path"; exit 1;; esac
-            if [[ "$path" == "$storage"/* ]] && [[ "$protected" == *" $base "* ]]; then echo "REFUSE protected $base"; exit 1; fi
-            bytes="$(sudo du -sb "$path" 2>/dev/null | awk '{print $1}')"; bytes="${bytes:-0}"
-            echo "DELETE reason=$reason bytes=$bytes path=$path"
-            sudo rm -rf --one-file-system "$path"
-            sudo test ! -e "$path"
-            deleted=$((deleted+1)); deleted_bytes=$((deleted_bytes+bytes))
-          }
-
-          for name in "${obsolete[@]}"; do
-            [[ "$protected" != *" $name "* ]] || { echo "REFUSE protected collision $name"; exit 1; }
-            remove_dir "$storage/$name" audited-obsolete
-          done
-
-          while IFS= read -r -d '' p; do
-            [ "$(basename "$p")" = PAUSED_BY_USER ] && continue
-            if sudo test -d "$p"; then remove_dir "$p" stopped-training-workspace; else
-              bytes="$(sudo stat -c %s "$p" 2>/dev/null || echo 0)"
-              echo "DELETE reason=stopped-training-workspace bytes=$bytes path=$p"
-              sudo rm -f "$p"; deleted=$((deleted+1)); deleted_bytes=$((deleted_bytes+bytes))
+          echo '--- top-level metadata inventory ---'
+          while IFS= read -r -d '' dir; do
+            name="$(basename "$dir")"
+            bytes="$(sudo du -sb "$dir" 2>/dev/null | awk '{print $1}')"; bytes="${bytes:-0}"
+            mtime="$(sudo stat -c '%y' "$dir" 2>/dev/null | cut -d. -f1 || true)"
+            manifest="$dir/manifest.json"
+            status_file="$dir/status.json"
+            state=''
+            phase=''
+            conclusion=''
+            eligible=''
+            release=''
+            audit=''
+            full=''
+            if sudo test -f "$manifest"; then
+              state="$(sudo jq -r '.state // .status // empty' "$manifest" 2>/dev/null || true)"
+              phase="$(sudo jq -r '.phase // empty' "$manifest" 2>/dev/null || true)"
+              conclusion="$(sudo jq -r '.conclusion // empty' "$manifest" 2>/dev/null || true)"
+              eligible="$(sudo jq -r '.trainingArtifactEligible // .diagnosticArtifactEligible // empty' "$manifest" 2>/dev/null || true)"
+              release="$(sudo jq -r '.releaseGatePassed // .diagnosticGatePassed // empty' "$manifest" 2>/dev/null || true)"
+              audit="$(sudo jq -r '.auditPassed // (.audit.passed // empty)' "$manifest" 2>/dev/null || true)"
+              full="$(sudo jq -r '.build.fullCorpus // empty' "$manifest" 2>/dev/null || true)"
+            elif sudo test -f "$status_file"; then
+              state="$(sudo jq -r '.state // .status // empty' "$status_file" 2>/dev/null || true)"
+              phase="$(sudo jq -r '.phase // empty' "$status_file" 2>/dev/null || true)"
+              conclusion="$(sudo jq -r '.conclusion // empty' "$status_file" 2>/dev/null || true)"
             fi
-          done < <(sudo find "$training" -mindepth 1 -maxdepth 1 -print0 2>/dev/null)
+            printf 'DIR name=%q bytes=%s mtime=%q state=%q phase=%q conclusion=%q eligible=%q release=%q audit=%q fullCorpus=%q\n' "$name" "$bytes" "$mtime" "$state" "$phase" "$conclusion" "$eligible" "$release" "$audit" "$full"
+          done < <(sudo find "$storage" -mindepth 1 -maxdepth 1 -type d -print0 | sort -z)
 
-          while IFS= read -r -d '' p; do
-            base="$(basename "$p")"; [[ "$protected" == *" $base "* ]] && continue
-            remove_dir "$p" explicit-temp-partial-failed
-          done < <(sudo find "$storage" -mindepth 1 -maxdepth 1 -type d \( -name '*.tmp' -o -name 'tmp-*' -o -name '*.partial' -o -name '*-partial' -o -name '*.failed' -o -name '*-failed' \) -print0 2>/dev/null)
-
-          while IFS= read -r -d '' run; do
-            root="$(basename "$(dirname "$(dirname "$run")")")"
-            [[ "$protected" == *" $root "* ]] && continue
-            failed=false
-            while IFS= read -r -d '' json; do
-              if sudo jq -e '((.state? // .status? // .conclusion? // "") | tostring | ascii_upcase) as $s | IN($s;"FAILED","FAILURE","CANCELLED","CANCELED","ABORTED","ERROR")' "$json" >/dev/null 2>&1; then failed=true; break; fi
-            done < <(sudo find "$run" -maxdepth 2 -type f \( -name status.json -o -name manifest.json -o -name summary.json -o -name result.json \) -print0 2>/dev/null)
-            [ "$failed" = false ] || remove_dir "$run" explicit-failed-run
-          done < <(sudo find "$storage" -mindepth 3 -maxdepth 3 -type d -path '*/runs/*' -print0 2>/dev/null)
-
-          while IFS=' ' read -r id name; do
-            [ -n "${id:-}" ] || continue
-            echo "DELETE stoppedContainer=$name id=$id"
-            sudo docker rm -f "$id"
-          done < <(sudo docker ps -a --filter status=exited --filter status=created --format '{{.ID}} {{.Names}}' | grep -Ei '(training|trainer|ablation|recommendation.*recovery|recommendation.*sweep)' || true)
-
-          echo '--- prune dangling images ---'
-          sudo docker image prune -f
-          echo '--- prune build cache older than 24h ---'
-          sudo docker builder prune -af --filter 'until=24h'
-
-          after="$(df --output=avail -B1 / | tail -1 | tr -d ' ')"; reclaimed=$((after-before))
-          api_running_after="$(sudo docker inspect -f '{{.State.Running}}' "$api")"
-          echo "deletedPaths=$deleted"
-          echo "deletedPathBytes=$deleted_bytes"
-          echo "availableAfterBytes=$after"
-          echo "availableIncreaseBytes=$reclaimed"
-          echo "apiRunningAfter=$api_running_after"
-          test "$api_running_after" = "$api_running_before"
-          echo 'dockerVolumesPruned=false'
-          echo 'dockerSystemPruneA=false'
-          echo 'productionRuntimeRestarted=false'
-          df -hT /
-          sudo docker system df || true
-          echo '--- storage after ---'
-          sudo du -xhd1 "$storage" 2>/dev/null | sort -h | tail -n 100 || true
+          echo '--- explicit failure markers, max depth 4 ---'
+          sudo find "$storage" -mindepth 1 -maxdepth 4 \( -type d \( -iname '*.failed' -o -iname '*-failed' -o -iname '*.partial' -o -iname '*-partial' -o -iname 'tmp-*' \) -o -type f \( -name status.json -o -name manifest.json -o -name result.json -o -name summary.json \) \) -print 2>/dev/null | head -n 4000 || true
           echo "finishedAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
       - name: Upload cleanup report
