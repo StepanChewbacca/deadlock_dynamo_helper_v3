@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Cancel only the obsolete historical recovery run
+      - name: Force-cancel only the stuck obsolete historical recovery run
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -31,11 +31,11 @@ jobs:
           echo "obsoleteRunConclusion=$conclusion"
           case "$status" in
             queued|in_progress|pending|waiting|requested)
-              gh api --method POST "repos/$REPO/actions/runs/$OBSOLETE_RUN_ID/cancel"
-              echo 'cancelRequested=true'
+              gh api --method POST "repos/$REPO/actions/runs/$OBSOLETE_RUN_ID/force-cancel"
+              echo 'forceCancelRequested=true'
               ;;
             *)
-              echo 'cancelRequested=false'
+              echo 'forceCancelRequested=false'
               ;;
           esac
           echo 'productionMutationPerformed=false'
