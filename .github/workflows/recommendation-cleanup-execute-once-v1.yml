@@ -18,21 +18,27 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.head.ref == 'agent/recommendation-behavioral-v6-feasible-choice-set-1'
     runs-on: self-hosted
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - name: Inventory remaining recommendation garbage candidates
+      - name: Delete audited obsolete training outputs
         shell: bash
         run: |
           set -euo pipefail
+
           storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
           training='/home/ubuntu/apps/deadlock_dynamo_helper-training'
+          api_container='deadlock_dynamo_helper-api-1'
           report="$RUNNER_TEMP/recommendation-cleanup-execute-once-$GITHUB_RUN_ID.txt"
           exec > >(tee "$report") 2>&1
 
           echo "startedAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          echo '--- filesystem ---'
-          df -hT /
-          echo "availableBytes=$(df --output=avail -B1 / | tail -1 | tr -d ' ')"
+          echo '--- preflight ---'
+          sudo test -d "$storage"
+          test -f "$training/PAUSED_BY_USER"
+
+          mounted_storage="$(sudo docker inspect "$api_container" --format '{{range .Mounts}}{{if eq .Destination "/app/apps/api/storage"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
+          echo "apiStorageMount=${mounted_storage:-missing}"
+          test "$mounted_storage" = "$storage"
 
           active_containers="$(sudo docker ps --format '{{.Names}}' | grep -Ei '(training|trainer|ablation)' || true)"
           active_services="$(sudo systemctl list-units --type=service --state=running --no-legend 2>/dev/null | grep -Ei '(training|trainer|ablation)' || true)"
@@ -44,45 +50,120 @@ jobs:
           test -z "$active_timers"
           test -z "$active_processes"
 
-          echo '--- docker usage ---'
+          before_bytes="$(df --output=avail -B1 / | tail -1 | tr -d ' ')"
+          echo "availableBeforeBytes=$before_bytes"
+          df -hT /
           sudo docker system df || true
-          echo '--- training workspace ---'
-          sudo du -xhd1 "$training" 2>/dev/null | sort -h || true
-          echo '--- storage top level ---'
-          sudo du -xhd1 "$storage" 2>/dev/null | sort -h | tail -n 120 || true
 
-          echo '--- top-level metadata inventory ---'
-          while IFS= read -r -d '' dir; do
-            name="$(basename "$dir")"
-            bytes="$(sudo du -sb "$dir" 2>/dev/null | awk '{print $1}')"; bytes="${bytes:-0}"
-            mtime="$(sudo stat -c '%y' "$dir" 2>/dev/null | cut -d. -f1 || true)"
-            manifest="$dir/manifest.json"
-            status_file="$dir/status.json"
-            state=''
-            phase=''
-            conclusion=''
-            eligible=''
-            release=''
-            audit=''
-            full=''
-            if sudo test -f "$manifest"; then
-              state="$(sudo jq -r '.state // .status // empty' "$manifest" 2>/dev/null || true)"
-              phase="$(sudo jq -r '.phase // empty' "$manifest" 2>/dev/null || true)"
-              conclusion="$(sudo jq -r '.conclusion // empty' "$manifest" 2>/dev/null || true)"
-              eligible="$(sudo jq -r '.trainingArtifactEligible // .diagnosticArtifactEligible // empty' "$manifest" 2>/dev/null || true)"
-              release="$(sudo jq -r '.releaseGatePassed // .diagnosticGatePassed // empty' "$manifest" 2>/dev/null || true)"
-              audit="$(sudo jq -r '.auditPassed // (.audit.passed // empty)' "$manifest" 2>/dev/null || true)"
-              full="$(sudo jq -r '.build.fullCorpus // empty' "$manifest" 2>/dev/null || true)"
-            elif sudo test -f "$status_file"; then
-              state="$(sudo jq -r '.state // .status // empty' "$status_file" 2>/dev/null || true)"
-              phase="$(sudo jq -r '.phase // empty' "$status_file" 2>/dev/null || true)"
-              conclusion="$(sudo jq -r '.conclusion // empty' "$status_file" 2>/dev/null || true)"
+          # These are superseded V5/V5.1 experimental training outputs. Keep sweep-b-v1,
+          # current V7 pinned data, replay/dataset inputs, telemetry, identity evidence,
+          # candidate snapshots, and all live/runtime namespaces.
+          candidates=(
+            'recommendation-behavioral-v4-training'
+            'recommendation-behavioral-v5-1-sweep-a-v1'
+            'recommendation-behavioral-v5-1-sweep-c-v1'
+            'recommendation-behavioral-v5-1-sweep-v1'
+            'recommendation-behavioral-v5-1-sweep-a-v3'
+            'recommendation-behavioral-v5-1-sweep-b-v3'
+            'recommendation-behavioral-v5-1-sweep-c-v3'
+            'recommendation-behavioral-v5-1-sweep-v3'
+            'recommendation-behavioral-v5-1-terminal-5000-v3'
+            'recommendation-behavioral-v5-v51-sweep-a-31330346696'
+            'recommendation-behavioral-v5-v51-sweep-b-31330346696'
+            'recommendation-behavioral-v5-v51-sweep-c-31330346696'
+            'recommendation-behavioral-v5-v51-sweep-a-31330366325'
+            'recommendation-behavioral-v5-v51-sweep-b-31330366325'
+            'recommendation-behavioral-v5-2-bounded-v3'
+            'recommendation-behavioral-v5-2-bounded-v4'
+            'recommendation-behavioral-v5-2-bounded-v5'
+            'recommendation-behavioral-v5-2-bounded-v5-detached-1'
+            'recommendation-behavioral-v5-2-bounded-v6'
+            'recommendation-behavioral-v5-2-bounded-v7-background'
+            'recommendation-behavioral-v5-2-bounded-v8-background'
+          )
+
+          protected=(
+            'match-timeline-events-v1'
+            'recommendation-historical-pro-replay-terminal-5000-v2'
+            'recommendation-pro-decision-dataset-v6-terminal-5000-v2'
+            'recommendation-behavioral-v7-pinned-data-gates-v1'
+            'recommendation-behavioral-v5-1-sweep-b-v1'
+            'recommendation-decision-telemetry'
+            'recommendation-value-v6-user-live-telemetry'
+            'recommendation-value-v6-live-candidates'
+            'deadlock-live'
+            'item-catalog-snapshots'
+            'recommendation-candidate-generator-snapshots-5000-v1'
+            'recommendation-behavioral-v7-historical-ledger-v1'
+            'recommendation-behavioral-v7-temporal-audit-v2'
+            'recommendation-observability-v7'
+          )
+
+          echo '--- protected namespaces before ---'
+          for name in "${protected[@]}"; do
+            path="$storage/$name"
+            if sudo test -e "$path"; then
+              bytes="$(sudo du -sb "$path" 2>/dev/null | awk '{print $1}')"
+              echo "PROTECTED name=$name bytes=${bytes:-0}"
+            else
+              echo "PROTECTED name=$name state=absent"
             fi
-            printf 'DIR name=%q bytes=%s mtime=%q state=%q phase=%q conclusion=%q eligible=%q release=%q audit=%q fullCorpus=%q\n' "$name" "$bytes" "$mtime" "$state" "$phase" "$conclusion" "$eligible" "$release" "$audit" "$full"
-          done < <(sudo find "$storage" -mindepth 1 -maxdepth 1 -type d -print0 | sort -z)
+          done
 
-          echo '--- explicit failure markers, max depth 4 ---'
-          sudo find "$storage" -mindepth 1 -maxdepth 4 \( -type d \( -iname '*.failed' -o -iname '*-failed' -o -iname '*.partial' -o -iname '*-partial' -o -iname 'tmp-*' \) -o -type f \( -name status.json -o -name manifest.json -o -name result.json -o -name summary.json \) \) -print 2>/dev/null | head -n 4000 || true
+          deleted_count=0
+          deleted_bytes=0
+          echo '--- deleting exact audited candidates ---'
+          for name in "${candidates[@]}"; do
+            path="$storage/$name"
+            case "$path" in
+              "$storage"/*) ;;
+              *) echo "Refusing unsafe path: $path" >&2; exit 1 ;;
+            esac
+
+            if sudo test -e "$path"; then
+              bytes="$(sudo du -sb "$path" 2>/dev/null | awk '{print $1}')"
+              bytes="${bytes:-0}"
+              echo "DELETE name=$name bytes=$bytes"
+              sudo rm -rf --one-file-system -- "$path"
+              if sudo test -e "$path"; then
+                echo "Failed to delete $path" >&2
+                exit 1
+              fi
+              deleted_count=$((deleted_count + 1))
+              deleted_bytes=$((deleted_bytes + bytes))
+            else
+              echo "SKIP_ABSENT name=$name"
+            fi
+          done
+
+          echo '--- safe docker cache cleanup ---'
+          sudo docker image prune -f || true
+          sudo docker builder prune -f --filter 'until=24h' || true
+
+          echo '--- postflight ---'
+          for name in "${protected[@]}"; do
+            path="$storage/$name"
+            if sudo test -e "$path"; then
+              echo "PROTECTED_OK name=$name"
+            else
+              case "$name" in
+                recommendation-value-v6-live-candidates) echo "PROTECTED_OPTIONAL_ABSENT name=$name" ;;
+                *) echo "Protected namespace disappeared: $name" >&2; exit 1 ;;
+              esac
+            fi
+          done
+
+          after_bytes="$(df --output=avail -B1 / | tail -1 | tr -d ' ')"
+          increase=$((after_bytes - before_bytes))
+          echo "deletedPaths=$deleted_count"
+          echo "deletedPathBytes=$deleted_bytes"
+          echo "availableAfterBytes=$after_bytes"
+          echo "availableIncreaseBytes=$increase"
+          df -hT /
+          sudo docker system df || true
+
+          echo '--- remaining largest storage namespaces ---'
+          sudo du -xhd1 "$storage" 2>/dev/null | sort -h | tail -n 30 || true
           echo "finishedAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
       - name: Upload cleanup report
