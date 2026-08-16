@@ -20,7 +20,7 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 10
     steps:
-      - name: Read-only classify legacy bounded V8 artifact
+      - name: Freeze metadata and delete obsolete bounded V8 datasets
         shell: bash
         run: |
           set -euo pipefail
@@ -28,7 +28,8 @@ jobs:
           storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
           training='/home/ubuntu/apps/deadlock_dynamo_helper-training'
           api_container='deadlock_dynamo_helper-api-1'
-          v8="$storage/recommendation-v8-bounded-5000-v1"
+          source="$storage/recommendation-v8-bounded-5000-v1"
+          freeze="$storage/recommendation-v8-bounded-5000-v1-freeze"
           report="$RUNNER_TEMP/recommendation-cleanup-execute-once-$GITHUB_RUN_ID.txt"
           exec > >(tee "$report") 2>&1
 
@@ -50,35 +51,89 @@ jobs:
           test -z "$active_timers"
           test -z "$active_processes"
 
-          sudo test -d "$v8"
-          echo "v8BoundedBytes=$(sudo du -sb "$v8" | awk '{print $1}')"
-          echo '--- files ---'
-          sudo find "$v8" -maxdepth 3 -type f -printf '%s %p\n' | sort -nr
+          before_bytes="$(df --output=avail -B1 / | tail -1 | tr -d ' ')"
+          echo "availableBeforeBytes=$before_bytes"
+          df -hT /
 
-          for file in \
-            "$v8/summary.json" \
-            "$v8/replay-v3/manifest.json" \
-            "$v8/replay-v3/audit.json" \
-            "$v8/policy-v3/manifest.json" \
-            "$v8/policy-v3/audit.json"; do
-            echo "--- RAW $file ---"
-            sudo test -s "$file"
-            sudo cat "$file"
-            echo
+          echo '--- verify exact obsolete bounded derivation ---'
+          sudo test -s "$source/summary.json"
+          for side in replay-v3 policy-v3; do
+            sudo test -s "$source/$side/dataset.ndjson"
+            sudo test -s "$source/$side/manifest.json"
+            sudo test -s "$source/$side/audit.json"
           done
 
-          echo '--- dataset hashes ---'
-          sudo sha256sum "$v8/replay-v3/dataset.ndjson" "$v8/policy-v3/dataset.ndjson"
-          echo '--- metadata hashes ---'
-          sudo sha256sum \
-            "$v8/summary.json" \
-            "$v8/replay-v3/manifest.json" \
-            "$v8/replay-v3/audit.json" \
-            "$v8/policy-v3/manifest.json" \
-            "$v8/policy-v3/audit.json"
+          test "$(sudo jq -r '.sourceDatasetSha256' "$source/summary.json")" = 'ff04970fda519ca5ebbfa49991af05ef99b99038d3f9f39f64fc9b0d07018fad'
+          test "$(sudo jq -r '.sourceMatchCount' "$source/summary.json")" = '30178'
+          test "$(sudo jq -r '.policy.matchCount' "$source/summary.json")" = '5000'
+          test "$(sudo jq -r '.replay.matchCount' "$source/summary.json")" = '5000'
 
-          echo '--- disk ---'
+          for side in replay-v3 policy-v3; do
+            manifest="$source/$side/manifest.json"
+            audit="$source/$side/audit.json"
+            test "$(sudo jq -r '.datasetVersion' "$manifest")" = 'CONTEXTUAL_V3_DECISION_DATASET_1'
+            test "$(sudo jq -r '.source.kind' "$manifest")" = 'IMMUTABLE_CONTEXTUAL_V3_BOUNDED_DERIVATION'
+            test "$(sudo jq -r '.source.sourceDatasetSha256' "$manifest")" = 'ff04970fda519ca5ebbfa49991af05ef99b99038d3f9f39f64fc9b0d07018fad'
+            test "$(sudo jq -r '.auditPassed' "$manifest")" = 'true'
+            test "$(sudo jq -r '.userLiveUsedAsInput' "$manifest")" = 'false'
+            test "$(sudo jq -r '.passed' "$audit")" = 'true'
+            test "$(sudo jq -r '.sourceDatasetSha256' "$audit")" = 'ff04970fda519ca5ebbfa49991af05ef99b99038d3f9f39f64fc9b0d07018fad'
+          done
+
+          replay_sha="$(sudo sha256sum "$source/replay-v3/dataset.ndjson" | awk '{print $1}')"
+          policy_sha="$(sudo sha256sum "$source/policy-v3/dataset.ndjson" | awk '{print $1}')"
+          echo "replayDatasetSha256=$replay_sha"
+          echo "policyDatasetSha256=$policy_sha"
+          test "$replay_sha" = '0c51dee1589ea1cf0ae286973ca898c0d7d8891f0b05a58e68524d657d705e8b'
+          test "$policy_sha" = '7bb3af89eefe8eaba87eaf3b77b09b07f262520745871308614f384ff0ecc8fc'
+          test "$(sudo jq -r '.artifact.sha256' "$source/replay-v3/manifest.json")" = "$replay_sha"
+          test "$(sudo jq -r '.artifact.sha256' "$source/policy-v3/manifest.json")" = "$policy_sha"
+
+          source_bytes="$(sudo du -sb "$source" | awk '{print $1}')"
+          echo "sourceBytes=$source_bytes"
+
+          echo '--- create compact durable freeze ---'
+          sudo rm -rf --one-file-system -- "$freeze.tmp"
+          sudo mkdir -p "$freeze.tmp/replay-v3" "$freeze.tmp/policy-v3"
+          sudo cp "$source/summary.json" "$freeze.tmp/summary.json"
+          sudo cp "$source/replay-v3/manifest.json" "$freeze.tmp/replay-v3/manifest.json"
+          sudo cp "$source/replay-v3/audit.json" "$freeze.tmp/replay-v3/audit.json"
+          sudo cp "$source/policy-v3/manifest.json" "$freeze.tmp/policy-v3/manifest.json"
+          sudo cp "$source/policy-v3/audit.json" "$freeze.tmp/policy-v3/audit.json"
+          {
+            echo 'source=recommendation-v8-bounded-5000-v1'
+            echo "sourceBytes=$source_bytes"
+            echo 'classification=obsolete_contextual_v3_bounded_derivation'
+            echo 'datasetVersion=CONTEXTUAL_V3_DECISION_DATASET_1'
+            echo 'sourceDatasetSha256=ff04970fda519ca5ebbfa49991af05ef99b99038d3f9f39f64fc9b0d07018fad'
+            echo "replayDatasetSha256=$replay_sha"
+            echo "policyDatasetSha256=$policy_sha"
+            echo 'datasetsPreserved=false'
+            echo 'metadataPreserved=true'
+            echo "frozenAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } | sudo tee "$freeze.tmp/FREEZE.txt" >/dev/null
+          sudo rm -rf --one-file-system -- "$freeze"
+          sudo mv "$freeze.tmp" "$freeze"
+          freeze_bytes="$(sudo du -sb "$freeze" | awk '{print $1}')"
+          echo "freezeBytes=$freeze_bytes"
+
+          echo '--- delete obsolete datasets ---'
+          sudo rm -rf --one-file-system -- "$source"
+          ! sudo test -e "$source"
+          sudo test -s "$freeze/summary.json"
+          sudo test -s "$freeze/replay-v3/manifest.json"
+          sudo test -s "$freeze/policy-v3/manifest.json"
+
+          sudo docker image prune -f || true
+          sudo docker builder prune -f --filter 'until=24h' || true
+
+          after_bytes="$(df --output=avail -B1 / | tail -1 | tr -d ' ')"
+          increase=$((after_bytes - before_bytes))
+          echo "availableAfterBytes=$after_bytes"
+          echo "availableIncreaseBytes=$increase"
           df -hT /
+          echo '--- remaining largest storage namespaces ---'
+          sudo du -xhd1 "$storage" 2>/dev/null | sort -h | tail -n 25 || true
           echo "finishedAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
       - name: Upload cleanup report
