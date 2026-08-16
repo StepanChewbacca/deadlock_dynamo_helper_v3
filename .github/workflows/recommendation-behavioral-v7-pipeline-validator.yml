@@ -18,6 +18,7 @@ on:
       - 'scripts/refine-recommendation-behavioral-v7-temporal-audit.mjs'
       - 'scripts/resolve-recommendation-behavioral-v7-player-identity.mjs'
       - 'scripts/export-recommendation-pro-decision-dataset-v7.mjs'
+      - 'scripts/freeze-recommendation-pro-decision-dataset-v7-lineage.mjs'
       - 'scripts/audit-recommendation-behavioral-v7-choice-set.mjs'
       - 'scripts/diagnose-recommendation-behavioral-v7-information-gain*.mjs'
       - 'scripts/recommendation-behavioral-v7-evaluation.mjs'
@@ -25,6 +26,9 @@ on:
       - 'scripts/run-recommendation-behavioral-v7-bounded-screen.mjs'
       - 'scripts/run-recommendation-behavioral-v7-strict-crossfit.mjs'
       - 'scripts/run-recommendation-behavioral-v7-full-train.mjs'
+      - 'scripts/verify-recommendation-behavioral-v7-full.mjs'
+      - 'scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs'
+      - 'scripts/validate-recommendation-value-v8-v7-readiness.mjs'
       - '.github/workflows/recommendation-behavioral-v7-pipeline-validator.yml'
 
 permissions:
@@ -47,6 +51,7 @@ jobs:
           node --check scripts/refine-recommendation-behavioral-v7-temporal-audit.mjs
           node --check scripts/resolve-recommendation-behavioral-v7-player-identity.mjs
           node --check scripts/export-recommendation-pro-decision-dataset-v7.mjs
+          node --check scripts/freeze-recommendation-pro-decision-dataset-v7-lineage.mjs
           node --check scripts/audit-recommendation-behavioral-v7-choice-set.mjs
           node --check scripts/diagnose-recommendation-behavioral-v7-information-gain.mjs
           node --check scripts/diagnose-recommendation-behavioral-v7-information-gain-v2.mjs
@@ -56,6 +61,9 @@ jobs:
           node --check scripts/run-recommendation-behavioral-v7-bounded-screen.mjs
           node --check scripts/run-recommendation-behavioral-v7-strict-crossfit.mjs
           node --check scripts/run-recommendation-behavioral-v7-full-train.mjs
+          node --check scripts/verify-recommendation-behavioral-v7-full.mjs
+          node --check scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs
+          node --check scripts/validate-recommendation-value-v8-v7-readiness.mjs
           grep -q 'MATCH_PLAYER_ACCOUNT_ID_DIRECT' apps/api/src/deadlock-live/hero-build-decision-dataset-v3.service.ts
           grep -q 'accountId: replayRow.accountId' apps/api/src/deadlock-live/recommendation-pro-decision-dataset-v6.ts
           grep -q 'embeddedIdentityPreferred: true' scripts/resolve-recommendation-behavioral-v7-player-identity.mjs
@@ -71,6 +79,8 @@ jobs:
           grep -q 'latestAtOrBefore' scripts/export-recommendation-pro-decision-dataset-v7.mjs
           grep -q 'HISTORICAL_PREFIX_OBSERVABILITY_BACKFILL_3_EXPLICIT_IDENTITY' scripts/export-recommendation-pro-decision-dataset-v7.mjs
           grep -q 'EXPLICIT_DATASET_PLAYER_TO_STEAM_ID_SIDECAR_ONLY' scripts/export-recommendation-pro-decision-dataset-v7.mjs
+          grep -q 'EXACT_FULL_SOURCE_ROWS_WHERE_SPLIT_NE_FUTURE_TEST' scripts/freeze-recommendation-pro-decision-dataset-v7-lineage.mjs
+          grep -q 'nonFutureLogicalShaMatchesFullSourceProjection: true' scripts/freeze-recommendation-pro-decision-dataset-v7-lineage.mjs
           grep -q "payload.entity_type !== 'player_controller'" apps/api/src/deadlock-live/recommendation-observability-v7-raw-extractor.ts
           grep -q 'unknownAvailabilityRetained: true' scripts/audit-recommendation-behavioral-v7-choice-set.mjs
           grep -q 'sameChoiceSetUsedForBaselineAndEnriched: true' scripts/diagnose-recommendation-behavioral-v7-information-gain.mjs
@@ -82,5 +92,14 @@ jobs:
           grep -q "V7_STAGE_F_FIXED_FAMILY_COMPARISON_1" scripts/run-recommendation-behavioral-v7-bounded-screen.mjs
           grep -q 'championFamily' scripts/run-recommendation-behavioral-v7-bounded-screen.mjs
           grep -q 'boundedChampionFamilyPreserved: true' scripts/run-recommendation-behavioral-v7-strict-crossfit.mjs
+          grep -q 'RECOMMENDATION_BEHAVIORAL_V7_OOF_PROPENSITY_1' scripts/run-recommendation-behavioral-v7-strict-crossfit.mjs
+          grep -q 'futureTestUsedForPropensity: false' scripts/run-recommendation-behavioral-v7-strict-crossfit.mjs
           grep -q 'strictCrossFitFamilyPreserved: true' scripts/run-recommendation-behavioral-v7-full-train.mjs
+          grep -q 'modelTrainingPerformedByVerifier: false' scripts/verify-recommendation-behavioral-v7-full.mjs
+          grep -q 'valueV8StageEligible: releaseGatePassed' scripts/verify-recommendation-behavioral-v7-full.mjs
+          grep -q "operation === 'ROLLBACK'" scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs
+          grep -q 'productionApiRestarted: false' scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs
+          grep -q 'BEHAVIORAL_V7_VERIFIED_RAW_OOF_PROPENSITY' scripts/validate-recommendation-value-v8-v7-readiness.mjs
+          grep -q 'valueTrainingPerformedByReadinessCheck: false' scripts/validate-recommendation-value-v8-v7-readiness.mjs
+          grep -q 'valueV8TrainingAuthorized: false' scripts/validate-recommendation-value-v8-v7-readiness.mjs
           grep -q 'RAW_SOFTMAX_WITHIN_DECISION' apps/api/src/deadlock-live/recommendation-behavioral-v7.ts
