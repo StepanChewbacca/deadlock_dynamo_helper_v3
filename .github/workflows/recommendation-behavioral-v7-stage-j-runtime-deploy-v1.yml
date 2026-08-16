@@ -3,6 +3,8 @@ name: Recommendation Behavioral V7 Stage J Runtime Deploy V1
 on:
   pull_request:
     paths:
+      - 'scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs'
+      - 'scripts/verify-recommendation-behavioral-v7-full.mjs'
       - '.github/workflows/recommendation-behavioral-v7-stage-j-runtime-deploy-v1.yml'
 
 permissions:
@@ -13,8 +15,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  paused:
-    if: ${{ false }}
+  validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - run: echo 'Recommendation Behavioral V7 runtime deploy is paused.'
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate fail-closed runtime staging contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs
+          node --check scripts/verify-recommendation-behavioral-v7-full.mjs
+          grep -q "operation === 'STATUS'" scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs
+          grep -q "operation === 'STAGE'" scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs
+          grep -q "operation === 'ROLLBACK'" scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs
+          grep -q 'releaseGatePassed !== true' scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs
+          grep -q 'rawPropensityContractPassed !== true' scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs
+          grep -q 'modelArtifactSha256 !== modelArtifactSha256' scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs
+          grep -q 'atomicPointerSwap: true' scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs
+          grep -q 'productionApiRestarted: false' scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs
+          grep -q 'productionRankingChanged: false' scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs
+
+  deploy:
+    if: ${{ false }}
+    needs: validate
+    runs-on: [self-hosted, vps-arm64-runner]
+    steps:
+      - run: echo 'Recommendation Behavioral V7 runtime deploy remains paused; static staging and rollback code only.'
