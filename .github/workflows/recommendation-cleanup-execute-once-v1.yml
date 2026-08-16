@@ -20,7 +20,7 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 20
     steps:
-      - name: Delete audited obsolete training outputs
+      - name: Archive failed V5 baseline evidence and delete heavy artifact
         shell: bash
         run: |
           set -euo pipefail
@@ -28,11 +28,13 @@ jobs:
           storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
           training='/home/ubuntu/apps/deadlock_dynamo_helper-training'
           api_container='deadlock_dynamo_helper-api-1'
+          source="$storage/recommendation-behavioral-v5-terminal-5000-v2"
+          freeze="$storage/recommendation-behavioral-v5-baseline-freeze-v1"
+          v8="$storage/recommendation-v8-bounded-5000-v1"
           report="$RUNNER_TEMP/recommendation-cleanup-execute-once-$GITHUB_RUN_ID.txt"
           exec > >(tee "$report") 2>&1
 
           echo "startedAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          echo '--- preflight ---'
           sudo test -d "$storage"
           test -f "$training/PAUSED_BY_USER"
 
@@ -53,117 +55,95 @@ jobs:
           before_bytes="$(df --output=avail -B1 / | tail -1 | tr -d ' ')"
           echo "availableBeforeBytes=$before_bytes"
           df -hT /
-          sudo docker system df || true
 
-          # These are superseded V5/V5.1 experimental training outputs. Keep sweep-b-v1,
-          # current V7 pinned data, replay/dataset inputs, telemetry, identity evidence,
-          # candidate snapshots, and all live/runtime namespaces.
-          candidates=(
-            'recommendation-behavioral-v4-training'
-            'recommendation-behavioral-v5-1-sweep-a-v1'
-            'recommendation-behavioral-v5-1-sweep-c-v1'
-            'recommendation-behavioral-v5-1-sweep-v1'
-            'recommendation-behavioral-v5-1-sweep-a-v3'
-            'recommendation-behavioral-v5-1-sweep-b-v3'
-            'recommendation-behavioral-v5-1-sweep-c-v3'
-            'recommendation-behavioral-v5-1-sweep-v3'
-            'recommendation-behavioral-v5-1-terminal-5000-v3'
-            'recommendation-behavioral-v5-v51-sweep-a-31330346696'
-            'recommendation-behavioral-v5-v51-sweep-b-31330346696'
-            'recommendation-behavioral-v5-v51-sweep-c-31330346696'
-            'recommendation-behavioral-v5-v51-sweep-a-31330366325'
-            'recommendation-behavioral-v5-v51-sweep-b-31330366325'
-            'recommendation-behavioral-v5-2-bounded-v3'
-            'recommendation-behavioral-v5-2-bounded-v4'
-            'recommendation-behavioral-v5-2-bounded-v5'
-            'recommendation-behavioral-v5-2-bounded-v5-detached-1'
-            'recommendation-behavioral-v5-2-bounded-v6'
-            'recommendation-behavioral-v5-2-bounded-v7-background'
-            'recommendation-behavioral-v5-2-bounded-v8-background'
-          )
+          echo '--- verify exact failed V5 baseline ---'
+          sudo test -s "$source/manifest.json"
+          sudo test -s "$source/evaluation.json"
+          sudo test -s "$source/audit.json"
+          sudo test -s "$source/model.json"
+          sudo test -s "$source/propensities.ndjson"
 
-          protected=(
-            'match-timeline-events-v1'
-            'recommendation-historical-pro-replay-terminal-5000-v2'
-            'recommendation-pro-decision-dataset-v6-terminal-5000-v2'
-            'recommendation-behavioral-v7-pinned-data-gates-v1'
-            'recommendation-behavioral-v5-1-sweep-b-v1'
-            'recommendation-decision-telemetry'
-            'recommendation-value-v6-user-live-telemetry'
-            'recommendation-value-v6-live-candidates'
-            'deadlock-live'
-            'item-catalog-snapshots'
-            'recommendation-candidate-generator-snapshots-5000-v1'
-            'recommendation-behavioral-v7-historical-ledger-v1'
-            'recommendation-behavioral-v7-temporal-audit-v2'
-            'recommendation-observability-v7'
-          )
+          manifest_sha="$(sudo sha256sum "$source/manifest.json" | awk '{print $1}')"
+          evaluation_sha="$(sudo sha256sum "$source/evaluation.json" | awk '{print $1}')"
+          audit_sha="$(sudo sha256sum "$source/audit.json" | awk '{print $1}')"
+          model_sha="$(sudo sha256sum "$source/model.json" | awk '{print $1}')"
+          propensities_sha="$(sudo sha256sum "$source/propensities.ndjson" | awk '{print $1}')"
+          printf 'manifestSha256=%s\nevaluationSha256=%s\nauditSha256=%s\nmodelSha256=%s\npropensitiesSha256=%s\n' "$manifest_sha" "$evaluation_sha" "$audit_sha" "$model_sha" "$propensities_sha"
 
-          echo '--- protected namespaces before ---'
-          for name in "${protected[@]}"; do
-            path="$storage/$name"
-            if sudo test -e "$path"; then
-              bytes="$(sudo du -sb "$path" 2>/dev/null | awk '{print $1}')"
-              echo "PROTECTED name=$name bytes=${bytes:-0}"
-            else
-              echo "PROTECTED name=$name state=absent"
-            fi
-          done
+          test "$manifest_sha" = '418c8cdf073705cab96b818f4f644e2f1f3dee5183ed761f4953ee6a22699fe8'
+          test "$evaluation_sha" = '9e973dad0c7a0e6681b704c2a115574740362d3d71d7f534a623b5e1bc3c4fe2'
+          test "$audit_sha" = '50d1a15027b56e48bc9a9dd07e517982216fe17a8182952089c9b094feb3c496'
+          test "$model_sha" = 'c1dff90981e4af6bf486bd9d4df44a7f5b3a14520fdccabd4cf86eac3d5265a9'
+          test "$propensities_sha" = '31e6c7369ac68c5a161d50f5ca6b9052683b876b4f37fdddac78ddabebdcab12'
 
-          deleted_count=0
-          deleted_bytes=0
-          echo '--- deleting exact audited candidates ---'
-          for name in "${candidates[@]}"; do
-            path="$storage/$name"
-            case "$path" in
-              "$storage"/*) ;;
-              *) echo "Refusing unsafe path: $path" >&2; exit 1 ;;
-            esac
+          test "$(sudo jq -r '.auditPassed' "$source/manifest.json")" = 'true'
+          test "$(sudo jq -r '.releaseGatePassed' "$source/manifest.json")" = 'false'
+          test "$(sudo jq -r '.trainingArtifactEligible' "$source/manifest.json")" = 'false'
+          test "$(sudo jq -r '.build.fullCorpus' "$source/manifest.json")" = 'true'
 
-            if sudo test -e "$path"; then
-              bytes="$(sudo du -sb "$path" 2>/dev/null | awk '{print $1}')"
-              bytes="${bytes:-0}"
-              echo "DELETE name=$name bytes=$bytes"
-              sudo rm -rf --one-file-system -- "$path"
-              if sudo test -e "$path"; then
-                echo "Failed to delete $path" >&2
-                exit 1
+          echo '--- frozen gate summary ---'
+          sudo jq '{auditPassed,releaseGatePassed,trainingArtifactEligible,modelVersion,featureVersion,build,releaseGate:(.releaseGate // empty)}' "$source/manifest.json" || true
+          sudo jq '{releaseGate:(.releaseGate // empty),metrics:{selection:(.metrics.selection // empty),probabilityFloorSensitivity:(.metrics.probabilityFloorSensitivity // empty)}}' "$source/evaluation.json" || true
+
+          source_bytes="$(sudo du -sb "$source" | awk '{print $1}')"
+          echo "sourceBytes=$source_bytes"
+
+          echo '--- create compact durable freeze ---'
+          sudo rm -rf --one-file-system -- "$freeze.tmp"
+          sudo mkdir -p "$freeze.tmp"
+          sudo cp "$source/manifest.json" "$freeze.tmp/manifest.json"
+          sudo cp "$source/evaluation.json" "$freeze.tmp/evaluation.json"
+          sudo cp "$source/audit.json" "$freeze.tmp/audit.json"
+          sudo cp "$source/model.json" "$freeze.tmp/model.json"
+          {
+            echo "source=recommendation-behavioral-v5-terminal-5000-v2"
+            echo "sourceBytes=$source_bytes"
+            echo "manifestSha256=$manifest_sha"
+            echo "evaluationSha256=$evaluation_sha"
+            echo "auditSha256=$audit_sha"
+            echo "modelSha256=$model_sha"
+            echo "propensitiesSha256=$propensities_sha"
+            echo 'propensitiesPreserved=false'
+            echo 'reason=releaseGatePassed_false_and_trainingArtifactEligible_false'
+            echo "frozenAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } | sudo tee "$freeze.tmp/FREEZE.txt" >/dev/null
+          sudo rm -rf --one-file-system -- "$freeze"
+          sudo mv "$freeze.tmp" "$freeze"
+          freeze_bytes="$(sudo du -sb "$freeze" | awk '{print $1}')"
+          echo "freezeBytes=$freeze_bytes"
+
+          echo '--- delete heavy failed V5 artifact ---'
+          sudo rm -rf --one-file-system -- "$source"
+          ! sudo test -e "$source"
+          sudo test -s "$freeze/manifest.json"
+          sudo test -s "$freeze/model.json"
+
+          echo '--- inspect old bounded V8 without deleting ---'
+          if sudo test -d "$v8"; then
+            v8_bytes="$(sudo du -sb "$v8" | awk '{print $1}')"
+            echo "v8BoundedBytes=$v8_bytes"
+            sudo find "$v8" -maxdepth 2 -type f -printf '%s %p\n' 2>/dev/null | sort -nr | head -n 40 || true
+            for file in "$v8/summary.json" "$v8/replay-v3/manifest.json" "$v8/policy-v3/manifest.json"; do
+              if sudo test -s "$file"; then
+                echo "--- JSON $file ---"
+                sudo jq '{state,status,phase,passed,auditPassed,trainingArtifactEligible,diagnosticArtifactEligible,diagnosticGatePassed,releaseGatePassed,fullTrainingRecommended,reasons,build,source,behavioral}' "$file" 2>/dev/null || sudo head -c 12000 "$file" || true
               fi
-              deleted_count=$((deleted_count + 1))
-              deleted_bytes=$((deleted_bytes + bytes))
-            else
-              echo "SKIP_ABSENT name=$name"
-            fi
-          done
+            done
+          else
+            echo 'v8Bounded=absent'
+          fi
 
-          echo '--- safe docker cache cleanup ---'
           sudo docker image prune -f || true
           sudo docker builder prune -f --filter 'until=24h' || true
 
-          echo '--- postflight ---'
-          for name in "${protected[@]}"; do
-            path="$storage/$name"
-            if sudo test -e "$path"; then
-              echo "PROTECTED_OK name=$name"
-            else
-              case "$name" in
-                recommendation-value-v6-live-candidates) echo "PROTECTED_OPTIONAL_ABSENT name=$name" ;;
-                *) echo "Protected namespace disappeared: $name" >&2; exit 1 ;;
-              esac
-            fi
-          done
-
           after_bytes="$(df --output=avail -B1 / | tail -1 | tr -d ' ')"
           increase=$((after_bytes - before_bytes))
-          echo "deletedPaths=$deleted_count"
-          echo "deletedPathBytes=$deleted_bytes"
           echo "availableAfterBytes=$after_bytes"
           echo "availableIncreaseBytes=$increase"
           df -hT /
           sudo docker system df || true
-
           echo '--- remaining largest storage namespaces ---'
-          sudo du -xhd1 "$storage" 2>/dev/null | sort -h | tail -n 30 || true
+          sudo du -xhd1 "$storage" 2>/dev/null | sort -h | tail -n 25 || true
           echo "finishedAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
       - name: Upload cleanup report
