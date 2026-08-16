@@ -1,6 +1,8 @@
-import { createReadStream } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { createReadStream, createWriteStream } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
+import { finished } from 'node:stream/promises';
 import { createGunzip } from 'node:zlib';
 import {
   behavioralV7ContinuationChecks,
@@ -21,6 +23,7 @@ const boundedSummaryPath = required('BEHAVIORAL_V7_BOUNDED_SUMMARY_PATH');
 const outputDirectory = required('BEHAVIORAL_V7_CROSSFIT_OUTPUT_DIR');
 const folds = 5;
 const epochs = 3;
+const probabilityTolerance = 1e-9;
 
 const bounded = JSON.parse(await readFile(boundedSummaryPath, 'utf8'));
 if (
@@ -55,31 +58,71 @@ if (
 }
 
 await mkdir(outputDirectory, { recursive: true });
+const propensityPath = `${outputDirectory}/propensities.ndjson`;
+const propensityStream = createWriteStream(propensityPath, {
+  encoding: 'utf8',
+  flags: 'w',
+});
+const propensityStats = {
+  rowCount: 0,
+  candidateProbabilityCount: 0,
+  invalidProbabilityCount: 0,
+  normalizationViolationCount: 0,
+  observedProbabilityMismatchCount: 0,
+};
 
 const oofMetric = createBehavioralV7Metric();
 let oofEligibleRowCount = 0;
 let oofCoveredRowCount = 0;
 const foldReports = [];
-for (let holdout = 0; holdout < folds; holdout += 1) {
-  const model = family.createModel();
-  const trainingEpochs = [];
-  for (let epoch = 1; epoch <= epochs; epoch += 1) {
-    trainingEpochs.push(await trainFoldEpoch(model, holdout, epoch));
-  }
-  family.validate(model);
-  const evaluation = await evaluateHoldout(model, holdout, oofMetric);
-  oofEligibleRowCount += evaluation.eligibleRowCount;
-  oofCoveredRowCount += evaluation.coveredRowCount;
-  foldReports.push({ holdout, trainingEpochs, evaluation });
-  console.log(
-    JSON.stringify({
-      progress: 'CROSSFIT_HOLDOUT_COMPLETE',
-      familyId,
+try {
+  for (let holdout = 0; holdout < folds; holdout += 1) {
+    const model = family.createModel();
+    const trainingEpochs = [];
+    for (let epoch = 1; epoch <= epochs; epoch += 1) {
+      trainingEpochs.push(await trainFoldEpoch(model, holdout, epoch));
+    }
+    family.validate(model);
+    const evaluation = await evaluateHoldout(
+      model,
       holdout,
-      evaluation,
-    }),
+      oofMetric,
+      propensityStream,
+      propensityStats,
+    );
+    oofEligibleRowCount += evaluation.eligibleRowCount;
+    oofCoveredRowCount += evaluation.coveredRowCount;
+    foldReports.push({ holdout, trainingEpochs, evaluation });
+    console.log(
+      JSON.stringify({
+        progress: 'CROSSFIT_HOLDOUT_COMPLETE',
+        familyId,
+        holdout,
+        evaluation,
+      }),
+    );
+  }
+} finally {
+  propensityStream.end();
+  await finished(propensityStream);
+}
+
+if (propensityStats.rowCount !== oofCoveredRowCount) {
+  throw new Error(
+    `Behavioral V7 OOF propensity row count mismatch: ${propensityStats.rowCount} versus ${oofCoveredRowCount}.`,
   );
 }
+if (
+  propensityStats.invalidProbabilityCount !== 0 ||
+  propensityStats.normalizationViolationCount !== 0 ||
+  propensityStats.observedProbabilityMismatchCount !== 0
+) {
+  throw new Error(
+    `Behavioral V7 OOF raw propensity contract failed: ${JSON.stringify(propensityStats)}.`,
+  );
+}
+const propensitySha256 = await hashFile(propensityPath);
+
 const oof = finalizeBehavioralV7Metric(oofMetric);
 const oofCandidateCoverage = divide(oofCoveredRowCount, oofEligibleRowCount);
 
@@ -102,8 +145,16 @@ const independentTuningPassed = Object.values(tuningChecks).every(Boolean);
 const familyContractPreserved =
   family.contracts.probabilityContract === 'RAW_SOFTMAX_WITHIN_DECISION' &&
   family.contracts.consumesV7Observability === true;
+const oofPropensityContractPassed =
+  propensityStats.rowCount > 0 &&
+  propensityStats.invalidProbabilityCount === 0 &&
+  propensityStats.normalizationViolationCount === 0 &&
+  propensityStats.observedProbabilityMismatchCount === 0;
 const trainingArtifactEligible =
-  strictCrossFitPassed && independentTuningPassed && familyContractPreserved;
+  strictCrossFitPassed &&
+  independentTuningPassed &&
+  familyContractPreserved &&
+  oofPropensityContractPassed;
 
 const modelArtifact = {
   schemaVersion: 2,
@@ -117,10 +168,49 @@ const modelArtifact = {
   model: fullModel,
 };
 await writeJson(`${outputDirectory}/model.json`, modelArtifact);
+
+const propensityManifest = {
+  schemaVersion: 1,
+  operation: 'RECOMMENDATION_BEHAVIORAL_V7_OOF_PROPENSITY_ARTIFACT',
+  generatedAt: new Date().toISOString(),
+  familyId,
+  source: {
+    datasetPath,
+    boundedSummaryPath,
+    boundedChampionFamily: bounded.championFamily,
+  },
+  artifact: {
+    fileName: 'propensities.ndjson',
+    sha256: propensitySha256,
+    rowCount: propensityStats.rowCount,
+    candidateProbabilityCount: propensityStats.candidateProbabilityCount,
+  },
+  contracts: {
+    probabilityContract: 'RAW_SOFTMAX_WITHIN_DECISION',
+    split: 'TRAIN',
+    outOfFold: true,
+    matchFoldAssignment: 'FNV1A32_MATCH_ID_MOD_5',
+    inFoldPredictionUsed: false,
+    tuningUsedForPropensity: false,
+    futureTestUsedForPropensity: false,
+    probabilityNormalizationTolerance: probabilityTolerance,
+    boundedChampionFamilyPreserved: true,
+  },
+  audit: {
+    ...propensityStats,
+    rawPropensityContractPassed: oofPropensityContractPassed,
+  },
+  trainingArtifactEligible,
+  valueV8InputEligible: trainingArtifactEligible,
+  valueV8TrainingAuthorized: false,
+  productionRankingChanged: false,
+};
+await writeJson(`${outputDirectory}/propensity-manifest.json`, propensityManifest);
+
 const summary = {
   schemaVersion: 2,
   operation: 'RECOMMENDATION_BEHAVIORAL_V7_STRICT_CROSSFIT',
-  executorVersion: 'MATCH_FOLD_5_BOUND_FAMILY_2',
+  executorVersion: 'MATCH_FOLD_5_BOUND_FAMILY_OOF_PROPENSITY_3',
   generatedAt: new Date().toISOString(),
   familyId,
   source: {
@@ -133,9 +223,12 @@ const summary = {
     ...family.contracts,
     matchFoldAssignment: 'FNV1A32_MATCH_ID_MOD_5',
     trainOofEvaluation: true,
+    trainOofRawPropensityArtifact: true,
     tuningUsedForTraining: false,
     tuningUsedForEarlyStopping: false,
+    tuningUsedForPropensity: false,
     futureTestEvaluated: false,
+    futureTestUsedForPropensity: false,
     modelCapacityFrozen: true,
     boundedChampionFamilyPreserved: true,
   },
@@ -150,6 +243,13 @@ const summary = {
       oof.groups,
       'ECONOMY:GE_20000',
     ),
+  },
+  oofPropensityArtifact: {
+    fileName: 'propensities.ndjson',
+    manifestFileName: 'propensity-manifest.json',
+    sha256: propensitySha256,
+    rowCount: propensityStats.rowCount,
+    rawPropensityContractPassed: oofPropensityContractPassed,
   },
   fullTrainingEpochs,
   tuning: {
@@ -167,10 +267,12 @@ const summary = {
   oofChecks,
   tuningChecks,
   familyContractPreserved,
+  oofPropensityContractPassed,
   strictCrossFitPassed,
   independentTuningPassed,
   trainingArtifactEligible,
   fullTrainingRecommended: trainingArtifactEligible,
+  valueV8InputEligible: trainingArtifactEligible,
   valueV8TrainingAuthorized: false,
   productionRankingChanged: false,
   passiveShadowAuthorized: false,
@@ -211,7 +313,13 @@ async function trainFoldEpoch(model, holdout, epoch) {
   };
 }
 
-async function evaluateHoldout(model, holdout, targetMetric) {
+async function evaluateHoldout(
+  model,
+  holdout,
+  targetMetric,
+  targetPropensityStream,
+  targetPropensityStats,
+) {
   let eligibleRowCount = 0;
   let coveredRowCount = 0;
   let futureTestRowCount = 0;
@@ -234,10 +342,14 @@ async function evaluateHoldout(model, holdout, targetMetric) {
     const selected = selectBehavioralV7ChoiceSet(row);
     if (!selected) continue;
     coveredRowCount += 1;
-    observeBehavioralV7Metric(
-      targetMetric,
+    const prediction = family.predict(model, selected);
+    observeBehavioralV7Metric(targetMetric, selected, prediction);
+    await writeOofPropensity(
+      targetPropensityStream,
+      targetPropensityStats,
       selected,
-      family.predict(model, selected),
+      prediction,
+      holdout,
     );
   }
   assertNoFutureTest(futureTestRowCount);
@@ -245,7 +357,101 @@ async function evaluateHoldout(model, holdout, targetMetric) {
     eligibleRowCount,
     coveredRowCount,
     candidateCoverage: divide(coveredRowCount, eligibleRowCount),
+    propensityRowCount: coveredRowCount,
   };
+}
+
+async function writeOofPropensity(
+  stream,
+  stats,
+  row,
+  prediction,
+  holdout,
+) {
+  const observedCandidate = row.candidates.find(
+    (candidate) => candidate.actionKey === row.observedActionKey,
+  );
+  if (!observedCandidate) {
+    throw new Error('Behavioral V7 OOF observed action is missing from choice set.');
+  }
+  let probabilitySum = 0;
+  let observedCandidateProbability;
+  const candidates = prediction.candidates.map((candidate) => {
+    const rawProbability = Number(candidate.probability);
+    stats.candidateProbabilityCount += 1;
+    if (
+      !Number.isFinite(rawProbability) ||
+      rawProbability < 0 ||
+      rawProbability > 1
+    ) {
+      stats.invalidProbabilityCount += 1;
+    } else {
+      probabilitySum += rawProbability;
+    }
+    if (candidate.actionKey === row.observedActionKey) {
+      observedCandidateProbability = rawProbability;
+    }
+    return {
+      actionKey: candidate.actionKey,
+      itemId: candidate.itemId,
+      rawProbability,
+    };
+  });
+  if (Math.abs(probabilitySum - 1) > probabilityTolerance) {
+    stats.normalizationViolationCount += 1;
+  }
+  if (
+    observedCandidateProbability === undefined ||
+    Math.abs(
+      observedCandidateProbability - Number(prediction.observedActionProbability),
+    ) > probabilityTolerance
+  ) {
+    stats.observedProbabilityMismatchCount += 1;
+  }
+  if (
+    stats.invalidProbabilityCount !== 0 ||
+    stats.normalizationViolationCount !== 0 ||
+    stats.observedProbabilityMismatchCount !== 0
+  ) {
+    throw new Error(
+      `Behavioral V7 OOF prediction violates raw propensity contract at ${row.decisionId}.`,
+    );
+  }
+
+  const propensityRow = {
+    schemaVersion: 1,
+    propensityVersion: 'RECOMMENDATION_BEHAVIORAL_V7_OOF_PROPENSITY_1',
+    modelFamily: familyId,
+    modelVersion: family.contracts.modelVersion,
+    featureVersion: family.contracts.featureVersion,
+    probabilityContract: 'RAW_SOFTMAX_WITHIN_DECISION',
+    split: 'TRAIN',
+    outOfFold: true,
+    foldCount: folds,
+    holdoutFold: holdout,
+    decisionId: row.decisionId,
+    sourceDecisionId: row.sourceDecisionId,
+    matchId: row.matchId,
+    playerId: row.playerId,
+    ...(row.accountId !== undefined ? { accountId: row.accountId } : {}),
+    ...(row.playerIdentitySource !== undefined
+      ? { playerIdentitySource: row.playerIdentitySource }
+      : {}),
+    heroId: row.state.heroId,
+    gameTimeS: row.state.gameTimeS,
+    observedActionKey: row.observedActionKey,
+    observedActionItemId: observedCandidate.itemId,
+    observedActionRawProbability: Number(prediction.observedActionProbability),
+    candidates,
+  };
+  const serialized = `${JSON.stringify(propensityRow)}\n`;
+  if (!stream.write(serialized)) {
+    await new Promise((resolve, reject) => {
+      stream.once('drain', resolve);
+      stream.once('error', reject);
+    });
+  }
+  stats.rowCount += 1;
 }
 
 async function trainFullEpoch(model, epoch) {
@@ -318,6 +524,14 @@ function assertNoFutureTest(count) {
 function openDataset(path) {
   const stream = createReadStream(path);
   return path.endsWith('.gz') ? stream.pipe(createGunzip()) : stream;
+}
+
+async function hashFile(path) {
+  const hash = createHash('sha256');
+  for await (const chunk of createReadStream(path)) {
+    hash.update(chunk);
+  }
+  return hash.digest('hex');
 }
 
 async function writeJson(path, value) {
