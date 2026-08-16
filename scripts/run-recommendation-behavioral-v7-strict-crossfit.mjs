@@ -2,7 +2,6 @@ import { createReadStream } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { createGunzip } from 'node:zlib';
-import { createRequire } from 'node:module';
 import {
   behavioralV7ContinuationChecks,
   behavioralV7GroupSupport,
@@ -12,33 +11,49 @@ import {
   observeBehavioralV7Metric,
   selectBehavioralV7ChoiceSet,
 } from './recommendation-behavioral-v7-evaluation.mjs';
-
-const require = createRequire(import.meta.url);
-const {
-  createRecommendationBehavioralV7Model,
-  predictRecommendationBehavioralV7,
-  trainRecommendationBehavioralV7Decision,
-  validateRecommendationBehavioralV7Model,
-} = require('/app/apps/api/dist/src/deadlock-live/recommendation-behavioral-v7.js');
+import {
+  BEHAVIORAL_V7_MODEL_FAMILIES,
+  createBehavioralV7ModelFamily,
+} from './recommendation-behavioral-v7-model-families.mjs';
 
 const datasetPath = required('BEHAVIORAL_V7_DATASET_PATH');
 const boundedSummaryPath = required('BEHAVIORAL_V7_BOUNDED_SUMMARY_PATH');
 const outputDirectory = required('BEHAVIORAL_V7_CROSSFIT_OUTPUT_DIR');
 const folds = 5;
 const epochs = 3;
-const modelConfig = { hashDimension: 65_536 };
-const options = { learningRate: 0.05, l2: 0.0001, gradientClip: 1 };
 
 const bounded = JSON.parse(await readFile(boundedSummaryPath, 'utf8'));
 if (
   bounded?.operation !== 'RECOMMENDATION_BEHAVIORAL_V7_BOUNDED_SCREEN' ||
+  bounded?.schemaVersion !== 2 ||
   bounded?.screenPassed !== true ||
   bounded?.strictCrossFitRecommended !== true ||
   bounded?.trainingArtifactEligible !== false ||
-  bounded?.source?.futureTestRowCount !== 0
+  bounded?.source?.futureTestRowCount !== 0 ||
+  bounded?.contracts?.futureTestEvaluated !== false ||
+  bounded?.contracts?.tuningUsedForTraining !== false ||
+  !BEHAVIORAL_V7_MODEL_FAMILIES.includes(bounded?.championFamily)
 ) {
   throw new Error('Bounded V7 evidence does not permit strict cross-fit.');
 }
+
+const familyId = bounded.championFamily;
+const family = createBehavioralV7ModelFamily(familyId);
+const modelConfig = family.modelConfig;
+const options = family.trainingOptions;
+
+const boundedChampionResult = bounded.familyResults?.find(
+  (result) => result.familyId === familyId,
+);
+if (
+  !boundedChampionResult ||
+  boundedChampionResult.contracts?.probabilityContract !==
+    'RAW_SOFTMAX_WITHIN_DECISION' ||
+  boundedChampionResult.contracts?.consumesV7Observability !== true
+) {
+  throw new Error('Bounded V7 champion family contract is incomplete.');
+}
+
 await mkdir(outputDirectory, { recursive: true });
 
 const oofMetric = createBehavioralV7Metric();
@@ -46,12 +61,12 @@ let oofEligibleRowCount = 0;
 let oofCoveredRowCount = 0;
 const foldReports = [];
 for (let holdout = 0; holdout < folds; holdout += 1) {
-  const model = createRecommendationBehavioralV7Model(modelConfig);
+  const model = family.createModel();
   const trainingEpochs = [];
   for (let epoch = 1; epoch <= epochs; epoch += 1) {
     trainingEpochs.push(await trainFoldEpoch(model, holdout, epoch));
   }
-  validateRecommendationBehavioralV7Model(model);
+  family.validate(model);
   const evaluation = await evaluateHoldout(model, holdout, oofMetric);
   oofEligibleRowCount += evaluation.eligibleRowCount;
   oofCoveredRowCount += evaluation.coveredRowCount;
@@ -59,6 +74,7 @@ for (let holdout = 0; holdout < folds; holdout += 1) {
   console.log(
     JSON.stringify({
       progress: 'CROSSFIT_HOLDOUT_COMPLETE',
+      familyId,
       holdout,
       evaluation,
     }),
@@ -67,12 +83,12 @@ for (let holdout = 0; holdout < folds; holdout += 1) {
 const oof = finalizeBehavioralV7Metric(oofMetric);
 const oofCandidateCoverage = divide(oofCoveredRowCount, oofEligibleRowCount);
 
-const fullModel = createRecommendationBehavioralV7Model(modelConfig);
+const fullModel = family.createModel();
 const fullTrainingEpochs = [];
 for (let epoch = 1; epoch <= epochs; epoch += 1) {
   fullTrainingEpochs.push(await trainFullEpoch(fullModel, epoch));
 }
-validateRecommendationBehavioralV7Model(fullModel);
+family.validate(fullModel);
 const tuningEvaluation = await evaluateTuning(fullModel);
 const tuning = tuningEvaluation.metric;
 const tuningCandidateCoverage = tuningEvaluation.candidateCoverage;
@@ -83,35 +99,45 @@ const tuningChecks = behavioralV7ContinuationChecks(
 );
 const strictCrossFitPassed = Object.values(oofChecks).every(Boolean);
 const independentTuningPassed = Object.values(tuningChecks).every(Boolean);
-const trainingArtifactEligible = strictCrossFitPassed && independentTuningPassed;
+const familyContractPreserved =
+  family.contracts.probabilityContract === 'RAW_SOFTMAX_WITHIN_DECISION' &&
+  family.contracts.consumesV7Observability === true;
+const trainingArtifactEligible =
+  strictCrossFitPassed && independentTuningPassed && familyContractPreserved;
 
 const modelArtifact = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   operation: 'RECOMMENDATION_BEHAVIORAL_V7_STRICT_CROSSFIT_FULL_TRAIN_MODEL',
   generatedAt: new Date().toISOString(),
+  familyId,
   trainingArtifactEligible,
+  contracts: family.contracts,
   modelConfig,
   trainingConfig: { folds, epochs, ...options },
   model: fullModel,
 };
 await writeJson(`${outputDirectory}/model.json`, modelArtifact);
 const summary = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   operation: 'RECOMMENDATION_BEHAVIORAL_V7_STRICT_CROSSFIT',
-  executorVersion: 'MATCH_FOLD_5_FIXED_CAPACITY_1',
+  executorVersion: 'MATCH_FOLD_5_BOUND_FAMILY_2',
   generatedAt: new Date().toISOString(),
+  familyId,
   source: {
     datasetPath,
     boundedSummaryPath,
+    boundedChampionFamily: bounded.championFamily,
     futureTestRowCount: 0,
   },
   contracts: {
+    ...family.contracts,
     matchFoldAssignment: 'FNV1A32_MATCH_ID_MOD_5',
     trainOofEvaluation: true,
     tuningUsedForTraining: false,
     tuningUsedForEarlyStopping: false,
     futureTestEvaluated: false,
     modelCapacityFrozen: true,
+    boundedChampionFamilyPreserved: true,
   },
   modelConfig,
   trainingConfig: { folds, epochs, ...options },
@@ -140,6 +166,7 @@ const summary = {
   },
   oofChecks,
   tuningChecks,
+  familyContractPreserved,
   strictCrossFitPassed,
   independentTuningPassed,
   trainingArtifactEligible,
@@ -173,12 +200,7 @@ async function trainFoldEpoch(model, holdout, epoch) {
     }
     const selected = selectBehavioralV7ChoiceSet(row);
     if (!selected) continue;
-    const result = trainRecommendationBehavioralV7Decision(
-      model,
-      selected,
-      options,
-    );
-    lossSum += result.loss;
+    lossSum += family.train(model, selected);
     decisionCount += 1;
   }
   assertNoFutureTest(futureTestRowCount);
@@ -215,7 +237,7 @@ async function evaluateHoldout(model, holdout, targetMetric) {
     observeBehavioralV7Metric(
       targetMetric,
       selected,
-      predictRecommendationBehavioralV7(model, selected),
+      family.predict(model, selected),
     );
   }
   assertNoFutureTest(futureTestRowCount);
@@ -241,12 +263,7 @@ async function trainFullEpoch(model, epoch) {
     if (row.split !== 'TRAIN' || row.eligibility?.behavioralModel !== true) continue;
     const selected = selectBehavioralV7ChoiceSet(row);
     if (!selected) continue;
-    const result = trainRecommendationBehavioralV7Decision(
-      model,
-      selected,
-      options,
-    );
-    lossSum += result.loss;
+    lossSum += family.train(model, selected);
     decisionCount += 1;
   }
   assertNoFutureTest(futureTestRowCount);
@@ -278,7 +295,7 @@ async function evaluateTuning(model) {
     observeBehavioralV7Metric(
       metric,
       selected,
-      predictRecommendationBehavioralV7(model, selected),
+      family.predict(model, selected),
     );
   }
   assertNoFutureTest(futureTestRowCount);
@@ -291,21 +308,26 @@ async function evaluateTuning(model) {
 function foldFor(matchId) {
   return fnv1a32(String(matchId)) % folds;
 }
+
 function assertNoFutureTest(count) {
   if (count !== 0) {
     throw new Error(`Strict V7 cross-fit input contains FUTURE_TEST rows: ${count}.`);
   }
 }
+
 function openDataset(path) {
   const stream = createReadStream(path);
   return path.endsWith('.gz') ? stream.pipe(createGunzip()) : stream;
 }
+
 async function writeJson(path, value) {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
+
 function divide(numerator, denominator) {
   return denominator > 0 ? numerator / denominator : 0;
 }
+
 function required(name) {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`Missing ${name}.`);
