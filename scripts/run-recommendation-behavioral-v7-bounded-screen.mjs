@@ -2,116 +2,191 @@ import { createReadStream } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { createGunzip } from 'node:zlib';
-import { createRequire } from 'node:module';
-
-const require = createRequire(import.meta.url);
-const {
-  createRecommendationBehavioralV7Model,
-  predictRecommendationBehavioralV7,
-  trainRecommendationBehavioralV7Decision,
-  validateRecommendationBehavioralV7Model,
-  RECOMMENDATION_BEHAVIORAL_V7_MODEL_VERSION,
-  RECOMMENDATION_BEHAVIORAL_V7_FEATURE_VERSION,
-  RECOMMENDATION_BEHAVIORAL_V7_PROBABILITY_CONTRACT,
-  RECOMMENDATION_BEHAVIORAL_V7_OPTIMIZER,
-} = require('/app/apps/api/dist/src/deadlock-live/recommendation-behavioral-v7.js');
+import {
+  behavioralV7ContinuationChecks,
+  behavioralV7GroupSupport,
+  createBehavioralV7Metric,
+  finalizeBehavioralV7Metric,
+  observeBehavioralV7Metric,
+  selectBehavioralV7ChoiceSet,
+} from './recommendation-behavioral-v7-evaluation.mjs';
+import {
+  BEHAVIORAL_V7_LINEAR_FAMILY,
+  BEHAVIORAL_V7_MODEL_FAMILIES,
+  BEHAVIORAL_V7_SEQUENCE_CONFIG,
+  BEHAVIORAL_V7_SEQUENCE_FAMILY,
+  chooseBehavioralV7Champion,
+  createBehavioralV7ModelFamily,
+} from './recommendation-behavioral-v7-model-families.mjs';
 
 const datasetPath = required('BEHAVIORAL_V7_DATASET_PATH');
 const stageEPath = required('BEHAVIORAL_V7_STAGE_E_PATH');
 const outputDirectory = required('BEHAVIORAL_V7_BOUNDED_OUTPUT_DIR');
 
-const executorVersion = 'V7_OBSERVABILITY_CONDITIONAL_LOGIT_BOUNDED_1';
-const modelConfig = { hashDimension: 65_536 };
-const trainingConfig = {
-  epochs: 3,
-  learningRate: 0.05,
-  l2: 0.0001,
-  gradientClip: 1,
-  supportProbability: 0.01,
-  propensityFloors: [0.005, 0.01, 0.02],
-  majorGroupMinDecisions: 100,
-};
+const executorVersion = 'V7_STAGE_F_FIXED_FAMILY_COMPARISON_1';
+const epochs = 3;
+const v6SequenceCapacityReference = Object.freeze({
+  historyLength: 16,
+  hiddenDimension: 12,
+  sequenceEmbeddingHashDimension: 4_096,
+  contextEmbeddingHashDimension: 2_048,
+  candidateEmbeddingHashDimension: 4_096,
+  candidateBiasHashDimension: 8_192,
+  recurrenceDecay: 0.8,
+});
 
 await validatePrerequisites();
 await mkdir(outputDirectory, { recursive: true });
-const model = createRecommendationBehavioralV7Model(modelConfig);
-const trainingEpochs = [];
-for (let epoch = 1; epoch <= trainingConfig.epochs; epoch += 1) {
-  const result = await trainEpoch(model, epoch);
-  validateRecommendationBehavioralV7Model(model);
-  trainingEpochs.push(result);
-  console.log(JSON.stringify({ progress: 'TRAIN_EPOCH_COMPLETE', ...result }));
-}
-const tuning = await evaluateTuning(model);
-const lateSupportCoverage = supportForGroup(tuning.groups, 'PHASE:LATE');
-const highEconomySupportCoverage = supportForGroup(
-  tuning.groups,
-  'ECONOMY:GE_20000',
-);
-const continuationChecks = {
-  candidateCoverageAtLeast099: tuning.candidateCoverage >= 0.99,
-  supportAtLeast086: tuning.supportCoverage >= 0.86,
-  supportGainAtLeast001:
-    tuning.supportCoverage >= 0.835920177383592 + 0.01,
-  rawLogLossBeatsV6Sequence:
-    tuning.rawLogLoss < 2.747655053608051,
-  floorSensitivityBelow028:
-    tuning.floorSensitivityDelta < 0.28,
-  majorLowSupportGroupsAtMost2:
-    tuning.majorLowSupportGroupCount <= 2,
-  lateSupportBeatsV6:
-    lateSupportCoverage > 0.7670886075949367,
-  highEconomySupportBeatsV6:
-    highEconomySupportCoverage > 0.7611583421891605,
-};
-const screenPassed = Object.values(continuationChecks).every(Boolean);
 
-const modelArtifact = {
+const familyStates = BEHAVIORAL_V7_MODEL_FAMILIES.map((familyId) => {
+  const adapter = createBehavioralV7ModelFamily(familyId);
+  return {
+    familyId,
+    adapter,
+    model: adapter.createModel(),
+    trainingEpochs: [],
+  };
+});
+
+for (let epoch = 1; epoch <= epochs; epoch += 1) {
+  const reports = await trainEpoch(familyStates, epoch);
+  for (const state of familyStates) {
+    state.adapter.validate(state.model);
+    state.trainingEpochs.push(reports[state.familyId]);
+  }
+  console.log(
+    JSON.stringify({
+      progress: 'TRAIN_EPOCH_COMPLETE',
+      epoch,
+      families: reports,
+    }),
+  );
+}
+
+const evaluation = await evaluateTuning(familyStates);
+const familyResults = familyStates.map((state) => {
+  const tuning = evaluation.metrics[state.familyId];
+  return {
+    familyId: state.familyId,
+    contracts: state.adapter.contracts,
+    modelConfig: state.adapter.modelConfig,
+    trainingOptions: state.adapter.trainingOptions,
+    trainingEpochs: state.trainingEpochs,
+    tuning,
+    lateSupportCoverage: behavioralV7GroupSupport(tuning.groups, 'PHASE:LATE'),
+    highEconomySupportCoverage: behavioralV7GroupSupport(
+      tuning.groups,
+      'ECONOMY:GE_20000',
+    ),
+  };
+});
+const champion = chooseBehavioralV7Champion(familyResults);
+const continuationChecks = behavioralV7ContinuationChecks(
+  champion.tuning,
+  evaluation.candidateCoverage,
+);
+const stageFContractChecks = {
+  exactFixedFamilyCount: familyResults.length === 2,
+  linearBaselinePresent: familyResults.some(
+    (result) => result.familyId === BEHAVIORAL_V7_LINEAR_FAMILY,
+  ),
+  sameCapacitySequencePresent: familyResults.some(
+    (result) => result.familyId === BEHAVIORAL_V7_SEQUENCE_FAMILY,
+  ),
+  sequenceCapacityMatchesV6Reference:
+    JSON.stringify(BEHAVIORAL_V7_SEQUENCE_CONFIG) ===
+    JSON.stringify(v6SequenceCapacityReference),
+  allFamiliesConsumeV7Observability: familyResults.every(
+    (result) => result.contracts.consumesV7Observability === true,
+  ),
+  rawPropensityContractsOnly: familyResults.every(
+    (result) => result.contracts.probabilityContract === 'RAW_SOFTMAX_WITHIN_DECISION',
+  ),
+  sharedCandidateCoverageAtLeast099: evaluation.candidateCoverage >= 0.99,
+  tuningExcludedFromTraining: true,
+  tuningExcludedFromEarlyStopping: true,
+  futureTestExcluded: evaluation.futureTestRowCount === 0,
+};
+const screenPassed =
+  Object.values(stageFContractChecks).every(Boolean) &&
+  Object.values(continuationChecks).every(Boolean);
+
+for (const state of familyStates) {
+  await writeJson(`${outputDirectory}/model-${fileSafeFamily(state.familyId)}.json`, {
+    schemaVersion: 1,
+    operation: 'RECOMMENDATION_BEHAVIORAL_V7_BOUNDED_SCREEN_MODEL',
+    executorVersion,
+    familyId: state.familyId,
+    diagnosticOnly: true,
+    trainingArtifactEligible: false,
+    modelConfig: state.adapter.modelConfig,
+    trainingConfig: {
+      epochs,
+      ...state.adapter.trainingOptions,
+    },
+    contracts: state.adapter.contracts,
+    model: state.model,
+  });
+}
+const championState = familyStates.find(
+  (state) => state.familyId === champion.familyId,
+);
+if (!championState) throw new Error('Behavioral V7 bounded champion model is missing.');
+await writeJson(`${outputDirectory}/model.json`, {
   schemaVersion: 1,
   operation: 'RECOMMENDATION_BEHAVIORAL_V7_BOUNDED_SCREEN_MODEL',
   executorVersion,
+  familyId: champion.familyId,
   diagnosticOnly: true,
   trainingArtifactEligible: false,
-  modelConfig,
-  trainingConfig,
-  model,
-};
-await writeJson(`${outputDirectory}/model.json`, modelArtifact);
+  modelConfig: championState.adapter.modelConfig,
+  trainingConfig: {
+    epochs,
+    ...championState.adapter.trainingOptions,
+  },
+  contracts: championState.adapter.contracts,
+  model: championState.model,
+});
+
 const summary = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   operation: 'RECOMMENDATION_BEHAVIORAL_V7_BOUNDED_SCREEN',
   executorVersion,
   generatedAt: new Date().toISOString(),
   source: {
     datasetPath,
     stageEPath,
-    futureTestRowCount: 0,
+    futureTestRowCount: evaluation.futureTestRowCount,
   },
   contracts: {
-    modelVersion: RECOMMENDATION_BEHAVIORAL_V7_MODEL_VERSION,
-    featureVersion: RECOMMENDATION_BEHAVIORAL_V7_FEATURE_VERSION,
-    probabilityContract: RECOMMENDATION_BEHAVIORAL_V7_PROBABILITY_CONTRACT,
-    optimizerContract: RECOMMENDATION_BEHAVIORAL_V7_OPTIMIZER,
+    stageFContract: 'FIXED_LINEAR_AND_V6_CAPACITY_SEQUENCE_COMPARISON_1',
     behavioralChoiceSetDefinition: 'V7_OBSERVED_AVAILABILITY_TOP96_1',
-  },
-  modelConfig,
-  trainingConfig,
-  training: {
-    epochs: trainingEpochs,
+    matchSplitContract: 'IMMUTABLE_DATASET_V7_MATCH_SPLIT',
     tuningUsedForTraining: false,
     tuningUsedForEarlyStopping: false,
-    crossFittingPerformed: false,
-    rowsMaterializedInHeap: false,
+    futureTestEvaluated: false,
+    probabilityContract: 'RAW_SOFTMAX_WITHIN_DECISION',
   },
-  tuning,
-  candidateCoverage: tuning.candidateCoverage,
-  supportCoverage: tuning.supportCoverage,
-  rawLogLoss: tuning.rawLogLoss,
-  top1Rate: tuning.top1Rate,
-  floorSensitivityDelta: tuning.floorSensitivityDelta,
-  majorLowSupportGroupCount: tuning.majorLowSupportGroupCount,
-  lateSupportCoverage,
-  highEconomySupportCoverage,
+  candidateCoverage: evaluation.candidateCoverage,
+  familyResults,
+  championFamily: champion.familyId,
+  champion: {
+    supportCoverage: champion.tuning.supportCoverage,
+    rawLogLoss: champion.tuning.rawLogLoss,
+    top1Rate: champion.tuning.top1Rate,
+    floorSensitivityDelta: champion.tuning.floorSensitivityDelta,
+    majorLowSupportGroupCount: champion.tuning.majorLowSupportGroupCount,
+    lateSupportCoverage: champion.lateSupportCoverage,
+    highEconomySupportCoverage: champion.highEconomySupportCoverage,
+  },
+  supportCoverage: champion.tuning.supportCoverage,
+  rawLogLoss: champion.tuning.rawLogLoss,
+  top1Rate: champion.tuning.top1Rate,
+  floorSensitivityDelta: champion.tuning.floorSensitivityDelta,
+  majorLowSupportGroupCount: champion.tuning.majorLowSupportGroupCount,
+  lateSupportCoverage: champion.lateSupportCoverage,
+  highEconomySupportCoverage: champion.highEconomySupportCoverage,
+  stageFContractChecks,
   continuationChecks,
   screenPassed,
   strictCrossFitRecommended: screenPassed,
@@ -138,7 +213,8 @@ async function validatePrerequisites() {
     stageE.stageEGatePassed !== true ||
     stageE.futureTestEvaluated !== false ||
     stageE.source?.futureTestRowCount !== 0 ||
-    stageE.trainingArtifactEligible !== false
+    stageE.trainingArtifactEligible !== false ||
+    stageE.nextAuthorizedOperation !== 'BOUNDED_BEHAVIORAL_V7_SCREEN'
   ) {
     throw new Error(
       'Stage E information-gain evidence does not permit a bounded V7 screen.',
@@ -146,11 +222,13 @@ async function validatePrerequisites() {
   }
 }
 
-async function trainEpoch(model, epoch) {
-  let decisionCount = 0;
-  let lossSum = 0;
-  let rawFeatureTouches = 0;
-  let uniqueParameterUpdates = 0;
+async function trainEpoch(states, epoch) {
+  const reports = Object.fromEntries(
+    states.map((state) => [
+      state.familyId,
+      { epoch, decisionCount: 0, lossSum: 0 },
+    ]),
+  );
   let futureTestRowCount = 0;
   const input = createInterface({ input: openDataset(datasetPath), crlfDelay: Infinity });
   for await (const line of input) {
@@ -161,56 +239,34 @@ async function trainEpoch(model, epoch) {
       continue;
     }
     if (row.split !== 'TRAIN' || row.eligibility?.behavioralModel !== true) continue;
-    const selected = selectBehavioralChoiceSet(row);
+    const selected = selectBehavioralV7ChoiceSet(row);
     if (!selected) continue;
-    const result = trainRecommendationBehavioralV7Decision(
-      model,
-      selected,
-      {
-        learningRate: trainingConfig.learningRate,
-        l2: trainingConfig.l2,
-        gradientClip: trainingConfig.gradientClip,
-      },
-    );
-    decisionCount += 1;
-    lossSum += result.loss;
-    rawFeatureTouches += result.optimizerAudit.rawFeatureTouches;
-    uniqueParameterUpdates += result.optimizerAudit.uniqueParameterUpdates;
-    if (decisionCount % 5000 === 0) {
-      console.log(
-        JSON.stringify({
-          progress: 'TRAIN_ROWS',
-          epoch,
-          decisionCount,
-          meanOnlineLoss: lossSum / decisionCount,
-        }),
-      );
+    for (const state of states) {
+      const report = reports[state.familyId];
+      report.lossSum += state.adapter.train(state.model, selected);
+      report.decisionCount += 1;
     }
   }
-  if (futureTestRowCount !== 0) {
-    throw new Error(
-      `Dataset V7 bounded input must exclude FUTURE_TEST rows, got ${futureTestRowCount}.`,
-    );
-  }
-  return {
-    epoch,
-    decisionCount,
-    meanOnlineLoss: divide(lossSum, decisionCount),
-    optimizerAudit: {
-      rawFeatureTouches,
-      uniqueParameterUpdates,
-      repeatedTouchRate:
-        rawFeatureTouches > 0
-          ? 1 - uniqueParameterUpdates / rawFeatureTouches
-          : 0,
-    },
-  };
+  assertNoFutureTest(futureTestRowCount);
+  return Object.fromEntries(
+    Object.entries(reports).map(([familyId, report]) => [
+      familyId,
+      {
+        epoch: report.epoch,
+        decisionCount: report.decisionCount,
+        meanOnlineLoss: divide(report.lossSum, report.decisionCount),
+      },
+    ]),
+  );
 }
 
-async function evaluateTuning(model) {
-  const metric = createMetric();
-  let allSelectionRows = 0;
+async function evaluateTuning(states) {
+  const metrics = Object.fromEntries(
+    states.map((state) => [state.familyId, createBehavioralV7Metric()]),
+  );
+  let eligibleSelectionRows = 0;
   let coveredSelectionRows = 0;
+  let tuningDecisionCount = 0;
   let futureTestRowCount = 0;
   const input = createInterface({ input: openDataset(datasetPath), crlfDelay: Infinity });
   for await (const line of input) {
@@ -220,166 +276,47 @@ async function evaluateTuning(model) {
       futureTestRowCount += 1;
       continue;
     }
-    if (row.split !== 'TRAIN' && row.split !== 'TUNING') continue;
-    allSelectionRows += 1;
-    const selected = selectBehavioralChoiceSet(row);
+    if (!['TRAIN', 'TUNING'].includes(row.split)) continue;
+    if (row.eligibility?.behavioralModel !== true) continue;
+    eligibleSelectionRows += 1;
+    const selected = selectBehavioralV7ChoiceSet(row);
     if (selected) coveredSelectionRows += 1;
-    if (
-      row.split !== 'TUNING' ||
-      row.eligibility?.behavioralModel !== true ||
-      !selected
-    ) {
-      continue;
+    if (row.split !== 'TUNING' || !selected) continue;
+    tuningDecisionCount += 1;
+    for (const state of states) {
+      observeBehavioralV7Metric(
+        metrics[state.familyId],
+        selected,
+        state.adapter.predict(state.model, selected),
+      );
     }
-    const prediction = predictRecommendationBehavioralV7(model, selected);
-    observeMetric(metric, selected, prediction);
   }
-  if (futureTestRowCount !== 0) {
+  assertNoFutureTest(futureTestRowCount);
+  if (tuningDecisionCount === 0) {
+    throw new Error('Behavioral V7 bounded screen evaluated no TUNING decisions.');
+  }
+  return {
+    candidateCoverage: divide(coveredSelectionRows, eligibleSelectionRows),
+    futureTestRowCount,
+    metrics: Object.fromEntries(
+      Object.entries(metrics).map(([familyId, metric]) => [
+        familyId,
+        finalizeBehavioralV7Metric(metric),
+      ]),
+    ),
+  };
+}
+
+function assertNoFutureTest(count) {
+  if (count !== 0) {
     throw new Error(
-      `Dataset V7 bounded input must exclude FUTURE_TEST rows, got ${futureTestRowCount}.`,
+      `Dataset V7 bounded input must exclude FUTURE_TEST rows, got ${count}.`,
     );
   }
-  const finalized = finalizeMetric(metric);
-  return {
-    ...finalized,
-    candidateCoverage: divide(coveredSelectionRows, allSelectionRows),
-  };
 }
 
-function selectBehavioralChoiceSet(row) {
-  const actionKeys = row.choiceSet?.behavioralChoiceSetActionKeys;
-  if (!Array.isArray(actionKeys) || actionKeys.length < 2) return undefined;
-  const allowed = new Set(actionKeys);
-  const candidates = row.candidates
-    .filter((candidate) => allowed.has(candidate.actionKey))
-    .sort(
-      (left, right) =>
-        Number(left.rank) - Number(right.rank) ||
-        String(left.actionKey).localeCompare(String(right.actionKey)),
-    )
-    .map((candidate, index) => ({ ...candidate, rank: index + 1 }));
-  if (
-    candidates.length < 2 ||
-    !candidates.some((candidate) => candidate.actionKey === row.observedActionKey)
-  ) {
-    return undefined;
-  }
-  return { ...row, candidates, observedActionInCandidateSet: true };
-}
-
-function createMetric() {
-  return {
-    decisionCount: 0,
-    supportCount: 0,
-    top1Count: 0,
-    lossSum: 0,
-    minimumObservedRawProbability: 1,
-    floorLossSums: new Map(
-      trainingConfig.propensityFloors.map((floor) => [floor, 0]),
-    ),
-    groups: new Map(),
-  };
-}
-
-function observeMetric(metric, row, prediction) {
-  const probability = prediction.observedActionProbability;
-  metric.decisionCount += 1;
-  metric.supportCount += probability >= trainingConfig.supportProbability ? 1 : 0;
-  metric.top1Count += prediction.topActionKey === row.observedActionKey ? 1 : 0;
-  metric.lossSum += -Math.log(Math.max(probability, 1e-15));
-  metric.minimumObservedRawProbability = Math.min(
-    metric.minimumObservedRawProbability,
-    probability,
-  );
-  for (const floor of trainingConfig.propensityFloors) {
-    const current = metric.floorLossSums.get(floor) ?? 0;
-    metric.floorLossSums.set(
-      floor,
-      current + -Math.log(Math.max(probability, floor)),
-    );
-  }
-  for (const key of groupKeys(row)) {
-    const group = metric.groups.get(key) ?? {
-      decisionCount: 0,
-      supportCount: 0,
-      lossSum: 0,
-      top1Count: 0,
-    };
-    group.decisionCount += 1;
-    group.supportCount +=
-      probability >= trainingConfig.supportProbability ? 1 : 0;
-    group.lossSum += -Math.log(Math.max(probability, 1e-15));
-    group.top1Count +=
-      prediction.topActionKey === row.observedActionKey ? 1 : 0;
-    metric.groups.set(key, group);
-  }
-}
-
-function finalizeMetric(metric) {
-  const rawLogLoss = divide(metric.lossSum, metric.decisionCount);
-  const floorSensitivity = trainingConfig.propensityFloors.map((floor) => {
-    const logLoss = divide(
-      metric.floorLossSums.get(floor) ?? 0,
-      metric.decisionCount,
-    );
-    return {
-      floor,
-      logLoss,
-      logLossDeltaFromRaw: Math.abs(logLoss - rawLogLoss),
-    };
-  });
-  const groups = [...metric.groups.entries()]
-    .map(([key, group]) => ({
-      key,
-      decisionCount: group.decisionCount,
-      major: group.decisionCount >= trainingConfig.majorGroupMinDecisions,
-      supportCoverage: divide(group.supportCount, group.decisionCount),
-      rawLogLoss: divide(group.lossSum, group.decisionCount),
-      top1Rate: divide(group.top1Count, group.decisionCount),
-    }))
-    .sort((left, right) =>
-      left.key.localeCompare(right.key, undefined, { numeric: true }),
-    );
-  const majorLowSupportGroups = groups.filter(
-    (group) => group.major && group.supportCoverage < 0.75,
-  );
-  return {
-    decisionCount: metric.decisionCount,
-    supportCoverage: divide(metric.supportCount, metric.decisionCount),
-    rawLogLoss,
-    top1Rate: divide(metric.top1Count, metric.decisionCount),
-    minimumObservedRawProbability: metric.minimumObservedRawProbability,
-    floorSensitivity,
-    floorSensitivityDelta: Math.max(
-      ...floorSensitivity.map((value) => value.logLossDeltaFromRaw),
-    ),
-    groups,
-    majorLowSupportGroups,
-    majorLowSupportGroupCount: majorLowSupportGroups.length,
-  };
-}
-
-function groupKeys(row) {
-  const time = Number(row.state.gameTimeS);
-  return [
-    `PHASE:${row.state.phase}`,
-    `HERO:${row.state.heroId}`,
-    `ECONOMY:${economyBand(Number(row.state.netWorth))}`,
-    `TIME:${Math.floor(time / 300) * 5}-${Math.floor(time / 300) * 5 + 5}m`,
-  ];
-}
-
-function economyBand(value) {
-  if (!Number.isFinite(value)) return 'UNKNOWN';
-  if (value < 5000) return 'LT_5000';
-  if (value < 10000) return '5000_9999';
-  if (value < 15000) return '10000_14999';
-  if (value < 20000) return '15000_19999';
-  return 'GE_20000';
-}
-
-function supportForGroup(groups, key) {
-  return groups.find((group) => group.key === key)?.supportCoverage ?? 0;
+function fileSafeFamily(familyId) {
+  return familyId.toLowerCase().replaceAll('_', '-');
 }
 
 function openDataset(path) {
@@ -395,6 +332,7 @@ function renderReport(summary) {
   return [
     'Recommendation Behavioral V7 bounded screen',
     `screenPassed=${summary.screenPassed}`,
+    `championFamily=${summary.championFamily}`,
     `supportCoverage=${summary.supportCoverage}`,
     `rawLogLoss=${summary.rawLogLoss}`,
     `floorSensitivityDelta=${summary.floorSensitivityDelta}`,
