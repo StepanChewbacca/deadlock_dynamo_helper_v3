@@ -79,10 +79,11 @@ jobs:
           test "$(sudo jq -r '.auditPassed' "$source/manifest.json")" = 'true'
           test "$(sudo jq -r '.releaseGatePassed' "$source/manifest.json")" = 'false'
           test "$(sudo jq -r '.trainingArtifactEligible' "$source/manifest.json")" = 'false'
-          test "$(sudo jq -r '.build.fullCorpus' "$source/manifest.json")" = 'true'
+          test "$(sudo jq -r '.build.fullCorpus' "$source/audit.json")" = 'true'
 
           echo '--- frozen gate summary ---'
-          sudo jq '{auditPassed,releaseGatePassed,trainingArtifactEligible,modelVersion,featureVersion,build,releaseGate:(.releaseGate // empty)}' "$source/manifest.json" || true
+          sudo jq '{auditPassed,releaseGatePassed,trainingArtifactEligible,modelVersion,featureVersion}' "$source/manifest.json" || true
+          sudo jq '{passed,trainingArtifactEligible,build,releaseGate}' "$source/audit.json" || true
           sudo jq '{releaseGate:(.releaseGate // empty),metrics:{selection:(.metrics.selection // empty),probabilityFloorSensitivity:(.metrics.probabilityFloorSensitivity // empty)}}' "$source/evaluation.json" || true
 
           source_bytes="$(sudo du -sb "$source" | awk '{print $1}')"
