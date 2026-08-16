@@ -7,12 +7,8 @@ const stageDPath = required('BEHAVIORAL_V7_STAGE_D_PATH');
 const outputPath = required('BEHAVIORAL_V7_INFORMATION_GAIN_REPORT_PATH');
 const supportProbability = 0.01;
 const stageD = JSON.parse(await readFile(stageDPath, 'utf8'));
-if (
-  stageD?.operation !== 'RECOMMENDATION_BEHAVIORAL_V7_FEASIBLE_CHOICE_SET_AUDIT' ||
-  stageD?.stageDGatePassed !== true ||
-  stageD?.futureTestEvaluated !== false
-) {
-  throw new Error('Stage D does not permit V7 information-gain evaluation.');
+if (!stageDContractPassed(stageD)) {
+  throw new Error('Stage D does not permit V7 information-gain evaluation. Exact Stage D v3 gates must PASS.');
 }
 
 const trainPartitions = [[], [], []];
@@ -233,13 +229,20 @@ function calculateGains(value) {
   };
 }
 
+function stageDContractPassed(value) {
+  const gates = value?.gates;
+  return value?.schemaVersion === 3 &&
+    value?.operation === 'RECOMMENDATION_BEHAVIORAL_V7_FEASIBLE_CHOICE_SET_AUDIT' &&
+    value?.stageDGatePassed === true &&
+    value?.futureTestEvaluated === false &&
+    gates?.overallCoverageAtLeast099 === true &&
+    gates?.allMajorGroupsAtLeast095 === true &&
+    gates?.exactRankingSemantics === true &&
+    gates?.futureTestExcluded === true;
+}
+
 function stageDCoveragePassed(value) {
-  const gates = value?.gates ?? {};
-  if (typeof gates.overallObservedActionCoverageAtLeast099 === 'boolean') {
-    return gates.overallObservedActionCoverageAtLeast099 === true &&
-      gates.majorCohortCoverageAtLeast095 === true;
-  }
-  return value?.stageDGatePassed === true;
+  return stageDContractPassed(value);
 }
 
 function emptyMetric() { return { decisions: 0, support: 0, top1: 0, loss: 0, groups: new Map() }; }
