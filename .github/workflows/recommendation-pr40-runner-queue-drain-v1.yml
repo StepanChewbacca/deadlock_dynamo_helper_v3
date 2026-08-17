@@ -6,88 +6,11 @@ on:
       - '.github/workflows/recommendation-pr40-runner-queue-drain-v1.yml'
 
 permissions:
-  actions: write
   contents: read
 
 jobs:
   drain:
-    if: >-
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.head.ref == 'agent/recommendation-behavioral-v6-feasible-choice-set-1'
+    if: ${{ false }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
     steps:
-      - name: Drain obsolete PR40 runs while preserving current safety and roadmap gates
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          BRANCH: agent/recommendation-behavioral-v6-feasible-choice-set-1
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          CURRENT_RUN_ID: ${{ github.run_id }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          preserve_current_head_name() {
-            case "$1" in
-              'Recommendation PR40 Runner Queue Drain V1'|\
-              'Recommendation Emergency Stop Training V1'|\
-              'Recommendation Production Recovery Inventory V1'|\
-              'Recommendation Production Recovery Target Search V1'|\
-              'Recommendation Behavioral V7 Observability Inventory Validator'|\
-              'Recommendation Behavioral V7 Observability Inventory V2'|\
-              'Recommendation Behavioral V7 Temporal Audit V2'|\
-              'Recommendation Behavioral V7 Pinned Data Gates V1'|\
-              'Recommendation Behavioral V7 Pipeline Validator'|\
-              'Recommendation Behavioral V7 Stage E Contract Validator'|\
-              'Recommendation Behavioral V7 Execution Validator'|\
-              'CI') return 0 ;;
-              *) return 1 ;;
-            esac
-          }
-
-          cancelled=0
-          preserved=0
-          for status in queued in_progress waiting pending requested; do
-            page=1
-            while :; do
-              response="$(gh api "repos/$REPO/actions/runs?branch=$BRANCH&status=$status&per_page=100&page=$page")"
-              count="$(jq '.workflow_runs | length' <<<"$response")"
-              [ "$count" -gt 0 ] || break
-              while IFS=$'\t' read -r run_id name head_sha; do
-                [ -n "$run_id" ] || continue
-                if [ "$run_id" = "$CURRENT_RUN_ID" ]; then
-                  echo "PRESERVE_CURRENT_DRAIN $run_id $name $head_sha"
-                  preserved=$((preserved+1))
-                  continue
-                fi
-                if [ "$head_sha" = "$HEAD_SHA" ] && preserve_current_head_name "$name"; then
-                  echo "PRESERVE_CURRENT_HEAD $run_id $name $head_sha"
-                  preserved=$((preserved+1))
-                  continue
-                fi
-                echo "CANCEL_OBSOLETE $run_id $name $head_sha"
-                gh api --method POST "repos/$REPO/actions/runs/$run_id/force-cancel" >/dev/null 2>&1 || \
-                  gh api --method POST "repos/$REPO/actions/runs/$run_id/cancel" >/dev/null 2>&1 || true
-                cancelled=$((cancelled+1))
-              done < <(jq -r '.workflow_runs[] | [.id,.name,.head_sha] | @tsv' <<<"$response")
-              [ "$count" -eq 100 ] || break
-              page=$((page+1))
-            done
-          done
-
-          echo "headSha=$HEAD_SHA"
-          echo "preservedCurrentHeadRunCount=$preserved"
-          echo "cancelledObsoleteRunCount=$cancelled"
-
-          active_training_launchers="$(
-            for status in queued in_progress waiting pending requested; do
-              gh api "repos/$REPO/actions/runs?branch=$BRANCH&status=$status&per_page=100" \
-                | jq -r '.workflow_runs[] | select(.name | test("(Bounded Launcher|Full.*Train|Training Launcher|Architecture Sweep)"; "i")) | [.id,.name,.head_sha] | @tsv'
-            done | sort -u
-          )"
-          if [ -n "$active_training_launchers" ]; then
-            echo 'Active training launcher runs remain after drain:' >&2
-            printf '%s\n' "$active_training_launchers" >&2
-            exit 1
-          fi
+      - run: echo 'PR40 queue drain is disabled; emergency-stop training remains the authoritative training interlock.'
