@@ -1,0 +1,77 @@
+name: Recommendation Production Contextual V3 Env Inventory V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/recommendation-production-contextual-v3-env-inventory-v1.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-production-contextual-v3-env-inventory-v1
+  cancel-in-progress: true
+
+jobs:
+  inventory:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'agent/recommendation-behavioral-v6-feasible-choice-set-1'
+    runs-on: [self-hosted, vps-arm64-runner]
+    timeout-minutes: 5
+    steps:
+      - name: Read only Contextual V3 production contract variables
+        shell: bash
+        run: |
+          set -euo pipefail
+          target='/home/ubuntu/apps/deadlock_dynamo_helper'
+          env_file="$target/.env"
+          evidence_root='/home/ubuntu/apps/deadlock_dynamo_helper-training/production-recovery-evidence/contextual-v3-env'
+          evidence="$evidence_root/runs/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          latest="$evidence_root/latest"
+          sudo mkdir -p "$evidence"
+          sudo chown -R "$(id -u):$(id -g)" "$evidence_root"
+          test -r "$env_file"
+
+          keys=(
+            DEADLOCK_CONTEXTUAL_V3_TRAINING_DIR
+            DEADLOCK_CONTEXTUAL_V3_CANDIDATE_EVALUATION_DIR
+            DEADLOCK_CONTEXTUAL_V3_FINAL_TEST_DIR
+            DEADLOCK_CONTEXTUAL_V3_PRODUCTION_EXPECTED_MODEL_SHA256
+          )
+
+          : > "$evidence/contextual-v3-env.tsv"
+          for key in "${keys[@]}"; do
+            raw="$(grep -E "^[[:space:]]*(export[[:space:]]+)?${key}=" "$env_file" | tail -n 1 || true)"
+            if [ -z "$raw" ]; then
+              printf '%s\tUNSET\t\n' "$key" >> "$evidence/contextual-v3-env.tsv"
+              continue
+            fi
+            value="${raw#*=}"
+            value="${value%$'\r'}"
+            value="${value#\"}"
+            value="${value%\"}"
+            value="${value#\'}"
+            value="${value%\'}"
+            printf '%s\tSET\t%s\n' "$key" "$value" >> "$evidence/contextual-v3-env.tsv"
+          done
+
+          expected="$(awk -F '\t' '$1=="DEADLOCK_CONTEXTUAL_V3_PRODUCTION_EXPECTED_MODEL_SHA256" && $2=="SET" {print $3}' "$evidence/contextual-v3-env.tsv")"
+          training_dir="$(awk -F '\t' '$1=="DEADLOCK_CONTEXTUAL_V3_TRAINING_DIR" && $2=="SET" {print $3}' "$evidence/contextual-v3-env.tsv")"
+          candidate_dir="$(awk -F '\t' '$1=="DEADLOCK_CONTEXTUAL_V3_CANDIDATE_EVALUATION_DIR" && $2=="SET" {print $3}' "$evidence/contextual-v3-env.tsv")"
+          final_dir="$(awk -F '\t' '$1=="DEADLOCK_CONTEXTUAL_V3_FINAL_TEST_DIR" && $2=="SET" {print $3}' "$evidence/contextual-v3-env.tsv")"
+
+          jq -n \
+            --arg generatedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg expectedModelSha256 "$expected" \
+            --arg trainingDir "$training_dir" \
+            --arg candidateEvaluationDir "$candidate_dir" \
+            --arg finalTestDir "$final_dir" \
+            '{schemaVersion:1,operation:"RECOMMENDATION_PRODUCTION_CONTEXTUAL_V3_ENV_INVENTORY",generatedAt:$generatedAt,expectedModelSha256:($expectedModelSha256|select(length>0)),trainingDir:($trainingDir|select(length>0)),candidateEvaluationDir:($candidateEvaluationDir|select(length>0)),finalTestDir:($finalTestDir|select(length>0)),productionMutationPerformed:false,productionApiRestarted:false,trainingPerformed:false,futureTestEvaluated:false}' \
+            > "$evidence/summary.json"
+
+          echo '--- Contextual V3 production contract ---'
+          cat "$evidence/contextual-v3-env.tsv"
+          cat "$evidence/summary.json"
+          ln -sfn "runs/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" "$latest"
+          sha256sum "$evidence/summary.json" > "$evidence/summary.sha256"
