@@ -3,6 +3,14 @@ name: Recommendation Behavioral V7 Observability Inventory V2
 on:
   pull_request:
     paths:
+      - 'apps/api/src/app.module.ts'
+      - 'apps/api/src/database/migrations/*match-player-account-identity.ts'
+      - 'apps/api/src/deadlock-live/entities/match-player.entity.ts'
+      - 'apps/api/src/deadlock-live/recent-match-crawler.service.ts'
+      - 'apps/api/src/deadlock-live/stored-match-reprocessing.service.ts'
+      - 'apps/api/src/deadlock-live/recommendation-observability-v7-*.ts'
+      - 'scripts/audit-recommendation-behavioral-v7-observability-root.py'
+      - 'scripts/audit-recommendation-observability-v7-telemetry-completeness.mjs'
       - '.github/workflows/recommendation-behavioral-v7-observability-inventory-v2.yml'
 
 permissions:
@@ -10,11 +18,74 @@ permissions:
 
 concurrency:
   group: recommendation-behavioral-v7-observability-inventory-v2
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  paused:
-    if: ${{ false }}
-    runs-on: ubuntu-latest
+  inventory:
+    runs-on: self-hosted
+    timeout-minutes: 15
     steps:
-      - run: echo 'Recommendation Behavioral V7 observability inventory is paused.'
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build read-only observability inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          storage='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          timeline="$storage/match-timeline-events-v1"
+          canonical="$storage/recommendation-behavioral-v7-observability-inventory-v2"
+          run_output="$canonical/runs/${{ github.run_id }}-${{ github.run_attempt }}"
+          telemetry="$storage/recommendation-observability-v7/events.ndjson"
+          identity="$storage/recommendation-observability-v7/player-identities.ndjson"
+          telemetry_stage="$RUNNER_TEMP/recommendation-observability-v7-events.ndjson"
+          identity_stage="$RUNNER_TEMP/recommendation-observability-v7-player-identities.ndjson"
+          report="$RUNNER_TEMP/recommendation-behavioral-v7-observability-v2.json"
+          completeness="$RUNNER_TEMP/recommendation-observability-v7-telemetry-completeness.json"
+
+          sudo test -d "$timeline"
+          test -d apps/api/src/deadlock-live/entities
+          sudo python3 scripts/audit-recommendation-behavioral-v7-observability-root.py \
+            --timeline-root "$timeline" \
+            --entity-root apps/api/src/deadlock-live/entities \
+            --output "$report" \
+            --max-event-rows 250000
+          sudo chown "$(id -u):$(id -g)" "$report"
+          jq -e '.schemaVersion == 2 and .trainingPerformed == false and .futureTestEvaluated == false and .source.eventRowCountScanned > 0' "$report"
+
+          if sudo test -s "$telemetry"; then
+            sudo cp "$telemetry" "$telemetry_stage"
+            sudo chown "$(id -u):$(id -g)" "$telemetry_stage"
+          else
+            : > "$telemetry_stage"
+          fi
+          if sudo test -s "$identity"; then
+            sudo cp "$identity" "$identity_stage"
+            sudo chown "$(id -u):$(id -g)" "$identity_stage"
+          else
+            : > "$identity_stage"
+          fi
+          BEHAVIORAL_V7_TELEMETRY_PATH="$telemetry_stage" \
+          BEHAVIORAL_V7_PLAYER_IDENTITY_PATH="$identity_stage" \
+          BEHAVIORAL_V7_TELEMETRY_COMPLETENESS_PATH="$completeness" \
+            node scripts/audit-recommendation-observability-v7-telemetry-completeness.mjs
+          jq -e '.schemaVersion == 1 and .trainingPerformed == false and .futureTestEvaluated == false and .contracts.netWorthMayRepresentWallet == false and .contracts.historicalIdentityInferencePerformed == false and .identity.conflictingDatasetPlayerKeyCount == 0' "$completeness"
+
+          sudo mkdir -p "$run_output"
+          sudo install -m 0644 "$report" "$run_output/report.json"
+          sudo install -m 0644 "$completeness" "$run_output/telemetry-completeness.json"
+          if ! sudo test -s "$canonical/report.json"; then
+            sudo mkdir -p "$canonical"
+            sudo install -m 0644 "$report" "$canonical/report.json"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-behavioral-v7-observability-inventory-v2-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/recommendation-behavioral-v7-observability-v2.json
+            ${{ runner.temp }}/recommendation-observability-v7-telemetry-completeness.json
+          retention-days: 14
