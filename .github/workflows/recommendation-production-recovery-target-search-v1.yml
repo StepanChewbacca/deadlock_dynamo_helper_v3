@@ -147,7 +147,7 @@ jobs:
             --arg legacyModelSha256 "$legacy_model_sha" \
             --argjson matchingShaCount "$matching_sha_count" \
             --argjson searchTimedOut "$([ "$find_status" -eq 124 ] && echo true || echo false)" \
-            '{schemaVersion:5,generatedAt:$generatedAt,historicalRoot:$historicalRoot,evidencePath:$evidence,expectedModelSha256:$expectedModelSha256,legacyModelSha256:$legacyModelSha256,matchingKnownArtifactShaCount:$matchingShaCount,searchTimedOut:$searchTimedOut,productionMutationPerformed:false,trainingPerformed:false,futureTestEvaluated:false}' \
+            '{schemaVersion:5,generatedAt:$generatedAt,historicalRoot:$historicalRoot,evidencePath:$evidencePath,expectedModelSha256:$expectedModelSha256,legacyModelSha256:$legacyModelSha256,matchingKnownArtifactShaCount:$matchingShaCount,searchTimedOut:$searchTimedOut,productionMutationPerformed:false,trainingPerformed:false,futureTestEvaluated:false}' \
             | tee "$evidence/trace-summary.json"
 
           ln -sfn "runs/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" "$latest"
