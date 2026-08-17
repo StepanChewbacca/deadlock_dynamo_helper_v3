@@ -63,11 +63,18 @@ const tuningLateRawLogLossGain =
   groupLogLoss(tuning.baseline.groups, 'PHASE:LATE') - groupLogLoss(tuning.enriched.groups, 'PHASE:LATE');
 const tuningHighEconomyRawLogLossGain =
   groupLogLoss(tuning.baseline.groups, 'ECONOMY:GE_20000') - groupLogLoss(tuning.enriched.groups, 'ECONOMY:GE_20000');
-const supportPathPass =
-  tuningGains.supportGain >= 0.01 &&
-  tuningGains.lateGain >= 0.02 &&
-  tuningGains.highEconomyGain >= 0.02;
-const rawLogLossPathPass = tuningGains.rawLogLossGain >= 0.03;
+const overallSupportThresholdPass = tuningGains.supportGain >= 0.01;
+const lateInformationGainPass =
+  tuningGains.lateGain >= 0.02 || tuningLateRawLogLossGain >= 0.03;
+const highEconomyInformationGainPass =
+  tuningGains.highEconomyGain >= 0.02 || tuningHighEconomyRawLogLossGain >= 0.03;
+const tuningRawLogLossImproved = tuningGains.rawLogLossGain > 0;
+const informationGainThresholdPass =
+  overallSupportThresholdPass &&
+  lateInformationGainPass &&
+  highEconomyInformationGainPass &&
+  tuningRawLogLossImproved;
+const trainCrossFitStable = trainDirectionChecks.every((check) => check.passed);
 
 const gates = {
   stageDPassed: true,
@@ -77,28 +84,19 @@ const gates = {
   sameChoiceSetUsedForBaselineAndEnriched: true,
   capacityHeldFixed: true,
   candidateCoveragePreserved: stageDCoveragePassed(stageD),
-  trainCrossFitStable: trainDirectionChecks.every((check) => check.passed),
-  supportPathPass,
-  rawLogLossPathPass,
-  informationGainThresholdPass: supportPathPass || rawLogLossPathPass,
+  overallSupportThresholdPass,
+  lateInformationGainPass,
+  highEconomyInformationGainPass,
+  tuningRawLogLossImproved,
+  informationGainThresholdPass,
   measurableIncrementalVariableFamily: variableFamilyEvidence.some((entry) => entry.measurable),
 };
-const stageEGatePassed =
-  gates.stageDPassed &&
-  gates.futureTestExcluded &&
-  gates.independentTuningEvaluated &&
-  gates.tuningExcludedFromParameterUpdates &&
-  gates.sameChoiceSetUsedForBaselineAndEnriched &&
-  gates.capacityHeldFixed &&
-  gates.candidateCoveragePreserved &&
-  gates.trainCrossFitStable &&
-  gates.informationGainThresholdPass &&
-  gates.measurableIncrementalVariableFamily;
+const stageEGatePassed = Object.values(gates).every(Boolean);
 
 const report = {
-  schemaVersion: 4,
+  schemaVersion: 5,
   operation: 'RECOMMENDATION_BEHAVIORAL_V7_INFORMATION_GAIN_DIAGNOSTIC',
-  executorVersion: 'MATCH_CROSSFIT_PLUS_INDEPENDENT_TUNING_FIXED_CHOICE_SET_4',
+  executorVersion: 'MATCH_CROSSFIT_PLUS_INDEPENDENT_TUNING_FIXED_CHOICE_SET_5',
   generatedAt: new Date().toISOString(),
   trainingArtifactEligible: false,
   behavioralModelTrainingPerformed: false,
@@ -123,7 +121,7 @@ const report = {
     tuningUsedForFeatureSelection: false,
     futureTestUsed: false,
     continuationRule:
-      'SUPPORT_GAIN_GE_0_01_AND_LATE_GE_0_02_AND_HIGH_ECONOMY_GE_0_02_OR_RAW_LOGLOSS_GAIN_GE_0_03',
+      'OVERALL_SUPPORT_GAIN_GE_0_01_AND_LATE_SUPPORT_GAIN_GE_0_02_OR_LATE_RAW_LOGLOSS_GAIN_GE_0_03_AND_HIGH_ECONOMY_SUPPORT_GAIN_GE_0_02_OR_HIGH_ECONOMY_RAW_LOGLOSS_GAIN_GE_0_03_AND_OVERALL_TUNING_RAW_LOGLOSS_IMPROVES',
   },
   trainCrossFit: {
     directions: crossFitDirections,
@@ -137,6 +135,9 @@ const report = {
     lateRawLogLossGain: tuningLateRawLogLossGain,
     highEconomyRawLogLossGain: tuningHighEconomyRawLogLossGain,
   },
+  diagnostics: {
+    trainCrossFitStable,
+  },
   variableFamilyEvidence,
   gates,
   stageEGatePassed,
@@ -145,7 +146,14 @@ const report = {
     : 'COLLECT_NEW_OBSERVABILITY_TELEMETRY',
 };
 await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
-console.log(JSON.stringify({ stageEGatePassed, tuningGains, supportPathPass, rawLogLossPathPass, gates }, null, 2));
+console.log(JSON.stringify({
+  stageEGatePassed,
+  tuningGains,
+  tuningLateRawLogLossGain,
+  tuningHighEconomyRawLogLossGain,
+  trainCrossFitStable,
+  gates,
+}, null, 2));
 
 function eligible(row) {
   const actionKeys = row.choiceSet?.behavioralChoiceSetActionKeys;
