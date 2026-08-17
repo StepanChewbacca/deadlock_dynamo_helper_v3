@@ -93,9 +93,10 @@ try {
       { cwd: process.cwd(), env, encoding: 'utf8', stdio: 'pipe' },
     );
   } catch (error) {
-    missingModelFailed = String(error?.stderr ?? error?.message ?? error).includes(
-      'Unable to hash Contextual V3 artifact',
-    );
+    const failure = String(error?.stderr ?? error?.message ?? error);
+    missingModelFailed =
+      failure.includes('Required Contextual V3 artifact is missing:') &&
+      failure.includes('/model.json');
   }
   assert(missingModelFailed, 'Missing model must fail closed before deployment.');
 
