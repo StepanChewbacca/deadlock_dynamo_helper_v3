@@ -21,26 +21,35 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Stop all recommendation training workloads
+      - name: Stop all recommendation training workloads and persist local evidence
         shell: bash
         run: |
           set -euo pipefail
-          evidence="$RUNNER_TEMP/recommendation-emergency-stop-training-$GITHUB_RUN_ID"
-          mkdir -p "$evidence"
+          training_root='/home/ubuntu/apps/deadlock_dynamo_helper-training'
+          evidence_root="$training_root/emergency-stop-evidence"
+          evidence="$evidence_root/runs/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          latest="$evidence_root/latest"
+          pause_marker="$training_root/PAUSED_BY_USER"
 
-          echo "generatedAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee "$evidence/summary.txt"
+          sudo mkdir -p "$training_root" "$evidence" "$evidence_root"
+          sudo chown -R "$(id -u):$(id -g)" "$evidence_root"
+
+          generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          printf 'generatedAt=%s\nrunId=%s\nrunAttempt=%s\n' \
+            "$generated_at" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" \
+            | tee "$evidence/summary.txt"
           df -h | tee "$evidence/df-before.txt"
           sudo docker ps --no-trunc | tee "$evidence/docker-before.txt"
-          sudo systemctl list-units --type=service --all --no-legend | tee "$evidence/systemd-services-before.txt" >/dev/null
-          sudo systemctl list-units --type=timer --all --no-legend | tee "$evidence/systemd-timers-before.txt" >/dev/null
-          ps -eo pid,ppid,user,etime,args --width 300 | tee "$evidence/processes-before.txt" >/dev/null
+          sudo systemctl list-units --type=service --all --no-legend \
+            | tee "$evidence/systemd-services-before.txt" >/dev/null
+          sudo systemctl list-units --type=timer --all --no-legend \
+            | tee "$evidence/systemd-timers-before.txt" >/dev/null
+          ps -eo pid,ppid,user,etime,args --width 300 \
+            | tee "$evidence/processes-before.txt" >/dev/null
 
-          sudo mkdir -p /home/ubuntu/apps/deadlock_dynamo_helper-training
-          printf 'pausedAt=%s\npausedBy=github-actions\nreason=user-requested-emergency-stop\n' \
-            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            | sudo tee /home/ubuntu/apps/deadlock_dynamo_helper-training/PAUSED_BY_USER >/dev/null
+          printf 'pausedAt=%s\npausedBy=github-actions\nreason=user-requested-emergency-stop\nrunId=%s\n' \
+            "$generated_at" "$GITHUB_RUN_ID" \
+            | sudo tee "$pause_marker" >/dev/null
 
           mapfile -t timers < <(
             sudo systemctl list-units --type=timer --all --no-legend 2>/dev/null \
@@ -105,9 +114,12 @@ jobs:
           done
 
           sudo docker ps --no-trunc | tee "$evidence/docker-after.txt"
-          sudo systemctl list-units --type=service --state=running --no-legend | tee "$evidence/systemd-services-after.txt" >/dev/null
-          sudo systemctl list-units --type=timer --state=active --no-legend | tee "$evidence/systemd-timers-after.txt" >/dev/null
-          ps -eo pid,ppid,user,etime,args --width 300 | tee "$evidence/processes-after.txt" >/dev/null
+          sudo systemctl list-units --type=service --state=running --no-legend \
+            | tee "$evidence/systemd-services-after.txt" >/dev/null
+          sudo systemctl list-units --type=timer --state=active --no-legend \
+            | tee "$evidence/systemd-timers-after.txt" >/dev/null
+          ps -eo pid,ppid,user,etime,args --width 300 \
+            | tee "$evidence/processes-after.txt" >/dev/null
           df -h | tee "$evidence/df-after.txt"
 
           running_training_containers="$(sudo docker ps --format '{{.Names}}' | grep -Ei '(training|trainer|ablation)' || true)"
@@ -126,16 +138,13 @@ jobs:
             printf '%s\n' "$running_training_processes"
           } | tee -a "$evidence/summary.txt"
 
+          test -s "$pause_marker"
           test -z "$running_training_containers"
           test -z "$running_training_services"
           test -z "$running_training_timers"
           test -z "$running_training_processes"
 
-      - name: Upload emergency stop evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: recommendation-emergency-stop-training-${{ github.run_id }}
-          path: ${{ runner.temp }}/recommendation-emergency-stop-training-${{ github.run_id }}
-          if-no-files-found: warn
-          retention-days: 14
+          ln -sfn "runs/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" "$latest"
+          sha256sum "$pause_marker" > "$evidence/pause-marker.sha256"
+          printf 'emergencyStopPassed=true\ntrainingPaused=true\nevidencePath=%s\n' "$evidence" \
+            | tee -a "$evidence/summary.txt"
