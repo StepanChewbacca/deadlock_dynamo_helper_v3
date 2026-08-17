@@ -30,6 +30,7 @@ jobs:
           evidence="$evidence_root/runs/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           latest="$evidence_root/latest"
           pause_marker="$training_root/PAUSED_BY_USER"
+          process_pattern='(node|bash|sh|docker)[^\n]*(scripts/[^ ]*(train|training|ablation|bounded-screen)|run-[^ ]*(train|training|ablation)|train-[^ ]*recommendation|behavioral[^ ]*(train|training|ablation|bounded-screen))'
 
           sudo mkdir -p "$training_root" "$evidence" "$evidence_root"
           sudo chown -R "$(id -u):$(id -g)" "$evidence_root"
@@ -86,8 +87,8 @@ jobs:
 
           mapfile -t pids < <(
             ps -eo pid=,args= --width 300 \
-              | grep -E '/home/ubuntu/apps/deadlock_dynamo_helper-training|run-[^ ]*training|train-[^ ]*recommendation|behavioral[^ ]*ablation' \
-              | grep -Ev 'grep -E|actions-runner|Runner\.(Listener|Worker)' \
+              | grep -Ei "$process_pattern" \
+              | grep -Ev 'grep -E|actions-runner|Runner\.(Listener|Worker)|recommendation-emergency-stop-training-v1' \
               | awk '{print $1}' || true
           )
           for pid in "${pids[@]}"; do
@@ -125,7 +126,7 @@ jobs:
           running_training_containers="$(sudo docker ps --format '{{.Names}}' | grep -Ei '(training|trainer|ablation)' || true)"
           running_training_services="$(sudo systemctl list-units --type=service --state=running --no-legend 2>/dev/null | grep -Ei '(training|trainer|ablation)' || true)"
           running_training_timers="$(sudo systemctl list-units --type=timer --state=active --no-legend 2>/dev/null | grep -Ei '(training|trainer|ablation)' || true)"
-          running_training_processes="$(ps -eo pid=,args= --width 300 | grep -E '/home/ubuntu/apps/deadlock_dynamo_helper-training|run-[^ ]*training|train-[^ ]*recommendation|behavioral[^ ]*ablation' | grep -Ev 'grep -E|actions-runner|Runner\.(Listener|Worker)' || true)"
+          running_training_processes="$(ps -eo pid=,args= --width 300 | grep -Ei "$process_pattern" | grep -Ev 'grep -E|actions-runner|Runner\.(Listener|Worker)|recommendation-emergency-stop-training-v1' || true)"
 
           {
             echo '--- remaining matching containers ---'
