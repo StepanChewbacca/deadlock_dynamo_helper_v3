@@ -20,6 +20,7 @@ on:
       - 'scripts/export-recommendation-pro-decision-dataset-v7.mjs'
       - 'scripts/freeze-recommendation-pro-decision-dataset-v7-lineage.mjs'
       - 'scripts/audit-recommendation-behavioral-v7-choice-set.mjs'
+      - 'scripts/audit-recommendation-behavioral-v7-choice-set-v2.mjs'
       - 'scripts/diagnose-recommendation-behavioral-v7-information-gain*.mjs'
       - 'scripts/recommendation-behavioral-v7-evaluation.mjs'
       - 'scripts/recommendation-behavioral-v7-model-families.mjs'
@@ -53,6 +54,7 @@ jobs:
           node --check scripts/export-recommendation-pro-decision-dataset-v7.mjs
           node --check scripts/freeze-recommendation-pro-decision-dataset-v7-lineage.mjs
           node --check scripts/audit-recommendation-behavioral-v7-choice-set.mjs
+          node --check scripts/audit-recommendation-behavioral-v7-choice-set-v2.mjs
           node --check scripts/diagnose-recommendation-behavioral-v7-information-gain.mjs
           node --check scripts/diagnose-recommendation-behavioral-v7-information-gain-v2.mjs
           node --check scripts/diagnose-recommendation-behavioral-v7-information-gain-v3.mjs
@@ -83,6 +85,14 @@ jobs:
           grep -q 'nonFutureLogicalShaMatchesFullSourceProjection: true' scripts/freeze-recommendation-pro-decision-dataset-v7-lineage.mjs
           grep -q "payload.entity_type !== 'player_controller'" apps/api/src/deadlock-live/recommendation-observability-v7-raw-extractor.ts
           grep -q 'unknownAvailabilityRetained: true' scripts/audit-recommendation-behavioral-v7-choice-set.mjs
+          grep -q 'overallCoverageAtLeast099' scripts/audit-recommendation-behavioral-v7-choice-set-v2.mjs
+          grep -q 'allMajorGroupsAtLeast095' scripts/audit-recommendation-behavioral-v7-choice-set-v2.mjs
+          grep -q 'behavioralChoiceSetActionKeys: selection.actionKeys' scripts/audit-recommendation-behavioral-v7-choice-set-v2.mjs
+          grep -q 'gates?.overallCoverageAtLeast099 === true' scripts/diagnose-recommendation-behavioral-v7-information-gain-v3.mjs
+          grep -q 'gates?.allMajorGroupsAtLeast095 === true' scripts/diagnose-recommendation-behavioral-v7-information-gain-v3.mjs
+          grep -q 'const actionKeys = row.behavioralChoiceSetActionKeys' scripts/diagnose-recommendation-behavioral-v7-information-gain-v3.mjs
+          grep -q "nextAuthorizedOperation = stageEGatePassed" scripts/diagnose-recommendation-behavioral-v7-information-gain-v3.mjs
+          grep -q "'BOUNDED_BEHAVIORAL_V7_SCREEN'" scripts/diagnose-recommendation-behavioral-v7-information-gain-v3.mjs
           grep -q 'sameChoiceSetUsedForBaselineAndEnriched: true' scripts/diagnose-recommendation-behavioral-v7-information-gain.mjs
           grep -q 'tuningUsedForDiagnostic: false' scripts/diagnose-recommendation-behavioral-v7-information-gain.mjs
           grep -q "BEHAVIORAL_V7_LINEAR_FAMILY = 'LINEAR_LISTWISE_V7_OBSERVABILITY_1'" scripts/recommendation-behavioral-v7-model-families.mjs
@@ -91,6 +101,7 @@ jobs:
           grep -q "consumesV7Observability: true" scripts/recommendation-behavioral-v7-model-families.mjs
           grep -q "V7_STAGE_F_FIXED_FAMILY_COMPARISON_1" scripts/run-recommendation-behavioral-v7-bounded-screen.mjs
           grep -q 'championFamily' scripts/run-recommendation-behavioral-v7-bounded-screen.mjs
+          grep -q "stageE.nextAuthorizedOperation !== 'BOUNDED_BEHAVIORAL_V7_SCREEN'" scripts/run-recommendation-behavioral-v7-bounded-screen.mjs
           grep -q 'boundedChampionFamilyPreserved: true' scripts/run-recommendation-behavioral-v7-strict-crossfit.mjs
           grep -q 'RECOMMENDATION_BEHAVIORAL_V7_OOF_PROPENSITY_1' scripts/run-recommendation-behavioral-v7-strict-crossfit.mjs
           grep -q 'futureTestUsedForPropensity: false' scripts/run-recommendation-behavioral-v7-strict-crossfit.mjs
