@@ -20,6 +20,7 @@ ROLLBACK_SOURCE_SHA=''
 ROLLBACK_CONTAINER_ID=''
 ROLLBACK_IMAGE_ID=''
 ROLLBACK_IMAGE_REF=''
+CANDIDATE_SOURCE_SHA=''
 CANDIDATE_IMAGE_ID=''
 
 mkdir -p "$EVIDENCE_DIR"
@@ -34,6 +35,7 @@ write_state() {
     --arg phase "$1" \
     --arg productionTarget "$PRODUCTION_TARGET" \
     --arg candidateSource "$CANDIDATE_SOURCE" \
+    --arg candidateSourceSha "$CANDIDATE_SOURCE_SHA" \
     --arg rollbackSourceSha "$ROLLBACK_SOURCE_SHA" \
     --arg rollbackContainerId "$ROLLBACK_CONTAINER_ID" \
     --arg rollbackImageId "$ROLLBACK_IMAGE_ID" \
@@ -42,21 +44,28 @@ write_state() {
     --argjson mutationStarted "$MUTATION_STARTED" \
     --argjson rollbackStarted "$ROLLBACK_STARTED" \
     --argjson deploySucceeded "$DEPLOY_SUCCEEDED" \
-    '{schemaVersion:1,operation:"RECOMMENDATION_PRODUCTION_DEPLOY_WITH_ROLLBACK",deployId:$deployId,phase:$phase,productionTarget:$productionTarget,candidateSource:$candidateSource,rollbackSourceSha:$rollbackSourceSha,rollbackContainerId:$rollbackContainerId,rollbackImageId:$rollbackImageId,rollbackImageRef:$rollbackImageRef,candidateImageId:$candidateImageId,mutationStarted:$mutationStarted,rollbackStarted:$rollbackStarted,deploySucceeded:$deploySucceeded,trainingPerformed:false,valueTrainingPerformed:false,futureTestEvaluated:false}' \
+    '{schemaVersion:2,operation:"RECOMMENDATION_PRODUCTION_DEPLOY_WITH_ROLLBACK",deployId:$deployId,phase:$phase,productionTarget:$productionTarget,candidateSource:$candidateSource,candidateSourceSha:$candidateSourceSha,rollbackSourceSha:$rollbackSourceSha,rollbackContainerId:$rollbackContainerId,rollbackImageId:$rollbackImageId,rollbackImageRef:$rollbackImageRef,candidateImageId:$candidateImageId,mutationStarted:$mutationStarted,rollbackStarted:$rollbackStarted,deploySucceeded:$deploySucceeded,trainingPerformed:false,valueTrainingPerformed:false,futureTestEvaluated:false}' \
     > "$EVIDENCE_DIR/state.json"
 }
 
-require_clean_candidate() {
+require_clean_sources() {
   test -d "$CANDIDATE_SOURCE/.git"
+  test -d "$PRODUCTION_TARGET/.git"
+  test -r "$PRODUCTION_TARGET/.env"
   if [ -n "$(git -C "$CANDIDATE_SOURCE" status --porcelain)" ]; then
     echo 'Candidate source must be a clean Git checkout.' >&2
     exit 1
   fi
+  if [ -n "$(git -C "$PRODUCTION_TARGET" status --porcelain)" ]; then
+    echo 'Production source must be a clean Git checkout before rollback-safe deployment.' >&2
+    exit 1
+  fi
+  CANDIDATE_SOURCE_SHA="$(git -C "$CANDIDATE_SOURCE" rev-parse HEAD)"
+  git -C "$PRODUCTION_TARGET" fetch --no-tags origin "$CANDIDATE_SOURCE_SHA"
+  git -C "$PRODUCTION_TARGET" cat-file -e "$CANDIDATE_SOURCE_SHA^{commit}"
 }
 
 capture_rollback_target() {
-  test -d "$PRODUCTION_TARGET/.git"
-  test -r "$PRODUCTION_TARGET/.env"
   ROLLBACK_SOURCE_SHA="$(git -C "$PRODUCTION_TARGET" rev-parse HEAD)"
   ROLLBACK_CONTAINER_ID="$(cd "$PRODUCTION_TARGET" && sudo docker compose --env-file .env ps -q "$API_SERVICE" | head -n 1)"
   if [ -z "$ROLLBACK_CONTAINER_ID" ]; then
@@ -64,7 +73,7 @@ capture_rollback_target() {
     exit 1
   fi
   ROLLBACK_IMAGE_ID="$(sudo docker inspect --format='{{.Image}}' "$ROLLBACK_CONTAINER_ID")"
-  ROLLBACK_IMAGE_REF="$(cd "$PRODUCTION_TARGET" && sudo docker compose --env-file .env config --images | head -n 1)"
+  ROLLBACK_IMAGE_REF="$(sudo docker inspect --format='{{.Config.Image}}' "$ROLLBACK_CONTAINER_ID")"
   if [ -z "$ROLLBACK_IMAGE_ID" ] || [ -z "$ROLLBACK_IMAGE_REF" ]; then
     echo 'Unable to capture production API rollback image.' >&2
     exit 1
@@ -78,6 +87,37 @@ capture_rollback_target() {
   write_state 'ROLLBACK_TARGET_CAPTURED'
 }
 
+verify_endpoint() {
+  local url="$1"
+  local output="$2"
+  local error_output="$3"
+  local jq_expression="${4:-}"
+  local attempt
+  for attempt in $(seq 1 "$HEALTH_ATTEMPTS"); do
+    if curl --fail --silent --show-error "$url" > "$output" 2> "$error_output"; then
+      if [ -z "$jq_expression" ] || jq -e "$jq_expression" "$output" >/dev/null; then
+        return 0
+      fi
+    fi
+    sleep "$HEALTH_DELAY_SECONDS"
+  done
+  return 1
+}
+
+verify_current_rollback_readiness() {
+  log 'Verifying the current production state before authorizing any mutation.'
+  verify_endpoint \
+    "$API_HEALTH_URL" \
+    "$EVIDENCE_DIR/predeploy-application-health.json" \
+    "$EVIDENCE_DIR/predeploy-application-health.err"
+  verify_endpoint \
+    "$RECOMMENDATION_STATUS_URL" \
+    "$EVIDENCE_DIR/predeploy-recommendation-status.json" \
+    "$EVIDENCE_DIR/predeploy-recommendation-status.err" \
+    '.mode == "PRODUCTION" and .model.state == "READY"'
+  write_state 'ROLLBACK_TARGET_VERIFIED_READY'
+}
+
 run_preflight() {
   log 'Running Contextual V3 artifact preflight before any production mutation.'
   (
@@ -88,35 +128,22 @@ run_preflight() {
 }
 
 verify_application_health() {
-  local attempt
-  for attempt in $(seq 1 "$HEALTH_ATTEMPTS"); do
-    if curl --fail --silent --show-error "$API_HEALTH_URL" > "$EVIDENCE_DIR/application-health.json" 2> "$EVIDENCE_DIR/application-health.err"; then
-      return 0
-    fi
-    sleep "$HEALTH_DELAY_SECONDS"
-  done
-  return 1
+  verify_endpoint \
+    "$API_HEALTH_URL" \
+    "$EVIDENCE_DIR/application-health.json" \
+    "$EVIDENCE_DIR/application-health.err"
 }
 
 verify_recommendation_readiness() {
-  local attempt
-  for attempt in $(seq 1 "$HEALTH_ATTEMPTS"); do
-    if curl --fail --silent --show-error "$RECOMMENDATION_STATUS_URL" > "$EVIDENCE_DIR/recommendation-status.json" 2> "$EVIDENCE_DIR/recommendation-status.err"; then
-      if jq -e '.mode == "PRODUCTION" and .model.state == "READY"' "$EVIDENCE_DIR/recommendation-status.json" >/dev/null; then
-        return 0
-      fi
-    fi
-    sleep "$HEALTH_DELAY_SECONDS"
-  done
-  return 1
+  verify_endpoint \
+    "$RECOMMENDATION_STATUS_URL" \
+    "$EVIDENCE_DIR/recommendation-status.json" \
+    "$EVIDENCE_DIR/recommendation-status.err" \
+    '.mode == "PRODUCTION" and .model.state == "READY"'
 }
 
 restore_source() {
-  git -C "$PRODUCTION_TARGET" reset --hard "$ROLLBACK_SOURCE_SHA"
-  git -C "$PRODUCTION_TARGET" clean -fd \
-    -e .env \
-    -e storage \
-    -e 'storage/**'
+  git -C "$PRODUCTION_TARGET" checkout --detach --force "$ROLLBACK_SOURCE_SHA"
 }
 
 rollback() {
@@ -170,19 +197,17 @@ on_exit() {
 }
 trap on_exit EXIT
 
-require_clean_candidate
+require_clean_sources
 capture_rollback_target
+verify_current_rollback_readiness
 run_preflight
 
-log 'Preflight passed. Starting production source mutation.'
+log "Preflight passed. Starting production source mutation to $CANDIDATE_SOURCE_SHA."
 MUTATION_STARTED=true
 write_state 'MUTATION_STARTED'
 
-rsync -a --delete \
-  --exclude '.git/' \
-  --exclude '.env' \
-  --exclude 'storage/' \
-  "$CANDIDATE_SOURCE/" "$PRODUCTION_TARGET/"
+git -C "$PRODUCTION_TARGET" checkout --detach --force "$CANDIDATE_SOURCE_SHA"
+write_state 'CANDIDATE_SOURCE_CHECKED_OUT'
 
 (
   cd "$PRODUCTION_TARGET"
