@@ -1,0 +1,62 @@
+name: Recommendation Production Recovery Target Search V1
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/recommendation-production-recovery-target-search-v1.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  search:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'agent/recommendation-behavioral-v6-feasible-choice-set-1'
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - name: Inspect proven Contextual V3 recovery candidates
+        shell: bash
+        run: |
+          set -euo pipefail
+          root='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          evidence="$RUNNER_TEMP/contextual-v3-recovery-targets"
+          mkdir -p "$evidence"
+          test -d "$root"
+
+          sudo find "$root" -maxdepth 2 \( -iname 'contextual-v3*' -o -iname '*contextual*v3*' \) -print | sort | tee "$evidence/paths.txt"
+          : > "$evidence/files.tsv"
+          while IFS= read -r path; do
+            [ -n "$path" ] || continue
+            if sudo test -d "$path"; then
+              while IFS= read -r file; do
+                [ -n "$file" ] || continue
+                bytes="$(sudo stat -c '%s' "$file")"
+                sha="$(sudo sha256sum "$file" | awk '{print $1}')"
+                printf '%s\t%s\t%s\n' "$sha" "$bytes" "$file" >> "$evidence/files.tsv"
+              done < <(sudo find "$path" -maxdepth 2 -type f -print | sort)
+            fi
+          done < "$evidence/paths.txt"
+
+          echo '--- files ---'
+          cat "$evidence/files.tsv"
+          echo '--- exact historical anchors ---'
+          grep -F '88e3400e7bc88f0af7a6752fc4b7ea9b83af9a8a6424dff707b151e6459f10d3' "$evidence/files.tsv" || true
+          grep -F '92524cdeb1ff197d564c67f8cc4893f76e2a62c13d89175255e95ce3469d1ced' "$evidence/files.tsv" || true
+
+          jq -n \
+            --arg generatedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg readyModelSha '88e3400e7bc88f0af7a6752fc4b7ea9b83af9a8a6424dff707b151e6459f10d3' \
+            --arg rollbackCandidateSha '92524cdeb1ff197d564c67f8cc4893f76e2a62c13d89175255e95ce3469d1ced' \
+            --argjson candidatePathCount "$(wc -l < "$evidence/paths.txt")" \
+            '{schemaVersion:1,generatedAt:$generatedAt,readyModelSha:$readyModelSha,rollbackCandidateSha:$rollbackCandidateSha,candidatePathCount:$candidatePathCount,productionMutationPerformed:false,trainingPerformed:false,futureTestEvaluated:false}' \
+            | tee "$evidence/summary.json"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: recommendation-production-recovery-target-search-${{ github.run_id }}
+          path: ${{ runner.temp }}/contextual-v3-recovery-targets
+          if-no-files-found: error
+          retention-days: 14
