@@ -1,8 +1,9 @@
 import { createReadStream } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
+import { createGunzip } from 'node:zlib';
 import { createInterface } from 'node:readline';
 
-const compactPath = required('BEHAVIORAL_V7_COMPACT_ROWS_PATH');
+const datasetPath = required('BEHAVIORAL_V7_COMPACT_ROWS_PATH');
 const stageDPath = required('BEHAVIORAL_V7_STAGE_D_PATH');
 const outputPath = required('BEHAVIORAL_V7_INFORMATION_GAIN_REPORT_PATH');
 const supportProbability = 0.01;
@@ -14,7 +15,7 @@ if (!stageDContractPassed(stageD)) {
 const trainPartitions = [[], [], []];
 const tuningRows = [];
 let futureTestRowCount = 0;
-const input = createInterface({ input: createReadStream(compactPath), crlfDelay: Infinity });
+const input = createInterface({ input: openDataset(datasetPath), crlfDelay: Infinity });
 for await (const line of input) {
   if (!line.trim()) continue;
   const row = JSON.parse(line);
@@ -23,26 +24,25 @@ for await (const line of input) {
     continue;
   }
   if (!eligible(row)) continue;
+  const normalized = normalizeRow(row);
   if (row.split === 'TRAIN') {
-    trainPartitions[fnv1a32(String(row.matchId)) % trainPartitions.length].push(row);
+    trainPartitions[fnv1a32(String(row.matchId)) % trainPartitions.length].push(normalized);
   } else if (row.split === 'TUNING') {
-    tuningRows.push(row);
+    tuningRows.push(normalized);
   }
 }
 if (futureTestRowCount !== 0) {
-  throw new Error(`Compact V7 input contains FUTURE_TEST rows: ${futureTestRowCount}.`);
+  throw new Error(`Dataset V7 input contains FUTURE_TEST rows: ${futureTestRowCount}.`);
 }
 if (trainPartitions.some((rows) => rows.length < 1000)) {
-  throw new Error('All TRAIN MATCH partitions require at least 1000 eligible decisions.');
+  throw new Error('All TRAIN match partitions require at least 1000 eligible decisions.');
 }
 if (tuningRows.length < 1000) {
   throw new Error('Independent TUNING requires at least 1000 eligible decisions.');
 }
 
 const crossFitDirections = trainPartitions.map((evaluationRows, evaluationIndex) => {
-  const trainingRows = trainPartitions.flatMap((rows, index) =>
-    index === evaluationIndex ? [] : rows,
-  );
+  const trainingRows = trainPartitions.flatMap((rows, index) => index === evaluationIndex ? [] : rows);
   return evaluateDirection(trainingRows, evaluationRows, `TRAIN_OOF_${evaluationIndex}`);
 });
 const trainOof = combine(crossFitDirections);
@@ -51,7 +51,6 @@ const tuning = evaluateDirection(allTrainRows, tuningRows, 'TRAIN_TO_TUNING');
 const trainGains = calculateGains(trainOof);
 const tuningGains = calculateGains(tuning);
 const variableFamilyEvidence = evaluateVariableFamilies(allTrainRows, tuningRows, tuning.enriched);
-
 const trainDirectionChecks = crossFitDirections.map((direction) => ({
   id: direction.id,
   supportGain: direction.enriched.supportCoverage - direction.baseline.supportCoverage,
@@ -60,12 +59,15 @@ const trainDirectionChecks = crossFitDirections.map((direction) => ({
     direction.enriched.supportCoverage >= direction.baseline.supportCoverage &&
     direction.enriched.rawLogLoss <= direction.baseline.rawLogLoss + 0.01,
 }));
-
-const tuningLateLogLossGain = groupLogLoss(tuning.baseline.groups, 'PHASE:LATE') -
-  groupLogLoss(tuning.enriched.groups, 'PHASE:LATE');
-const tuningHighEconomyLogLossGain =
-  groupLogLoss(tuning.baseline.groups, 'ECONOMY:GE_20000') -
-  groupLogLoss(tuning.enriched.groups, 'ECONOMY:GE_20000');
+const tuningLateRawLogLossGain =
+  groupLogLoss(tuning.baseline.groups, 'PHASE:LATE') - groupLogLoss(tuning.enriched.groups, 'PHASE:LATE');
+const tuningHighEconomyRawLogLossGain =
+  groupLogLoss(tuning.baseline.groups, 'ECONOMY:GE_20000') - groupLogLoss(tuning.enriched.groups, 'ECONOMY:GE_20000');
+const supportPathPass =
+  tuningGains.supportGain >= 0.01 &&
+  tuningGains.lateGain >= 0.02 &&
+  tuningGains.highEconomyGain >= 0.02;
+const rawLogLossPathPass = tuningGains.rawLogLossGain >= 0.03;
 
 const gates = {
   stageDPassed: true,
@@ -76,19 +78,27 @@ const gates = {
   capacityHeldFixed: true,
   candidateCoveragePreserved: stageDCoveragePassed(stageD),
   trainCrossFitStable: trainDirectionChecks.every((check) => check.passed),
-  tuningSupportGainAtLeast001: tuningGains.supportGain >= 0.01,
-  tuningLateGain:
-    tuningGains.lateGain >= 0.02 || tuningLateLogLossGain >= 0.03,
-  tuningHighEconomyGain:
-    tuningGains.highEconomyGain >= 0.02 || tuningHighEconomyLogLossGain >= 0.03,
+  supportPathPass,
+  rawLogLossPathPass,
+  informationGainThresholdPass: supportPathPass || rawLogLossPathPass,
   measurableIncrementalVariableFamily: variableFamilyEvidence.some((entry) => entry.measurable),
 };
-const stageEGatePassed = Object.values(gates).every(Boolean);
+const stageEGatePassed =
+  gates.stageDPassed &&
+  gates.futureTestExcluded &&
+  gates.independentTuningEvaluated &&
+  gates.tuningExcludedFromParameterUpdates &&
+  gates.sameChoiceSetUsedForBaselineAndEnriched &&
+  gates.capacityHeldFixed &&
+  gates.candidateCoveragePreserved &&
+  gates.trainCrossFitStable &&
+  gates.informationGainThresholdPass &&
+  gates.measurableIncrementalVariableFamily;
 
 const report = {
   schemaVersion: 4,
   operation: 'RECOMMENDATION_BEHAVIORAL_V7_INFORMATION_GAIN_DIAGNOSTIC',
-  executorVersion: 'MATCH_CROSSFIT_PLUS_INDEPENDENT_TUNING_CONDITIONAL_PRIOR_GAIN_4',
+  executorVersion: 'MATCH_CROSSFIT_PLUS_INDEPENDENT_TUNING_FIXED_CHOICE_SET_4',
   generatedAt: new Date().toISOString(),
   trainingArtifactEligible: false,
   behavioralModelTrainingPerformed: false,
@@ -97,7 +107,7 @@ const report = {
   tuningEvaluated: true,
   tuningUsedForParameterUpdates: false,
   source: {
-    compactPath,
+    datasetPath,
     stageDPath,
     trainPartitionDecisionCounts: trainPartitions.map((rows) => rows.length),
     tuningDecisionCount: tuningRows.length,
@@ -112,13 +122,20 @@ const report = {
     independentTuningMatches: true,
     tuningUsedForFeatureSelection: false,
     futureTestUsed: false,
+    continuationRule:
+      'SUPPORT_GAIN_GE_0_01_AND_LATE_GE_0_02_AND_HIGH_ECONOMY_GE_0_02_OR_RAW_LOGLOSS_GAIN_GE_0_03',
   },
-  trainCrossFit: { directions: crossFitDirections, aggregate: trainOof, gains: trainGains, directionChecks: trainDirectionChecks },
+  trainCrossFit: {
+    directions: crossFitDirections,
+    aggregate: trainOof,
+    gains: trainGains,
+    directionChecks: trainDirectionChecks,
+  },
   tuning: {
     evaluation: tuning,
     gains: tuningGains,
-    lateRawLogLossGain: tuningLateLogLossGain,
-    highEconomyRawLogLossGain: tuningHighEconomyLogLossGain,
+    lateRawLogLossGain: tuningLateRawLogLossGain,
+    highEconomyRawLogLossGain: tuningHighEconomyRawLogLossGain,
   },
   variableFamilyEvidence,
   gates,
@@ -128,15 +145,20 @@ const report = {
     : 'COLLECT_NEW_OBSERVABILITY_TELEMETRY',
 };
 await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
-console.log(JSON.stringify({ stageEGatePassed, tuningGains, gates }, null, 2));
+console.log(JSON.stringify({ stageEGatePassed, tuningGains, supportPathPass, rawLogLossPathPass, gates }, null, 2));
 
 function eligible(row) {
+  const actionKeys = row.choiceSet?.behavioralChoiceSetActionKeys;
   return row.eligibility?.behavioralModel === true &&
-    Array.isArray(row.behavioralChoiceSetActionKeys) &&
-    row.behavioralChoiceSetActionKeys.length >= 2 &&
-    row.behavioralChoiceSetActionKeys.includes(row.observedActionKey);
+    Array.isArray(actionKeys) && actionKeys.length >= 2 &&
+    actionKeys.map(String).includes(String(row.observedActionKey));
 }
-
+function normalizeRow(row) {
+  return {
+    ...row,
+    behavioralChoiceSetActionKeys: row.choiceSet.behavioralChoiceSetActionKeys.map(String),
+  };
+}
 function evaluateDirection(trainingRows, evaluationRows, id) {
   const baselineCounts = buildCounts(trainingRows, false);
   const enrichedCounts = buildCounts(trainingRows, true);
@@ -148,7 +170,6 @@ function evaluateDirection(trainingRows, evaluationRows, id) {
     enriched: evaluate(evaluationRows, enrichedCounts, true),
   };
 }
-
 function evaluateVariableFamilies(trainingRows, evaluationRows, fullEnrichedMetric) {
   const fieldNames = [...new Set(trainingRows.flatMap((row) =>
     (row.observability ?? []).filter((entry) => entry.missing !== true).map((entry) => String(entry.fieldName)),
@@ -166,7 +187,6 @@ function evaluateVariableFamilies(trainingRows, evaluationRows, fullEnrichedMetr
     };
   });
 }
-
 function buildCounts(rows, enriched, excludedFieldName) {
   const groups = new Map();
   for (const row of rows) {
@@ -177,7 +197,6 @@ function buildCounts(rows, enriched, excludedFieldName) {
   }
   return groups;
 }
-
 function evaluate(rows, counts, enriched, excludedFieldName) {
   const metric = emptyMetric();
   for (const row of rows) {
@@ -192,7 +211,6 @@ function evaluate(rows, counts, enriched, excludedFieldName) {
   }
   return finalize(metric);
 }
-
 function probabilities(actionKeys, counts) {
   const alpha = 0.25;
   const totalObserved = counts ? [...counts.values()].reduce((sum, value) => sum + value, 0) : 0;
@@ -202,7 +220,6 @@ function probabilities(actionKeys, counts) {
     ((counts?.get(actionKey) ?? 0) + alpha) / Math.max(denominator, alpha * actionKeys.length),
   ]));
 }
-
 function stateKey(row, enriched, excludedFieldName) {
   const base = [
     `H=${row.state.heroId}`,
@@ -215,11 +232,13 @@ function stateKey(row, enriched, excludedFieldName) {
   if (!enriched) return base.join('|');
   const observability = (row.observability ?? [])
     .filter((entry) => entry.missing !== true && String(entry.fieldName) !== excludedFieldName)
-    .map((entry) => `${entry.fieldName}=${entry.value}`)
+    .map((entry) => `${entry.fieldName}=${stableValue(entry.value)}`)
     .sort();
   return [...base, ...observability].join('|');
 }
-
+function stableValue(value) {
+  return typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value);
+}
 function calculateGains(value) {
   return {
     supportGain: value.enriched.supportCoverage - value.baseline.supportCoverage,
@@ -228,23 +247,24 @@ function calculateGains(value) {
     highEconomyGain: groupSupport(value.enriched.groups, 'ECONOMY:GE_20000') - groupSupport(value.baseline.groups, 'ECONOMY:GE_20000'),
   };
 }
-
 function stageDContractPassed(value) {
   const gates = value?.gates;
   return value?.schemaVersion === 3 &&
     value?.operation === 'RECOMMENDATION_BEHAVIORAL_V7_FEASIBLE_CHOICE_SET_AUDIT' &&
     value?.stageDGatePassed === true &&
     value?.futureTestEvaluated === false &&
-    gates?.overallCoverageAtLeast099 === true &&
-    gates?.allMajorGroupsAtLeast095 === true &&
-    gates?.exactRankingSemantics === true &&
+    gates?.overallCandidateCoveragePass === true &&
+    gates?.allMajorGroupCoveragePass === true &&
+    gates?.overallDecisionCoveragePass === true &&
+    gates?.allMajorGroupDecisionCoveragePass === true &&
+    gates?.exactRankingSemanticsPass === true &&
     gates?.futureTestExcluded === true;
 }
-
-function stageDCoveragePassed(value) {
-  return stageDContractPassed(value);
+function stageDCoveragePassed(value) { return stageDContractPassed(value); }
+function openDataset(path) {
+  const stream = createReadStream(path);
+  return path.endsWith('.gz') ? stream.pipe(createGunzip()) : stream;
 }
-
 function emptyMetric() { return { decisions: 0, support: 0, top1: 0, loss: 0, groups: new Map() }; }
 function observe(metric, row, probability, top1) {
   metric.decisions += 1;
@@ -274,10 +294,12 @@ function finalize(metric) {
   };
 }
 function combine(directions) {
-  return { baseline: combineMetrics(directions.map((value) => value.baseline)), enriched: combineMetrics(directions.map((value) => value.enriched)) };
+  return {
+    baseline: combineMetrics(directions.map((value) => value.baseline)),
+    enriched: combineMetrics(directions.map((value) => value.enriched)),
+  };
 }
 function combineMetrics(metrics) {
-  const total = metrics.reduce((sum, metric) => sum + metric.decisionCount, 0);
   const groups = new Map();
   for (const metric of metrics) {
     for (const group of metric.groups) {
@@ -289,18 +311,25 @@ function combineMetrics(metrics) {
     }
   }
   return {
-    decisionCount: total,
+    decisionCount: metrics.reduce((sum, metric) => sum + metric.decisionCount, 0),
     supportCoverage: weighted(metrics, 'supportCoverage'),
     rawLogLoss: weighted(metrics, 'rawLogLoss'),
     top1Rate: weighted(metrics, 'top1Rate'),
-    groups: [...groups.entries()].map(([key, value]) => ({ key, decisionCount: value.decisions, supportCoverage: ratio(value.support, value.decisions), rawLogLoss: ratio(value.loss, value.decisions) })),
+    groups: [...groups.entries()].map(([key, value]) => ({
+      key,
+      decisionCount: value.decisions,
+      supportCoverage: ratio(value.support, value.decisions),
+      rawLogLoss: ratio(value.loss, value.decisions),
+    })),
   };
 }
 function weighted(metrics, field) {
   const total = metrics.reduce((sum, metric) => sum + metric.decisionCount, 0);
   return ratio(metrics.reduce((sum, metric) => sum + metric[field] * metric.decisionCount, 0), total);
 }
-function groupKeys(row) { return [`PHASE:${row.state.phase}`, `ECONOMY:${economyBand(Number(row.state.netWorth))}`]; }
+function groupKeys(row) {
+  return [`PHASE:${row.state.phase}`, `ECONOMY:${economyBand(Number(row.state.netWorth))}`];
+}
 function groupSupport(groups, key) { return groups.find((group) => group.key === key)?.supportCoverage ?? 0; }
 function groupLogLoss(groups, key) { return groups.find((group) => group.key === key)?.rawLogLoss ?? Number.POSITIVE_INFINITY; }
 function economyBand(value) {
