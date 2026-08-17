@@ -1,4 +1,5 @@
 name: Recommendation Production Contextual V3 Env Inventory V1
+# Read-only production contract evidence. No application or training mutation.
 
 on:
   pull_request:
