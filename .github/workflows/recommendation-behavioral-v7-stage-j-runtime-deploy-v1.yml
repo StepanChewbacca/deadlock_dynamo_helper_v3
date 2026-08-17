@@ -5,6 +5,8 @@ on:
     paths:
       - 'scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs'
       - 'scripts/verify-recommendation-behavioral-v7-full.mjs'
+      - 'scripts/verify-contextual-v3-production-artifact-bundle.mjs'
+      - 'scripts/test-contextual-v3-production-artifact-bundle.mjs'
       - '.github/workflows/recommendation-behavioral-v7-stage-j-runtime-deploy-v1.yml'
 
 permissions:
@@ -29,6 +31,9 @@ jobs:
           set -euo pipefail
           node --check scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs
           node --check scripts/verify-recommendation-behavioral-v7-full.mjs
+          node --check scripts/verify-contextual-v3-production-artifact-bundle.mjs
+          node --check scripts/test-contextual-v3-production-artifact-bundle.mjs
+          node scripts/test-contextual-v3-production-artifact-bundle.mjs
           grep -q "operation === 'STATUS'" scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs
           grep -q "operation === 'STAGE'" scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs
           grep -q "operation === 'ROLLBACK'" scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs
@@ -38,10 +43,12 @@ jobs:
           grep -q 'atomicPointerSwap: true' scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs
           grep -q 'productionApiRestarted: false' scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs
           grep -q 'productionRankingChanged: false' scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs
+          grep -q 'productionMutationPerformed: false' scripts/verify-contextual-v3-production-artifact-bundle.mjs
+          grep -q 'trainingPerformed: false' scripts/verify-contextual-v3-production-artifact-bundle.mjs
 
   deploy:
     if: ${{ false }}
     needs: validate
     runs-on: [self-hosted, vps-arm64-runner]
     steps:
-      - run: echo 'Recommendation Behavioral V7 runtime deploy remains paused; static staging and rollback code only.'
+      - run: echo 'Recommendation Behavioral V7 runtime deploy remains paused; static staging, preflight and rollback code only.'
