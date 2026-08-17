@@ -92,10 +92,46 @@ jobs:
           node scripts/audit-recommendation-behavioral-v7-choice-set.mjs
           jq -e '.schemaVersion == 3 and .stageDGatePassed == true and .futureTestEvaluated == false and .gates.overallCandidateCoveragePass == true and .gates.allMajorGroupCoveragePass == true and .gates.overallDecisionCoveragePass == true and .gates.allMajorGroupDecisionCoveragePass == true and .gates.exactRankingSemanticsPass == true and .gates.futureTestExcluded == true' "$BEHAVIORAL_V7_CHOICE_SET_REPORT_PATH"
 
+      - name: Compact Dataset V7 for Stage E diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import gzip
+          import json
+          import os
+
+          source = os.path.join(os.environ['RUNNER_TEMP'], 'dataset-v7.ndjson.gz')
+          target = os.path.join(os.environ['RUNNER_TEMP'], 'dataset-v7-stage-e.ndjson.gz')
+          kept = 0
+          with gzip.open(source, 'rt', encoding='utf-8') as src, gzip.open(target, 'wt', encoding='utf-8', compresslevel=6) as dst:
+              for line in src:
+                  if not line.strip():
+                      continue
+                  row = json.loads(line)
+                  compact = {
+                      'split': row.get('split'),
+                      'matchId': row.get('matchId'),
+                      'observedActionKey': row.get('observedActionKey'),
+                      'eligibility': row.get('eligibility'),
+                      'choiceSet': {
+                          'behavioralChoiceSetActionKeys': (row.get('choiceSet') or {}).get('behavioralChoiceSetActionKeys', []),
+                      },
+                      'state': row.get('state'),
+                      'observability': row.get('observability'),
+                  }
+                  dst.write(json.dumps(compact, separators=(',', ':')) + '\n')
+                  kept += 1
+          if kept == 0:
+              raise SystemExit('Stage E compact dataset is empty.')
+          print(json.dumps({'compactDecisionCount': kept, 'target': target}))
+          PY
+          test -s "$RUNNER_TEMP/dataset-v7-stage-e.ndjson.gz"
+
       - name: Run Stage E information-gain stop gate
         shell: bash
         env:
-          BEHAVIORAL_V7_COMPACT_ROWS_PATH: ${{ runner.temp }}/dataset-v7.ndjson.gz
+          BEHAVIORAL_V7_COMPACT_ROWS_PATH: ${{ runner.temp }}/dataset-v7-stage-e.ndjson.gz
           BEHAVIORAL_V7_STAGE_D_PATH: ${{ runner.temp }}/stage-d.json
           BEHAVIORAL_V7_INFORMATION_GAIN_REPORT_PATH: ${{ runner.temp }}/stage-e.json
         run: |
