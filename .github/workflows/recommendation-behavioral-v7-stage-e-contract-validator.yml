@@ -1,0 +1,32 @@
+name: Recommendation Behavioral V7 Stage E Contract Validator
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/audit-recommendation-behavioral-v7-choice-set-v2.mjs'
+      - 'scripts/diagnose-recommendation-behavioral-v7-information-gain-v3.mjs'
+      - 'scripts/run-recommendation-behavioral-v7-bounded-screen.mjs'
+      - 'scripts/test-recommendation-behavioral-v7-stage-e-contract.mjs'
+      - '.github/workflows/recommendation-behavioral-v7-stage-e-contract-validator.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate Stage D to E to F contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check scripts/audit-recommendation-behavioral-v7-choice-set-v2.mjs
+          node --check scripts/diagnose-recommendation-behavioral-v7-information-gain-v3.mjs
+          node --check scripts/run-recommendation-behavioral-v7-bounded-screen.mjs
+          node --check scripts/test-recommendation-behavioral-v7-stage-e-contract.mjs
+          node scripts/test-recommendation-behavioral-v7-stage-e-contract.mjs
