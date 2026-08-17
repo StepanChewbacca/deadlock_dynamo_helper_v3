@@ -7,16 +7,21 @@ const datasetPath = required('BEHAVIORAL_V7_DATASET_PATH');
 const outputPath = required('BEHAVIORAL_V7_CHOICE_SET_REPORT_PATH');
 const referencePath = process.env.BEHAVIORAL_V6_TOP96_REPORT_PATH?.trim();
 const majorGroupMinDecisions = 100;
+const minimumOverallCoverage = 0.99;
+const minimumMajorGroupCoverage = 0.95;
+const expectedDefinition = 'V7_OBSERVED_AVAILABILITY_TOP96_1';
 
 const groups = new Map();
 const candidateCounts = [];
 let selectedRowCount = 0;
-let observedCoveredCount = 0;
+let candidateCoveredCount = 0;
+let decisionCoveredCount = 0;
 let futureTestRowCount = 0;
 let availabilityAwareDecisionCount = 0;
 let unavailableCandidateCount = 0;
 let availabilityEvaluatedCandidateCount = 0;
 let observedActionInjectionViolationCount = 0;
+let rankingSemanticViolationCount = 0;
 
 const input = createInterface({ input: openDataset(datasetPath), crlfDelay: Infinity });
 for await (const line of input) {
@@ -27,23 +32,36 @@ for await (const line of input) {
     futureTestRowCount += 1;
     continue;
   }
+
   selectedRowCount += 1;
-  if (
-    row.choiceSet?.observedActionInjected === true ||
-    row.choiceSet?.selectedAfterObservedAction === true
-  ) {
+  const coverageUniverse = new Set(row.candidates.map((candidate) => String(candidate.actionKey)));
+  const candidateCovered = coverageUniverse.has(String(row.observedActionKey));
+  candidateCoveredCount += candidateCovered ? 1 : 0;
+
+  if (row.choiceSet?.observedActionInjected === true || row.choiceSet?.selectedAfterObservedAction === true) {
     observedActionInjectionViolationCount += 1;
   }
-  const selection = selectActionKeys(row.candidates);
-  candidateCounts.push(selection.actionKeys.length);
-  availabilityAwareDecisionCount +=
-    selection.availabilityEvaluatedCount > 0 ? 1 : 0;
-  unavailableCandidateCount += selection.unavailableCount;
-  availabilityEvaluatedCandidateCount += selection.availabilityEvaluatedCount;
-  const covered = selection.actionKeys.includes(row.observedActionKey);
-  observedCoveredCount += covered ? 1 : 0;
+
+  const expected = selectActionKeys(row.candidates);
+  const persisted = (row.choiceSet?.behavioralChoiceSetActionKeys ?? []).map(String);
+  const exactRankingSemantics =
+    row.choiceSet?.behavioralChoiceSetDefinition === expectedDefinition &&
+    arraysEqual(persisted, expected.actionKeys) &&
+    arraysEqual(
+      (row.choiceSet?.coverageUniverseActionKeys ?? []).map(String),
+      row.candidates.map((candidate) => String(candidate.actionKey)),
+    );
+  rankingSemanticViolationCount += exactRankingSemantics ? 0 : 1;
+
+  candidateCounts.push(expected.actionKeys.length);
+  availabilityAwareDecisionCount += expected.availabilityEvaluatedCount > 0 ? 1 : 0;
+  unavailableCandidateCount += expected.unavailableCount;
+  availabilityEvaluatedCandidateCount += expected.availabilityEvaluatedCount;
+
+  const decisionCovered = expected.actionKeys.includes(String(row.observedActionKey));
+  decisionCoveredCount += decisionCovered ? 1 : 0;
   for (const key of groupKeys(row)) {
-    observeGroup(groups, key, covered, selection.actionKeys.length);
+    observeGroup(groups, key, candidateCovered, decisionCovered, expected.actionKeys.length);
   }
 }
 
@@ -51,28 +69,40 @@ const groupMetrics = [...groups.entries()]
   .map(([key, value]) => ({
     key,
     decisionCount: value.decisions,
-    observedActionCoverage: value.covered / value.decisions,
-    meanCandidateCount: value.candidateCountSum / value.decisions,
+    candidateCoverage: ratio(value.candidateCovered, value.decisions),
+    observedActionCoverage: ratio(value.decisionCovered, value.decisions),
+    meanCandidateCount: ratio(value.candidateCountSum, value.decisions),
     major: value.decisions >= majorGroupMinDecisions,
   }))
-  .sort((left, right) =>
-    left.key.localeCompare(right.key, undefined, { numeric: true }),
-  );
-const majorLowCoverageGroups = groupMetrics.filter(
-  (group) => group.major && group.observedActionCoverage < 0.95,
+  .sort((left, right) => left.key.localeCompare(right.key, undefined, { numeric: true }));
+
+const majorCandidateLowCoverageGroups = groupMetrics.filter(
+  (group) => group.major && group.candidateCoverage < minimumMajorGroupCoverage,
 );
-const overallCoverage = ratio(observedCoveredCount, selectedRowCount);
-const availabilityMode =
-  availabilityAwareDecisionCount > 0
-    ? 'OBSERVED_AVAILABILITY_FILTER_TOP96'
-    : 'NO_AVAILABILITY_SIGNAL_KEEP_TOP96';
-const reference = referencePath
-  ? JSON.parse(await readFile(referencePath, 'utf8'))
-  : undefined;
+const majorDecisionLowCoverageGroups = groupMetrics.filter(
+  (group) => group.major && group.observedActionCoverage < minimumMajorGroupCoverage,
+);
+const overallCandidateCoverage = ratio(candidateCoveredCount, selectedRowCount);
+const overallDecisionCoverage = ratio(decisionCoveredCount, selectedRowCount);
+const availabilityMode = availabilityAwareDecisionCount > 0
+  ? 'OBSERVED_AVAILABILITY_FILTER_TOP96'
+  : 'NO_AVAILABILITY_SIGNAL_KEEP_TOP96';
+const reference = referencePath ? JSON.parse(await readFile(referencePath, 'utf8')) : undefined;
+
+const gates = {
+  overallCandidateCoveragePass: overallCandidateCoverage >= minimumOverallCoverage,
+  allMajorGroupCoveragePass: majorCandidateLowCoverageGroups.length === 0,
+  overallDecisionCoveragePass: overallDecisionCoverage >= minimumOverallCoverage,
+  allMajorGroupDecisionCoveragePass: majorDecisionLowCoverageGroups.length === 0,
+  exactRankingSemanticsPass:
+    rankingSemanticViolationCount === 0 && observedActionInjectionViolationCount === 0,
+  futureTestExcluded: futureTestRowCount === 0,
+};
+
 const report = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   operation: 'RECOMMENDATION_BEHAVIORAL_V7_FEASIBLE_CHOICE_SET_AUDIT',
-  executorVersion: 'V7_OBSERVED_AVAILABILITY_OR_SAFE_TOP96_AUDIT_2',
+  executorVersion: 'V7_EXACT_RANKING_CANDIDATE_AND_DECISION_COVERAGE_3',
   trainingPerformed: false,
   valueTrainingPerformed: false,
   futureTestEvaluated: false,
@@ -82,9 +112,12 @@ const report = {
     unknownAvailabilityRetained: true,
     explicitlyUnavailableRemovedOnlyWhenObserved: true,
     noAvailabilitySignalPreservesSafeTop96: true,
+    exactRankingSemantics: 'RANK_ASC_GENERATOR_SCORE_DESC_ACTION_KEY_ASC_FILTER_OBSERVED_UNAVAILABLE_THEN_TOP96',
     maximumCandidates: 96,
-    minimumOverallObservedActionCoverage: 0.99,
-    minimumMajorGroupObservedActionCoverage: 0.95,
+    minimumOverallCandidateCoverage: minimumOverallCoverage,
+    minimumMajorGroupCandidateCoverage: minimumMajorGroupCoverage,
+    minimumOverallDecisionCoverage: minimumOverallCoverage,
+    minimumMajorGroupDecisionCoverage: minimumMajorGroupCoverage,
   },
   source: {
     datasetPath,
@@ -93,48 +126,33 @@ const report = {
     futureTestRowCount,
   },
   metrics: {
-    observedActionCoverage: overallCoverage,
-    observedCoveredCount,
+    candidateCoverage: overallCandidateCoverage,
+    observedActionCoverage: overallDecisionCoverage,
+    candidateCoveredCount,
+    observedCoveredCount: decisionCoveredCount,
     availabilityAwareDecisionCount,
-    availabilityAwareDecisionRate: ratio(
-      availabilityAwareDecisionCount,
-      selectedRowCount,
-    ),
+    availabilityAwareDecisionRate: ratio(availabilityAwareDecisionCount, selectedRowCount),
     availabilityEvaluatedCandidateCount,
     unavailableCandidateCount,
+    observedActionInjectionViolationCount,
+    rankingSemanticViolationCount,
     candidateCount: distribution(candidateCounts),
-    majorLowCoverageGroupCount: majorLowCoverageGroups.length,
-    majorLowCoverageGroups,
+    majorCandidateLowCoverageGroupCount: majorCandidateLowCoverageGroups.length,
+    majorDecisionLowCoverageGroupCount: majorDecisionLowCoverageGroups.length,
+    majorCandidateLowCoverageGroups,
+    majorDecisionLowCoverageGroups,
     groups: groupMetrics,
   },
   reference: summarizeReference(reference),
-  gates: {
-    futureTestExcluded: futureTestRowCount === 0,
-    observedActionNeverInjected: observedActionInjectionViolationCount === 0,
-    overallCoverageAtLeast099: overallCoverage >= 0.99,
-    allMajorGroupsAtLeast095: majorLowCoverageGroups.length === 0,
-    availabilityModeExplicitlyDocumented:
-      availabilityMode === 'OBSERVED_AVAILABILITY_FILTER_TOP96' ||
-      availabilityMode === 'NO_AVAILABILITY_SIGNAL_KEEP_TOP96',
-  },
+  gates,
 };
-report.stageDGatePassed = Object.values(report.gates).every(Boolean);
+report.stageDGatePassed = Object.values(gates).every(Boolean);
 report.nextStep = report.stageDGatePassed
-  ? 'RUN_INFORMATION_GAIN_GATE'
+  ? 'RUN_INFORMATION_GAIN_GATE_V3'
   : 'REVISE_V7_CHOICE_SET_WITHOUT_OBSERVED_ACTION_INJECTION';
+
 await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
-console.log(
-  JSON.stringify(
-    {
-      stageDGatePassed: report.stageDGatePassed,
-      availabilityMode,
-      metrics: report.metrics,
-      gates: report.gates,
-    },
-    null,
-    2,
-  ),
-);
+console.log(JSON.stringify({ stageDGatePassed: report.stageDGatePassed, availabilityMode, metrics: report.metrics, gates }, null, 2));
 
 function selectActionKeys(candidates) {
   const ordered = [...candidates].sort(
@@ -147,20 +165,17 @@ function selectActionKeys(candidates) {
     (candidate) => candidate.feasibility?.evaluated === true,
   ).length;
   const unavailableCount = ordered.filter(
-    (candidate) =>
-      candidate.feasibility?.evaluated === true &&
-      candidate.feasibility?.feasible === false,
+    (candidate) => candidate.feasibility?.evaluated === true && candidate.feasibility?.feasible === false,
   ).length;
   const actionKeys = ordered
     .filter(
-      (candidate) =>
-        candidate.feasibility?.evaluated !== true ||
-        candidate.feasibility?.feasible === true,
+      (candidate) => candidate.feasibility?.evaluated !== true || candidate.feasibility?.feasible === true,
     )
     .slice(0, 96)
     .map((candidate) => String(candidate.actionKey));
   return { actionKeys, availabilityEvaluatedCount, unavailableCount };
 }
+
 function groupKeys(row) {
   const gameTimeS = Number(row.state?.gameTimeS ?? 0);
   const netWorth = Number(row.state?.netWorth);
@@ -179,14 +194,11 @@ function economyBand(value) {
   if (value < 20000) return '15000_19999';
   return 'GE_20000';
 }
-function observeGroup(map, key, covered, candidateCount) {
-  const value = map.get(key) ?? {
-    decisions: 0,
-    covered: 0,
-    candidateCountSum: 0,
-  };
+function observeGroup(map, key, candidateCovered, decisionCovered, candidateCount) {
+  const value = map.get(key) ?? { decisions: 0, candidateCovered: 0, decisionCovered: 0, candidateCountSum: 0 };
   value.decisions += 1;
-  value.covered += covered ? 1 : 0;
+  value.candidateCovered += candidateCovered ? 1 : 0;
+  value.decisionCovered += decisionCovered ? 1 : 0;
   value.candidateCountSum += candidateCount;
   map.set(key, value);
 }
@@ -203,7 +215,7 @@ function distribution(values) {
     p50: quantile(sorted, 0.5),
     p95: quantile(sorted, 0.95),
     max: sorted[sorted.length - 1],
-    mean: sorted.reduce((sum, value) => sum + value, 0) / sorted.length,
+    mean: ratio(sorted.reduce((sum, value) => sum + value, 0), sorted.length),
   };
 }
 function quantile(sorted, q) {
@@ -217,28 +229,20 @@ function summarizeReference(reference) {
   if (!reference) return undefined;
   return {
     operation: reference.operation,
-    selectedDefinition:
-      reference.selectedDefinition ?? reference.selected?.definition,
-    observedActionCoverage:
-      reference.selected?.observedActionCoverage ??
-      reference.observedActionCoverage,
-    candidateCount:
-      reference.selected?.candidateCount ?? reference.candidateCount,
+    selectedDefinition: reference.selectedDefinition ?? reference.selected?.definition,
+    observedActionCoverage: reference.selected?.observedActionCoverage ?? reference.observedActionCoverage,
+    candidateCount: reference.selected?.candidateCount ?? reference.candidateCount,
   };
 }
 function assertV7Row(row) {
-  if (
-    row?.schemaVersion !== 1 ||
-    row?.datasetVersion !==
-      'RECOMMENDATION_PRO_DECISION_DATASET_V7_OBSERVABILITY_1' ||
-    !Array.isArray(row?.candidates)
-  ) {
+  if (row?.schemaVersion !== 1 || row?.datasetVersion !== 'RECOMMENDATION_PRO_DECISION_DATASET_V7_OBSERVABILITY_1' || !Array.isArray(row?.candidates)) {
     throw new Error('Unsupported Dataset V7 row.');
   }
 }
-function ratio(numerator, denominator) {
-  return denominator > 0 ? numerator / denominator : 0;
+function arraysEqual(left, right) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
+function ratio(numerator, denominator) { return denominator > 0 ? numerator / denominator : 0; }
 function required(name) {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`Missing ${name}.`);
