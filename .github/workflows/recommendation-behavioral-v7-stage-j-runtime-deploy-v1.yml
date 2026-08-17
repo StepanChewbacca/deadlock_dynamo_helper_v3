@@ -7,6 +7,8 @@ on:
       - 'scripts/verify-recommendation-behavioral-v7-full.mjs'
       - 'scripts/verify-contextual-v3-production-artifact-bundle.mjs'
       - 'scripts/test-contextual-v3-production-artifact-bundle.mjs'
+      - 'scripts/summarize-contextual-v3-recovery-verdict.mjs'
+      - 'scripts/test-contextual-v3-recovery-verdict.mjs'
       - 'scripts/deploy-recommendation-production-with-rollback-v1.sh'
       - '.github/workflows/recommendation-behavioral-v7-stage-j-runtime-deploy-v1.yml'
 
@@ -34,7 +36,10 @@ jobs:
           node --check scripts/verify-recommendation-behavioral-v7-full.mjs
           node --check scripts/verify-contextual-v3-production-artifact-bundle.mjs
           node --check scripts/test-contextual-v3-production-artifact-bundle.mjs
+          node --check scripts/summarize-contextual-v3-recovery-verdict.mjs
+          node --check scripts/test-contextual-v3-recovery-verdict.mjs
           node scripts/test-contextual-v3-production-artifact-bundle.mjs
+          node scripts/test-contextual-v3-recovery-verdict.mjs
           bash -n scripts/deploy-recommendation-production-with-rollback-v1.sh
           grep -q "operation === 'STATUS'" scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs
           grep -q "operation === 'STAGE'" scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs
@@ -47,6 +52,9 @@ jobs:
           grep -q 'productionRankingChanged: false' scripts/prepare-recommendation-behavioral-v7-runtime-release.mjs
           grep -q 'productionMutationPerformed: false' scripts/verify-contextual-v3-production-artifact-bundle.mjs
           grep -q 'trainingPerformed: false' scripts/verify-contextual-v3-production-artifact-bundle.mjs
+          grep -q 'ARTIFACT_UNAVAILABLE_FROM_DISCOVERED_RECOVERY_SOURCES' scripts/summarize-contextual-v3-recovery-verdict.mjs
+          grep -q 'retrainingAuthorized: false' scripts/summarize-contextual-v3-recovery-verdict.mjs
+          grep -q 'productionMutationAuthorized: false' scripts/summarize-contextual-v3-recovery-verdict.mjs
           grep -q 'verify_current_rollback_readiness' scripts/deploy-recommendation-production-with-rollback-v1.sh
           grep -q 'run_preflight' scripts/deploy-recommendation-production-with-rollback-v1.sh
           grep -q 'ROLLBACK_STARTED=true' scripts/deploy-recommendation-production-with-rollback-v1.sh
@@ -58,4 +66,4 @@ jobs:
     needs: validate
     runs-on: [self-hosted, vps-arm64-runner]
     steps:
-      - run: echo 'Recommendation Behavioral V7 runtime deploy remains paused; static staging, Contextual V3 preflight and production rollback code only.'
+      - run: echo 'Recommendation Behavioral V7 runtime deploy remains paused; static staging, Contextual V3 preflight, recovery verdict and production rollback code only.'
