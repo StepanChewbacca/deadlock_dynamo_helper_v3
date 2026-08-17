@@ -10,11 +10,108 @@ permissions:
 
 concurrency:
   group: recommendation-production-recovery-inventory-v1
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  paused:
-    if: ${{ false }}
-    runs-on: ubuntu-latest
+  inventory:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'agent/recommendation-behavioral-v6-feasible-choice-set-1'
+    runs-on: self-hosted
+    timeout-minutes: 15
     steps:
-      - run: echo 'Recommendation production recovery inventory is paused.'
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+
+      - name: Capture production recovery inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          target='/home/ubuntu/apps/deadlock_dynamo_helper'
+          evidence="$RUNNER_TEMP/recovery-inventory"
+          mkdir -p "$evidence/container-artifacts"
+          test -d "$target"
+          test -r "$target/.env"
+
+          {
+            echo "generatedAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "requestedHead=${{ github.event.pull_request.head.sha }}"
+            echo "productionSourceHead=$(git -C "$target" rev-parse HEAD 2>/dev/null || true)"
+          } > "$evidence/provenance.txt"
+
+          df -h > "$evidence/df-h.txt"
+          sudo docker ps -a --no-trunc > "$evidence/docker-ps-a.txt"
+          sudo docker images --no-trunc --digests > "$evidence/docker-images.txt"
+          sudo docker volume ls > "$evidence/docker-volumes.txt"
+
+          cd "$target"
+          sudo docker compose --env-file .env ps --format json > "$evidence/compose-ps.json" 2>/dev/null || printf '[]\n' > "$evidence/compose-ps.json"
+          sudo docker compose --env-file .env config > "$evidence/compose-config.yml"
+
+          api_container="$(sudo docker compose --env-file .env ps -aq api 2>/dev/null | head -1 || true)"
+          printf '%s\n' "$api_container" > "$evidence/current-api-container.txt"
+          if [ -n "$api_container" ]; then
+            sudo docker inspect "$api_container" > "$evidence/current-api-inspect.json"
+            sudo docker inspect --format='{{.Image}}' "$api_container" > "$evidence/current-api-image.txt"
+            sudo docker inspect --format='{{json .Mounts}}' "$api_container" | jq . > "$evidence/current-api-mounts.json"
+            sudo docker inspect --format='{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' "$api_container" > "$evidence/current-api-health.txt"
+          else
+            printf '[]\n' > "$evidence/current-api-inspect.json"
+            printf '[]\n' > "$evidence/current-api-mounts.json"
+            : > "$evidence/current-api-image.txt"
+            printf 'missing\n' > "$evidence/current-api-health.txt"
+          fi
+
+          sudo find /var/lib/docker/volumes -type f -path '*/contextual-v3-training/manifest.json' -print 2>/dev/null | sort > "$evidence/volume-manifests.txt"
+          : > "$evidence/volume-manifest-sha256.tsv"
+          while IFS= read -r manifest; do
+            [ -n "$manifest" ] || continue
+            sha="$(sudo sha256sum "$manifest" | awk '{print $1}')"
+            bytes="$(sudo stat -c '%s' "$manifest")"
+            printf '%s\t%s\t%s\n' "$sha" "$bytes" "$manifest" >> "$evidence/volume-manifest-sha256.tsv"
+          done < "$evidence/volume-manifests.txt"
+
+          : > "$evidence/container-manifests.tsv"
+          for cid in $(sudo docker ps -aq); do
+            name="$(sudo docker inspect --format='{{.Name}}' "$cid" | sed 's#^/##')"
+            image="$(sudo docker inspect --format='{{.Image}}' "$cid")"
+            out="$evidence/container-artifacts/${cid}.manifest.json"
+            if sudo docker cp "$cid:/app/apps/api/storage/contextual-v3-training/manifest.json" "$out" >/dev/null 2>&1; then
+              sha="$(sha256sum "$out" | awk '{print $1}')"
+              printf '%s\t%s\t%s\t%s\n' "$cid" "$name" "$image" "$sha" >> "$evidence/container-manifests.tsv"
+            fi
+          done
+
+          sudo find /home/ubuntu/apps -type f -path '*/contextual-v3-training/manifest.json' -print 2>/dev/null | sort > "$evidence/host-manifests.txt"
+          sudo find /var/lib/docker/volumes -maxdepth 5 -type d -name 'contextual-v3-training' -print 2>/dev/null | sort > "$evidence/contextual-training-dirs.txt"
+
+          jq -n \
+            --arg generatedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg requestedHead '${{ github.event.pull_request.head.sha }}' \
+            --arg apiContainerId "$api_container" \
+            --arg apiImageId "$(cat "$evidence/current-api-image.txt")" \
+            --arg apiHealth "$(cat "$evidence/current-api-health.txt")" \
+            --argjson volumeManifestCount "$(wc -l < "$evidence/volume-manifests.txt")" \
+            --argjson containerManifestCount "$(wc -l < "$evidence/container-manifests.tsv")" \
+            '{schemaVersion:1,operation:"RECOMMENDATION_PRODUCTION_RECOVERY_INVENTORY",generatedAt:$generatedAt,requestedHead:$requestedHead,apiContainerId:$apiContainerId,apiImageId:$apiImageId,apiHealth:$apiHealth,volumeManifestCount:$volumeManifestCount,containerManifestCount:$containerManifestCount,productionMutationPerformed:false,trainingPerformed:false,valueTrainingPerformed:false,futureTestEvaluated:false}' > "$evidence/summary.json"
+
+          cat "$evidence/summary.json"
+          echo '--- volume manifests ---'
+          cat "$evidence/volume-manifest-sha256.tsv"
+          echo '--- container manifests ---'
+          cat "$evidence/container-manifests.tsv"
+          echo '--- host manifests ---'
+          cat "$evidence/host-manifests.txt"
+          echo '--- contextual training dirs ---'
+          cat "$evidence/contextual-training-dirs.txt"
+
+      - name: Upload recovery inventory evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-production-recovery-inventory-v1-${{ github.run_id }}
+          path: ${{ runner.temp }}/recovery-inventory
+          if-no-files-found: error
+          retention-days: 14
