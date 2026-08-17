@@ -20,12 +20,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          root='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          volume_root='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
+          historical_root='/home/ubuntu/deadlock-training-results/full-crawler-recovery-v3-20260725'
           evidence="$RUNNER_TEMP/contextual-v3-recovery-targets"
           mkdir -p "$evidence"
-          sudo test -d "$root"
+          sudo test -d "$volume_root"
 
-          sudo find "$root" -maxdepth 2 \( -iname 'contextual-v3*' -o -iname '*contextual*v3*' \) -print | sort | tee "$evidence/paths.txt"
+          {
+            sudo find "$volume_root" -maxdepth 2 \( -iname 'contextual-v3*' -o -iname '*contextual*v3*' \) -print 2>/dev/null || true
+            sudo test -e "$historical_root" && printf '%s\n' "$historical_root" || true
+          } | sort -u | tee "$evidence/paths.txt"
+
           : > "$evidence/files.tsv"
           while IFS= read -r path; do
             [ -n "$path" ] || continue
@@ -35,22 +40,29 @@ jobs:
                 bytes="$(sudo stat -c '%s' "$file")"
                 sha="$(sudo sha256sum "$file" | awk '{print $1}')"
                 printf '%s\t%s\t%s\n' "$sha" "$bytes" "$file" >> "$evidence/files.tsv"
-              done < <(sudo find "$path" -maxdepth 2 -type f -print | sort)
+              done < <(sudo find "$path" -maxdepth 4 -type f -print | sort)
             fi
           done < "$evidence/paths.txt"
+
+          if sudo test -f "$historical_root/state.json"; then
+            sudo cat "$historical_root/state.json" > "$evidence/historical-state.json"
+          fi
 
           echo '--- files ---'
           cat "$evidence/files.tsv"
           echo '--- exact historical anchors ---'
           grep -F '88e3400e7bc88f0af7a6752fc4b7ea9b83af9a8a6424dff707b151e6459f10d3' "$evidence/files.tsv" || true
           grep -F '92524cdeb1ff197d564c67f8cc4893f76e2a62c13d89175255e95ce3469d1ced' "$evidence/files.tsv" || true
+          echo '--- historical state ---'
+          cat "$evidence/historical-state.json" 2>/dev/null || true
 
           jq -n \
             --arg generatedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg readyModelSha '88e3400e7bc88f0af7a6752fc4b7ea9b83af9a8a6424dff707b151e6459f10d3' \
             --arg rollbackCandidateSha '92524cdeb1ff197d564c67f8cc4893f76e2a62c13d89175255e95ce3469d1ced' \
+            --arg historicalRoot "$historical_root" \
             --argjson candidatePathCount "$(wc -l < "$evidence/paths.txt")" \
-            '{schemaVersion:1,generatedAt:$generatedAt,readyModelSha:$readyModelSha,rollbackCandidateSha:$rollbackCandidateSha,candidatePathCount:$candidatePathCount,productionMutationPerformed:false,trainingPerformed:false,futureTestEvaluated:false}' \
+            '{schemaVersion:2,generatedAt:$generatedAt,readyModelSha:$readyModelSha,rollbackCandidateSha:$rollbackCandidateSha,historicalRoot:$historicalRoot,candidatePathCount:$candidatePathCount,productionMutationPerformed:false,trainingPerformed:false,futureTestEvaluated:false}' \
             | tee "$evidence/summary.json"
 
       - uses: actions/upload-artifact@v4
