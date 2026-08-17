@@ -46,7 +46,7 @@ for await (const line of input) {
     selection.availabilityEvaluatedCount > 0 ? 1 : 0;
   unavailableCandidateCount += selection.unavailableCount;
   availabilityEvaluatedCandidateCount += selection.availabilityEvaluatedCount;
-  const covered = selection.actionKeys.includes(row.observedActionKey);
+  const covered = selection.actionKeys.includes(String(row.observedActionKey));
   observedCoveredCount += covered ? 1 : 0;
 
   for (const key of groupKeys(row)) {
@@ -57,7 +57,7 @@ for await (const line of input) {
     schemaVersion: 1,
     split: row.split,
     matchId: row.matchId,
-    observedActionKey: row.observedActionKey,
+    observedActionKey: String(row.observedActionKey),
     eligibility: {
       behavioralModel: row.eligibility?.behavioralModel === true,
     },
@@ -158,14 +158,18 @@ const report = {
   },
 };
 report.stageDGatePassed = Object.values(report.gates).every(Boolean);
+report.nextAuthorizedOperation = report.stageDGatePassed
+  ? 'STAGE_E_INFORMATION_GAIN_DIAGNOSTIC'
+  : 'REVISE_V7_CHOICE_SET_WITHOUT_OBSERVED_ACTION_INJECTION';
 report.nextStep = report.stageDGatePassed
-  ? 'RUN_INFORMATION_GAIN_GATE_V2'
+  ? 'RUN_INFORMATION_GAIN_GATE_V3'
   : 'REVISE_V7_CHOICE_SET_WITHOUT_OBSERVED_ACTION_INJECTION';
 await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
 console.log(
   JSON.stringify(
     {
       stageDGatePassed: report.stageDGatePassed,
+      nextAuthorizedOperation: report.nextAuthorizedOperation,
       availabilityMode,
       compactRowCount,
       metrics: report.metrics,
