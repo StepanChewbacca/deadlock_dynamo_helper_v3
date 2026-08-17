@@ -45,7 +45,7 @@ async function verifyBundle() {
     readJson(join(finalTestDir, 'manifest.json')),
     readJson(join(finalTestDir, 'evaluation.json')),
     readJson(join(finalTestDir, 'audit.json')),
-    readFile(modelPath, 'utf8'),
+    readArtifactText(modelPath),
     hashFile(modelPath),
   ]);
 
@@ -152,13 +152,16 @@ async function verifyBundle() {
   };
 }
 
-async function readJson(path) {
-  let raw;
+async function readArtifactText(path) {
   try {
-    raw = await readFile(path, 'utf8');
+    return await readFile(path, 'utf8');
   } catch (error) {
     throw new Error(`Required Contextual V3 artifact is missing: ${path}. ${message(error)}`);
   }
+}
+
+async function readJson(path) {
+  const raw = await readArtifactText(path);
   try {
     return JSON.parse(raw);
   } catch {
