@@ -23,7 +23,7 @@ jobs:
           root='/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data'
           evidence="$RUNNER_TEMP/contextual-v3-recovery-targets"
           mkdir -p "$evidence"
-          test -d "$root"
+          sudo test -d "$root"
 
           sudo find "$root" -maxdepth 2 \( -iname 'contextual-v3*' -o -iname '*contextual*v3*' \) -print | sort | tee "$evidence/paths.txt"
           : > "$evidence/files.tsv"
