@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: recommendation-production-recovery-target-search-v1
+  cancel-in-progress: true
+
 jobs:
   search:
     if: >-
@@ -16,14 +20,17 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 10
     steps:
-      - name: Trace historical Contextual V3 recovery outputs
+      - name: Trace historical Contextual V3 recovery outputs and persist local evidence
         shell: bash
         run: |
           set -euo pipefail
           historical_root='/home/ubuntu/deadlock-training-results/full-crawler-recovery-v3-20260725'
           unit='deadlock-full-crawler-recovery-v3-20260725.service'
-          evidence="$RUNNER_TEMP/contextual-v3-recovery-targets"
-          mkdir -p "$evidence"
+          evidence_root='/home/ubuntu/apps/deadlock_dynamo_helper-training/production-recovery-evidence/target-search'
+          evidence="$evidence_root/runs/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          latest="$evidence_root/latest"
+          sudo mkdir -p "$evidence"
+          sudo chown -R "$(id -u):$(id -g)" "$evidence_root"
           sudo test -d "$historical_root"
 
           for name in \
@@ -94,19 +101,18 @@ jobs:
               printf '%s\t%s\t%s\n' "$sha" "$bytes" "$file" >> "$evidence/targeted-model-sha.tsv"
             fi
           done < "$evidence/targeted-model-paths.txt"
+
+          matching_sha_count="$(grep -Ec '88e3400e7bc88f0af7a6752fc4b7ea9b83af9a8a6424dff707b151e6459f10d3|92524cdeb1ff197d564c67f8cc4893f76e2a62c13d89175255e95ce3469d1ced' "$evidence/targeted-model-sha.tsv" || true)"
           grep -E '88e3400e7bc88f0af7a6752fc4b7ea9b83af9a8a6424dff707b151e6459f10d3|92524cdeb1ff197d564c67f8cc4893f76e2a62c13d89175255e95ce3469d1ced' \
             "$evidence/targeted-model-sha.tsv" || true
 
           jq -n \
             --arg generatedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg historicalRoot "$historical_root" \
-            '{schemaVersion:3,generatedAt:$generatedAt,historicalRoot:$historicalRoot,productionMutationPerformed:false,trainingPerformed:false,futureTestEvaluated:false}' \
+            --arg evidencePath "$evidence" \
+            --argjson matchingShaCount "$matching_sha_count" \
+            '{schemaVersion:4,generatedAt:$generatedAt,historicalRoot:$historicalRoot,evidencePath:$evidencePath,matchingKnownArtifactShaCount:$matchingShaCount,productionMutationPerformed:false,trainingPerformed:false,futureTestEvaluated:false}' \
             | tee "$evidence/trace-summary.json"
 
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: recommendation-production-recovery-target-search-${{ github.run_id }}
-          path: ${{ runner.temp }}/contextual-v3-recovery-targets
-          if-no-files-found: error
-          retention-days: 14
+          ln -sfn "runs/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" "$latest"
+          sha256sum "$evidence/trace-summary.json" > "$evidence/trace-summary.sha256"
