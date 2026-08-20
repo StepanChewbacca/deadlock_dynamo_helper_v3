@@ -47,6 +47,7 @@ export type RulesetCatalogValidationCode =
   | 'INVALID_SOURCE'
   | 'INVALID_SLOT_RULE'
   | 'INVALID_ITEM_ID'
+  | 'INVALID_SLOT_TYPE'
   | 'DUPLICATE_ITEM_ID'
   | 'INVALID_ITEM_COST'
   | 'INVALID_ITEM_TIER'
@@ -205,6 +206,13 @@ function normalizeItem(item: RulesetCatalogItemV1): RulesetCatalogItemV1 {
       `Item id must be a positive integer: ${String(item.itemId)}.`,
     );
   }
+  if (!isInventorySlotType(item.slotType)) {
+    throw new RulesetCatalogValidationError(
+      'INVALID_SLOT_TYPE',
+      `Item ${item.itemId} has invalid slot type ${String(item.slotType)}.`,
+      [item.itemId],
+    );
+  }
   if (!Number.isInteger(item.cost) || item.cost < 0) {
     throw new RulesetCatalogValidationError(
       'INVALID_ITEM_COST',
@@ -271,6 +279,10 @@ function assertAcyclicRecipeGraph(recipes: readonly RulesetCatalogRecipeV1[]): v
   for (const recipe of recipes) {
     visit(recipe.parentItemId, []);
   }
+}
+
+function isInventorySlotType(value: unknown): value is InventorySlotType {
+  return value === 'weapon' || value === 'vitality' || value === 'spirit';
 }
 
 function isPositiveInteger(value: number): boolean {
