@@ -1,4 +1,9 @@
-import { applyInventoryAction, DEFAULT_INVENTORY_RULESET, getHeldItemIds } from './inventory-reducer';
+import {
+  applyInventoryAction,
+  DEFAULT_INVENTORY_RULESET,
+  getHeldItemIds,
+  getHeldItemIdsWithMultiplicity,
+} from './inventory-reducer';
 import {
   InventoryAction,
   InventoryActionMetadata,
@@ -7,7 +12,9 @@ import {
   SnapshotDiagnostic,
 } from './types';
 
-export function normalizeInventorySnapshot(input: NormalizeSnapshotInput): NormalizeSnapshotResult {
+export function normalizeInventorySnapshot(
+  input: NormalizeSnapshotInput,
+): NormalizeSnapshotResult {
   const ruleset = input.ruleset ?? DEFAULT_INVENTORY_RULESET;
   const metadata: InventoryActionMetadata = {
     observedAtMs: input.observedAtMs,
@@ -16,7 +23,9 @@ export function normalizeInventorySnapshot(input: NormalizeSnapshotInput): Norma
     source: 'OVERWOLF_SNAPSHOT',
   };
   const diagnostics: SnapshotDiagnostic[] = [];
-  const duplicateIds = findDuplicateIds(input.snapshotItems.map((item) => item.itemId));
+  const duplicateIds = findDuplicateIds(
+    input.snapshotItems.map((item) => item.itemId),
+  );
 
   if (duplicateIds.length > 0 && !ruleset.duplicateItemsAllowed) {
     return {
@@ -41,12 +50,33 @@ export function normalizeInventorySnapshot(input: NormalizeSnapshotInput): Norma
     return applyActions(input, [action], diagnostics);
   }
 
-  const snapshotById = new Map(input.snapshotItems.map((item) => [item.itemId, item]));
+  const currentDuplicateIds = findDuplicateIds(
+    getHeldItemIdsWithMultiplicity(input.state),
+  );
+  if (
+    ruleset.duplicateItemsAllowed &&
+    (duplicateIds.length > 0 || currentDuplicateIds.length > 0)
+  ) {
+    const action: InventoryAction = {
+      type: 'RECONCILE',
+      items: input.snapshotItems,
+      metadata: { ...metadata, evidence: 'OBSERVED' },
+    };
+    return applyActions(input, [action], diagnostics);
+  }
+
+  const snapshotById = new Map(
+    input.snapshotItems.map((item) => [item.itemId, item]),
+  );
   const addedIds = new Set(
-    input.snapshotItems.filter((item) => !input.state.heldByItemId.has(item.itemId)).map((item) => item.itemId),
+    input.snapshotItems
+      .filter((item) => !input.state.heldByItemId.has(item.itemId))
+      .map((item) => item.itemId),
   );
   const removedIds = new Set(
-    [...input.state.heldByItemId.keys()].filter((itemId) => !snapshotById.has(itemId)),
+    [...input.state.heldByItemId.keys()].filter(
+      (itemId) => !snapshotById.has(itemId),
+    ),
   );
 
   const actions: InventoryAction[] = [];
@@ -77,7 +107,9 @@ export function normalizeInventorySnapshot(input: NormalizeSnapshotInput): Norma
     consumedByParent.set(parentId, consumed);
   }
 
-  for (const [parentId, componentIds] of [...consumedByParent.entries()].sort(([a], [b]) => a - b)) {
+  for (const [parentId, componentIds] of [
+    ...consumedByParent.entries(),
+  ].sort(([a], [b]) => a - b)) {
     const item = snapshotById.get(parentId);
     if (!item) continue;
     const uniqueComponentIds = [...new Set(componentIds)].sort((a, b) => a - b);
@@ -102,15 +134,18 @@ export function normalizeInventorySnapshot(input: NormalizeSnapshotInput): Norma
         metadata,
       }) ?? 'UNKNOWN_REMOVE';
 
-    if (decision === 'SELL') actions.push({ type: 'SELL', itemId, metadata });
-    else if (decision === 'CONSUME') actions.push({ type: 'CONSUME', itemId, metadata });
+    if (decision === 'SELL')
+      actions.push({ type: 'SELL', itemId, metadata });
+    else if (decision === 'CONSUME')
+      actions.push({ type: 'CONSUME', itemId, metadata });
     else actions.push({ type: 'UNKNOWN_REMOVE', itemIds: [itemId], metadata });
   }
 
   for (const itemId of [...addedIds].sort((a, b) => a - b)) {
     const item = snapshotById.get(itemId);
     if (!item) continue;
-    const previouslyOwned = (input.state.lifecycleCountByItemId.get(itemId) ?? 0) > 0;
+    const previouslyOwned =
+      (input.state.lifecycleCountByItemId.get(itemId) ?? 0) > 0;
     actions.push({
       type: previouslyOwned ? 'REBUY' : 'BUY',
       item,
@@ -146,13 +181,17 @@ function applyActions(
     appliedActions.push(action);
   }
 
-  const expectedIds = input.snapshotItems.map((item) => item.itemId).sort((a, b) => a - b);
-  const actualIds = getHeldItemIds(state);
+  const expectedIds = input.snapshotItems
+    .map((item) => item.itemId)
+    .sort((a, b) => a - b);
+  const actualIds = getHeldItemIdsWithMultiplicity(state);
   if (!sameIds(expectedIds, actualIds)) {
     diagnostics.push({
       code: 'SNAPSHOT_STATE_MISMATCH',
       message: `Replayed inventory [${actualIds.join(', ')}] does not match snapshot [${expectedIds.join(', ')}].`,
-      itemIds: [...new Set([...expectedIds, ...actualIds])].sort((a, b) => a - b),
+      itemIds: [...new Set([...expectedIds, ...actualIds])].sort(
+        (a, b) => a - b,
+      ),
     });
   }
 
@@ -170,5 +209,8 @@ function findDuplicateIds(itemIds: readonly number[]): number[] {
 }
 
 function sameIds(left: readonly number[], right: readonly number[]): boolean {
-  return left.length === right.length && left.every((itemId, index) => itemId === right[index]);
+  return (
+    left.length === right.length &&
+    left.every((itemId, index) => itemId === right[index])
+  );
 }
