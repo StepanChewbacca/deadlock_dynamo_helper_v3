@@ -33,6 +33,14 @@ const base = {
   },
 };
 
+const knownEvidence = {
+  spendableSouls: 'OBSERVED',
+  shopOpportunity: 'OBSERVED',
+  inventory: 'OBSERVED',
+  ruleset: 'RECONSTRUCTED',
+  transaction: 'RECONSTRUCTED',
+};
+
 const decision = {
   ...base,
   eventType: 'RECOMMENDATION_DECISION',
@@ -46,6 +54,8 @@ const decision = {
         actionType: 'BUY_ITEM',
         targetItemId: 1,
         effectiveCostSouls: 800,
+        spendableSoulsAfter: 200,
+        resultingItemIds: [1],
         feasible: true,
         feasibilityReasons: ['FEASIBLE'],
         affordable: true,
@@ -53,6 +63,8 @@ const decision = {
         recipeLegal: true,
         shopLegal: true,
         rulesetLegal: true,
+        transactionMechanicsKnown: true,
+        evidence: knownEvidence,
         behaviorProbability: 0.75,
       },
       {
@@ -66,6 +78,12 @@ const decision = {
         recipeLegal: true,
         shopLegal: 'UNKNOWN',
         rulesetLegal: true,
+        transactionMechanicsKnown: true,
+        evidence: {
+          ...knownEvidence,
+          spendableSouls: 'UNKNOWN',
+          shopOpportunity: 'UNKNOWN',
+        },
         behaviorProbability: 0.25,
       },
     ],
@@ -108,10 +126,17 @@ const missingPlayer = structuredClone(decision);
 delete missingPlayer.playerKey;
 assert(validateRecommendationDecisionEventV8(missingPlayer).errors.includes('PLAYER_KEY_REQUIRED'));
 
+const unknownTransaction = structuredClone(decision);
+unknownTransaction.payload.candidates[0].transactionMechanicsKnown = false;
+unknownTransaction.payload.candidates[0].evidence.transaction = 'UNKNOWN';
+const unknownTransactionErrors = validateRecommendationDecisionEventV8(unknownTransaction).errors;
+assert(unknownTransactionErrors.includes('FEASIBLE_ACTION_TRANSACTION_MECHANICS_UNKNOWN:BUY_ITEM:1'));
+assert(unknownTransactionErrors.includes('FEASIBLE_ACTION_TRANSACTION_EVIDENCE_UNKNOWN:BUY_ITEM:1'));
+
 const unverifiedPlayer = {
   ...base,
   eventType: 'PLAYER_STATE',
-  payload: { soulsRaw: 3510 },
+  payload: { soulsRaw: 3510, shopOpportunity: 'UNKNOWN' },
 };
 assert.deepEqual(validatePlayerStateEventV8(unverifiedPlayer), { valid: true, errors: [] });
 
