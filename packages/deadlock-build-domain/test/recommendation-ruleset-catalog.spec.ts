@@ -21,6 +21,7 @@ function baseInput() {
         cost: 800,
         shopable: true,
         disabled: false,
+        active: true,
         isActiveItem: false,
       },
       {
@@ -30,6 +31,7 @@ function baseInput() {
         cost: 1600,
         shopable: true,
         disabled: false,
+        active: true,
         isActiveItem: false,
       },
     ],
@@ -47,6 +49,18 @@ describe('recommendation ruleset catalog', () => {
     expect(catalog.payloadSha256).toBe('a'.repeat(64));
     expect(compiled.graph.getItem(1)?.directPurchaseCost).toBe(800);
     expect(compiled.graph.getItem(1)?.availableRulesetIds).toEqual(['ruleset-1']);
+  });
+
+  it('does not confuse catalog availability with active-item behavior', () => {
+    const input = baseInput();
+    const catalog = buildRecommendationRulesetCatalogV1({
+      ...input,
+      items: [{ ...input.items[0], active: false, isActiveItem: true }, input.items[1]],
+    });
+    const first = catalog.items.find((item) => item.itemId === 1)!;
+
+    expect(first.activeItem.value).toBe(true);
+    expect(first.rulesetAvailable.value).toBe(false);
   });
 
   it('excludes items when slot semantics are unknown', () => {
