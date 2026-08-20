@@ -16,6 +16,7 @@
     "db:generate": "yarn workspace @deadlock-live-probe/api migration:generate",
     "recommendation:v8:real-data": "node scripts/run-recommendation-v8-pipeline.mjs",
     "buildlm:souls:audit": "yarn workspace @deadlock-live-probe/shared build && node scripts/analyze-souls-affordability.cjs",
+    "buildlm:ruleset:extract-source": "node scripts/extract-deadlock-authoritative-source.cjs",
     "buildlm:ruleset:artifact": "yarn workspace @deadlock-live-probe/build-domain build && node scripts/build-ruleset-catalog-artifact.cjs"
   }
 }
