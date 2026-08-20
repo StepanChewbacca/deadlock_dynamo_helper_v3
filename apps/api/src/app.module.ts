@@ -13,6 +13,10 @@ import { Match } from './deadlock-live/entities/match.entity';
 import { MatchPlayerItem } from './deadlock-live/entities/match-player-item.entity';
 import { MatchPlayer } from './deadlock-live/entities/match-player.entity';
 import { MatchPlayerSkillUpgrade } from './deadlock-live/entities/match-player-skill-upgrade.entity';
+import { RecommendationDecisionCandidateV8 } from './deadlock-live/entities/recommendation-decision-candidate.entity';
+import { RecommendationDecisionV8 } from './deadlock-live/entities/recommendation-decision.entity';
+import { RecommendationExposureAckV8 } from './deadlock-live/entities/recommendation-exposure-ack.entity';
+import { RecommendationTelemetryEvent } from './deadlock-live/entities/recommendation-telemetry-event.entity';
 import { ShadowModeDecision } from './deadlock-live/entities/shadow-mode-decision.entity';
 
 @Module({
@@ -35,6 +39,10 @@ import { ShadowModeDecision } from './deadlock-live/entities/shadow-mode-decisio
         ItemCatalogVersion,
         ItemCatalogItem,
         ItemCatalogRecipe,
+        RecommendationTelemetryEvent,
+        RecommendationDecisionV8,
+        RecommendationDecisionCandidateV8,
+        RecommendationExposureAckV8,
         CrawlerRun,
         CrawlerState,
         ShadowModeDecision,
