@@ -32,6 +32,8 @@ export interface InventoryItemInstance extends InventoryItem {
 export interface InventoryState {
   initializedFromSnapshot: boolean;
   heldByItemId: ReadonlyMap<number, InventoryItemInstance>;
+  heldByInstanceId?: ReadonlyMap<string, InventoryItemInstance>;
+  heldInstanceIdsByItemId?: ReadonlyMap<number, readonly string[]>;
   lifecycleCountByItemId: ReadonlyMap<number, number>;
   nextInstanceSequence: number;
 }
