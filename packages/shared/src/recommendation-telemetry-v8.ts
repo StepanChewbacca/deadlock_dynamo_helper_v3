@@ -1,6 +1,7 @@
 export const RECOMMENDATION_TELEMETRY_CONTRACT_VERSION = 'recommendation-telemetry-v8' as const;
 export const RECOMMENDATION_TELEMETRY_SCHEMA_VERSION = 2 as const;
 export const RECOMMENDATION_TELEMETRY_MAX_CLOCK_SKEW_MS = 5_000;
+export const RECOMMENDATION_BEHAVIOR_PROBABILITY_SUM_TOLERANCE = 1e-9;
 
 export type RecommendationTelemetryEventType =
   | 'PLAYER_STATE'
@@ -109,7 +110,7 @@ export interface RecommendationDecisionPayloadV8 {
   decisionId: string;
   stateRevision: string;
   candidateGeneratorVersion: string;
-  feasibleActions: readonly RecommendationDecisionCandidateV8[];
+  candidates: readonly RecommendationDecisionCandidateV8[];
   selectedActionKey: string;
   modelVersion: string;
   policyProbability: number;
@@ -200,25 +201,40 @@ export function validateRecommendationDecisionEventV8(
 ): RecommendationTelemetryValidationV8 {
   const errors = [...validateRecommendationTelemetryEnvelopeV8(event).errors];
   const payload = event.payload;
+  if (!event.playerKey) errors.push('PLAYER_KEY_REQUIRED');
   if (!payload.decisionId) errors.push('DECISION_ID_REQUIRED');
   if (!payload.stateRevision) errors.push('STATE_REVISION_REQUIRED');
   if (!payload.candidateGeneratorVersion) errors.push('CANDIDATE_GENERATOR_VERSION_REQUIRED');
   if (!payload.modelVersion) errors.push('MODEL_VERSION_REQUIRED');
   if (payload.observedActionInjected !== false) errors.push('OBSERVED_ACTION_INJECTION_FORBIDDEN');
-  if (!probability(payload.policyProbability, true)) errors.push('POLICY_PROBABILITY_INVALID');
+  if (!probability(payload.policyProbability, false)) errors.push('POLICY_PROBABILITY_INVALID');
   if (!payload.experiment.assignmentVersion) errors.push('ASSIGNMENT_VERSION_REQUIRED');
   if (payload.experiment.assignmentUnit !== 'MATCH') errors.push('ASSIGNMENT_UNIT_MUST_BE_MATCH');
   if (!probability(payload.experiment.loggingPropensity, false)) errors.push('LOGGING_PROPENSITY_INVALID');
   if (payload.experiment.randomized && !payload.experiment.experimentId) errors.push('RANDOMIZED_EXPERIMENT_ID_REQUIRED');
+  if (payload.candidates.length === 0) errors.push('CANDIDATE_SET_EMPTY');
 
   const actionKeys = new Set<string>();
-  for (const candidate of payload.feasibleActions) {
+  const feasibleBehaviorProbabilities: number[] = [];
+  let feasibleWithBehaviorProbability = 0;
+  let feasibleCount = 0;
+  for (const candidate of payload.candidates) {
     if (!candidate.actionKey) errors.push('CANDIDATE_ACTION_KEY_REQUIRED');
     if (actionKeys.has(candidate.actionKey)) errors.push(`DUPLICATE_CANDIDATE:${candidate.actionKey}`);
     actionKeys.add(candidate.actionKey);
     if (!Number.isFinite(candidate.effectiveCostSouls)) errors.push(`CANDIDATE_COST_INVALID:${candidate.actionKey}`);
-    if (candidate.behaviorProbability !== undefined && !probability(candidate.behaviorProbability, true)) {
-      errors.push(`BEHAVIOR_PROBABILITY_INVALID:${candidate.actionKey}`);
+    if (candidate.feasible) feasibleCount += 1;
+    if (candidate.behaviorProbability !== undefined) {
+      if (!probability(candidate.behaviorProbability, true)) {
+        errors.push(`BEHAVIOR_PROBABILITY_INVALID:${candidate.actionKey}`);
+      }
+      if (!candidate.feasible && candidate.behaviorProbability !== 0) {
+        errors.push(`INFEASIBLE_ACTION_NONZERO_BEHAVIOR_PROBABILITY:${candidate.actionKey}`);
+      }
+      if (candidate.feasible) {
+        feasibleWithBehaviorProbability += 1;
+        feasibleBehaviorProbabilities.push(candidate.behaviorProbability);
+      }
     }
     if (candidate.feasible && candidate.actionType !== 'WAIT_SAVE') {
       if (candidate.affordable !== true) errors.push(`FEASIBLE_ACTION_AFFORDABILITY_NOT_TRUE:${candidate.actionKey}`);
@@ -229,23 +245,38 @@ export function validateRecommendationDecisionEventV8(
     }
   }
 
-  const selected = payload.feasibleActions.find((candidate) => candidate.actionKey === payload.selectedActionKey);
+  if (feasibleWithBehaviorProbability > 0 && feasibleWithBehaviorProbability !== feasibleCount) {
+    errors.push('PARTIAL_BEHAVIOR_PROBABILITY_VECTOR');
+  }
+  if (feasibleCount > 0 && feasibleWithBehaviorProbability === feasibleCount) {
+    const probabilitySum = feasibleBehaviorProbabilities.reduce((sum, value) => sum + value, 0);
+    if (Math.abs(probabilitySum - 1) > RECOMMENDATION_BEHAVIOR_PROBABILITY_SUM_TOLERANCE) {
+      errors.push('BEHAVIOR_PROBABILITY_VECTOR_NOT_NORMALIZED');
+    }
+  }
+
+  const selected = payload.candidates.find((candidate) => candidate.actionKey === payload.selectedActionKey);
   if (!selected) errors.push('SELECTED_ACTION_NOT_IN_CANDIDATE_SET');
   else if (!selected.feasible) errors.push('SELECTED_ACTION_NOT_FEASIBLE');
+  if (selected && payload.policyProbability > 0 && selected.behaviorProbability !== undefined && !Number.isFinite(selected.behaviorProbability)) {
+    errors.push('SELECTED_BEHAVIOR_PROBABILITY_INVALID');
+  }
 
-  return { valid: errors.length === 0, errors };
+  return { valid: errors.length === 0, errors: [...new Set(errors)].sort() };
 }
 
 export function validateRecommendationExposureAckEventV8(
   event: RecommendationExposureAckEventV8,
 ): RecommendationTelemetryValidationV8 {
   const errors = [...validateRecommendationTelemetryEnvelopeV8(event).errors];
+  if (!event.playerKey) errors.push('PLAYER_KEY_REQUIRED');
   if (!event.payload.decisionId) errors.push('DECISION_ID_REQUIRED');
   if (!event.payload.selectedActionKey) errors.push('SELECTED_ACTION_KEY_REQUIRED');
   if (!Number.isFinite(event.payload.displayedAtMs)) errors.push('DISPLAYED_AT_INVALID');
   if (!Number.isFinite(event.payload.ttlMs) || event.payload.ttlMs <= 0) errors.push('TTL_INVALID');
   if (!event.payload.displayOrder.includes(event.payload.selectedActionKey)) errors.push('SELECTED_ACTION_NOT_DISPLAYED');
-  return { valid: errors.length === 0, errors };
+  if (new Set(event.payload.displayOrder).size !== event.payload.displayOrder.length) errors.push('DISPLAY_ORDER_DUPLICATE_ACTION');
+  return { valid: errors.length === 0, errors: [...new Set(errors)].sort() };
 }
 
 export function recommendationTelemetryDeduplicationKeyV8(
