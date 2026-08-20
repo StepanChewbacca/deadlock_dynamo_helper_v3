@@ -15,6 +15,9 @@ import { AllHeroesAnalysisController } from './all-heroes-analysis.controller';
 import { SituationalRecommendationService } from './situational-recommendation.service';
 import { CatalogContentService } from './catalog-content.service';
 import { ModelBundleRegistryService } from './model-bundle-registry.service';
+import { RecommendationEngineV8Service } from './recommendation-engine-v8.service';
+import { RecommendationObservabilityController } from './recommendation-observability.controller';
+import { RecommendationObservabilityReportService } from './recommendation-observability-report.service';
 import { RecommendationTelemetryController } from './recommendation-telemetry.controller';
 import { RecommendationTelemetryStoreService } from './recommendation-telemetry-store.service';
 import { CrawlerRun } from './entities/crawler-run.entity';
@@ -67,6 +70,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     AllHeroesAnalysisController,
     IngestStatusController,
     RecommendationTelemetryController,
+    RecommendationObservabilityController,
   ],
   providers: [
     LiveMatchStateService,
@@ -78,7 +82,9 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     SituationalRecommendationService,
     CatalogContentService,
     ModelBundleRegistryService,
+    RecommendationEngineV8Service,
     RecommendationTelemetryStoreService,
+    RecommendationObservabilityReportService,
     ReferenceDataImportService,
     IngestStatusService,
   ],
@@ -92,7 +98,9 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     SituationalRecommendationService,
     CatalogContentService,
     ModelBundleRegistryService,
+    RecommendationEngineV8Service,
     RecommendationTelemetryStoreService,
+    RecommendationObservabilityReportService,
     ReferenceDataImportService,
     IngestStatusService,
   ],
