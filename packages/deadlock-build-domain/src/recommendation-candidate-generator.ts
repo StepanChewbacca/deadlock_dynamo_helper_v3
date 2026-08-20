@@ -154,6 +154,7 @@ function evaluateSell(
       if (!graph.getItem(returnedItemId)) reasons.push('SELL_RETURN_ITEM_UNKNOWN');
     }
   }
+  applyShopObservabilityReasons(state, reasons);
   const resulting = applySellTransition(state, item, graph);
   if (!checkSlots(resulting, graph, rules)) reasons.push('SLOT_LIMIT_EXCEEDED');
   if (!checkActiveLimit(resulting, graph, rules)) reasons.push('ACTIVE_ITEM_LIMIT_EXCEEDED');
@@ -207,12 +208,19 @@ function evaluateReplace(
   );
 }
 
-function applyPurchaseObservabilityReasons(state: RecommendationDecisionState, reasons: RecommendationFeasibilityReason[]): void {
+function applyShopObservabilityReasons(
+  state: RecommendationDecisionState,
+  reasons: RecommendationFeasibilityReason[],
+): void {
   if (state.economy.shopOpportunity.evidence === 'UNKNOWN' || state.economy.shopOpportunity.value === 'UNKNOWN') {
     reasons.push('SHOP_OPPORTUNITY_UNKNOWN');
   } else if (state.economy.shopOpportunity.value === 'UNAVAILABLE') {
     reasons.push('SHOP_UNAVAILABLE');
   }
+}
+
+function applyPurchaseObservabilityReasons(state: RecommendationDecisionState, reasons: RecommendationFeasibilityReason[]): void {
+  applyShopObservabilityReasons(state, reasons);
   if (state.economy.spendableSouls.evidence === 'UNKNOWN' || state.economy.spendableSouls.value === undefined) {
     reasons.push('SPENDABLE_SOULS_UNKNOWN');
   }
