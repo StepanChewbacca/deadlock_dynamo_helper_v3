@@ -1,8 +1,10 @@
 import {
+  deduplicateRecipes,
   normalizeCatalogItem,
   normalizeClientVersions,
   selectClientVersions,
 } from '../src/deadlock-live/item-catalog-import.service';
+import { ItemCatalogRecipe } from '../src/deadlock-live/entities/item-catalog-recipe.entity';
 
 describe('ItemCatalogImportService helpers', () => {
   it('normalizes and sorts client versions', () => {
@@ -56,4 +58,38 @@ describe('ItemCatalogImportService helpers', () => {
       rawPayload: raw,
     });
   });
+
+  it('preserves repeated component ids at different recipe positions', () => {
+    const recipes = [
+      recipe(1, 300, 100, 0),
+      recipe(1, 300, 100, 1),
+      recipe(1, 300, 200, 2),
+      recipe(1, 300, 999, 2),
+    ];
+
+    expect(
+      deduplicateRecipes(recipes).map((entry) => ({
+        componentItemId: entry.componentItemId,
+        componentOrder: entry.componentOrder,
+      })),
+    ).toEqual([
+      { componentItemId: 100, componentOrder: 0 },
+      { componentItemId: 100, componentOrder: 1 },
+      { componentItemId: 200, componentOrder: 2 },
+    ]);
+  });
 });
+
+function recipe(
+  catalogVersionId: number,
+  parentItemId: number,
+  componentItemId: number,
+  componentOrder: number,
+): ItemCatalogRecipe {
+  return {
+    catalogVersionId,
+    parentItemId,
+    componentItemId,
+    componentOrder,
+  } as ItemCatalogRecipe;
+}
