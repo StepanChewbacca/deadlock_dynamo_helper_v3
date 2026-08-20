@@ -6,7 +6,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "yarn build && node test/gep-canonical-v2.test.js && node test/recommendation-telemetry-v8.test.js && node test/recommendation-experiment-v1.test.js && node test/model-contracts-v1.test.js",
+    "test": "yarn build && node test/gep-canonical-v2.test.js && node test/recommendation-telemetry-v8.test.js && node test/recommendation-experiment-v1.test.js && node test/model-contracts-v1.test.js && node test/recommendation-observability-gate-v1.test.js",
     "lint": "echo \"shared: no lint\""
   },
   "devDependencies": {
