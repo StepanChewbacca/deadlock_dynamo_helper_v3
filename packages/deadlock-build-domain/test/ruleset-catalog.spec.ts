@@ -82,6 +82,13 @@ describe('ruleset catalog v1', () => {
     expect(canonicalizeRulesetCatalogV1(input).recipes[0].componentItemIds).toEqual([100, 100, 200]);
   });
 
+  it('rejects invalid slot types from untyped JSON input', () => {
+    const input = baseInput();
+    (input.items[0] as { slotType: string }).slotType = 'unknown';
+
+    expectValidationCode(() => canonicalizeRulesetCatalogV1(input), 'INVALID_SLOT_TYPE');
+  });
+
   it('rejects duplicate item ids', () => {
     const input = baseInput();
     input.items.push({ ...input.items[0] });
