@@ -14,6 +14,7 @@
     "db:revert": "yarn workspace @deadlock-live-probe/api migration:revert",
     "db:migrations": "yarn workspace @deadlock-live-probe/api migration:show",
     "db:generate": "yarn workspace @deadlock-live-probe/api migration:generate",
-    "recommendation:v8:real-data": "node scripts/run-recommendation-v8-pipeline.mjs"
+    "recommendation:v8:real-data": "node scripts/run-recommendation-v8-pipeline.mjs",
+    "buildlm:souls:audit": "yarn workspace @deadlock-live-probe/shared build && node scripts/analyze-souls-affordability.cjs"
   }
 }
