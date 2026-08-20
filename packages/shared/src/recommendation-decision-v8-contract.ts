@@ -73,6 +73,7 @@ export interface RecommendationDecisionV8 {
 }
 
 export type RecommendationDecisionV8ValidationCode =
+  | 'INVALID_SCHEMA_VERSION'
   | 'INVALID_IDENTITY'
   | 'INVALID_HERO_ID'
   | 'INVALID_GAME_TIME'
@@ -83,10 +84,12 @@ export type RecommendationDecisionV8ValidationCode =
   | 'INVALID_CATALOG_SHA256'
   | 'INVALID_INVENTORY_ITEM_ID'
   | 'INVALID_ECONOMY'
+  | 'UNVALIDATED_ECONOMY_HAS_SPEND_ACTION'
   | 'EMPTY_LEGAL_ACTION_SET'
   | 'DUPLICATE_LEGAL_ACTION_ID'
   | 'WAIT_ACTION_MISSING'
   | 'INVALID_LEGAL_ACTION'
+  | 'INCONSISTENT_ACTION_ECONOMY'
   | 'SERVED_ACTION_NOT_LEGAL'
   | 'EXPOSED_ACTION_NOT_LEGAL'
   | 'INVALID_EXPOSURE_ACK'
@@ -138,6 +141,12 @@ export function validateRecommendationDecisionV8(
 ): RecommendationDecisionV8ValidationResult {
   const issues: RecommendationDecisionV8ValidationIssue[] = [];
 
+  if (input.schemaVersion !== RECOMMENDATION_DECISION_V8_SCHEMA_VERSION) {
+    issues.push({
+      code: 'INVALID_SCHEMA_VERSION',
+      message: `schemaVersion must be ${RECOMMENDATION_DECISION_V8_SCHEMA_VERSION}.`,
+    });
+  }
   if (!isNonEmptyString(input.decisionId) || !isNonEmptyString(input.matchId) || !isNonEmptyString(input.steamId)) {
     issues.push({ code: 'INVALID_IDENTITY', message: 'decisionId, matchId, and steamId are required.' });
   }
@@ -166,8 +175,12 @@ export function validateRecommendationDecisionV8(
     issues.push({ code: 'INVALID_INVENTORY_ITEM_ID', message: 'inventoryItemIds must contain only positive safe integers.' });
   }
 
+  const validatedSpendableSouls =
+    input.economy.evidence === 'VALIDATED' && isNonNegativeSafeInteger(input.economy.spendableSouls)
+      ? input.economy.spendableSouls
+      : undefined;
   if (
-    (input.economy.evidence === 'VALIDATED' && !isNonNegativeSafeInteger(input.economy.spendableSouls)) ||
+    (input.economy.evidence === 'VALIDATED' && validatedSpendableSouls === undefined) ||
     (input.economy.evidence === 'UNAVAILABLE' && input.economy.spendableSouls !== undefined)
   ) {
     issues.push({
@@ -182,6 +195,7 @@ export function validateRecommendationDecisionV8(
 
   const legalActionIds = new Set<string>();
   let waitCount = 0;
+  let nonWaitCount = 0;
   for (const action of input.legalActions) {
     if (legalActionIds.has(action.actionId)) {
       issues.push({
@@ -190,16 +204,35 @@ export function validateRecommendationDecisionV8(
       });
     }
     legalActionIds.add(action.actionId);
-    if (action.type === 'WAIT') waitCount += 1;
+    if (action.type === 'WAIT') {
+      waitCount += 1;
+    } else {
+      nonWaitCount += 1;
+    }
     if (!isValidLegalAction(action)) {
       issues.push({
         code: 'INVALID_LEGAL_ACTION',
-        message: `Legal action ${action.actionId || '<missing>'} has an invalid shape.`,
+        message: `Legal action ${action.actionId || '<missing>'} has an invalid or non-canonical shape.`,
+      });
+    }
+    if (
+      validatedSpendableSouls !== undefined &&
+      validatedSpendableSouls + action.soulsDelta !== action.spendableSoulsAfter
+    ) {
+      issues.push({
+        code: 'INCONSISTENT_ACTION_ECONOMY',
+        message: `Legal action ${action.actionId} has inconsistent spendableSoulsAfter.`,
       });
     }
   }
   if (waitCount !== 1) {
     issues.push({ code: 'WAIT_ACTION_MISSING', message: 'legalActions must contain exactly one WAIT action.' });
+  }
+  if (input.economy.evidence === 'UNAVAILABLE' && nonWaitCount > 0) {
+    issues.push({
+      code: 'UNVALIDATED_ECONOMY_HAS_SPEND_ACTION',
+      message: 'Only WAIT may be emitted while decision-time spendable currency is unavailable.',
+    });
   }
 
   if (input.servedActionId !== undefined && !legalActionIds.has(input.servedActionId)) {
@@ -213,7 +246,9 @@ export function validateRecommendationDecisionV8(
 
   const exposureHasAck = input.exposure.acknowledgedAtMs !== undefined;
   if (
-    (input.exposure.status === 'SHOWN_ACKED' && !isNonNegativeSafeInteger(input.exposure.acknowledgedAtMs)) ||
+    (input.exposure.status === 'SHOWN_ACKED' &&
+      (!isNonNegativeSafeInteger(input.exposure.acknowledgedAtMs) ||
+        input.exposure.acknowledgedAtMs < input.observedAtMs)) ||
     (input.exposure.status !== 'SHOWN_ACKED' && exposureHasAck) ||
     (input.exposure.status === 'NOT_SHOWN' && input.exposure.exposedActionIds.length > 0) ||
     (input.exposure.status !== 'NOT_SHOWN' && input.exposure.exposedActionIds.length === 0)
@@ -227,11 +262,12 @@ export function validateRecommendationDecisionV8(
   if (input.observedAction) {
     if (
       !isNonNegativeFinite(input.observedAction.observedAtGameTimeSec) ||
+      input.observedAction.observedAtGameTimeSec < input.gameTimeSec ||
       input.observedAction.actionIds.length === 0
     ) {
       issues.push({
         code: 'INVALID_OBSERVED_ACTION',
-        message: 'Observed action requires at least one action id and a non-negative game time.',
+        message: 'Observed action requires at least one action id at or after the decision game time.',
       });
     }
     for (const actionId of input.observedAction.actionIds) {
@@ -261,20 +297,27 @@ function isValidLegalAction(action: RecommendationDecisionV8LegalAction): boolea
     case 'WAIT':
       return action.actionId === 'WAIT' && action.effectiveCost === 0 && action.soulsDelta === 0;
     case 'BUY':
+      return isPositiveInteger(action.itemId) && action.actionId === `BUY:${action.itemId}`;
     case 'SELL':
-      return isPositiveInteger(action.itemId);
-    case 'UPGRADE':
-      return (
-        isPositiveInteger(action.itemId) &&
-        Array.isArray(action.consumedComponentIds) &&
-        action.consumedComponentIds.length > 0 &&
-        action.consumedComponentIds.every(isPositiveInteger)
-      );
+      return isPositiveInteger(action.itemId) && action.actionId === `SELL:${action.itemId}`;
+    case 'UPGRADE': {
+      if (
+        !isPositiveInteger(action.itemId) ||
+        !Array.isArray(action.consumedComponentIds) ||
+        action.consumedComponentIds.length === 0 ||
+        !action.consumedComponentIds.every(isPositiveInteger)
+      ) {
+        return false;
+      }
+      const componentKey = [...action.consumedComponentIds].sort((left, right) => left - right).join(',');
+      return action.actionId === `UPGRADE:${action.itemId}:${componentKey}`;
+    }
     case 'REPLACE':
       return (
         isPositiveInteger(action.sellItemId) &&
         isPositiveInteger(action.buyItemId) &&
-        action.sellItemId !== action.buyItemId
+        action.sellItemId !== action.buyItemId &&
+        action.actionId === `REPLACE:${action.sellItemId}->${action.buyItemId}`
       );
   }
 }
