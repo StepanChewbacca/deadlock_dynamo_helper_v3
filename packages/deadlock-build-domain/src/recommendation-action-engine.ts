@@ -111,15 +111,21 @@ export function generateLegalRecommendationActions(
     catalogByItemId.set(item.itemId, item);
   }
 
+  const hasValidSpendableSouls =
+    input.economy !== undefined && isValidEconomyAmount(input.economy.spendableSouls);
   const waitCandidate: RecommendationActionCandidate = {
     actionId: 'WAIT',
     action: { type: 'WAIT' },
     effectiveCost: 0,
     soulsDelta: 0,
-    spendableSoulsAfter: input.economy?.spendableSouls ?? 0,
+    spendableSoulsAfter: hasValidSpendableSouls ? input.economy!.spendableSouls : 0,
   };
 
-  if (!input.economy || !isValidEconomyAmount(input.economy.spendableSouls)) {
+  if (diagnostics.some((diagnostic) => diagnostic.code === 'DUPLICATE_CATALOG_ITEM_ID')) {
+    return { candidates: [waitCandidate], diagnostics };
+  }
+
+  if (!hasValidSpendableSouls || !input.economy) {
     diagnostics.push({
       code: 'INVALID_SPENDABLE_SOULS',
       message: 'Validated spendable souls are required before economic actions can be generated.',
@@ -128,8 +134,13 @@ export function generateLegalRecommendationActions(
     return { candidates: [waitCandidate], diagnostics };
   }
 
+  const economyDiagnostics = validateEconomyMaps(input.economy, catalogByItemId);
+  if (economyDiagnostics.length > 0) {
+    diagnostics.push(...economyDiagnostics);
+    return { candidates: [waitCandidate], diagnostics };
+  }
+
   const candidates: RecommendationActionCandidate[] = [waitCandidate];
-  const metadata = createMetadata(input.observedAtMs, input.gameTimeSec);
 
   for (const heldItemId of [...input.state.heldByItemId.keys()].sort((a, b) => a - b)) {
     const refund = input.economy.sellRefundByItemId.get(heldItemId);
@@ -182,10 +193,11 @@ export function generateLegalRecommendationActions(
 
     const buyCost = input.economy.buyCostByItemId.get(item.itemId);
     if (!isValidEconomyAmount(buyCost)) continue;
-    if (buyCost > input.economy.spendableSouls) continue;
 
     const buyAction: RecommendationAction = { type: 'BUY', itemId: item.itemId };
-    if (isStructurallyLegal(input, catalogByItemId, buyAction)) {
+    const directBuyLegal = isStructurallyLegal(input, catalogByItemId, buyAction);
+    const directBuyAffordable = buyCost <= input.economy.spendableSouls;
+    if (directBuyLegal && directBuyAffordable) {
       candidates.push(
         createCandidate(
           buyAction,
@@ -194,6 +206,10 @@ export function generateLegalRecommendationActions(
           input.economy.spendableSouls - buyCost,
         ),
       );
+    }
+
+    if (directBuyLegal) {
+      continue;
     }
 
     for (const sellItemId of [...input.state.heldByItemId.keys()].sort((a, b) => a - b)) {
@@ -217,9 +233,6 @@ export function generateLegalRecommendationActions(
       );
     }
   }
-
-  const economyDiagnostics = validateEconomyMaps(input.economy, catalogByItemId);
-  diagnostics.push(...economyDiagnostics);
 
   return {
     candidates: deduplicateCandidates(candidates).sort(compareCandidates),
