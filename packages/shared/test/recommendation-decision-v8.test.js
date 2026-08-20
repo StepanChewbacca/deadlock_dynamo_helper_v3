@@ -102,6 +102,41 @@ assert.ok(
   ),
 );
 
+const unvalidatedSpendAction = validDecision();
+unvalidatedSpendAction.economy = { evidence: 'UNAVAILABLE' };
+unvalidatedSpendAction.exposure = { status: 'NOT_SHOWN', exposedActionIds: [] };
+delete unvalidatedSpendAction.servedActionId;
+delete unvalidatedSpendAction.observedAction;
+assert.ok(
+  validateRecommendationDecisionV8(unvalidatedSpendAction).issues.some(
+    (issue) => issue.code === 'UNVALIDATED_ECONOMY_HAS_SPEND_ACTION',
+  ),
+);
+
+const invalidSchemaVersion = validDecision();
+invalidSchemaVersion.schemaVersion = 7;
+assert.ok(
+  validateRecommendationDecisionV8(invalidSchemaVersion).issues.some(
+    (issue) => issue.code === 'INVALID_SCHEMA_VERSION',
+  ),
+);
+
+const nonCanonicalActionId = validDecision();
+nonCanonicalActionId.legalActions[0].actionId = 'upgrade-300';
+assert.ok(
+  validateRecommendationDecisionV8(nonCanonicalActionId).issues.some(
+    (issue) => issue.code === 'INVALID_LEGAL_ACTION',
+  ),
+);
+
+const inconsistentEconomy = validDecision();
+inconsistentEconomy.legalActions[0].spendableSoulsAfter = 999;
+assert.ok(
+  validateRecommendationDecisionV8(inconsistentEconomy).issues.some(
+    (issue) => issue.code === 'INCONSISTENT_ACTION_ECONOMY',
+  ),
+);
+
 const illegalObservedAction = validDecision();
 illegalObservedAction.observedAction.actionIds = ['BUY:999'];
 assert.ok(
