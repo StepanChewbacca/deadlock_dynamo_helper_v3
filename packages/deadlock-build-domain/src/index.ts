@@ -7,3 +7,4 @@ export * from './skill-build-path-search';
 export * from './diagnostic-match-parser';
 export * from './diagnostic-baseline-model';
 export * from './ruleset-catalog';
+export * from './recommendation-action-engine';
