@@ -1,0 +1,39 @@
+name: Recommendation CI
+
+on:
+  push:
+    branches:
+      - agent/add-inventory-simulator
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  recommendation-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Test shared contracts
+        run: yarn workspace @deadlock-live-probe/shared test
+
+      - name: Test deterministic build domain
+        run: yarn workspace @deadlock-live-probe/build-domain test
+
+      - name: Build API
+        run: yarn workspace @deadlock-live-probe/api build
+
+      - name: Test API
+        run: yarn workspace @deadlock-live-probe/api test
