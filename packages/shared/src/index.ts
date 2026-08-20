@@ -6,3 +6,4 @@ export * from './recommendation-experiment-v1';
 export * from './model-bundle-contract-v1';
 export * from './recommendation-model-gates-v1';
 export * from './off-policy-evaluation-v1';
+export * from './recommendation-observability-gate-v1';
