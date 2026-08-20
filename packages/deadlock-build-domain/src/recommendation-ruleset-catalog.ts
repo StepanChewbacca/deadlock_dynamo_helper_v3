@@ -220,15 +220,12 @@ function buildCatalogItem(
   rulesetId: string,
 ): RecommendationCatalogItemV1 {
   const normalizedSlot = normalizeSlotType(raw.slotType);
-  const activeValue = typeof raw.isActiveItem === 'boolean'
-    ? raw.isActiveItem
-    : typeof raw.active === 'boolean'
-      ? raw.active
-      : undefined;
+  const activeItem = typeof raw.isActiveItem === 'boolean' ? raw.isActiveItem : undefined;
+  const availabilityActive = typeof raw.active === 'boolean' ? raw.active : undefined;
   const shopable = typeof raw.shopable === 'boolean' ? raw.shopable : undefined;
   const disabled = typeof raw.disabled === 'boolean' ? raw.disabled : undefined;
-  const rulesetAvailable = shopable !== undefined && disabled !== undefined
-    ? reconstructedFact(shopable && !disabled, `catalog:${rulesetId}:shopable+disabled`)
+  const rulesetAvailable = availabilityActive !== undefined && disabled !== undefined
+    ? reconstructedFact(availabilityActive && !disabled, `catalog:${rulesetId}:active+disabled`)
     : unknownFact<boolean>(`catalog:${rulesetId}:availability`);
   const directPurchaseCost = Number.isFinite(raw.cost) && (raw.cost as number) >= 0
     ? observedFact(raw.cost as number, 'item_catalog_items.cost')
@@ -258,8 +255,8 @@ function buildCatalogItem(
     slotType: normalizedSlot
       ? observedFact(normalizedSlot, 'item_catalog_items.slotType')
       : unknownFact<InventorySlotType>('item_catalog_items.slotType'),
-    activeItem: activeValue !== undefined
-      ? observedFact(activeValue, 'item_catalog_items.isActiveItem')
+    activeItem: activeItem !== undefined
+      ? observedFact(activeItem, 'item_catalog_items.isActiveItem')
       : unknownFact<boolean>('item_catalog_items.isActiveItem'),
     rulesetAvailable,
     shopable: shopable !== undefined
