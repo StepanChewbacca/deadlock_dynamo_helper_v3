@@ -41,6 +41,8 @@ jobs:
           node --check scripts/run-recommendation-behavioral-v5-1-bounded-sweep.mjs
           node --check scripts/run-recommendation-behavioral-v5-1-full.mjs
           node --check scripts/run-recommendation-behavioral-v5-2-bounded.mjs
+          node --check scripts/analyze-souls-affordability.cjs
+          node --check scripts/build-ruleset-catalog-artifact.cjs
 
       - name: Build shared package
         run: yarn workspace @deadlock-live-probe/shared build
@@ -121,8 +123,8 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile --ignore-engines
 
-      - name: Build shared package for tests
-        run: yarn workspace @deadlock-live-probe/shared build
+      - name: Test shared package
+        run: yarn workspace @deadlock-live-probe/shared test
 
       - name: Test domain package
         run: yarn workspace @deadlock-live-probe/build-domain test

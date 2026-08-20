@@ -6,3 +6,4 @@ export * from './skill-build';
 export * from './skill-build-path-search';
 export * from './diagnostic-match-parser';
 export * from './diagnostic-baseline-model';
+export * from './ruleset-catalog';
