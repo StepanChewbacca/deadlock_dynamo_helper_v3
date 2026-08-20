@@ -41,7 +41,6 @@ export function generateRecommendationCandidates(
   const graph = input.itemGraph;
   const candidates: RecommendationCandidate[] = [];
   const waitTargets = new Set<number>();
-  registerGraphMetadata(graph);
 
   candidates.push(buildCandidate(state, { type: 'WAIT_SAVE' }, true, ['FEASIBLE'], 0, heldIds(state), state.economy.spendableSouls.value));
 
@@ -60,7 +59,7 @@ export function generateRecommendationCandidates(
       applyPurchaseObservabilityReasons(state, reasons);
       applyAffordabilityReason(state, item.directPurchaseCost, reasons);
       const resulting = addItemToInventory(state, item);
-      if (!checkSlots(resulting, rules)) reasons.push('SLOT_LIMIT_EXCEEDED');
+      if (!checkSlots(resulting, graph, rules)) reasons.push('SLOT_LIMIT_EXCEEDED');
       if (!checkActiveLimit(resulting, graph, rules)) reasons.push('ACTIVE_ITEM_LIMIT_EXCEEDED');
       const feasible = reasons.length === 0;
       candidates.push(buildCandidate(
@@ -93,7 +92,7 @@ export function generateRecommendationCandidates(
       applyPurchaseObservabilityReasons(state, reasons);
       applyAffordabilityReason(state, recipe.soulsCost, reasons);
       const resulting = upgradeInventory(state, item, recipe.consumedItemIds);
-      if (!checkSlots(resulting, rules)) reasons.push('SLOT_LIMIT_EXCEEDED');
+      if (!checkSlots(resulting, graph, rules)) reasons.push('SLOT_LIMIT_EXCEEDED');
       if (!checkActiveLimit(resulting, graph, rules)) reasons.push('ACTIVE_ITEM_LIMIT_EXCEEDED');
       const feasible = reasons.length === 0;
       candidates.push(buildCandidate(
@@ -156,7 +155,7 @@ function evaluateSell(
     }
   }
   const resulting = applySellTransition(state, item, graph);
-  if (!checkSlots(resulting, rules)) reasons.push('SLOT_LIMIT_EXCEEDED');
+  if (!checkSlots(resulting, graph, rules)) reasons.push('SLOT_LIMIT_EXCEEDED');
   if (!checkActiveLimit(resulting, graph, rules)) reasons.push('ACTIVE_ITEM_LIMIT_EXCEEDED');
   const feasible = reasons.length === 0;
   const refund = item.sellTransition?.soulsRefund ?? 0;
@@ -189,7 +188,7 @@ function evaluateReplace(
 
   const afterSell = applySellTransition(state, sold, graph);
   const resulting = bought.directPurchaseCost === undefined ? afterSell : addItemIds(afterSell, [bought.itemId]);
-  if (!checkSlots(resulting, rules)) reasons.push('SLOT_LIMIT_EXCEEDED');
+  if (!checkSlots(resulting, graph, rules)) reasons.push('SLOT_LIMIT_EXCEEDED');
   if (!checkActiveLimit(resulting, graph, rules)) reasons.push('ACTIVE_ITEM_LIMIT_EXCEEDED');
 
   const refund = sold.sellTransition?.soulsRefund ?? 0;
@@ -228,10 +227,14 @@ function rulesetAvailability(rulesetId: string, item: RecommendationItemDefiniti
   return item.availableRulesetIds.includes(rulesetId);
 }
 
-function checkSlots(itemIds: readonly number[], rules: RecommendationCandidateGeneratorRules): boolean {
+function checkSlots(
+  itemIds: readonly number[],
+  graph: RecommendationItemGraph,
+  rules: RecommendationCandidateGeneratorRules,
+): boolean {
   const counts: Record<InventorySlotType, number> = { weapon: 0, vitality: 0, spirit: 0 };
   for (const itemId of itemIds) {
-    const slotType = slotTypesByItemId.get(itemId);
+    const slotType = graph.getItem(itemId)?.slotType;
     if (slotType) counts[slotType] += 1;
   }
   const flexUsed = (Object.keys(counts) as InventorySlotType[])
@@ -239,20 +242,13 @@ function checkSlots(itemIds: readonly number[], rules: RecommendationCandidateGe
   return flexUsed <= rules.maxFlexSlots;
 }
 
-const slotTypesByItemId = new Map<number, InventorySlotType>();
-const activeByItemId = new Map<number, boolean>();
-
-function registerGraphMetadata(graph: RecommendationItemGraph): void {
-  for (const item of graph.getAllItems()) {
-    slotTypesByItemId.set(item.itemId, item.slotType);
-    activeByItemId.set(item.itemId, item.active);
-  }
-}
-
-function checkActiveLimit(itemIds: readonly number[], graph: RecommendationItemGraph, rules: RecommendationCandidateGeneratorRules): boolean {
-  registerGraphMetadata(graph);
+function checkActiveLimit(
+  itemIds: readonly number[],
+  graph: RecommendationItemGraph,
+  rules: RecommendationCandidateGeneratorRules,
+): boolean {
   let activeCount = 0;
-  for (const itemId of itemIds) if (activeByItemId.get(itemId)) activeCount += 1;
+  for (const itemId of itemIds) if (graph.getItem(itemId)?.active) activeCount += 1;
   return activeCount <= rules.maxActiveItems;
 }
 
@@ -337,7 +333,6 @@ export function buildInventoryInstancesForRecommendation(
   itemIds: readonly number[],
   graph: RecommendationItemGraph,
 ): ReadonlyMap<number, InventoryItemInstance> {
-  registerGraphMetadata(graph);
   const held = new Map<number, InventoryItemInstance>();
   let sequence = 1;
   for (const itemId of [...new Set(itemIds)].sort((a, b) => a - b)) {
