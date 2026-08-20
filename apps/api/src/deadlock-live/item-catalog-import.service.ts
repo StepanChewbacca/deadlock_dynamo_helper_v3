@@ -526,10 +526,10 @@ function resolveComponentItemId(
   return itemIdByClassName.get(reference);
 }
 
-function deduplicateRecipes(recipes: ItemCatalogRecipe[]): ItemCatalogRecipe[] {
+export function deduplicateRecipes(recipes: ItemCatalogRecipe[]): ItemCatalogRecipe[] {
   const seen = new Set<string>();
   return recipes.filter((recipe) => {
-    const key = `${recipe.catalogVersionId}:${recipe.parentItemId}:${recipe.componentItemId}`;
+    const key = `${recipe.catalogVersionId}:${recipe.parentItemId}:${recipe.componentOrder}`;
     if (seen.has(key)) {
       return false;
     }
