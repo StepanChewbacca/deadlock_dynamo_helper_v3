@@ -1,11 +1,11 @@
 import {
   canonicalizeGepRosterPayloadV2,
-  CanonicalGepPlayerPayloadV2,
+  CanonicalGepRosterPayloadV2,
   MinimalPlayerState,
 } from '@deadlock-live-probe/shared';
 
 export interface CanonicalRosterStateResult {
-  canonical: CanonicalGepPlayerPayloadV2;
+  canonical: CanonicalGepRosterPayloadV2;
   steamId?: string;
 }
 
