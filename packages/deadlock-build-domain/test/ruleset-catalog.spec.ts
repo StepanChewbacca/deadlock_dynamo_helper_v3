@@ -1,6 +1,7 @@
 import {
   canonicalRulesetCatalogJsonV1,
   canonicalizeRulesetCatalogV1,
+  requireAuthoritativeRulesetCatalogV1,
   RulesetCatalogInputV1,
   RulesetCatalogValidationError,
 } from '../src';
@@ -9,6 +10,8 @@ const baseInput = (): RulesetCatalogInputV1 => ({
   rulesetKey: 'deadlock-standard-2026-08-20',
   clientVersion: '6101',
   source: 'fixture',
+  authority: 'FIXTURE',
+  sourceArtifactSha256: 'a'.repeat(64),
   inventoryRuleset: {
     duplicateItemsAllowed: false,
     baseSlotsByType: {
@@ -67,6 +70,8 @@ describe('ruleset catalog v1', () => {
       schemaVersion: 1,
       rulesetKey: 'deadlock-standard-2026-08-20',
       clientVersion: '6101',
+      authority: 'FIXTURE',
+      sourceArtifactSha256: 'a'.repeat(64),
       items: [{ itemId: 100 }, { itemId: 200 }, { itemId: 300 }],
       recipes: [
         { parentItemId: 200, componentItemIds: [100] },
@@ -80,6 +85,45 @@ describe('ruleset catalog v1', () => {
     input.recipes = [{ parentItemId: 300, componentItemIds: [100, 100, 200] }];
 
     expect(canonicalizeRulesetCatalogV1(input).recipes[0].componentItemIds).toEqual([100, 100, 200]);
+  });
+
+  it('requires a cryptographic source artifact digest', () => {
+    const input = baseInput();
+    input.sourceArtifactSha256 = 'not-a-sha';
+
+    expectValidationCode(
+      () => canonicalizeRulesetCatalogV1(input),
+      'INVALID_SOURCE_ARTIFACT_SHA256',
+    );
+  });
+
+  it('rejects secondary and fixture sources for exact production legality', () => {
+    const secondary = baseInput();
+    secondary.authority = 'SECONDARY_API';
+    secondary.source = 'deadlock-api-assets';
+    expectValidationCode(
+      () => requireAuthoritativeRulesetCatalogV1(secondary),
+      'NON_AUTHORITATIVE_SOURCE',
+    );
+
+    const fixture = baseInput();
+    expectValidationCode(
+      () => requireAuthoritativeRulesetCatalogV1(fixture),
+      'NON_AUTHORITATIVE_SOURCE',
+    );
+  });
+
+  it('accepts an explicitly authoritative installed-game artifact', () => {
+    const input = baseInput();
+    input.authority = 'AUTHORITATIVE_INSTALLED_GAME';
+    input.source = 'installed-game-vpk-extract';
+    input.sourceArtifactSha256 = 'b'.repeat(64);
+
+    expect(requireAuthoritativeRulesetCatalogV1(input)).toMatchObject({
+      authority: 'AUTHORITATIVE_INSTALLED_GAME',
+      source: 'installed-game-vpk-extract',
+      sourceArtifactSha256: 'b'.repeat(64),
+    });
   });
 
   it('rejects invalid slot types from untyped JSON input', () => {
