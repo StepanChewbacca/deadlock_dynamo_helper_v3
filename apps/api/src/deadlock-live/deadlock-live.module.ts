@@ -14,6 +14,7 @@ import { AllHeroesAnalysisService } from './all-heroes-analysis.service';
 import { AllHeroesAnalysisController } from './all-heroes-analysis.controller';
 import { SituationalRecommendationService } from './situational-recommendation.service';
 import { CatalogContentService } from './catalog-content.service';
+import { RecommendationTelemetryStoreService } from './recommendation-telemetry-store.service';
 import { CrawlerRun } from './entities/crawler-run.entity';
 import { CrawlerState } from './entities/crawler-state.entity';
 import { Hero } from './entities/hero.entity';
@@ -26,6 +27,10 @@ import { Match } from './entities/match.entity';
 import { MatchPlayerItem } from './entities/match-player-item.entity';
 import { MatchPlayer } from './entities/match-player.entity';
 import { MatchPlayerSkillUpgrade } from './entities/match-player-skill-upgrade.entity';
+import { RecommendationDecisionCandidateV8 } from './entities/recommendation-decision-candidate.entity';
+import { RecommendationDecisionV8 } from './entities/recommendation-decision.entity';
+import { RecommendationExposureAckV8 } from './entities/recommendation-exposure-ack.entity';
+import { RecommendationTelemetryEvent } from './entities/recommendation-telemetry-event.entity';
 import { ReferenceDataImportService } from './reference-data-import.service';
 import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
 
@@ -42,6 +47,10 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
       ItemCatalogVersion,
       ItemCatalogItem,
       ItemCatalogRecipe,
+      RecommendationTelemetryEvent,
+      RecommendationDecisionV8,
+      RecommendationDecisionCandidateV8,
+      RecommendationExposureAckV8,
       CrawlerRun,
       CrawlerState,
       ShadowModeDecision,
@@ -63,6 +72,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     AllHeroesAnalysisService,
     SituationalRecommendationService,
     CatalogContentService,
+    RecommendationTelemetryStoreService,
     ReferenceDataImportService,
     IngestStatusService,
   ],
@@ -75,6 +85,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     AllHeroesAnalysisService,
     SituationalRecommendationService,
     CatalogContentService,
+    RecommendationTelemetryStoreService,
     ReferenceDataImportService,
     IngestStatusService,
   ],
