@@ -14,6 +14,7 @@ import { AllHeroesAnalysisService } from './all-heroes-analysis.service';
 import { AllHeroesAnalysisController } from './all-heroes-analysis.controller';
 import { SituationalRecommendationService } from './situational-recommendation.service';
 import { CatalogContentService } from './catalog-content.service';
+import { ModelBundleRegistryService } from './model-bundle-registry.service';
 import { RecommendationTelemetryController } from './recommendation-telemetry.controller';
 import { RecommendationTelemetryStoreService } from './recommendation-telemetry-store.service';
 import { CrawlerRun } from './entities/crawler-run.entity';
@@ -28,6 +29,7 @@ import { Match } from './entities/match.entity';
 import { MatchPlayerItem } from './entities/match-player-item.entity';
 import { MatchPlayer } from './entities/match-player.entity';
 import { MatchPlayerSkillUpgrade } from './entities/match-player-skill-upgrade.entity';
+import { ModelBundleRegistryV1 } from './entities/model-bundle-registry.entity';
 import { RecommendationDecisionCandidateV8 } from './entities/recommendation-decision-candidate.entity';
 import { RecommendationDecisionV8 } from './entities/recommendation-decision.entity';
 import { RecommendationExposureAckV8 } from './entities/recommendation-exposure-ack.entity';
@@ -52,6 +54,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
       RecommendationDecisionV8,
       RecommendationDecisionCandidateV8,
       RecommendationExposureAckV8,
+      ModelBundleRegistryV1,
       CrawlerRun,
       CrawlerState,
       ShadowModeDecision,
@@ -74,6 +77,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     AllHeroesAnalysisService,
     SituationalRecommendationService,
     CatalogContentService,
+    ModelBundleRegistryService,
     RecommendationTelemetryStoreService,
     ReferenceDataImportService,
     IngestStatusService,
@@ -87,6 +91,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     AllHeroesAnalysisService,
     SituationalRecommendationService,
     CatalogContentService,
+    ModelBundleRegistryService,
     RecommendationTelemetryStoreService,
     ReferenceDataImportService,
     IngestStatusService,
