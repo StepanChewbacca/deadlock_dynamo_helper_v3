@@ -14,6 +14,7 @@ import { AllHeroesAnalysisService } from './all-heroes-analysis.service';
 import { AllHeroesAnalysisController } from './all-heroes-analysis.controller';
 import { SituationalRecommendationService } from './situational-recommendation.service';
 import { CatalogContentService } from './catalog-content.service';
+import { RecommendationTelemetryController } from './recommendation-telemetry.controller';
 import { RecommendationTelemetryStoreService } from './recommendation-telemetry-store.service';
 import { CrawlerRun } from './entities/crawler-run.entity';
 import { CrawlerState } from './entities/crawler-state.entity';
@@ -62,6 +63,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     HeroAnalysisController,
     AllHeroesAnalysisController,
     IngestStatusController,
+    RecommendationTelemetryController,
   ],
   providers: [
     LiveMatchStateService,
