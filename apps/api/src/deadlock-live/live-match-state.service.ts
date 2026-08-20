@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  canonicalizeGepRosterPayloadV2,
   MinimalItemState,
   MinimalMatchState,
   MinimalMatchSnapshot,
@@ -193,79 +194,55 @@ export class LiveMatchStateService {
     }
 
     const player = this.getOrCreatePlayer(state, playerKey);
-    const playerName = this.getStringValue(payload, 'player_name');
-    const heroName = this.getStringValue(payload, 'hero_name');
-    const heroId = this.getNumericValue(payload, 'hero_id');
-    const teamId =
-      this.getNumericValue(payload, 'team_id') ??
-      this.getNumericValue(payload, 'team');
-    const lane =
-      this.getNumericValue(payload, 'assigned_lane') ??
-      this.getNumericValue(payload, 'lane');
-    const level = this.getNumericValue(payload, 'level');
-    const souls = this.getNumericValue(payload, 'souls');
-    const health = this.getNumericValue(payload, 'health');
-    const maxHealth = this.getNumericValue(payload, 'max_health');
-    const kills = this.getNumericValue(payload, 'kills');
-    const deaths = this.getNumericValue(payload, 'deaths');
-    const assists =
-      this.getNumericValue(payload, 'assist') ??
-      this.getNumericValue(payload, 'assists');
-    const heroDamage = this.getNumericValue(payload, 'hero_damage');
-    const objectDamage = this.getNumericValue(payload, 'object_damage');
-    const healing =
-      this.getNumericValue(payload, 'hero_healing') ??
-      this.getNumericValue(payload, 'healing');
+    const { canonicalPayload } = canonicalizeGepRosterPayloadV2(payload);
 
-    if (playerName !== undefined) {
-      player.playerName = playerName;
+    if (canonicalPayload.playerName !== undefined) {
+      player.playerName = canonicalPayload.playerName;
     }
-    if ('is_local' in payload || 'isLocal' in payload) {
-      player.isLocal =
-        this.getBooleanValue(payload, 'is_local') ||
-        this.getBooleanValue(payload, 'isLocal');
+    if (canonicalPayload.isLocal !== undefined) {
+      player.isLocal = canonicalPayload.isLocal;
     }
-    if (heroName !== undefined) {
-      player.heroName = heroName;
+    if (canonicalPayload.heroName !== undefined) {
+      player.heroName = canonicalPayload.heroName;
     }
-    if (heroId !== undefined) {
-      player.heroId = heroId;
+    if (canonicalPayload.heroId !== undefined) {
+      player.heroId = canonicalPayload.heroId;
     }
-    if (teamId !== undefined) {
-      player.teamId = teamId;
+    if (canonicalPayload.teamId !== undefined) {
+      player.teamId = canonicalPayload.teamId;
     }
-    if (lane !== undefined) {
-      player.lane = lane;
+    if (canonicalPayload.laneId !== undefined) {
+      player.lane = canonicalPayload.laneId;
     }
-    if (level !== undefined) {
-      player.level = level;
+    if (canonicalPayload.level !== undefined) {
+      player.level = canonicalPayload.level;
     }
-    if (souls !== undefined) {
-      player.souls = souls;
+    if (canonicalPayload.soulsRaw !== undefined) {
+      player.souls = canonicalPayload.soulsRaw;
     }
-    if (health !== undefined) {
-      player.health = health;
+    if (canonicalPayload.health !== undefined) {
+      player.health = canonicalPayload.health;
     }
-    if (maxHealth !== undefined) {
-      player.maxHealth = maxHealth;
+    if (canonicalPayload.maxHealth !== undefined) {
+      player.maxHealth = canonicalPayload.maxHealth;
     }
-    if (kills !== undefined) {
-      player.kills = kills;
+    if (canonicalPayload.kills !== undefined) {
+      player.kills = canonicalPayload.kills;
     }
-    if (deaths !== undefined) {
-      player.deaths = deaths;
+    if (canonicalPayload.deaths !== undefined) {
+      player.deaths = canonicalPayload.deaths;
     }
-    if (assists !== undefined) {
-      player.assists = assists;
+    if (canonicalPayload.assists !== undefined) {
+      player.assists = canonicalPayload.assists;
     }
-    if (heroDamage !== undefined) {
-      player.heroDamage = heroDamage;
+    if (canonicalPayload.heroDamage !== undefined) {
+      player.heroDamage = canonicalPayload.heroDamage;
     }
-    if (objectDamage !== undefined) {
-      player.objectDamage = objectDamage;
+    if (canonicalPayload.objectDamage !== undefined) {
+      player.objectDamage = canonicalPayload.objectDamage;
     }
-    if (healing !== undefined) {
-      player.healing = healing;
+    if (canonicalPayload.heroHealing !== undefined) {
+      player.healing = canonicalPayload.heroHealing;
     }
   }
 
@@ -322,7 +299,8 @@ export class LiveMatchStateService {
     payload: Record<string, unknown>,
     eventKey: string,
   ): string | undefined {
-    const steamId = this.getStringValue(payload, 'steam_id');
+    const { canonicalPayload } = canonicalizeGepRosterPayloadV2(payload);
+    const steamId = canonicalPayload.steamId;
     if (!steamId) {
       return undefined;
     }
@@ -340,12 +318,9 @@ export class LiveMatchStateService {
       return `bot:${rosterSlot}`;
     }
 
-    const teamId =
-      this.getNumericValue(payload, 'team_id') ??
-      this.getNumericValue(payload, 'team') ??
-      'unknown';
-    const heroId = this.getNumericValue(payload, 'hero_id') ?? 'unknown';
-    const playerName = this.getStringValue(payload, 'player_name') ?? 'unknown';
+    const teamId = canonicalPayload.teamId ?? 'unknown';
+    const heroId = canonicalPayload.heroId ?? 'unknown';
+    const playerName = canonicalPayload.playerName ?? 'unknown';
     return `bot:${teamId}:${heroId}:${playerName}`;
   }
 
