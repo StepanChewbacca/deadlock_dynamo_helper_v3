@@ -2,6 +2,11 @@ import { InventoryRuleset, InventorySlotType } from './types';
 
 export const RULESET_CATALOG_SCHEMA_VERSION = 1 as const;
 
+export type RulesetCatalogAuthorityV1 =
+  | 'AUTHORITATIVE_INSTALLED_GAME'
+  | 'SECONDARY_API'
+  | 'FIXTURE';
+
 export interface RulesetCatalogItemV1 {
   itemId: number;
   slotType: InventorySlotType;
@@ -22,6 +27,8 @@ export interface RulesetCatalogInputV1 {
   rulesetKey: string;
   clientVersion: string;
   source: string;
+  authority: RulesetCatalogAuthorityV1;
+  sourceArtifactSha256: string;
   inventoryRuleset: InventoryRuleset;
   items: RulesetCatalogItemV1[];
   recipes: RulesetCatalogRecipeV1[];
@@ -32,6 +39,8 @@ export interface CanonicalRulesetCatalogV1 {
   rulesetKey: string;
   clientVersion: string;
   source: string;
+  authority: RulesetCatalogAuthorityV1;
+  sourceArtifactSha256: string;
   inventoryRuleset: {
     duplicateItemsAllowed: boolean;
     baseSlotsByType: Record<InventorySlotType, number>;
@@ -45,6 +54,9 @@ export type RulesetCatalogValidationCode =
   | 'INVALID_RULESET_KEY'
   | 'INVALID_CLIENT_VERSION'
   | 'INVALID_SOURCE'
+  | 'INVALID_AUTHORITY'
+  | 'INVALID_SOURCE_ARTIFACT_SHA256'
+  | 'NON_AUTHORITATIVE_SOURCE'
   | 'INVALID_SLOT_RULE'
   | 'INVALID_ITEM_ID'
   | 'INVALID_SLOT_TYPE'
@@ -154,6 +166,8 @@ export function canonicalizeRulesetCatalogV1(
     rulesetKey: input.rulesetKey.trim(),
     clientVersion: input.clientVersion.trim(),
     source: input.source.trim(),
+    authority: input.authority,
+    sourceArtifactSha256: input.sourceArtifactSha256,
     inventoryRuleset: {
       duplicateItemsAllowed: input.inventoryRuleset.duplicateItemsAllowed,
       baseSlotsByType: {
@@ -166,6 +180,19 @@ export function canonicalizeRulesetCatalogV1(
     items,
     recipes,
   };
+}
+
+export function requireAuthoritativeRulesetCatalogV1(
+  input: RulesetCatalogInputV1,
+): CanonicalRulesetCatalogV1 {
+  const canonical = canonicalizeRulesetCatalogV1(input);
+  if (canonical.authority !== 'AUTHORITATIVE_INSTALLED_GAME') {
+    throw new RulesetCatalogValidationError(
+      'NON_AUTHORITATIVE_SOURCE',
+      `Ruleset catalog authority ${canonical.authority} cannot be used for exact production legality.`,
+    );
+  }
+  return canonical;
 }
 
 export function canonicalRulesetCatalogJsonV1(input: RulesetCatalogInputV1): string {
@@ -181,6 +208,18 @@ function validateIdentity(input: RulesetCatalogInputV1): void {
   }
   if (!input.source?.trim()) {
     throw new RulesetCatalogValidationError('INVALID_SOURCE', 'source is required.');
+  }
+  if (!isRulesetCatalogAuthority(input.authority)) {
+    throw new RulesetCatalogValidationError(
+      'INVALID_AUTHORITY',
+      `Invalid ruleset catalog authority: ${String(input.authority)}.`,
+    );
+  }
+  if (!isSha256(input.sourceArtifactSha256)) {
+    throw new RulesetCatalogValidationError(
+      'INVALID_SOURCE_ARTIFACT_SHA256',
+      'sourceArtifactSha256 must be a 64-character lowercase hex digest.',
+    );
   }
 }
 
@@ -281,8 +320,20 @@ function assertAcyclicRecipeGraph(recipes: readonly RulesetCatalogRecipeV1[]): v
   }
 }
 
+function isRulesetCatalogAuthority(value: unknown): value is RulesetCatalogAuthorityV1 {
+  return (
+    value === 'AUTHORITATIVE_INSTALLED_GAME' ||
+    value === 'SECONDARY_API' ||
+    value === 'FIXTURE'
+  );
+}
+
 function isInventorySlotType(value: unknown): value is InventorySlotType {
   return value === 'weapon' || value === 'vitality' || value === 'spirit';
+}
+
+function isSha256(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 }
 
 function isPositiveInteger(value: number): boolean {
