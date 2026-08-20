@@ -55,7 +55,9 @@ export interface RecommendationDatasetAuditOptionsV8 {
   candidateCoverageFloor?: number;
   majorCohortCoverageFloor?: number;
   majorCohortMinDecisions?: number;
+  minimumLabeledDecisions?: number;
   evaluateFutureTest?: boolean;
+  allowStructuralOnly?: boolean;
 }
 
 export interface RecommendationDatasetCohortAuditV8 {
@@ -69,6 +71,9 @@ export interface RecommendationDatasetCohortAuditV8 {
 
 export interface RecommendationDatasetAuditV8 {
   passed: boolean;
+  structuralPassed: boolean;
+  empiricalPassed: boolean;
+  evidenceSufficient: boolean;
   decisionCount: number;
   labeledDecisionCount: number;
   coveredDecisionCount: number;
@@ -77,6 +82,8 @@ export interface RecommendationDatasetAuditV8 {
   futureTestEvaluated: boolean;
   splitMatchCounts: Record<RecommendationDatasetSplitV8, number>;
   cohortAudits: readonly RecommendationDatasetCohortAuditV8[];
+  structuralErrors: readonly string[];
+  empiricalErrors: readonly string[];
   errors: readonly string[];
 }
 
@@ -127,8 +134,11 @@ export function auditRecommendationDatasetV8(
   const candidateCoverageFloor = options.candidateCoverageFloor ?? 0.99;
   const majorCohortCoverageFloor = options.majorCohortCoverageFloor ?? 0.95;
   const majorCohortMinDecisions = options.majorCohortMinDecisions ?? 100;
+  const minimumLabeledDecisions = options.minimumLabeledDecisions ?? 10_000;
   const evaluateFutureTest = options.evaluateFutureTest ?? false;
-  const errors: string[] = [];
+  const allowStructuralOnly = options.allowStructuralOnly ?? false;
+  const structuralErrors: string[] = [];
+  const empiricalErrors: string[] = [];
   const decisionIds = new Set<string>();
   const splitByMatch = new Map<string, RecommendationDatasetSplitV8>();
   const matchesBySplit: Record<RecommendationDatasetSplitV8, Set<string>> = {
@@ -140,36 +150,39 @@ export function auditRecommendationDatasetV8(
   const evaluatedRows: RecommendationDatasetDecisionV8[] = [];
   for (const row of rows) {
     if (row.schemaVersion !== 8 || row.contract !== RECOMMENDATION_DATASET_V8_CONTRACT) {
-      errors.push(`CONTRACT_MISMATCH:${row.decisionId}`);
+      structuralErrors.push(`CONTRACT_MISMATCH:${row.decisionId}`);
     }
-    if (decisionIds.has(row.decisionId)) errors.push(`DUPLICATE_DECISION_ID:${row.decisionId}`);
+    if (decisionIds.has(row.decisionId)) structuralErrors.push(`DUPLICATE_DECISION_ID:${row.decisionId}`);
     decisionIds.add(row.decisionId);
-    if (row.observedActionInjected !== false) errors.push(`OBSERVED_ACTION_INJECTION:${row.decisionId}`);
-    if (row.latestStateSourceAtMs > row.decisionAtMs) errors.push(`FUTURE_STATE_TIMESTAMP:${row.decisionId}`);
-    if (!isSha256(row.catalogSha256)) errors.push(`CATALOG_SHA_INVALID:${row.decisionId}`);
-    if (!row.rulesetId) errors.push(`RULESET_ID_REQUIRED:${row.decisionId}`);
-    if (!row.candidateGeneratorVersion) errors.push(`CANDIDATE_GENERATOR_VERSION_REQUIRED:${row.decisionId}`);
+    if (row.observedActionInjected !== false) structuralErrors.push(`OBSERVED_ACTION_INJECTION:${row.decisionId}`);
+    if (row.latestStateSourceAtMs > row.decisionAtMs) structuralErrors.push(`FUTURE_STATE_TIMESTAMP:${row.decisionId}`);
+    if (!isSha256(row.catalogSha256)) structuralErrors.push(`CATALOG_SHA_INVALID:${row.decisionId}`);
+    if (!row.rulesetId) structuralErrors.push(`RULESET_ID_REQUIRED:${row.decisionId}`);
+    if (!row.candidateGeneratorVersion) structuralErrors.push(`CANDIDATE_GENERATOR_VERSION_REQUIRED:${row.decisionId}`);
+    if (!row.playerKey) structuralErrors.push(`PLAYER_KEY_REQUIRED:${row.decisionId}`);
 
     const existingSplit = splitByMatch.get(row.matchId);
-    if (existingSplit && existingSplit !== row.split) errors.push(`MATCH_SPLIT_LEAKAGE:${row.matchId}`);
+    if (existingSplit && existingSplit !== row.split) structuralErrors.push(`MATCH_SPLIT_LEAKAGE:${row.matchId}`);
     else splitByMatch.set(row.matchId, row.split);
     matchesBySplit[row.split].add(row.matchId);
 
     const candidateKeys = row.candidates.map((candidate) => candidate.actionId);
-    if (new Set(candidateKeys).size !== candidateKeys.length) errors.push(`DUPLICATE_CANDIDATE:${row.decisionId}`);
+    if (candidateKeys.length === 0) structuralErrors.push(`EMPTY_CANDIDATE_SET:${row.decisionId}`);
+    if (new Set(candidateKeys).size !== candidateKeys.length) structuralErrors.push(`DUPLICATE_CANDIDATE:${row.decisionId}`);
     const feasibleKeys = row.candidates.filter((candidate) => candidate.feasible).map((candidate) => candidate.actionId);
-    if (!sameStringSet(row.coverageUniverseActionKeys, candidateKeys)) errors.push(`COVERAGE_UNIVERSE_MISMATCH:${row.decisionId}`);
-    if (!sameStringSet(row.behavioralChoiceSetActionKeys, feasibleKeys)) errors.push(`BEHAVIORAL_CHOICE_SET_MISMATCH:${row.decisionId}`);
+    if (feasibleKeys.length === 0) structuralErrors.push(`EMPTY_BEHAVIORAL_CHOICE_SET:${row.decisionId}`);
+    if (!sameStringSet(row.coverageUniverseActionKeys, candidateKeys)) structuralErrors.push(`COVERAGE_UNIVERSE_MISMATCH:${row.decisionId}`);
+    if (!sameStringSet(row.behavioralChoiceSetActionKeys, feasibleKeys)) structuralErrors.push(`BEHAVIORAL_CHOICE_SET_MISMATCH:${row.decisionId}`);
     if (row.candidates.some((candidate) => candidate.observedActionInjected !== false)) {
-      errors.push(`CANDIDATE_OBSERVED_ACTION_INJECTION:${row.decisionId}`);
+      structuralErrors.push(`CANDIDATE_OBSERVED_ACTION_INJECTION:${row.decisionId}`);
     }
 
     if (row.observedAction) {
-      if (row.observedAction.occurredAtMs < row.decisionAtMs) errors.push(`OBSERVED_ACTION_BEFORE_DECISION:${row.decisionId}`);
+      if (row.observedAction.occurredAtMs < row.decisionAtMs) structuralErrors.push(`OBSERVED_ACTION_BEFORE_DECISION:${row.decisionId}`);
       const inCoverage = candidateKeys.includes(row.observedAction.actionKey);
       const inBehavioral = feasibleKeys.includes(row.observedAction.actionKey);
-      if (row.observedActionInCoverageUniverse !== inCoverage) errors.push(`OBSERVED_COVERAGE_FLAG_MISMATCH:${row.decisionId}`);
-      if (row.observedActionInBehavioralChoiceSet !== inBehavioral) errors.push(`OBSERVED_BEHAVIOR_FLAG_MISMATCH:${row.decisionId}`);
+      if (row.observedActionInCoverageUniverse !== inCoverage) structuralErrors.push(`OBSERVED_COVERAGE_FLAG_MISMATCH:${row.decisionId}`);
+      if (row.observedActionInBehavioralChoiceSet !== inBehavioral) structuralErrors.push(`OBSERVED_BEHAVIOR_FLAG_MISMATCH:${row.decisionId}`);
     }
 
     if (evaluateFutureTest || row.split !== 'FUTURE_TEST') evaluatedRows.push(row);
@@ -178,8 +191,12 @@ export function auditRecommendationDatasetV8(
   const labeled = evaluatedRows.filter((row) => row.observedAction !== undefined);
   const covered = labeled.filter((row) => row.observedActionInBehavioralChoiceSet === true);
   const candidateCoverage = ratio(covered.length, labeled.length);
+  const evidenceSufficient = labeled.length >= minimumLabeledDecisions;
+  if (!evidenceSufficient) {
+    empiricalErrors.push(`MIN_LABELED_DECISIONS_NOT_MET:${labeled.length}<${minimumLabeledDecisions}`);
+  }
   if (labeled.length > 0 && candidateCoverage < candidateCoverageFloor) {
-    errors.push(`CANDIDATE_COVERAGE_BELOW_FLOOR:${candidateCoverage.toFixed(6)}<${candidateCoverageFloor}`);
+    empiricalErrors.push(`CANDIDATE_COVERAGE_BELOW_FLOOR:${candidateCoverage.toFixed(6)}<${candidateCoverageFloor}`);
   }
 
   const cohortMap = new Map<string, RecommendationDatasetDecisionV8[]>();
@@ -196,7 +213,7 @@ export function auditRecommendationDatasetV8(
       const coverage = ratio(coveredCount, cohortRows.length);
       const major = cohortRows.length >= majorCohortMinDecisions;
       const passed = !major || coverage >= majorCohortCoverageFloor;
-      if (!passed) errors.push(`MAJOR_COHORT_COVERAGE_BELOW_FLOOR:${cohortKey}:${coverage.toFixed(6)}`);
+      if (!passed) empiricalErrors.push(`MAJOR_COHORT_COVERAGE_BELOW_FLOOR:${cohortKey}:${coverage.toFixed(6)}`);
       return {
         cohortKey,
         labeledDecisionCount: cohortRows.length,
@@ -208,8 +225,17 @@ export function auditRecommendationDatasetV8(
     })
     .sort((a, b) => a.cohortKey.localeCompare(b.cohortKey));
 
+  const uniqueStructuralErrors = [...new Set(structuralErrors)].sort();
+  const uniqueEmpiricalErrors = [...new Set(empiricalErrors)].sort();
+  const structuralPassed = uniqueStructuralErrors.length === 0;
+  const empiricalPassed = evidenceSufficient && uniqueEmpiricalErrors.length === 0;
+  const passed = structuralPassed && (allowStructuralOnly || empiricalPassed);
+
   return {
-    passed: errors.length === 0,
+    passed,
+    structuralPassed,
+    empiricalPassed,
+    evidenceSufficient,
     decisionCount: rows.length,
     labeledDecisionCount: labeled.length,
     coveredDecisionCount: covered.length,
@@ -222,7 +248,9 @@ export function auditRecommendationDatasetV8(
       FUTURE_TEST: matchesBySplit.FUTURE_TEST.size,
     },
     cohortAudits,
-    errors: [...new Set(errors)].sort(),
+    structuralErrors: uniqueStructuralErrors,
+    empiricalErrors: uniqueEmpiricalErrors,
+    errors: [...new Set([...uniqueStructuralErrors, ...uniqueEmpiricalErrors])].sort(),
   };
 }
 
@@ -234,6 +262,7 @@ function validateDecisionInput(input: BuildRecommendationDatasetDecisionV8Input)
   if (!Number.isFinite(input.latestStateSourceAtMs)) throw new Error('latestStateSourceAtMs is invalid');
   if (input.latestStateSourceAtMs > input.decisionAtMs) throw new Error('State source timestamp cannot be after decision timestamp');
   if (!isSha256(input.catalogSha256)) throw new Error('catalogSha256 must be a SHA-256 hex string');
+  if (input.candidates.length === 0) throw new Error('Candidate set must not be empty');
   for (const candidate of input.candidates) {
     if (candidate.decisionId !== input.decisionId) throw new Error(`Candidate ${candidate.actionId} decisionId mismatch`);
     if (candidate.matchId !== input.matchId) throw new Error(`Candidate ${candidate.actionId} matchId mismatch`);
