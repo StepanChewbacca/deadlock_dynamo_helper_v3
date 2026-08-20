@@ -27,6 +27,16 @@ const strictRuleset: InventoryRuleset = {
   maxFlexSlots: 0,
 };
 
+const duplicateRuleset: InventoryRuleset = {
+  duplicateItemsAllowed: true,
+  baseSlotsByType: {
+    weapon: 4,
+    vitality: 4,
+    spirit: 4,
+  },
+  maxFlexSlots: 4,
+};
+
 const catalog: RecommendationCatalogItem[] = [
   item(100, 'weapon', 500, 1),
   item(101, 'weapon', 500, 1),
@@ -216,23 +226,67 @@ describe('generateLegalRecommendationActions', () => {
     }
   });
 
-  it('fails closed on recipes that require duplicate component instances', () => {
-    const state = ownedState(catalog[2]);
+  it('emits duplicate-component UPGRADE only when the full component multiplicity is held', () => {
+    const recipeGraph = createRecipeGraph([
+      { parentItemId: 300, componentItemIds: [200, 200] },
+    ]);
+    let oneCopyState = createEmptyInventoryState();
+    const first = applyInventoryAction(
+      oneCopyState,
+      { type: 'BUY', item: catalog[2], metadata },
+      { recipeGraph: createRecipeGraph([]), ruleset: duplicateRuleset },
+    );
+    if (!first.ok) throw new Error(first.error.message);
+    oneCopyState = first.state;
+
+    const missingCopyResult = generateLegalRecommendationActions({
+      state: oneCopyState,
+      catalogItems: catalog,
+      recipeGraph,
+      ruleset: duplicateRuleset,
+      economy: exactEconomy(5000),
+      observedAtMs: 10,
+    });
+    expect(actionIds(missingCopyResult)).not.toContain('UPGRADE:300:200,200');
+
+    const second = applyInventoryAction(
+      oneCopyState,
+      { type: 'BUY', item: catalog[2], metadata },
+      { recipeGraph: createRecipeGraph([]), ruleset: duplicateRuleset },
+    );
+    if (!second.ok) throw new Error(second.error.message);
+
+    const completeResult = generateLegalRecommendationActions({
+      state: second.state,
+      catalogItems: catalog,
+      recipeGraph,
+      ruleset: duplicateRuleset,
+      economy: exactEconomy(5000),
+      observedAtMs: 10,
+    });
+    expect(actionIds(completeResult)).toContain('UPGRADE:300:200,200');
+  });
+
+  it('allows another BUY of the same item when the ruleset allows duplicates', () => {
+    let state = createEmptyInventoryState();
+    const first = applyInventoryAction(
+      state,
+      { type: 'BUY', item: catalog[0], metadata },
+      { recipeGraph: createRecipeGraph([]), ruleset: duplicateRuleset },
+    );
+    if (!first.ok) throw new Error(first.error.message);
+    state = first.state;
+
     const result = generateLegalRecommendationActions({
       state,
       catalogItems: catalog,
-      recipeGraph: createRecipeGraph([{ parentItemId: 300, componentItemIds: [200, 200] }]),
-      ruleset: strictRuleset,
+      recipeGraph: createRecipeGraph([]),
+      ruleset: duplicateRuleset,
       economy: exactEconomy(5000),
       observedAtMs: 10,
     });
 
-    expect(actionIds(result)).not.toContain('UPGRADE:300:200,200');
-    expect(result.diagnostics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ code: 'RECIPE_REQUIRES_DUPLICATE_COMPONENT_INSTANCE' }),
-      ]),
-    );
+    expect(actionIds(result)).toContain('BUY:100');
   });
 });
 
