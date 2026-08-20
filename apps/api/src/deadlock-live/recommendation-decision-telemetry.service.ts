@@ -16,6 +16,7 @@ const EVENT_LOG_FILE = 'events.ndjson';
 
 export type RecommendationDecisionTelemetryEventType =
   | 'DECISION_SERVED'
+  | 'DECISION_EXPOSED'
   | 'DECISION_SUPERSEDED'
   | 'ACTION_OBSERVED'
   | 'MODEL_ERROR'
@@ -34,6 +35,8 @@ export type RecommendationDecisionSupersedeReason =
 export type RecommendationOutcomeSource =
   | 'HISTORICAL_MATCH_PLAYER'
   | 'MANUAL';
+
+export type RecommendationExposureSurface = 'IN_GAME' | 'DESKTOP';
 
 export interface RecommendationDecisionTelemetryContext {
   matchId: string;
@@ -101,6 +104,17 @@ export interface RecommendationDecisionServedEvent
   elapsedMs: number;
 }
 
+export interface RecommendationDecisionExposedEvent
+  extends RecommendationTelemetryBaseEvent {
+  eventType: 'DECISION_EXPOSED';
+  decisionId: string;
+  matchId: string;
+  steamId: string;
+  exposedActionKeys: string[];
+  acknowledgedAtMs: number;
+  surface: RecommendationExposureSurface;
+}
+
 export interface RecommendationDecisionSupersededEvent
   extends RecommendationTelemetryBaseEvent {
   eventType: 'DECISION_SUPERSEDED';
@@ -140,6 +154,7 @@ export interface RecommendationMatchOutcomeEvent
 
 export type RecommendationDecisionTelemetryEvent =
   | RecommendationDecisionServedEvent
+  | RecommendationDecisionExposedEvent
   | RecommendationDecisionSupersededEvent
   | RecommendationActionObservedEvent
   | RecommendationModelErrorEvent
@@ -152,6 +167,7 @@ export interface RecommendationDecisionTelemetryStatus {
   eventLogPath: string;
   eventCount: number;
   decisionCount: number;
+  exposedDecisionCount: number;
   supersededDecisionCount: number;
   observedActionCount: number;
   modelErrorCount: number;
@@ -167,6 +183,15 @@ export interface RecordRecommendationDecisionInput {
   context: RecommendationDecisionTelemetryContext;
   recommendation: HeroBuildRecommendationResponse;
   elapsedMs: number;
+}
+
+export interface RecordRecommendationExposureInput {
+  decisionId: string;
+  matchId: string;
+  steamId: string;
+  exposedActionKeys: string[];
+  acknowledgedAtMs: number;
+  surface: RecommendationExposureSurface;
 }
 
 export interface RecordRecommendationObservedActionInput
@@ -198,6 +223,11 @@ export interface RecordRecommendationMatchOutcomeInput
   source: RecommendationOutcomeSource;
 }
 
+interface RecommendationDecisionIdentity {
+  matchId: string;
+  steamId: string;
+}
+
 @Injectable()
 export class RecommendationDecisionTelemetryService implements OnModuleInit {
   private readonly logger = new Logger(
@@ -215,6 +245,7 @@ export class RecommendationDecisionTelemetryService implements OnModuleInit {
     number
   > = {
     DECISION_SERVED: 0,
+    DECISION_EXPOSED: 0,
     DECISION_SUPERSEDED: 0,
     ACTION_OBSERVED: 0,
     MODEL_ERROR: 0,
@@ -225,6 +256,9 @@ export class RecommendationDecisionTelemetryService implements OnModuleInit {
     RecommendationOutcomeContext
   >();
   private readonly resolvedOutcomeKeys = new Set<string>();
+  private readonly decisionIdentities = new Map<string, RecommendationDecisionIdentity>();
+  private readonly candidateActionKeysByDecisionId = new Map<string, Set<string>>();
+  private readonly exposureKeys = new Set<string>();
   private writeQueue: Promise<void> = Promise.resolve();
   private eventCount = 0;
   private writeErrorCount = 0;
@@ -249,6 +283,7 @@ export class RecommendationDecisionTelemetryService implements OnModuleInit {
       eventLogPath: this.eventLogPath,
       eventCount: this.eventCount,
       decisionCount: this.counts.DECISION_SERVED,
+      exposedDecisionCount: this.counts.DECISION_EXPOSED,
       supersededDecisionCount: this.counts.DECISION_SUPERSEDED,
       observedActionCount: this.counts.ACTION_OBSERVED,
       modelErrorCount: this.counts.MODEL_ERROR,
@@ -304,6 +339,58 @@ export class RecommendationDecisionTelemetryService implements OnModuleInit {
     };
     this.appendEvent(event);
     return decisionId;
+  }
+
+  recordDecisionExposure(input: RecordRecommendationExposureInput): boolean {
+    const identity = this.decisionIdentities.get(input.decisionId);
+    if (!identity) {
+      throw new Error(`Unknown recommendation decision ${input.decisionId}.`);
+    }
+    if (identity.matchId !== input.matchId || identity.steamId !== input.steamId) {
+      throw new Error('Exposure identity does not match the served recommendation decision.');
+    }
+    if (!Number.isSafeInteger(input.acknowledgedAtMs) || input.acknowledgedAtMs < 0) {
+      throw new Error('acknowledgedAtMs must be a non-negative safe integer.');
+    }
+
+    const candidateActionKeys = this.candidateActionKeysByDecisionId.get(input.decisionId);
+    if (!candidateActionKeys) {
+      throw new Error(`Recommendation decision ${input.decisionId} has no candidate set.`);
+    }
+    const exposedActionKeys = [
+      ...new Set(
+        input.exposedActionKeys
+          .map((actionKey) => actionKey.trim())
+          .filter(Boolean),
+      ),
+    ].sort();
+    if (exposedActionKeys.length === 0) {
+      throw new Error('exposedActionKeys must contain at least one action key.');
+    }
+    for (const actionKey of exposedActionKeys) {
+      if (!candidateActionKeys.has(actionKey)) {
+        throw new Error(`Exposed action ${actionKey} was not in the served candidate set.`);
+      }
+    }
+
+    const exposureKey = createExposureKey(input.decisionId, input.surface);
+    if (this.exposureKeys.has(exposureKey)) {
+      return false;
+    }
+
+    this.appendEvent({
+      schemaVersion: SCHEMA_VERSION,
+      eventId: randomUUID(),
+      eventType: 'DECISION_EXPOSED',
+      occurredAt: new Date().toISOString(),
+      decisionId: input.decisionId,
+      matchId: input.matchId,
+      steamId: input.steamId,
+      exposedActionKeys,
+      acknowledgedAtMs: input.acknowledgedAtMs,
+      surface: input.surface,
+    });
+    return true;
   }
 
   recordObservedAction(
@@ -410,8 +497,21 @@ export class RecommendationDecisionTelemetryService implements OnModuleInit {
       return;
     }
 
+    if (event.eventType === 'DECISION_EXPOSED') {
+      this.exposureKeys.add(createExposureKey(event.decisionId, event.surface));
+      return;
+    }
+
     if (event.eventType === 'DECISION_SERVED') {
       const key = createOutcomeKey(event);
+      this.decisionIdentities.set(event.decisionId, {
+        matchId: event.matchId,
+        steamId: event.steamId,
+      });
+      this.candidateActionKeysByDecisionId.set(
+        event.decisionId,
+        new Set(event.candidateActions.map((action) => action.actionKey)),
+      );
       if (!this.resolvedOutcomeKeys.has(key)) {
         this.pendingOutcomeContexts.set(
           key,
@@ -516,6 +616,13 @@ function createOutcomeKey(context: RecommendationOutcomeContext): string {
   return `${context.matchId}:${context.steamId}:${context.heroId}`;
 }
 
+function createExposureKey(
+  decisionId: string,
+  surface: RecommendationExposureSurface,
+): string {
+  return `${decisionId}:${surface}`;
+}
+
 function isTelemetryEvent(
   value: unknown,
 ): value is RecommendationDecisionTelemetryEvent {
@@ -528,6 +635,7 @@ function isTelemetryEvent(
     typeof value.occurredAt === 'string' &&
     [
       'DECISION_SERVED',
+      'DECISION_EXPOSED',
       'DECISION_SUPERSEDED',
       'ACTION_OBSERVED',
       'MODEL_ERROR',
