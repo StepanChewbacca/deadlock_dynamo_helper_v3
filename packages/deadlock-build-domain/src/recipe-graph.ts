@@ -4,10 +4,10 @@ export function createRecipeGraph(definitions: readonly RecipeDefinition[]): Rec
   const componentsByParent = new Map<number, readonly number[]>();
 
   for (const definition of definitions) {
-    const uniqueComponents = [...new Set(definition.componentItemIds)]
-      .filter((itemId) => Number.isFinite(itemId) && itemId > 0)
+    const components = definition.componentItemIds
+      .filter((itemId) => Number.isSafeInteger(itemId) && itemId > 0)
       .sort((a, b) => a - b);
-    componentsByParent.set(definition.parentItemId, uniqueComponents);
+    componentsByParent.set(definition.parentItemId, components);
   }
 
   return {
