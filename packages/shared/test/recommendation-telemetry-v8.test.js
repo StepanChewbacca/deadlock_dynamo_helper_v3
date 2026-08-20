@@ -40,7 +40,7 @@ const decision = {
     decisionId: 'decision-1',
     stateRevision: 'state-1',
     candidateGeneratorVersion: 'feasible-v1',
-    feasibleActions: [
+    candidates: [
       {
         actionKey: 'BUY_ITEM:1',
         actionType: 'BUY_ITEM',
@@ -53,6 +53,7 @@ const decision = {
         recipeLegal: true,
         shopLegal: true,
         rulesetLegal: true,
+        behaviorProbability: 0.75,
       },
       {
         actionKey: 'WAIT_SAVE',
@@ -65,6 +66,7 @@ const decision = {
         recipeLegal: true,
         shopLegal: 'UNKNOWN',
         rulesetLegal: true,
+        behaviorProbability: 0.25,
       },
     ],
     selectedActionKey: 'BUY_ITEM:1',
@@ -90,8 +92,21 @@ assert.equal(validateRecommendationDecisionEventV8(injected).valid, false);
 assert(validateRecommendationDecisionEventV8(injected).errors.includes('OBSERVED_ACTION_INJECTION_FORBIDDEN'));
 
 const illegalSelected = structuredClone(decision);
-illegalSelected.payload.feasibleActions[0].feasible = false;
+illegalSelected.payload.candidates[0].feasible = false;
 assert(validateRecommendationDecisionEventV8(illegalSelected).errors.includes('SELECTED_ACTION_NOT_FEASIBLE'));
+assert(validateRecommendationDecisionEventV8(illegalSelected).errors.includes('INFEASIBLE_ACTION_NONZERO_BEHAVIOR_PROBABILITY:BUY_ITEM:1'));
+
+const nonNormalizedBehavior = structuredClone(decision);
+nonNormalizedBehavior.payload.candidates[0].behaviorProbability = 0.7;
+assert(validateRecommendationDecisionEventV8(nonNormalizedBehavior).errors.includes('BEHAVIOR_PROBABILITY_VECTOR_NOT_NORMALIZED'));
+
+const partialBehavior = structuredClone(decision);
+delete partialBehavior.payload.candidates[1].behaviorProbability;
+assert(validateRecommendationDecisionEventV8(partialBehavior).errors.includes('PARTIAL_BEHAVIOR_PROBABILITY_VECTOR'));
+
+const missingPlayer = structuredClone(decision);
+delete missingPlayer.playerKey;
+assert(validateRecommendationDecisionEventV8(missingPlayer).errors.includes('PLAYER_KEY_REQUIRED'));
 
 const unverifiedPlayer = {
   ...base,
