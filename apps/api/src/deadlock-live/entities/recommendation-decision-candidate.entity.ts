@@ -1,4 +1,5 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { RecommendationDecisionCandidateEvidenceV8 } from '@deadlock-live-probe/shared';
 
 @Entity('recommendation_decision_candidates_v8')
 @Index('idx_recommendation_decision_candidates_v8_decision_action', ['decisionId', 'actionKey'], { unique: true })
@@ -25,8 +26,17 @@ export class RecommendationDecisionCandidateV8 {
   @Column({ type: 'varchar', length: 128, nullable: true })
   recipeId?: string;
 
+  @Column({ type: 'jsonb', nullable: true })
+  consumedItemIds?: number[];
+
   @Column({ type: 'int' })
   effectiveCostSouls!: number;
+
+  @Column({ type: 'int', nullable: true })
+  spendableSoulsAfter?: number;
+
+  @Column({ type: 'jsonb', nullable: true })
+  resultingItemIds?: number[];
 
   @Column({ type: 'boolean' })
   feasible!: boolean;
@@ -48,6 +58,12 @@ export class RecommendationDecisionCandidateV8 {
 
   @Column({ type: 'varchar', length: 16 })
   rulesetLegal!: string;
+
+  @Column({ type: 'boolean' })
+  transactionMechanicsKnown!: boolean;
+
+  @Column({ type: 'jsonb' })
+  evidence!: RecommendationDecisionCandidateEvidenceV8;
 
   @Column({ type: 'double precision', nullable: true })
   behaviorProbability?: number;
