@@ -13,9 +13,13 @@ import { IngestStatusService } from './ingest-status.service';
 import { AllHeroesAnalysisService } from './all-heroes-analysis.service';
 import { AllHeroesAnalysisController } from './all-heroes-analysis.controller';
 import { SituationalRecommendationService } from './situational-recommendation.service';
+import { CatalogContentService } from './catalog-content.service';
 import { CrawlerRun } from './entities/crawler-run.entity';
 import { CrawlerState } from './entities/crawler-state.entity';
 import { Hero } from './entities/hero.entity';
+import { ItemCatalogItem } from './entities/item-catalog-item.entity';
+import { ItemCatalogRecipe } from './entities/item-catalog-recipe.entity';
+import { ItemCatalogVersion } from './entities/item-catalog-version.entity';
 import { ItemComponent } from './entities/item-component.entity';
 import { Item } from './entities/item.entity';
 import { Match } from './entities/match.entity';
@@ -35,6 +39,9 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
       Hero,
       Item,
       ItemComponent,
+      ItemCatalogVersion,
+      ItemCatalogItem,
+      ItemCatalogRecipe,
       CrawlerRun,
       CrawlerState,
       ShadowModeDecision,
@@ -55,6 +62,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     HeroAnalysisService,
     AllHeroesAnalysisService,
     SituationalRecommendationService,
+    CatalogContentService,
     ReferenceDataImportService,
     IngestStatusService,
   ],
@@ -66,6 +74,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     HeroAnalysisService,
     AllHeroesAnalysisService,
     SituationalRecommendationService,
+    CatalogContentService,
     ReferenceDataImportService,
     IngestStatusService,
   ],
