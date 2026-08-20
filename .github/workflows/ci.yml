@@ -43,6 +43,8 @@ jobs:
           node --check scripts/run-recommendation-behavioral-v5-2-bounded.mjs
           node --check scripts/analyze-souls-affordability.cjs
           node --check scripts/build-ruleset-catalog-artifact.cjs
+          node --check scripts/extract-deadlock-authoritative-source.cjs
+          node --check scripts/extract-deadlock-authoritative-source.test.cjs
 
       - name: Build shared package
         run: yarn workspace @deadlock-live-probe/shared build
@@ -125,6 +127,9 @@ jobs:
 
       - name: Test shared package
         run: yarn workspace @deadlock-live-probe/shared test
+
+      - name: Test authoritative source extractor helpers
+        run: node scripts/extract-deadlock-authoritative-source.test.cjs
 
       - name: Test domain package
         run: yarn workspace @deadlock-live-probe/build-domain test
