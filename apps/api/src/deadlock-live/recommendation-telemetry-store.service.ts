@@ -44,9 +44,6 @@ export class RecommendationTelemetryStoreService {
     if (!validation.valid) {
       throw new Error(`Invalid recommendation telemetry event ${event.eventId}: ${validation.errors.join(',')}`);
     }
-    if (event.eventType === 'RECOMMENDATION_DECISION' && !event.playerKey) {
-      throw new Error(`Invalid recommendation telemetry event ${event.eventId}: PLAYER_KEY_REQUIRED`);
-    }
 
     const deduplicationKey = recommendationTelemetryDeduplicationKeyV8(event);
     const existing = await this.eventRepo.findOne({ where: { deduplicationKey } });
@@ -105,7 +102,7 @@ export class RecommendationTelemetryStoreService {
             randomized: event.payload.experiment.randomized,
             observedActionInjected: event.payload.observedActionInjected,
           }));
-          const candidates = event.payload.feasibleActions.map((candidate) => candidateRepo.create({
+          const candidates = event.payload.candidates.map((candidate) => candidateRepo.create({
             decisionId: event.payload.decisionId,
             actionKey: candidate.actionKey,
             actionType: candidate.actionType,
