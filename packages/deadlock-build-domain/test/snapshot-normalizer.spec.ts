@@ -2,6 +2,8 @@ import {
   createEmptyInventoryState,
   createRecipeGraph,
   getHeldItemIds,
+  getHeldItemIdsWithMultiplicity,
+  InventoryRuleset,
   normalizeInventorySnapshot,
 } from '../src';
 import {
@@ -79,5 +81,60 @@ describe('normalizeInventorySnapshot', () => {
       classifyRemoval: () => 'SELL',
     });
     expect(result.actions.map((action) => action.type)).toEqual(['SELL']);
+  });
+
+  it('reconciles duplicate snapshots as exact multisets when duplicates are allowed', () => {
+    const ruleset: InventoryRuleset = {
+      duplicateItemsAllowed: true,
+      baseSlotsByType: {
+        weapon: 4,
+        vitality: 4,
+        spirit: 4,
+      },
+      maxFlexSlots: 4,
+    };
+    const recipeGraph = createRecipeGraph([]);
+    let state = createEmptyInventoryState();
+
+    const twoCopies = normalizeInventorySnapshot({
+      state,
+      snapshotItems: [
+        { itemId: 1, slotType: 'weapon' },
+        { itemId: 1, slotType: 'weapon' },
+      ],
+      recipeGraph,
+      ruleset,
+      observedAtMs: 1,
+    });
+    expect(twoCopies.diagnostics).toEqual([]);
+    expect(twoCopies.actions.map((action) => action.type)).toEqual(['RECONCILE']);
+    expect(getHeldItemIdsWithMultiplicity(twoCopies.state)).toEqual([1, 1]);
+    state = twoCopies.state;
+
+    const oneCopy = normalizeInventorySnapshot({
+      state,
+      snapshotItems: [{ itemId: 1, slotType: 'weapon' }],
+      recipeGraph,
+      ruleset,
+      observedAtMs: 2,
+    });
+    expect(oneCopy.diagnostics).toEqual([]);
+    expect(oneCopy.actions.map((action) => action.type)).toEqual(['RECONCILE']);
+    expect(getHeldItemIdsWithMultiplicity(oneCopy.state)).toEqual([1]);
+    state = oneCopy.state;
+
+    const twoCopiesAgain = normalizeInventorySnapshot({
+      state,
+      snapshotItems: [
+        { itemId: 1, slotType: 'weapon' },
+        { itemId: 1, slotType: 'weapon' },
+      ],
+      recipeGraph,
+      ruleset,
+      observedAtMs: 3,
+    });
+    expect(twoCopiesAgain.diagnostics).toEqual([]);
+    expect(twoCopiesAgain.actions.map((action) => action.type)).toEqual(['RECONCILE']);
+    expect(getHeldItemIdsWithMultiplicity(twoCopiesAgain.state)).toEqual([1, 1]);
   });
 });
