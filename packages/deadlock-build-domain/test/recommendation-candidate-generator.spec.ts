@@ -103,6 +103,20 @@ describe('recommendation candidate generator', () => {
     expect(candidates.find((entry) => entry.actionId === 'REPLACE_ITEM:1->5')?.feasible).toBe(true);
   });
 
+  it('requires a known shop opportunity for selling', () => {
+    const unavailable = decision([item(1)], [1], 1_000, { shop: 'UNAVAILABLE' });
+    expect(candidate(unavailable, 'SELL_ITEM:1')).toMatchObject({
+      feasible: false,
+      reasons: expect.arrayContaining(['SHOP_UNAVAILABLE']),
+    });
+
+    const unknown = decision([item(1)], [1], 1_000, { shopUnknown: true });
+    expect(candidate(unknown, 'SELL_ITEM:1')).toMatchObject({
+      feasible: false,
+      reasons: expect.arrayContaining(['SHOP_OPPORTUNITY_UNKNOWN']),
+    });
+  });
+
   it('applies explicit returned components when selling an upgraded item', () => {
     const input = decision([
       item(1),
