@@ -34,6 +34,10 @@ export function hasRenderedLiveBuildRecommendation(
 }
 
 export function installLiveBuildExposureAcknowledgement(): void {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return;
+  }
+
   const ow = (window as any).overwolf;
   if (!ow?.windows) {
     return;
@@ -71,4 +75,6 @@ export function installLiveBuildExposureAcknowledgement(): void {
   });
 }
 
-installLiveBuildExposureAcknowledgement();
+if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+  installLiveBuildExposureAcknowledgement();
+}
