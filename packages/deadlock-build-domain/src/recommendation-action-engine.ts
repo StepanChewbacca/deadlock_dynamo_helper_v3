@@ -1,5 +1,6 @@
 import {
   applyInventoryAction,
+  getHeldItemCount,
   InventoryReducerContext,
 } from './inventory-reducer';
 import {
@@ -44,8 +45,7 @@ export interface RecommendationActionCandidate {
 export type RecommendationActionDiagnosticCode =
   | 'INVALID_SPENDABLE_SOULS'
   | 'DUPLICATE_CATALOG_ITEM_ID'
-  | 'INVALID_ECONOMY_VALUE'
-  | 'RECIPE_REQUIRES_DUPLICATE_COMPONENT_INSTANCE';
+  | 'INVALID_ECONOMY_VALUE';
 
 export interface RecommendationActionDiagnostic {
   code: RecommendationActionDiagnosticCode;
@@ -112,29 +112,40 @@ export function generateLegalRecommendationActions(
   }
 
   const hasValidSpendableSouls =
-    input.economy !== undefined && isValidEconomyAmount(input.economy.spendableSouls);
+    input.economy !== undefined &&
+    isValidEconomyAmount(input.economy.spendableSouls);
   const waitCandidate: RecommendationActionCandidate = {
     actionId: 'WAIT',
     action: { type: 'WAIT' },
     effectiveCost: 0,
     soulsDelta: 0,
-    spendableSoulsAfter: hasValidSpendableSouls ? input.economy!.spendableSouls : 0,
+    spendableSoulsAfter: hasValidSpendableSouls
+      ? input.economy!.spendableSouls
+      : 0,
   };
 
-  if (diagnostics.some((diagnostic) => diagnostic.code === 'DUPLICATE_CATALOG_ITEM_ID')) {
+  if (
+    diagnostics.some(
+      (diagnostic) => diagnostic.code === 'DUPLICATE_CATALOG_ITEM_ID',
+    )
+  ) {
     return { candidates: [waitCandidate], diagnostics };
   }
 
   if (!hasValidSpendableSouls || !input.economy) {
     diagnostics.push({
       code: 'INVALID_SPENDABLE_SOULS',
-      message: 'Validated spendable souls are required before economic actions can be generated.',
+      message:
+        'Validated spendable souls are required before economic actions can be generated.',
       itemIds: [],
     });
     return { candidates: [waitCandidate], diagnostics };
   }
 
-  const economyDiagnostics = validateEconomyMaps(input.economy, catalogByItemId);
+  const economyDiagnostics = validateEconomyMaps(
+    input.economy,
+    catalogByItemId,
+  );
   if (economyDiagnostics.length > 0) {
     diagnostics.push(...economyDiagnostics);
     return { candidates: [waitCandidate], diagnostics };
@@ -142,31 +153,40 @@ export function generateLegalRecommendationActions(
 
   const candidates: RecommendationActionCandidate[] = [waitCandidate];
 
-  for (const heldItemId of [...input.state.heldByItemId.keys()].sort((a, b) => a - b)) {
+  for (const heldItemId of [...input.state.heldByItemId.keys()].sort(
+    (a, b) => a - b,
+  )) {
     const refund = input.economy.sellRefundByItemId.get(heldItemId);
     if (!isValidEconomyAmount(refund)) continue;
 
     const action: RecommendationAction = { type: 'SELL', itemId: heldItemId };
     if (!isStructurallyLegal(input, catalogByItemId, action)) continue;
     candidates.push(
-      createCandidate(action, 0, refund, input.economy.spendableSouls + refund),
+      createCandidate(
+        action,
+        0,
+        refund,
+        input.economy.spendableSouls + refund,
+      ),
     );
   }
 
-  for (const item of [...catalogByItemId.values()].sort((a, b) => a.itemId - b.itemId)) {
-    if (!isCatalogItemPurchasable(item) || input.state.heldByItemId.has(item.itemId)) continue;
+  for (const item of [...catalogByItemId.values()].sort(
+    (a, b) => a.itemId - b.itemId,
+  )) {
+    if (!isCatalogItemPurchasable(item)) continue;
+    if (
+      !input.ruleset.duplicateItemsAllowed &&
+      getHeldItemCount(input.state, item.itemId) > 0
+    ) {
+      continue;
+    }
 
-    const componentItemIds = [...input.recipeGraph.getComponentIds(item.itemId)];
+    const componentItemIds = [
+      ...input.recipeGraph.getComponentIds(item.itemId),
+    ].sort((a, b) => a - b);
     if (componentItemIds.length > 0) {
-      if (containsDuplicates(componentItemIds)) {
-        diagnostics.push({
-          code: 'RECIPE_REQUIRES_DUPLICATE_COMPONENT_INSTANCE',
-          message: `Recipe ${item.itemId} requires duplicate component instances, which the current inventory state model cannot represent exactly.`,
-          itemIds: [item.itemId, ...componentItemIds].sort((a, b) => a - b),
-        });
-        continue;
-      }
-      if (!componentItemIds.every((componentItemId) => input.state.heldByItemId.has(componentItemId))) {
+      if (!hasRequiredItemMultiplicity(input.state, componentItemIds)) {
         continue;
       }
 
@@ -177,7 +197,7 @@ export function generateLegalRecommendationActions(
       const action: RecommendationAction = {
         type: 'UPGRADE',
         itemId: item.itemId,
-        consumedComponentIds: [...componentItemIds].sort((a, b) => a - b),
+        consumedComponentIds: componentItemIds,
       };
       if (!isStructurallyLegal(input, catalogByItemId, action)) continue;
       candidates.push(
@@ -194,8 +214,15 @@ export function generateLegalRecommendationActions(
     const buyCost = input.economy.buyCostByItemId.get(item.itemId);
     if (!isValidEconomyAmount(buyCost)) continue;
 
-    const buyAction: RecommendationAction = { type: 'BUY', itemId: item.itemId };
-    const directBuyLegal = isStructurallyLegal(input, catalogByItemId, buyAction);
+    const buyAction: RecommendationAction = {
+      type: 'BUY',
+      itemId: item.itemId,
+    };
+    const directBuyLegal = isStructurallyLegal(
+      input,
+      catalogByItemId,
+      buyAction,
+    );
     const directBuyAffordable = buyCost <= input.economy.spendableSouls;
     if (directBuyLegal && directBuyAffordable) {
       candidates.push(
@@ -212,7 +239,9 @@ export function generateLegalRecommendationActions(
       continue;
     }
 
-    for (const sellItemId of [...input.state.heldByItemId.keys()].sort((a, b) => a - b)) {
+    for (const sellItemId of [...input.state.heldByItemId.keys()].sort(
+      (a, b) => a - b,
+    )) {
       const sellRefund = input.economy.sellRefundByItemId.get(sellItemId);
       if (!isValidEconomyAmount(sellRefund)) continue;
       if (buyCost > input.economy.spendableSouls + sellRefund) continue;
@@ -256,7 +285,11 @@ export function simulateRecommendationAction(
       const item = input.catalogByItemId.get(input.action.itemId);
       if (!item) return unknownCatalogItem(input.state, input.action.itemId);
       return normalizeReducerResult(
-        applyInventoryAction(input.state, { type: 'BUY', item, metadata }, context),
+        applyInventoryAction(
+          input.state,
+          { type: 'BUY', item, metadata },
+          context,
+        ),
       );
     }
     case 'UPGRADE': {
@@ -293,20 +326,28 @@ export function simulateRecommendationAction(
       );
       if (!sold.ok) return normalizeReducerResult(sold);
       return normalizeReducerResult(
-        applyInventoryAction(sold.state, { type: 'BUY', item, metadata }, context),
+        applyInventoryAction(
+          sold.state,
+          { type: 'BUY', item, metadata },
+          context,
+        ),
       );
     }
   }
 }
 
-export function recommendationActionId(action: RecommendationAction): string {
+export function recommendationActionId(
+  action: RecommendationAction,
+): string {
   switch (action.type) {
     case 'WAIT':
       return 'WAIT';
     case 'BUY':
       return `BUY:${action.itemId}`;
     case 'UPGRADE':
-      return `UPGRADE:${action.itemId}:${[...action.consumedComponentIds]
+      return `UPGRADE:${action.itemId}:${[
+        ...action.consumedComponentIds,
+      ]
         .sort((a, b) => a - b)
         .join(',')}`;
     case 'SELL':
@@ -332,7 +373,9 @@ function isStructurallyLegal(
   }).ok;
 }
 
-function isCatalogItemPurchasable(item: RecommendationCatalogItem): boolean {
+function isCatalogItemPurchasable(
+  item: RecommendationCatalogItem,
+): boolean {
   return item.shopable && item.active && !item.disabled;
 }
 
@@ -351,7 +394,10 @@ function createCandidate(
   };
 }
 
-function createMetadata(observedAtMs: number, gameTimeSec: number | undefined): InventoryActionMetadata {
+function createMetadata(
+  observedAtMs: number,
+  gameTimeSec: number | undefined,
+): InventoryActionMetadata {
   return {
     observedAtMs,
     gameTimeSec,
@@ -393,7 +439,10 @@ function normalizeReducerResult(
     : { ok: false, state: result.state, reason: result.error.code };
 }
 
-function unknownCatalogItem(state: InventoryState, itemId: number): SimulateRecommendationActionFailure {
+function unknownCatalogItem(
+  state: InventoryState,
+  itemId: number,
+): SimulateRecommendationActionFailure {
   return {
     ok: false,
     state,
@@ -405,7 +454,9 @@ function deduplicateCandidates(
   candidates: readonly RecommendationActionCandidate[],
 ): RecommendationActionCandidate[] {
   const byActionId = new Map<string, RecommendationActionCandidate>();
-  for (const candidate of candidates) byActionId.set(candidate.actionId, candidate);
+  for (const candidate of candidates) {
+    byActionId.set(candidate.actionId, candidate);
+  }
   return [...byActionId.values()];
 }
 
@@ -418,8 +469,18 @@ function compareCandidates(
   return left.actionId.localeCompare(right.actionId);
 }
 
-function containsDuplicates(values: readonly number[]): boolean {
-  return new Set(values).size !== values.length;
+function hasRequiredItemMultiplicity(
+  state: InventoryState,
+  itemIds: readonly number[],
+): boolean {
+  const requiredCounts = new Map<number, number>();
+  for (const itemId of itemIds) {
+    requiredCounts.set(itemId, (requiredCounts.get(itemId) ?? 0) + 1);
+  }
+  for (const [itemId, requiredCount] of requiredCounts) {
+    if (getHeldItemCount(state, itemId) < requiredCount) return false;
+  }
+  return true;
 }
 
 function isValidEconomyAmount(value: number | undefined): value is number {
