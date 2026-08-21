@@ -142,6 +142,28 @@ describe('RecommendationDecisionV8Service', () => {
     expect(validateRecommendationDecisionEventV8(result.event).valid).toBe(true);
   });
 
+  it('fails closed to WAIT_SAVE with propensity one when exploration distribution is incomplete', () => {
+    const request = requestBase();
+    const experiment = assignRecommendationExperimentByMatchV1('exp-1', 'm1', [
+      { arm: 'EXPLORE', probability: 0.5 },
+      { arm: 'CONTROL', probability: 0.5 },
+    ]);
+    const result = service.createDecision({
+      ...request,
+      experiment,
+      selectionMode: 'SAFE_EXPLORATION',
+      explorationProbabilityByActionKey: {
+        'BUY_ITEM:1': 1,
+      },
+    });
+
+    expect(result.event.payload.selectedActionKey).toBe('WAIT_SAVE');
+    expect(result.event.payload.actionLoggingPropensity).toBe(1);
+    expect(result.fallbackUsed).toBe(true);
+    expect(result.fallbackReasons).toContain('SAFE_EXPLORATION_DISTRIBUTION_INCOMPLETE');
+    expect(validateRecommendationDecisionEventV8(result.event).valid).toBe(true);
+  });
+
   it('fails closed to WAIT_SAVE when observability is not ready', () => {
     const request = requestBase();
     const experiment = assignRecommendationExperimentByMatchV1('control', 'm1', [
@@ -156,6 +178,7 @@ describe('RecommendationDecisionV8Service', () => {
     });
 
     expect(result.event.payload.selectedActionKey).toBe('WAIT_SAVE');
+    expect(result.event.payload.actionLoggingPropensity).toBe(1);
     expect(result.userVisibleActionKey).toBe('WAIT_SAVE');
     expect(result.fallbackUsed).toBe(true);
     expect(result.fallbackReasons).toContain('OBSERVABILITY_GATE_NOT_PASS');
