@@ -9,7 +9,7 @@ import sys
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Mapping, Sequence
+from typing import Any, Dict, Iterable, Iterator, List, Mapping
 
 import torch
 from torch import nn
@@ -26,7 +26,6 @@ from common import (
 from model import build_model, collate_examples, model_config_from_json
 
 TRAINING_LAUNCH_CONTRACT = "recommendation-behavioral-training-launch-v1"
-MODEL_BUNDLE_CONTRACT = "model-bundle-manifest-v1"
 BEHAVIORAL_MODEL_CONTRACT = "recommendation-behavioral-v8"
 PROBABILITY_CONTRACT = "RAW_SOFTMAX_FEASIBLE_CHOICE_SET"
 OBJECTIVE = "GROUPED_LISTWISE_CROSS_ENTROPY"
@@ -219,6 +218,12 @@ def validate_launch_config(config: Mapping[str, Any]) -> None:
     support_threshold = config.get("supportProbabilityThreshold", 1e-4)
     if not isinstance(support_threshold, (int, float)) or not 0 < float(support_threshold) < 1:
         errors.append("supportProbabilityThreshold_INVALID")
+    diagnostic_floor = config.get("diagnosticProbabilityFloor", 1e-4)
+    if not isinstance(diagnostic_floor, (int, float)) or not 0 < float(diagnostic_floor) < 1:
+        errors.append("diagnosticProbabilityFloor_INVALID")
+    calibration_bins = config.get("calibrationBins", 20)
+    if not isinstance(calibration_bins, int) or calibration_bins < 2 or calibration_bins > 1000:
+        errors.append("calibrationBins_INVALID")
     if config.get("family") == "SEQUENCE_TRANSFORMER":
         heads = config.get("attentionHeads")
         if not isinstance(heads, int) or heads <= 0:
@@ -315,18 +320,33 @@ def evaluate_split(
     model.eval()
     batch_size = int(config.get("evaluationBatchSize", config["batchSize"]))
     support_threshold = float(config.get("supportProbabilityThreshold", 1e-4))
+    diagnostic_floor = float(config.get("diagnosticProbabilityFloor", 1e-4))
+    calibration_bins = int(config.get("calibrationBins", 20))
     decision_count = 0
     covered = 0
     supported = 0
-    top1_correct = 0
+    hit_at_1 = 0
+    hit_at_3 = 0
+    hit_at_5 = 0
     reciprocal_rank_sum = 0.0
+    ndcg_at_3_sum = 0.0
+    ndcg_at_5_sum = 0.0
     log_loss_sum = 0.0
+    floored_log_loss_sum = 0.0
     baseline_log_loss_sum = 0.0
+    brier_sum = 0.0
     entropy_sum = 0.0
     cohort_total: Dict[str, int] = defaultdict(int)
     cohort_supported: Dict[str, int] = defaultdict(int)
+    cohort_log_loss: Dict[str, float] = defaultdict(float)
     illegal_candidate_count = 0
     candidate_count = 0
+    observed_probabilities: List[float] = []
+    candidate_counts: List[int] = []
+    calibration_count = [0 for _ in range(calibration_bins)]
+    calibration_probability_sum = [0.0 for _ in range(calibration_bins)]
+    calibration_outcome_sum = [0.0 for _ in range(calibration_bins)]
+    action_type_confusion: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
     for examples in batch_stream(iter_examples(dataset_dir, manifest, split), batch_size):
         batch = collate_examples(examples, model.config, device)
@@ -340,33 +360,94 @@ def evaluate_split(
             decision_count += 1
             covered += 1
             candidate_count += count
+            candidate_counts.append(count)
+            observed_probabilities.append(probability)
             illegal_candidate_count += sum(1 for candidate in example["candidates"] if candidate.get("feasible") is not True)
-            log_loss_sum += -math.log(max(probability, sys.float_info.min))
+            raw_loss = -math.log(max(probability, sys.float_info.min))
+            log_loss_sum += raw_loss
             baseline_log_loss_sum += math.log(count)
             entropy_sum += -sum(float(p) * math.log(max(float(p), sys.float_info.min)) for p in probs)
+
+            floored = [max(float(p), diagnostic_floor) for p in probs]
+            floored_total = sum(floored)
+            floored_probability = floored[label] / floored_total
+            floored_log_loss_sum += -math.log(max(floored_probability, sys.float_info.min))
+
+            brier_sum += sum(
+                (float(p) - (1.0 if candidate_index == label else 0.0)) ** 2
+                for candidate_index, p in enumerate(probs)
+            )
+            for candidate_index, p in enumerate(probs):
+                p_value = float(p)
+                bin_index = min(calibration_bins - 1, int(p_value * calibration_bins))
+                calibration_count[bin_index] += 1
+                calibration_probability_sum[bin_index] += p_value
+                calibration_outcome_sum[bin_index] += 1.0 if candidate_index == label else 0.0
+
             ranking = torch.argsort(probs, descending=True)
             rank = int((ranking == label).nonzero(as_tuple=False)[0].item()) + 1
             reciprocal_rank_sum += 1.0 / rank
-            if rank == 1:
-                top1_correct += 1
+            if rank <= 1:
+                hit_at_1 += 1
+            if rank <= 3:
+                hit_at_3 += 1
+                ndcg_at_3_sum += 1.0 / math.log2(rank + 1)
+            if rank <= 5:
+                hit_at_5 += 1
+                ndcg_at_5_sum += 1.0 / math.log2(rank + 1)
+
+            predicted_index = int(ranking[0].item())
+            observed_type = str(example["candidates"][label].get("actionType", "UNKNOWN"))
+            predicted_type = str(example["candidates"][predicted_index].get("actionType", "UNKNOWN"))
+            action_type_confusion[observed_type][predicted_type] += 1
+
             is_supported = probability >= support_threshold
             if is_supported:
                 supported += 1
             cohort = major_cohort_key(example)
             cohort_total[cohort] += 1
+            cohort_log_loss[cohort] += raw_loss
             if is_supported:
                 cohort_supported[cohort] += 1
 
     if decision_count == 0:
         raise RuntimeError(f"{split} split emitted zero decisions")
-    major_min_count = max(int(config.get("majorCohortMinDecisions", 50)), math.ceil(decision_count * float(config.get("majorCohortMinFraction", 0.005))))
-    major_support = [
-        cohort_supported[key] / total
-        for key, total in cohort_total.items()
-        if total >= major_min_count
-    ]
+    major_min_count = max(
+        int(config.get("majorCohortMinDecisions", 50)),
+        math.ceil(decision_count * float(config.get("majorCohortMinFraction", 0.005))),
+    )
+    major_keys = sorted(key for key, total in cohort_total.items() if total >= major_min_count)
+    major_support = [cohort_supported[key] / cohort_total[key] for key in major_keys]
     major_cohort_support_min = min(major_support) if major_support else supported / decision_count
     illegal_rate = illegal_candidate_count / candidate_count if candidate_count else 0.0
+    raw_log_loss = log_loss_sum / decision_count
+    floored_log_loss = floored_log_loss_sum / decision_count
+
+    reliability = []
+    ece = 0.0
+    for bin_index in range(calibration_bins):
+        count = calibration_count[bin_index]
+        if count == 0:
+            continue
+        mean_probability = calibration_probability_sum[bin_index] / count
+        empirical_rate = calibration_outcome_sum[bin_index] / count
+        ece += (count / candidate_count) * abs(mean_probability - empirical_rate)
+        reliability.append({
+            "bin": bin_index,
+            "count": count,
+            "meanProbability": mean_probability,
+            "empiricalRate": empirical_rate,
+        })
+
+    cohort_metrics = {
+        key: {
+            "decisionCount": cohort_total[key],
+            "support": cohort_supported[key] / cohort_total[key],
+            "rawLogLoss": cohort_log_loss[key] / cohort_total[key],
+            "major": cohort_total[key] >= major_min_count,
+        }
+        for key in sorted(cohort_total)
+    }
 
     return {
         "split": split,
@@ -376,16 +457,34 @@ def evaluate_split(
         "candidateCoverage": covered / decision_count,
         "support": supported / decision_count,
         "supportProbabilityThreshold": support_threshold,
+        "supportDistribution": quantile_report(observed_probabilities),
         "majorCohortSupportMin": major_cohort_support_min,
-        "majorCohortCount": len(major_support),
-        "rawLogLoss": log_loss_sum / decision_count,
+        "majorCohortCount": len(major_keys),
+        "cohortMetrics": cohort_metrics,
+        "rawLogLoss": raw_log_loss,
         "baselineRawLogLoss": baseline_log_loss_sum / decision_count,
-        "top1Accuracy": top1_correct / decision_count,
+        "multiclassBrier": brier_sum / decision_count,
+        "expectedCalibrationError": ece,
+        "reliability": reliability,
+        "hitAt1": hit_at_1 / decision_count,
+        "hitAt3": hit_at_3 / decision_count,
+        "hitAt5": hit_at_5 / decision_count,
+        "top1Accuracy": hit_at_1 / decision_count,
         "mrr": reciprocal_rank_sum / decision_count,
+        "ndcgAt3": ndcg_at_3_sum / decision_count,
+        "ndcgAt5": ndcg_at_5_sum / decision_count,
         "meanEntropy": entropy_sum / decision_count,
+        "candidateCountDistribution": quantile_report([float(value) for value in candidate_counts]),
+        "exactActionTypeConfusion": {
+            observed: dict(sorted(predicted.items()))
+            for observed, predicted in sorted(action_type_confusion.items())
+        },
         "probabilityFloorApplied": False,
-        "floorSensitivity": 0.0,
+        "diagnosticProbabilityFloor": diagnostic_floor,
+        "diagnosticFlooredLogLoss": floored_log_loss,
+        "floorSensitivity": abs(floored_log_loss - raw_log_loss),
         "illegalCandidateRate": illegal_rate,
+        "temporalHoldout": split == "SHADOW_HOLDOUT",
     }
 
 
@@ -477,6 +576,33 @@ def batch_stream(source: Iterable[Dict[str, Any]], batch_size: int) -> Iterator[
             batch = []
     if batch:
         yield batch
+
+
+def quantile_report(values: List[float]) -> Dict[str, float]:
+    if not values:
+        return {"p01": 0.0, "p05": 0.0, "p10": 0.0, "p50": 0.0, "p90": 0.0, "p95": 0.0, "p99": 0.0}
+    ordered = sorted(values)
+    return {
+        "p01": percentile(ordered, 0.01),
+        "p05": percentile(ordered, 0.05),
+        "p10": percentile(ordered, 0.10),
+        "p50": percentile(ordered, 0.50),
+        "p90": percentile(ordered, 0.90),
+        "p95": percentile(ordered, 0.95),
+        "p99": percentile(ordered, 0.99),
+    }
+
+
+def percentile(ordered: List[float], fraction: float) -> float:
+    if len(ordered) == 1:
+        return float(ordered[0])
+    position = fraction * (len(ordered) - 1)
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return float(ordered[lower])
+    weight = position - lower
+    return float(ordered[lower] * (1 - weight) + ordered[upper] * weight)
 
 
 def observable_contract_sha256(config: Mapping[str, Any], manifest: Mapping[str, Any]) -> str:
