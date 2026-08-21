@@ -1,7 +1,10 @@
 import { timingSafeEqual } from 'crypto';
 import { Body, Controller, Get, Headers, Param, Post } from '@nestjs/common';
 import { RecommendationDatasetManifestV1 } from '@deadlock-live-probe/shared';
-import { RecommendationDatasetRegistryService } from './recommendation-dataset-registry.service';
+import {
+  RecommendationDatasetRegistryService,
+  VerifyRecommendationDatasetV1Input,
+} from './recommendation-dataset-registry.service';
 
 interface RegisterDatasetBodyV1 {
   manifest: RecommendationDatasetManifestV1;
@@ -19,6 +22,15 @@ export class RecommendationDatasetRegistryController {
   ) {
     requireArtifactToken(token);
     return this.registry.register(body);
+  }
+
+  @Post('verify')
+  verify(
+    @Headers('x-recommendation-artifact-token') token: string | undefined,
+    @Body() body: VerifyRecommendationDatasetV1Input,
+  ) {
+    requireArtifactToken(token);
+    return this.registry.verify(body);
   }
 
   @Get(':datasetId')
