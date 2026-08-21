@@ -3,10 +3,14 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
+  RecommendationDatasetArtifactFileV1,
   RecommendationDatasetManifestV1,
   assertRecommendationDatasetManifestV1,
 } from '@deadlock-live-probe/shared';
-import { RecommendationDatasetRegistryV1 } from './entities/recommendation-dataset-registry.entity';
+import {
+  RecommendationDatasetArtifactVerificationV1,
+  RecommendationDatasetRegistryV1,
+} from './entities/recommendation-dataset-registry.entity';
 
 export interface RegisterRecommendationDatasetV1Input {
   manifest: RecommendationDatasetManifestV1;
@@ -18,6 +22,14 @@ export interface RegisterRecommendationDatasetV1Result {
   datasetId: string;
   datasetSha256: string;
   manifestSha256: string;
+}
+
+export interface VerifyRecommendationDatasetV1Input {
+  datasetId: string;
+  verifier: string;
+  manifestSha256: string;
+  files: readonly RecommendationDatasetArtifactFileV1[];
+  attestationRef?: string;
 }
 
 @Injectable()
@@ -50,6 +62,7 @@ export class RecommendationDatasetRegistryService {
         manifestSha256,
         objectBaseUri: input.objectBaseUri,
         manifest: input.manifest,
+        status: 'REGISTERED',
       }));
       return result('REGISTERED', saved);
     } catch (error) {
@@ -67,10 +80,56 @@ export class RecommendationDatasetRegistryService {
     }
   }
 
+  async verify(input: VerifyRecommendationDatasetV1Input): Promise<RecommendationDatasetRegistryV1> {
+    if (!input.datasetId) throw new Error('datasetId is required');
+    if (!input.verifier) throw new Error('verifier is required');
+    const row = await this.get(input.datasetId);
+    if (row.manifestSha256 !== input.manifestSha256) {
+      throw new Error('Verified dataset manifest SHA does not match registry');
+    }
+    const expectedFiles = normalizeFiles(row.manifest.files);
+    const verifiedFiles = normalizeFiles(input.files);
+    if (JSON.stringify(expectedFiles) !== JSON.stringify(verifiedFiles)) {
+      throw new Error('Verified dataset files do not exactly match dataset manifest');
+    }
+    if (row.status === 'VERIFIED') {
+      const current = row.verification;
+      if (
+        current?.verifiedManifestSha256 !== input.manifestSha256
+        || JSON.stringify(current.verifiedFiles) !== JSON.stringify(verifiedFiles)
+      ) {
+        throw new Error(`Immutable verified dataset conflict: ${input.datasetId}`);
+      }
+      return row;
+    }
+    const verification: RecommendationDatasetArtifactVerificationV1 = {
+      verifier: input.verifier,
+      verifiedManifestSha256: input.manifestSha256,
+      verifiedFiles,
+      attestationRef: input.attestationRef,
+    };
+    row.verification = verification;
+    row.verifiedAt = new Date();
+    row.status = 'VERIFIED';
+    return this.datasetRepo.save(row);
+  }
+
   async get(datasetId: string): Promise<RecommendationDatasetRegistryV1> {
     if (!datasetId) throw new Error('datasetId is required');
     const row = await this.datasetRepo.findOne({ where: { datasetId } });
     if (!row) throw new Error(`Dataset is not registered: ${datasetId}`);
+    return row;
+  }
+
+  async getVerified(datasetId: string): Promise<RecommendationDatasetRegistryV1> {
+    const row = await this.get(datasetId);
+    if (
+      row.status !== 'VERIFIED'
+      || !row.verification
+      || row.verification.verifiedManifestSha256 !== row.manifestSha256
+    ) {
+      throw new Error(`Dataset is not verified: ${datasetId}`);
+    }
     return row;
   }
 }
@@ -92,6 +151,19 @@ function assertRemoteImmutableUri(value: string): void {
   if (/^(s3|gs|az|https):\/\//i.test(value)) return;
   if (process.env.NODE_ENV !== 'production' && process.env.RECOMMENDATION_ALLOW_LOCAL_ARTIFACTS === 'true' && value.startsWith('file://')) return;
   throw new Error('objectBaseUri must reference an approved remote immutable artifact store');
+}
+
+function normalizeFiles(
+  files: readonly RecommendationDatasetArtifactFileV1[],
+): Array<{ path: string; sha256: string; sizeBytes: number; rowCount: number }> {
+  return files
+    .map((file) => ({
+      path: file.path,
+      sha256: file.sha256,
+      sizeBytes: file.sizeBytes,
+      rowCount: file.rowCount,
+    }))
+    .sort((left, right) => left.path.localeCompare(right.path));
 }
 
 function hashCanonicalJson(value: unknown): string {
