@@ -1,0 +1,24 @@
+name: Recommendation Security
+
+on:
+  pull_request:
+  push:
+    branches:
+      - agent/recommendation-roadmap-v8-runtime-finalization
+
+permissions:
+  contents: read
+
+jobs:
+  trust-boundary-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Audit workflow trust boundaries
+        run: node scripts/recommendation-security-audit.mjs
