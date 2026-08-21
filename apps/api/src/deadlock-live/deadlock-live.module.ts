@@ -19,6 +19,7 @@ import { RecommendationEngineV8Service } from './recommendation-engine-v8.servic
 import { RecommendationDecisionV8Service } from './recommendation-decision-v8.service';
 import { RecommendationRealtimeStateV8Service } from './recommendation-realtime-state-v8.service';
 import { RecommendationRealtimeCoordinatorV8Service } from './recommendation-realtime-coordinator-v8.service';
+import { RecommendationRuntimeHealthV8Service } from './recommendation-runtime-health-v8.service';
 import { RecommendationObservabilityController } from './recommendation-observability.controller';
 import { RecommendationObservabilityReportService } from './recommendation-observability-report.service';
 import { RecommendationTelemetryController } from './recommendation-telemetry.controller';
@@ -112,6 +113,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationDecisionV8Service,
     RecommendationRealtimeStateV8Service,
     RecommendationRealtimeCoordinatorV8Service,
+    RecommendationRuntimeHealthV8Service,
     RecommendationTelemetryStoreService,
     RecommendationTelemetryIngestV8Service,
     RecommendationObservabilityReportService,
@@ -138,6 +140,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationDecisionV8Service,
     RecommendationRealtimeStateV8Service,
     RecommendationRealtimeCoordinatorV8Service,
+    RecommendationRuntimeHealthV8Service,
     RecommendationTelemetryStoreService,
     RecommendationTelemetryIngestV8Service,
     RecommendationObservabilityReportService,
