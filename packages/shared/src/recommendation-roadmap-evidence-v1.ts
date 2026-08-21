@@ -42,6 +42,7 @@ const GATE_NAMES = new Set<RecommendationRoadmapEvidenceGateNameV1>([
   'offPolicySupport',
   'causalValueRelease',
   'policyAbRelease',
+  'futureTestEvaluation',
   'sequentialRlResearchGate',
   'futureTestUntouched',
 ]);
@@ -60,6 +61,9 @@ export function validateRecommendationRoadmapEvidenceRecordV1(
   if (record.subjectSha256 !== undefined && !isSha256(record.subjectSha256)) errors.push('SUBJECT_SHA256_INVALID');
   if (record.gateName === 'futureTestUntouched' && record.status === 'INSUFFICIENT_EVIDENCE') {
     errors.push('FUTURE_TEST_UNTOUCHED_REQUIRES_PASS_OR_FAIL');
+  }
+  if (record.gateName === 'futureTestEvaluation' && record.status === 'INSUFFICIENT_EVIDENCE') {
+    errors.push('FUTURE_TEST_EVALUATION_REQUIRES_PASS_OR_FAIL');
   }
   return { valid: errors.length === 0, errors: [...new Set(errors)].sort() };
 }
