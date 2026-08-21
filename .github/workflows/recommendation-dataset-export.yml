@@ -57,11 +57,19 @@ jobs:
       DB_NAME: ${{ secrets.DB_NAME }}
       DB_SSL: ${{ vars.DB_SSL }}
       DB_SSL_REJECT_UNAUTHORIZED: ${{ vars.DB_SSL_REJECT_UNAUTHORIZED }}
+      DATASET_ID: ${{ inputs.dataset_id }}
+      CANDIDATE_GENERATOR_VERSION: ${{ inputs.candidate_generator_version }}
+      ACTION_CONTRACT_VERSION: ${{ inputs.action_contract_version }}
+      TRAIN_FROM: ${{ inputs.train_from }}
+      TRAIN_TO: ${{ inputs.train_to }}
+      VALIDATION_TO: ${{ inputs.validation_to }}
+      SHADOW_HOLDOUT_TO: ${{ inputs.shadow_holdout_to }}
+      FUTURE_TEST_TO: ${{ inputs.future_test_to }}
     steps:
       - name: Checkout frozen exporter
         uses: actions/checkout@v4
 
-      - name: Validate secure export runner
+      - name: Validate secure export runner and inputs
         shell: bash
         run: |
           set -euo pipefail
@@ -70,9 +78,14 @@ jobs:
             /*) ;;
             *) echo "RECOMMENDATION_DATASET_OUTPUT_ROOT must be absolute" >&2; exit 1 ;;
           esac
-          OUTPUT_DIR="$RECOMMENDATION_DATASET_OUTPUT_ROOT/${{ inputs.dataset_id }}"
+          [[ "$DATASET_ID" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || { echo "dataset_id contains unsafe characters" >&2; exit 1; }
+          [[ "$CANDIDATE_GENERATOR_VERSION" =~ ^[A-Za-z0-9._:-]{1,128}$ ]] || { echo "candidate_generator_version contains unsafe characters" >&2; exit 1; }
+          [[ "$ACTION_CONTRACT_VERSION" =~ ^[A-Za-z0-9._:-]{1,128}$ ]] || { echo "action_contract_version contains unsafe characters" >&2; exit 1; }
+          OUTPUT_ROOT="$(realpath -e "$RECOMMENDATION_DATASET_OUTPUT_ROOT")"
+          test -d "$OUTPUT_ROOT" || { echo "Dataset output root must exist and be a directory" >&2; exit 1; }
+          OUTPUT_DIR="$OUTPUT_ROOT/$DATASET_ID"
           test ! -e "$OUTPUT_DIR" || { echo "Immutable dataset output already exists: $OUTPUT_DIR" >&2; exit 1; }
-          mkdir -p "$OUTPUT_DIR"
+          mkdir "$OUTPUT_DIR"
           rmdir "$OUTPUT_DIR"
           echo "OUTPUT_DIR=$OUTPUT_DIR" >> "$GITHUB_ENV"
 
@@ -99,19 +112,19 @@ jobs:
           python3 - "$CONFIG" "$OUTPUT_DIR" <<'PY'
           import json, os, sys
           config = {
-              "datasetId": "${{ inputs.dataset_id }}",
+              "datasetId": os.environ["DATASET_ID"],
               "sourceCommitSha": os.environ["GITHUB_SHA"],
-              "actionContractVersion": "${{ inputs.action_contract_version }}",
-              "candidateGeneratorVersion": "${{ inputs.candidate_generator_version }}",
+              "actionContractVersion": os.environ["ACTION_CONTRACT_VERSION"],
+              "candidateGeneratorVersion": os.environ["CANDIDATE_GENERATOR_VERSION"],
               "outputDir": sys.argv[2],
               "maximumAlignmentAgeMs": 5000,
               "maximumHistoryEvents": 64,
               "minimumDevelopmentExportCoverage": 0.99,
               "splits": [
-                  {"split": "TRAIN", "from": "${{ inputs.train_from }}", "to": "${{ inputs.train_to }}"},
-                  {"split": "VALIDATION", "from": "${{ inputs.train_to }}", "to": "${{ inputs.validation_to }}"},
-                  {"split": "SHADOW_HOLDOUT", "from": "${{ inputs.validation_to }}", "to": "${{ inputs.shadow_holdout_to }}"},
-                  {"split": "FUTURE_TEST", "from": "${{ inputs.shadow_holdout_to }}", "to": "${{ inputs.future_test_to }}"},
+                  {"split": "TRAIN", "from": os.environ["TRAIN_FROM"], "to": os.environ["TRAIN_TO"]},
+                  {"split": "VALIDATION", "from": os.environ["TRAIN_TO"], "to": os.environ["VALIDATION_TO"]},
+                  {"split": "SHADOW_HOLDOUT", "from": os.environ["VALIDATION_TO"], "to": os.environ["SHADOW_HOLDOUT_TO"]},
+                  {"split": "FUTURE_TEST", "from": os.environ["SHADOW_HOLDOUT_TO"], "to": os.environ["FUTURE_TEST_TO"]},
               ],
           }
           with open(sys.argv[1], "x", encoding="utf-8") as handle:
