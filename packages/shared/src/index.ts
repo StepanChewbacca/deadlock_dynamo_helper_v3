@@ -23,4 +23,5 @@ export * from './recommendation-value-v8';
 export * from './recommendation-policy-v1';
 export * from './recommendation-roadmap-state-v1';
 export * from './recommendation-roadmap-evidence-v1';
+export * from './recommendation-future-test-evaluation-v1';
 export * from './recommendation-sequential-rl-v1';
