@@ -1,5 +1,14 @@
 import { timingSafeEqual } from 'crypto';
-import { Body, Controller, Get, Headers, Param, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  ForbiddenException,
+  Get,
+  Headers,
+  Param,
+  Post,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { RecommendationRoadmapEvidenceRecordV1 } from '@deadlock-live-probe/shared';
 import { RecommendationEvidenceMaterializerV8Service } from './recommendation-evidence-materializer-v8.service';
 import { RecommendationRoadmapEvidenceService } from './recommendation-roadmap-evidence.service';
@@ -23,6 +32,11 @@ export class RecommendationRoadmapEvidenceController {
     @Body() record: RecommendationRoadmapEvidenceRecordV1,
   ) {
     requireRoadmapToken(token);
+    if (record?.gateName === 'futureTestEvaluation') {
+      throw new ForbiddenException(
+        'FUTURE_TEST evaluation can only be materialized from a verified frozen-policy evaluation artifact',
+      );
+    }
     return this.evidence.append(record);
   }
 
@@ -58,7 +72,7 @@ export class RecommendationRoadmapEvidenceController {
 function requireRoadmapToken(provided: string | undefined): void {
   const expected = process.env.RECOMMENDATION_ROADMAP_EVIDENCE_TOKEN;
   if (!expected || !provided || !safeEqual(expected, provided)) {
-    throw new Error('Recommendation roadmap evidence endpoint is disabled or unauthorized');
+    throw new UnauthorizedException('Recommendation roadmap evidence endpoint is disabled or unauthorized');
   }
 }
 
