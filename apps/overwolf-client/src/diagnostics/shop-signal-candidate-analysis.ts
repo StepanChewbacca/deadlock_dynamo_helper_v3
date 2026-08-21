@@ -1,5 +1,3 @@
-import { createHash } from 'crypto';
-
 export const SHOP_SIGNAL_CANDIDATE_ANALYSIS_VERSION = 'shop-signal-candidate-analysis-v1' as const;
 
 export type ShopSignalMarkerState = 'AVAILABLE' | 'UNAVAILABLE';
@@ -38,8 +36,8 @@ export interface ShopSignalCandidateV1 {
   distinctPayloadCount: number;
   lowCardinality: boolean;
   observedPayloadsSeparatedByMarkerState: boolean;
-  availablePayloadSha256: readonly string[];
-  unavailablePayloadSha256: readonly string[];
+  availablePayloadFingerprints: readonly string[];
+  unavailablePayloadFingerprints: readonly string[];
 }
 
 export interface ShopSignalCandidateAnalysisV1 {
@@ -80,7 +78,7 @@ export function analyzeShopSignalCandidatesV1(
 
   const byChannel = new Map<string, {
     channel: ShopSignalChannelV1;
-    entries: Array<ShopSignalDiagnosticEntry & { timestampMs: number; payloadSha256: string }>;
+    entries: Array<ShopSignalDiagnosticEntry & { timestampMs: number; payloadFingerprint: string }>;
   }>();
   for (const entry of entries) {
     if (!entry.key) continue;
@@ -98,7 +96,7 @@ export function analyzeShopSignalCandidatesV1(
     bucket.entries.push({
       ...entry,
       timestampMs,
-      payloadSha256: sha256Canonical(entry.rawPayload),
+      payloadFingerprint: fingerprintCanonical(entry.rawPayload),
     });
     byChannel.set(channelKey, bucket);
   }
@@ -115,16 +113,16 @@ export function analyzeShopSignalCandidatesV1(
       if (!nearest) continue;
       if (marker.state === 'AVAILABLE') {
         availableMarkerHitCount += 1;
-        availablePayloads.add(nearest.payloadSha256);
+        availablePayloads.add(nearest.payloadFingerprint);
       } else {
         unavailableMarkerHitCount += 1;
-        unavailablePayloads.add(nearest.payloadSha256);
+        unavailablePayloads.add(nearest.payloadFingerprint);
       }
     }
 
     const markerHitCount = availableMarkerHitCount + unavailableMarkerHitCount;
     if (markerHitCount === 0) return [];
-    const distinctPayloads = new Set(bucket.entries.map((entry) => entry.payloadSha256));
+    const distinctPayloads = new Set(bucket.entries.map((entry) => entry.payloadFingerprint));
     const lowCardinality = distinctPayloads.size >= 2 && distinctPayloads.size <= 4;
     const observedPayloadsSeparatedByMarkerState = availablePayloads.size > 0
       && unavailablePayloads.size > 0
@@ -139,8 +137,8 @@ export function analyzeShopSignalCandidatesV1(
       distinctPayloadCount: distinctPayloads.size,
       lowCardinality,
       observedPayloadsSeparatedByMarkerState,
-      availablePayloadSha256: [...availablePayloads].sort(),
-      unavailablePayloadSha256: [...unavailablePayloads].sort(),
+      availablePayloadFingerprints: [...availablePayloads].sort(),
+      unavailablePayloadFingerprints: [...unavailablePayloads].sort(),
     } satisfies ShopSignalCandidateV1];
   }).sort(compareCandidates);
 
@@ -204,8 +202,14 @@ function areDisjoint(left: ReadonlySet<string>, right: ReadonlySet<string>): boo
   return true;
 }
 
-function sha256Canonical(value: unknown): string {
-  return createHash('sha256').update(canonicalJson(value)).digest('hex');
+function fingerprintCanonical(value: unknown): string {
+  const text = canonicalJson(value);
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return `fnv1a32:${hash.toString(16).padStart(8, '0')}`;
 }
 
 function canonicalJson(value: unknown): string {
