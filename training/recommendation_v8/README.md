@@ -57,6 +57,16 @@ The next control-plane sequence is:
 
 `upload immutable bundle -> model registry REGISTERED -> independent hash verification -> VERIFIED -> runtime compatibility/gate check -> ACTIVE`
 
+## Policy V1 construction and release identity
+
+Policy V1 is a support-constrained composition of an exact verified Behavioral bundle, an exact verified causal Value bundle, and the frozen policy parameters `temperature`, `behaviorRegularization`, and a strictly positive `minimumBehaviorSupport`.
+
+`POST /deadlock-live/recommendation-policy/v1/build-spec` is the protected Policy builder. It is authorized only after the roadmap has unlocked `CAUSAL_VALUE`, FUTURE_TEST is still untouched, and the selected Behavioral and Value manifests are the exact manifests referenced by the immutable `behavioralOffline` and `causalValueRelease` PASS evidence snapshots. The two dependencies must also agree on feature contract, action contract, candidate generator, and have non-empty ruleset/catalog compatibility intersections.
+
+The builder returns the exact bytes for `policy.json`, their SHA/size, and a valid immutable `POLICY` model-bundle manifest. It does not register, verify, activate, deploy, or expose the policy. The operator must upload those exact bytes and manifest to the immutable artifact store, register the manifest, independently verify it, and only then use that exact policy in the Policy A/B experiment.
+
+When `policyAbRelease` is materialized, `modelId` and `modelVersion` are mandatory. The A/B PASS snapshot records the exact verified POLICY manifest SHA. A later FUTURE_TEST evaluation is rejected unless its policy manifest SHA is exactly the same SHA that passed Policy A/B. This prevents swapping in a tuned or otherwise different policy between online release validation and the final test.
+
 ## Final FUTURE_TEST opening
 
 FUTURE_TEST is a one-time final evaluation, not a model-development split. It remains unavailable until the roadmap has unlocked `POLICY_V1` and the exact final policy exists as a verified immutable `POLICY` model bundle.
@@ -64,5 +74,7 @@ FUTURE_TEST is a one-time final evaluation, not a model-development split. It re
 The final evaluator must produce a `recommendation-future-test-evaluation-v1` artifact tied to the exact policy manifest SHA. That artifact records the pre-registered evaluation-plan SHA, immutable evaluation-artifact SHA/reference, frozen model-selection/hyperparameter/candidate-generator/feature-contract assertions, and `futureTestAccessCount=1`.
 
 Only `POST /deadlock-live/recommendation-roadmap/v1/materialize/future-test` can turn that artifact into `futureTestEvaluation` evidence. The generic roadmap evidence endpoint explicitly rejects direct FUTURE_TEST evaluation writes, and the shared evidence contract requires the dedicated frozen-artifact evaluator identity. A second final evaluation is rejected.
+
+The FUTURE_TEST materializer also requires the latest `policyAbRelease` evidence to be PASS, loads its immutable snapshot, and verifies that the released policy manifest SHA equals the exact verified policy named by the final evaluation artifact.
 
 `SEQUENTIAL_RL_RESEARCH` can unlock only after this final evidence is `PASS` and its separate sequential-RL research gate is also `PASS`. No workflow in this directory automatically opens FUTURE_TEST, activates a policy, deploys to production, or enables randomized traffic.
