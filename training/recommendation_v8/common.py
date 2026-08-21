@@ -94,6 +94,17 @@ def verify_dataset_manifest(
     split_names = [entry.get("split") for entry in splits if isinstance(entry, dict)]
     if split_names != ["TRAIN", "VALIDATION", "SHADOW_HOLDOUT", "FUTURE_TEST"]:
         errors.append("DATASET_SPLIT_ORDER_INVALID")
+    for entry in splits:
+        if not isinstance(entry, dict):
+            continue
+        split = entry.get("split")
+        if split == FORBIDDEN_TRAINING_SPLIT:
+            if entry.get("sealed") is not True:
+                errors.append("FUTURE_TEST_MUST_BE_SEALED")
+            if entry.get("matchCount") != 0 or entry.get("decisionCount") != 0:
+                errors.append("FUTURE_TEST_COUNTS_MUST_BE_HIDDEN")
+        elif split in ALLOWED_TRAINING_SPLITS and entry.get("sealed") is not False:
+            errors.append(f"DEVELOPMENT_SPLIT_MUST_BE_UNSEALED:{split}")
     assert_split_chronology(splits, errors)
 
     files = manifest.get("files")
@@ -101,6 +112,7 @@ def verify_dataset_manifest(
         errors.append("DATASET_FILES_REQUIRED")
         files = []
     seen_paths: set[str] = set()
+    development_file_counts = {split: 0 for split in ALLOWED_TRAINING_SPLITS}
     for descriptor in files:
         if not isinstance(descriptor, dict):
             errors.append("DATASET_FILE_DESCRIPTOR_INVALID")
@@ -109,6 +121,12 @@ def verify_dataset_manifest(
         if not isinstance(relative, str) or not safe_relative_path(relative):
             errors.append(f"DATASET_FILE_PATH_INVALID:{relative}")
             continue
+        normalized = relative.replace("\\", "/")
+        if normalized.endswith("future_test.jsonl.gz"):
+            errors.append("FUTURE_TEST_ARTIFACT_FORBIDDEN_DURING_MODEL_DEVELOPMENT")
+        for split in ALLOWED_TRAINING_SPLITS:
+            if normalized.endswith(split.lower() + ".jsonl.gz"):
+                development_file_counts[split] += 1
         if relative in seen_paths:
             errors.append(f"DATASET_FILE_DUPLICATE:{relative}")
         seen_paths.add(relative)
@@ -121,6 +139,9 @@ def verify_dataset_manifest(
             errors.append(f"DATASET_FILE_SHA256_MISMATCH:{relative}")
         if file_size(path) != descriptor.get("sizeBytes"):
             errors.append(f"DATASET_FILE_SIZE_MISMATCH:{relative}")
+    for split, count in development_file_counts.items():
+        if count != 1:
+            errors.append(f"DEVELOPMENT_SPLIT_ARTIFACT_COUNT_INVALID:{split}:{count}")
 
     if errors:
         raise ValueError("Invalid immutable dataset: " + ",".join(sorted(set(errors))))
@@ -169,6 +190,8 @@ def validate_training_example(
     line_number: int,
 ) -> None:
     errors: List[str] = []
+    if split == FORBIDDEN_TRAINING_SPLIT:
+        errors.append("FUTURE_TEST_ACCESS_FORBIDDEN_DURING_MODEL_DEVELOPMENT")
     if example.get("contractVersion") != TRAINING_EXAMPLE_CONTRACT:
         errors.append("TRAINING_EXAMPLE_CONTRACT_MISMATCH")
     if example.get("split") != split:
