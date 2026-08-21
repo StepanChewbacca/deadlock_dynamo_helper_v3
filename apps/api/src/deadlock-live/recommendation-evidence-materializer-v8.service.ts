@@ -111,7 +111,7 @@ export class RecommendationEvidenceMaterializerV8Service {
     blockers: readonly string[],
   ): Promise<RecommendationMaterializedGateEvidenceV8> {
     if (status === 'NOT_EVALUATED') throw new Error('Materialized evidence cannot be NOT_EVALUATED');
-    const evaluatedAt = new Date().toISOString();
+    const evaluatedAt = reportEvaluatedAt(report);
     const subjectSha256 = sha256Canonical({ gateName, report });
     const evidenceRef = `/deadlock-live/recommendation-roadmap/v1/evidence-snapshots/${subjectSha256}`;
     const snapshotStatus = await this.persistSnapshot({
@@ -202,14 +202,24 @@ function assertSameSnapshot(
     subjectSha256: string;
     gateName: RecommendationRoadmapEvidenceGateNameV1;
     evaluator: string;
+    evaluatedAt: string;
     report: unknown;
   },
 ): void {
   const same = existing.subjectSha256 === input.subjectSha256
     && existing.gateName === input.gateName
     && existing.evaluator === input.evaluator
+    && existing.evaluatedAt.toISOString() === input.evaluatedAt
     && canonicalJson(existing.report) === canonicalJson(input.report);
   if (!same) throw new Error(`Immutable recommendation evidence snapshot conflict: ${input.subjectSha256}`);
+}
+
+function reportEvaluatedAt(report: unknown): string {
+  if (typeof report === 'object' && report !== null && 'generatedAt' in report) {
+    const value = (report as { generatedAt?: unknown }).generatedAt;
+    if (typeof value === 'string' && Number.isFinite(Date.parse(value))) return new Date(value).toISOString();
+  }
+  throw new Error('Materialized evidence report must include a valid generatedAt timestamp');
 }
 
 function validateRange(from: Date | undefined, to: Date | undefined): void {
