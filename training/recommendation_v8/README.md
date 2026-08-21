@@ -23,6 +23,8 @@ Use the manual `Recommendation Dataset Export` workflow on the dedicated `recomm
 
 Match assignment uses the first Decision V8 timestamp for the match, so a match cannot cross splits. The export uses the causal Feature Store V8 assembler and the persisted deterministic feasible candidate set. Observed actions are never injected into the candidate set. Development quality gates stop at the end of `SHADOW_HOLDOUT`; FUTURE_TEST diagnostics are not exposed.
 
+The model-development artifact contains files only for `TRAIN`, `VALIDATION`, and `SHADOW_HOLDOUT`. The FUTURE_TEST split is represented only by its sealed chronological descriptor with hidden counts and is not materialized into a readable model-development file. The Python verifier rejects any `future_test.jsonl.gz` file in this artifact.
+
 After export, upload the directory to an approved immutable object store, register the manifest through the protected dataset-registry endpoint, and independently verify the exact manifest SHA and all file SHA/size/row-count values. Training accepts only a registry-verified dataset id.
 
 ## Model training
@@ -39,7 +41,7 @@ The workflow:
 6. runs the equal-observables RNN/Transformer ablation gate;
 7. builds an immutable Transformer model bundle only if the Behavioral and ablation gates pass.
 
-`FUTURE_TEST` is never decoded by `train_behavioral.py` or `compare_behavioral.py`. The immutable file may be cryptographically hashed as part of dataset verification, but no example from it can enter training, validation, architecture selection, or model-bundle metrics.
+`FUTURE_TEST` cannot be decoded by `train_behavioral.py` or `compare_behavioral.py` because it is not present in the model-development artifact and the shared loader explicitly rejects that split. No FUTURE_TEST example can enter training, validation, architecture selection, or model-bundle metrics.
 
 ## Objective and probabilities
 
@@ -55,4 +57,12 @@ The next control-plane sequence is:
 
 `upload immutable bundle -> model registry REGISTERED -> independent hash verification -> VERIFIED -> runtime compatibility/gate check -> ACTIVE`
 
-Do not use FUTURE_TEST to choose the Behavioral architecture or hyperparameters. The formal roadmap allows the single frozen FUTURE_TEST evaluation only after `POLICY_V1` is unlocked; that evaluation is recorded separately as `futureTestEvaluation` evidence before `SEQUENTIAL_RL_RESEARCH` can unlock.
+## Final FUTURE_TEST opening
+
+FUTURE_TEST is a one-time final evaluation, not a model-development split. It remains unavailable until the roadmap has unlocked `POLICY_V1` and the exact final policy exists as a verified immutable `POLICY` model bundle.
+
+The final evaluator must produce a `recommendation-future-test-evaluation-v1` artifact tied to the exact policy manifest SHA. That artifact records the pre-registered evaluation-plan SHA, immutable evaluation-artifact SHA/reference, frozen model-selection/hyperparameter/candidate-generator/feature-contract assertions, and `futureTestAccessCount=1`.
+
+Only `POST /deadlock-live/recommendation-roadmap/v1/materialize/future-test` can turn that artifact into `futureTestEvaluation` evidence. The generic roadmap evidence endpoint explicitly rejects direct FUTURE_TEST evaluation writes, and the shared evidence contract requires the dedicated frozen-artifact evaluator identity. A second final evaluation is rejected.
+
+`SEQUENTIAL_RL_RESEARCH` can unlock only after this final evidence is `PASS` and its separate sequential-RL research gate is also `PASS`. No workflow in this directory automatically opens FUTURE_TEST, activates a policy, deploys to production, or enables randomized traffic.
