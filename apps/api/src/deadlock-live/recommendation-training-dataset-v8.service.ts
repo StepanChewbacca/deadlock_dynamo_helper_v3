@@ -1,5 +1,14 @@
 import { createHash } from 'crypto';
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs';
+import { once } from 'events';
+import {
+  createReadStream,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from 'fs';
 import { join, resolve } from 'path';
 import { createGzip } from 'zlib';
 import { Injectable } from '@nestjs/common';
@@ -36,6 +45,7 @@ export interface RecommendationTrainingDatasetExportV1Options {
   splits: readonly RecommendationTrainingSplitWindowV1[];
   maximumAlignmentAgeMs?: number;
   maximumHistoryEvents?: number;
+  minimumDevelopmentExportCoverage?: number;
 }
 
 export interface RecommendationTrainingDatasetPreflightV1 {
@@ -43,6 +53,8 @@ export interface RecommendationTrainingDatasetPreflightV1 {
   blockers: readonly string[];
   decisionCount: number;
   labeledDecisionCount: number;
+  developmentWindowTo: string;
+  futureTestSealed: true;
   splitMatchCounts: Readonly<Record<string, number>>;
   splitDecisionCounts: Readonly<Record<string, number>>;
 }
@@ -50,9 +62,11 @@ export interface RecommendationTrainingDatasetPreflightV1 {
 export interface RecommendationTrainingDatasetExportReportV1 {
   datasetId: string;
   generatedAt: string;
-  emittedDecisionCount: number;
-  skippedDecisionCount: number;
-  skipReasons: Readonly<Record<string, number>>;
+  emittedDevelopmentDecisionCount: number;
+  skippedDevelopmentDecisionCount: number;
+  developmentSkipReasons: Readonly<Record<string, number>>;
+  futureTestSealed: true;
+  futureTestDiagnosticMetricsExposed: false;
   manifest: RecommendationDatasetManifestV1;
 }
 
@@ -60,8 +74,10 @@ interface ExportDecisionRow {
   decisionId: string;
   matchId: string;
   candidateGeneratorVersion: string;
+  rulesetVersion: string;
+  catalogSha256: string;
   observedActionInjected: boolean;
-  actionLoggingPropensity: number;
+  actionLoggingPropensity: string | number;
   observedActionKey?: string;
 }
 
@@ -71,7 +87,7 @@ interface CandidateRow {
   targetItemId?: string | number;
   sellItemId?: string | number;
   recipeId?: string;
-  effectiveCostSouls: number;
+  effectiveCostSouls: string | number;
   feasible: boolean;
 }
 
@@ -102,15 +118,29 @@ export class RecommendationTrainingDatasetV8Service {
     const blockers = validateOptions(options);
     const splitMatchCounts: Record<string, number> = {};
     const splitDecisionCounts: Record<string, number> = {};
+    const developmentWindowTo = options.splits.find((split) => split.split === 'SHADOW_HOLDOUT')?.to ?? '';
     if (blockers.length > 0) {
-      return { ready: false, blockers, decisionCount: 0, labeledDecisionCount: 0, splitMatchCounts, splitDecisionCounts };
+      return {
+        ready: false,
+        blockers,
+        decisionCount: 0,
+        labeledDecisionCount: 0,
+        developmentWindowTo,
+        futureTestSealed: true,
+        splitMatchCounts,
+        splitDecisionCounts,
+      };
     }
 
     const from = new Date(options.splits[0].from);
-    const to = new Date(options.splits[options.splits.length - 1].to);
+    const developmentTo = new Date(developmentWindowTo);
     const [dataset, observability, souls, roadmap] = await Promise.all([
-      this.datasetReport.buildReport({ from, to }),
-      this.observabilityReport.buildReport({ from, to, maximumAlignmentAgeMs: options.maximumAlignmentAgeMs }),
+      this.datasetReport.buildReport({ from, to: developmentTo }),
+      this.observabilityReport.buildReport({
+        from,
+        to: developmentTo,
+        maximumAlignmentAgeMs: options.maximumAlignmentAgeMs,
+      }),
       this.soulsEvidence.report(),
       this.roadmapEvidence.report(),
     ]);
@@ -123,10 +153,15 @@ export class RecommendationTrainingDatasetV8Service {
     if (!souls.canMarkSpendableSoulsVerified) blockers.push(`SOULS_EVIDENCE:${souls.verdict}`);
     const prospectiveData = roadmap.state.phases.find((phase) => phase.phase === 'PROSPECTIVE_DATA');
     if (!prospectiveData?.unlocked) {
-      blockers.push(...(prospectiveData?.blockers.map((blocker) => `ROADMAP_PROSPECTIVE_DATA:${blocker}`) ?? ['ROADMAP_PROSPECTIVE_DATA:NOT_FOUND']));
+      blockers.push(...(
+        prospectiveData?.blockers.map((blocker) => `ROADMAP_PROSPECTIVE_DATA:${blocker}`)
+        ?? ['ROADMAP_PROSPECTIVE_DATA:NOT_FOUND']
+      ));
     }
     if (!roadmap.evidence.futureTestUntouched) blockers.push('FUTURE_TEST_INTEGRITY_VIOLATION');
-    if ((roadmap.evidence.futureTestEvaluation ?? 'NOT_EVALUATED') !== 'NOT_EVALUATED') blockers.push('FUTURE_TEST_ALREADY_EVALUATED');
+    if ((roadmap.evidence.futureTestEvaluation ?? 'NOT_EVALUATED') !== 'NOT_EVALUATED') {
+      blockers.push('FUTURE_TEST_ALREADY_EVALUATED');
+    }
 
     for (const split of options.splits) {
       const counts = await this.splitCounts(options.candidateGeneratorVersion, split);
@@ -141,6 +176,8 @@ export class RecommendationTrainingDatasetV8Service {
       blockers: [...new Set(blockers)].sort(),
       decisionCount: dataset.decisionCount,
       labeledDecisionCount: dataset.labeledDecisionCount,
+      developmentWindowTo,
+      futureTestSealed: true,
       splitMatchCounts,
       splitDecisionCounts,
     };
@@ -148,16 +185,21 @@ export class RecommendationTrainingDatasetV8Service {
 
   async export(options: RecommendationTrainingDatasetExportV1Options): Promise<RecommendationTrainingDatasetExportReportV1> {
     const preflight = await this.preflight(options);
-    if (!preflight.ready) throw new Error(`Recommendation training dataset export is blocked: ${preflight.blockers.join(',')}`);
+    if (!preflight.ready) {
+      throw new Error(`Recommendation training dataset export is blocked: ${preflight.blockers.join(',')}`);
+    }
     const outputDir = resolve(options.outputDir);
     assertFreshOutputDirectory(outputDir);
     mkdirSync(join(outputDir, 'splits'), { recursive: true });
 
     const files: RecommendationDatasetArtifactFileV1[] = [];
     const splitDescriptors: RecommendationDatasetSplitDescriptorV1[] = [];
-    const skipReasons = new Map<string, number>();
-    let emittedDecisionCount = 0;
-    let skippedDecisionCount = 0;
+    const developmentSkipReasons = new Map<string, number>();
+    const supportedRulesets = new Set<string>();
+    const supportedCatalogs = new Set<string>();
+    const minimumDevelopmentExportCoverage = options.minimumDevelopmentExportCoverage ?? 0.99;
+    let emittedDevelopmentDecisionCount = 0;
+    let skippedDevelopmentDecisionCount = 0;
 
     for (const split of options.splits) {
       const relativePath = `splits/${split.split.toLowerCase()}.jsonl.gz`;
@@ -168,23 +210,42 @@ export class RecommendationTrainingDatasetV8Service {
       const output = createWriteStream(absolutePath, { flags: 'wx' });
       gzip.pipe(output);
       let rowCount = 0;
+      let skippedCount = 0;
 
       for (const decision of decisions) {
-        matchIds.add(decision.matchId);
-        const example = await this.buildExample(decision, split.split, options);
-        if (!example.example) {
-          skippedDecisionCount += 1;
-          increment(skipReasons, example.reason ?? 'UNKNOWN_SKIP_REASON');
+        const built = await this.buildExample(decision, split.split, options);
+        if (!built.example) {
+          skippedCount += 1;
+          if (split.split === 'FUTURE_TEST') {
+            increment(developmentSkipReasons, 'SEALED_FUTURE_TEST_ROW_EXCLUDED_BY_FROZEN_PIPELINE');
+          } else {
+            skippedDevelopmentDecisionCount += 1;
+            increment(developmentSkipReasons, built.reason ?? 'UNKNOWN_SKIP_REASON');
+          }
           continue;
         }
-        gzip.write(`${JSON.stringify(example.example)}\n`);
+        if (!gzip.write(`${JSON.stringify(built.example)}\n`)) await once(gzip, 'drain');
+        matchIds.add(decision.matchId);
+        supportedRulesets.add(decision.rulesetVersion);
+        supportedCatalogs.add(decision.catalogSha256);
         rowCount += 1;
-        emittedDecisionCount += 1;
+        if (split.split !== 'FUTURE_TEST') emittedDevelopmentDecisionCount += 1;
       }
 
       await endGzip(gzip, output);
-      const file = artifactFile(relativePath, absolutePath, rowCount);
-      files.push(file);
+      if (rowCount === 0) throw new Error(`Exported split is empty: ${split.split}`);
+      if (split.split !== 'FUTURE_TEST') {
+        const coverage = decisions.length > 0 ? rowCount / decisions.length : 0;
+        if (coverage < minimumDevelopmentExportCoverage) {
+          throw new Error(
+            `Development export coverage below gate for ${split.split}: ${coverage} < ${minimumDevelopmentExportCoverage}`,
+          );
+        }
+      } else if (skippedCount > 0) {
+        throw new Error('FUTURE_TEST_EXPORT_INTEGRITY_FAILURE');
+      }
+
+      files.push(await artifactFile(relativePath, absolutePath, rowCount));
       splitDescriptors.push({
         split: split.split,
         from: new Date(split.from).toISOString(),
@@ -207,11 +268,13 @@ export class RecommendationTrainingDatasetV8Service {
       pointInTimeCorrect: true,
       observedActionInjected: false,
       futureTestTouched: false,
-      supportedRulesetVersions: await this.supportedRulesets(splitDescriptors),
-      supportedCatalogSha256: await this.supportedCatalogs(splitDescriptors),
+      supportedRulesetVersions: [...supportedRulesets].filter(Boolean).sort(),
+      supportedCatalogSha256: [...supportedCatalogs].filter(isSha256).sort(),
       splits: splitDescriptors,
       files,
     };
+    if (manifestBase.supportedRulesetVersions.length === 0) throw new Error('Export produced no supported rulesets');
+    if (manifestBase.supportedCatalogSha256.length === 0) throw new Error('Export produced no supported catalog hashes');
     const datasetSha256 = createHash('sha256').update(canonicalJson(manifestBase)).digest('hex');
     const manifest: RecommendationDatasetManifestV1 = { ...manifestBase, datasetSha256 };
     writeFileSync(join(outputDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, { flag: 'wx' });
@@ -219,9 +282,15 @@ export class RecommendationTrainingDatasetV8Service {
     const report: RecommendationTrainingDatasetExportReportV1 = {
       datasetId: options.datasetId,
       generatedAt: new Date().toISOString(),
-      emittedDecisionCount,
-      skippedDecisionCount,
-      skipReasons: Object.fromEntries([...skipReasons.entries()].sort(([a], [b]) => a.localeCompare(b))),
+      emittedDevelopmentDecisionCount,
+      skippedDevelopmentDecisionCount,
+      developmentSkipReasons: Object.fromEntries(
+        [...developmentSkipReasons.entries()]
+          .filter(([reason]) => reason !== 'SEALED_FUTURE_TEST_ROW_EXCLUDED_BY_FROZEN_PIPELINE')
+          .sort(([left], [right]) => left.localeCompare(right)),
+      ),
+      futureTestSealed: true,
+      futureTestDiagnosticMetricsExposed: false,
       manifest,
     };
     writeFileSync(join(outputDir, 'export-report.json'), `${JSON.stringify(report, null, 2)}\n`, { flag: 'wx' });
@@ -240,17 +309,22 @@ export class RecommendationTrainingDatasetV8Service {
       options.maximumAlignmentAgeMs ?? 5_000,
       options.maximumHistoryEvents ?? 64,
     );
-    if (!feature.ready || !feature.featureState) return { reason: `FEATURE_STATE:${feature.blockers.join('|') || 'NOT_READY'}` };
+    if (!feature.ready || !feature.featureState) {
+      return { reason: `FEATURE_STATE:${feature.blockers.join('|') || 'NOT_READY'}` };
+    }
     const candidates = await this.loadCandidates(decision.decisionId);
-    const feasible = candidates.filter((candidate) => candidate.feasible).map((candidate) => ({
-      actionKey: candidate.actionKey,
-      actionType: candidate.actionType,
-      targetItemId: optionalNumber(candidate.targetItemId),
-      sellItemId: optionalNumber(candidate.sellItemId),
-      recipeId: candidate.recipeId,
-      effectiveCostSouls: candidate.effectiveCostSouls,
-      feasible: true as const,
-    }));
+    const feasible = candidates
+      .filter((candidate) => candidate.feasible)
+      .map((candidate) => ({
+        actionKey: candidate.actionKey,
+        actionType: candidate.actionType,
+        targetItemId: optionalNumber(candidate.targetItemId),
+        sellItemId: optionalNumber(candidate.sellItemId),
+        recipeId: candidate.recipeId,
+        effectiveCostSouls: numeric(candidate.effectiveCostSouls),
+        feasible: true as const,
+      }));
+    const propensity = numeric(decision.actionLoggingPropensity);
     const example: RecommendationBehavioralTrainingExampleV1 = {
       contractVersion: RECOMMENDATION_BEHAVIORAL_TRAINING_EXAMPLE_V1,
       split,
@@ -261,7 +335,7 @@ export class RecommendationTrainingDatasetV8Service {
       candidates: feasible,
       observedActionKey: decision.observedActionKey,
       observedActionInjected: false,
-      actionLoggingPropensity: decision.actionLoggingPropensity,
+      actionLoggingPropensity: propensity,
       actionLoggingPropensitySource: 'RECORDED_AT_ACTION_SELECTION',
     };
     const validation = validateRecommendationBehavioralTrainingExampleV1(example);
@@ -288,8 +362,8 @@ export class RecommendationTrainingDatasetV8Service {
            AND COALESCE(e."payload"->>'decisionId', '') <> ''
          ORDER BY e."payload"->>'decisionId', e."sourceOccurredAt" DESC, e."receivedAt" DESC
        )
-       SELECT d."decisionId", d."matchId", d."candidateGeneratorVersion", d."observedActionInjected",
-              d."actionLoggingPropensity", o.observed_action_key AS "observedActionKey"
+       SELECT d."decisionId", d."matchId", d."candidateGeneratorVersion", d."rulesetVersion", d."catalogSha256",
+              d."observedActionInjected", d."actionLoggingPropensity", o.observed_action_key AS "observedActionKey"
        FROM recommendation_decisions_v8 d
        JOIN match_first m ON m."matchId" = d."matchId"
        LEFT JOIN latest_outcome o ON o.decision_id = d."decisionId"
@@ -311,7 +385,10 @@ export class RecommendationTrainingDatasetV8Service {
     ) as Promise<CandidateRow[]>;
   }
 
-  private async splitCounts(candidateGeneratorVersion: string, split: RecommendationTrainingSplitWindowV1): Promise<{ matchCount: number; decisionCount: number }> {
+  private async splitCounts(
+    candidateGeneratorVersion: string,
+    split: RecommendationTrainingSplitWindowV1,
+  ): Promise<{ matchCount: number; decisionCount: number }> {
     const rows = await this.dataSource.query(
       `WITH match_first AS (
          SELECT "matchId", MIN("decidedAt") AS first_decision_at
@@ -332,32 +409,6 @@ export class RecommendationTrainingDatasetV8Service {
       decisionCount: numeric(rows[0]?.decisionCount),
     };
   }
-
-  private async supportedRulesets(splits: readonly RecommendationDatasetSplitDescriptorV1[]): Promise<string[]> {
-    const from = splits[0]?.from;
-    const to = splits[splits.length - 1]?.to;
-    const rows = await this.dataSource.query(
-      `SELECT DISTINCT "rulesetVersion" AS value
-       FROM recommendation_decisions_v8
-       WHERE "decidedAt" >= $1::timestamptz AND "decidedAt" < $2::timestamptz
-       ORDER BY value`,
-      [from, to],
-    ) as Array<{ value: string }>;
-    return rows.map((row) => row.value).filter(Boolean);
-  }
-
-  private async supportedCatalogs(splits: readonly RecommendationDatasetSplitDescriptorV1[]): Promise<string[]> {
-    const from = splits[0]?.from;
-    const to = splits[splits.length - 1]?.to;
-    const rows = await this.dataSource.query(
-      `SELECT DISTINCT "catalogSha256" AS value
-       FROM recommendation_decisions_v8
-       WHERE "decidedAt" >= $1::timestamptz AND "decidedAt" < $2::timestamptz
-       ORDER BY value`,
-      [from, to],
-    ) as Array<{ value: string }>;
-    return rows.map((row) => row.value).filter((value) => /^[a-f0-9]{64}$/i.test(value));
-  }
 }
 
 function validateOptions(options: RecommendationTrainingDatasetExportV1Options): string[] {
@@ -367,17 +418,36 @@ function validateOptions(options: RecommendationTrainingDatasetExportV1Options):
   if (!options.actionContractVersion) errors.push('ACTION_CONTRACT_VERSION_REQUIRED');
   if (!options.candidateGeneratorVersion) errors.push('CANDIDATE_GENERATOR_VERSION_REQUIRED');
   if (!options.outputDir) errors.push('OUTPUT_DIR_REQUIRED');
-  if (options.maximumAlignmentAgeMs !== undefined && (!Number.isInteger(options.maximumAlignmentAgeMs) || options.maximumAlignmentAgeMs < 0)) errors.push('MAXIMUM_ALIGNMENT_AGE_INVALID');
-  if (options.maximumHistoryEvents !== undefined && (!Number.isInteger(options.maximumHistoryEvents) || options.maximumHistoryEvents < 0)) errors.push('MAXIMUM_HISTORY_EVENTS_INVALID');
+  if (
+    options.maximumAlignmentAgeMs !== undefined
+    && (!Number.isInteger(options.maximumAlignmentAgeMs) || options.maximumAlignmentAgeMs < 0)
+  ) errors.push('MAXIMUM_ALIGNMENT_AGE_INVALID');
+  if (
+    options.maximumHistoryEvents !== undefined
+    && (!Number.isInteger(options.maximumHistoryEvents) || options.maximumHistoryEvents < 0)
+  ) errors.push('MAXIMUM_HISTORY_EVENTS_INVALID');
+  if (
+    options.minimumDevelopmentExportCoverage !== undefined
+    && (
+      !Number.isFinite(options.minimumDevelopmentExportCoverage)
+      || options.minimumDevelopmentExportCoverage < 0.99
+      || options.minimumDevelopmentExportCoverage > 1
+    )
+  ) errors.push('MINIMUM_DEVELOPMENT_EXPORT_COVERAGE_INVALID');
   if (options.splits.length !== REQUIRED_SPLITS.length) errors.push('EXACTLY_FOUR_SPLITS_REQUIRED');
   for (let index = 0; index < REQUIRED_SPLITS.length; index += 1) {
     const split = options.splits[index];
     if (!split || split.split !== REQUIRED_SPLITS[index]) errors.push(`SPLIT_ORDER_INVALID:${REQUIRED_SPLITS[index]}`);
-    if (!split || !Number.isFinite(Date.parse(split.from)) || !Number.isFinite(Date.parse(split.to))) errors.push(`SPLIT_TIMESTAMP_INVALID:${REQUIRED_SPLITS[index]}`);
-    else if (Date.parse(split.from) >= Date.parse(split.to)) errors.push(`SPLIT_RANGE_INVALID:${split.split}`);
+    if (!split || !Number.isFinite(Date.parse(split.from)) || !Number.isFinite(Date.parse(split.to))) {
+      errors.push(`SPLIT_TIMESTAMP_INVALID:${REQUIRED_SPLITS[index]}`);
+    } else if (Date.parse(split.from) >= Date.parse(split.to)) {
+      errors.push(`SPLIT_RANGE_INVALID:${split.split}`);
+    }
     if (index > 0 && split && Number.isFinite(Date.parse(split.from))) {
       const previous = options.splits[index - 1];
-      if (previous && Date.parse(previous.to) > Date.parse(split.from)) errors.push(`SPLIT_OVERLAP:${previous.split}->${split.split}`);
+      if (previous && Date.parse(previous.to) > Date.parse(split.from)) {
+        errors.push(`SPLIT_OVERLAP:${previous.split}->${split.split}`);
+      }
     }
   }
   return [...new Set(errors)].sort();
@@ -392,12 +462,18 @@ function assertFreshOutputDirectory(outputDir: string): void {
   if (readdirSync(outputDir).length > 0) throw new Error('Training dataset output directory must be empty');
 }
 
-function artifactFile(relativePath: string, absolutePath: string, rowCount: number): RecommendationDatasetArtifactFileV1 {
-  const bytes = readFileSync(absolutePath);
+async function artifactFile(
+  relativePath: string,
+  absolutePath: string,
+  rowCount: number,
+): Promise<RecommendationDatasetArtifactFileV1> {
+  const digest = createHash('sha256');
+  const stream = createReadStream(absolutePath);
+  for await (const chunk of stream) digest.update(chunk);
   return {
     path: relativePath,
-    sha256: createHash('sha256').update(bytes).digest('hex'),
-    sizeBytes: bytes.length,
+    sha256: digest.digest('hex'),
+    sizeBytes: statSync(absolutePath).size,
     rowCount,
   };
 }
@@ -426,6 +502,10 @@ function optionalNumber(value: string | number | undefined): number | undefined 
   if (value === undefined) return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function isSha256(value: string): boolean {
+  return /^[a-f0-9]{64}$/i.test(value);
 }
 
 function endGzip(gzip: ReturnType<typeof createGzip>, output: ReturnType<typeof createWriteStream>): Promise<void> {
