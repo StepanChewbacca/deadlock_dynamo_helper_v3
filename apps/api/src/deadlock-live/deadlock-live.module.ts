@@ -49,6 +49,8 @@ import { RecommendationValueTrainingLaunchV8Service } from './recommendation-val
 import { RecommendationEvidenceMaterializerV8Service } from './recommendation-evidence-materializer-v8.service';
 import { RecommendationRoadmapEvidenceController } from './recommendation-roadmap-evidence.controller';
 import { RecommendationRoadmapEvidenceService } from './recommendation-roadmap-evidence.service';
+import { RecommendationFutureTestEvaluationV1Controller } from './recommendation-future-test-evaluation-v1.controller';
+import { RecommendationFutureTestEvaluationV1Service } from './recommendation-future-test-evaluation-v1.service';
 import { RecommendationShadowController } from './recommendation-shadow.controller';
 import { RecommendationShadowReportService } from './recommendation-shadow-report.service';
 import { RecommendationOpeController } from './recommendation-ope.controller';
@@ -131,6 +133,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     ModelBundleRegistryController,
     RecommendationRoadmapEvidenceController,
     RecommendationAdvancedEvidenceV8Controller,
+    RecommendationFutureTestEvaluationV1Controller,
     RecommendationShadowController,
     RecommendationOpeController,
     RecommendationAbController,
@@ -167,6 +170,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationEvidenceMaterializerV8Service,
     RecommendationAdvancedEvidenceV8Service,
     RecommendationRoadmapEvidenceService,
+    RecommendationFutureTestEvaluationV1Service,
     RecommendationShadowReportService,
     RecommendationOpeReportService,
     RecommendationAbReportService,
@@ -205,6 +209,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationEvidenceMaterializerV8Service,
     RecommendationAdvancedEvidenceV8Service,
     RecommendationRoadmapEvidenceService,
+    RecommendationFutureTestEvaluationV1Service,
     RecommendationShadowReportService,
     RecommendationOpeReportService,
     RecommendationAbReportService,
