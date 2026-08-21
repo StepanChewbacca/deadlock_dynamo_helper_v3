@@ -56,6 +56,7 @@ export interface RecommendationDecisionV8Request {
   selectionMode: RecommendationActionSelectionModeV8;
   explorationProbabilityByActionKey?: Readonly<Record<string, number>>;
   upstreamInferenceLatencyMs?: number;
+  preInferenceBlockers?: readonly string[];
 }
 
 export interface RecommendationDecisionV8Result {
@@ -113,6 +114,7 @@ export class RecommendationDecisionV8Service {
     const fallbackReasons = [
       ...runtime.fallbackReasons,
       ...(engineResult.policyReady ? [] : engineResult.policyBlockers),
+      ...(request.preInferenceBlockers ?? []),
     ];
 
     if (
@@ -243,6 +245,9 @@ function validateRequest(request: RecommendationDecisionV8Request): void {
   if (request.upstreamInferenceLatencyMs !== undefined
     && (!Number.isFinite(request.upstreamInferenceLatencyMs) || request.upstreamInferenceLatencyMs < 0)) {
     throw new Error('upstreamInferenceLatencyMs is invalid');
+  }
+  if (request.preInferenceBlockers?.some((blocker) => !blocker)) {
+    throw new Error('preInferenceBlockers contains an empty blocker');
   }
   if (request.selectionMode === 'SAFE_EXPLORATION' && !request.experiment.randomized) {
     throw new Error('SAFE_EXPLORATION requires a randomized experiment assignment');
