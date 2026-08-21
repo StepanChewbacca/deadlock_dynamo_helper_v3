@@ -1,0 +1,134 @@
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, Iterable
+
+from common import load_json, sha256_file, verify_dataset_manifest
+
+MODEL_BUNDLE_CONTRACT = "model-bundle-v1"
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Build immutable Behavioral model bundle manifest")
+    parser.add_argument("--training-output", required=True)
+    parser.add_argument("--dataset-dir", required=True)
+    parser.add_argument("--ablation-report", required=True)
+    parser.add_argument("--bundle-dir", required=True)
+    parser.add_argument("--action-contract-version", required=True)
+    parser.add_argument("--source-commit-sha", required=True)
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    training_output = Path(args.training_output).resolve()
+    dataset_dir = Path(args.dataset_dir).resolve()
+    ablation_path = Path(args.ablation_report).resolve()
+    bundle_dir = Path(args.bundle_dir).resolve()
+    if bundle_dir.exists() and any(bundle_dir.iterdir()):
+        raise ValueError("Model bundle directory must be empty")
+    bundle_dir.mkdir(parents=True, exist_ok=True)
+
+    metrics = load_json(training_output / "metrics.json")
+    model_metadata = load_json(training_output / "model-metadata.json")
+    config = load_json(training_output / "training-config.json")
+    ablation = load_json(ablation_path)
+    dataset = verify_dataset_manifest(dataset_dir)
+
+    if metrics.get("futureTestEvaluated") is not False:
+        raise ValueError("FUTURE_TEST_MUST_REMAIN_UNTOUCHED_FOR_BEHAVIORAL_BUNDLE")
+    if dataset.get("futureTestTouched") is not False:
+        raise ValueError("DATASET_FUTURE_TEST_ALREADY_TOUCHED")
+    if metrics.get("datasetSha256") != dataset.get("datasetSha256"):
+        raise ValueError("MODEL_DATASET_SHA_MISMATCH")
+    if ablation.get("datasetSha256") != dataset.get("datasetSha256"):
+        raise ValueError("ABLATION_DATASET_SHA_MISMATCH")
+    if ablation.get("passed") is not True:
+        raise ValueError("RNN_TRANSFORMER_ABLATION_NOT_PASS")
+    if metrics.get("family") != "SEQUENCE_TRANSFORMER":
+        raise ValueError("BUILDLM_BUNDLE_REQUIRES_TRANSFORMER_WINNER")
+    if metrics.get("behavioralGate", {}).get("passed") is not True:
+        raise ValueError("BEHAVIORAL_OFFLINE_GATE_NOT_PASS")
+    if not is_git_sha(args.source_commit_sha):
+        raise ValueError("sourceCommitSha must be a 40-character Git SHA")
+
+    source_files = [
+        (training_output / "model.pt", "model.pt"),
+        (training_output / "metrics.json", "metrics.json"),
+        (training_output / "training-config.json", "training-config.json"),
+        (training_output / "model-metadata.json", "model-metadata.json"),
+        (ablation_path, "ablation-report.json"),
+    ]
+    files = []
+    for source, relative in source_files:
+        if not source.is_file():
+            raise ValueError(f"Required model artifact is missing: {source}")
+        target = bundle_dir / relative
+        shutil.copyfile(source, target)
+        files.append({
+            "path": relative,
+            "sha256": sha256_file(target),
+            "sizeBytes": target.stat().st_size,
+        })
+
+    shadow = metrics["shadowHoldout"]
+    gates = [
+        gate("BEHAVIORAL_OFFLINE", True, shadow["rawLogLoss"], f"<{shadow['baselineRawLogLoss']}"),
+        gate("BEHAVIORAL_SUPPORT", shadow["support"] >= 0.90, shadow["support"], ">=0.9"),
+        gate("BEHAVIORAL_MAJOR_COHORT_SUPPORT", shadow["majorCohortSupportMin"] >= 0.75, shadow["majorCohortSupportMin"], ">=0.75"),
+        gate("BEHAVIORAL_CANDIDATE_COVERAGE", shadow["candidateCoverage"] >= 0.99, shadow["candidateCoverage"], ">=0.99"),
+        gate("BEHAVIORAL_ILLEGAL_CANDIDATE_RATE", shadow["illegalCandidateRate"] == 0, shadow["illegalCandidateRate"], "=0"),
+        gate("NO_PROBABILITY_FLOOR", shadow["probabilityFloorApplied"] is False, shadow["probabilityFloorApplied"], False),
+        gate("RNN_TRANSFORMER_ABLATION", ablation["passed"] is True, ablation["transformerLogLossImprovement"], ">=1e-6"),
+        gate("FUTURE_TEST_UNTOUCHED", True, False, False),
+    ]
+    if not all(item["status"] == "PASS" for item in gates):
+        failed = [item["name"] for item in gates if item["status"] != "PASS"]
+        raise ValueError("Model bundle gate failure: " + ",".join(failed))
+
+    manifest = {
+        "contractVersion": MODEL_BUNDLE_CONTRACT,
+        "modelId": metrics["modelId"],
+        "modelVersion": metrics["modelVersion"],
+        "modelKind": "BEHAVIORAL",
+        "createdAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "sourceCommitSha": args.source_commit_sha,
+        "datasetId": dataset["datasetId"],
+        "datasetSha256": dataset["datasetSha256"],
+        "featureContractVersion": dataset["featureContractVersion"],
+        "actionContractVersion": args.action_contract_version,
+        "candidateGeneratorVersion": dataset["candidateGeneratorVersion"],
+        "supportedRulesetVersions": sorted(dataset["supportedRulesetVersions"]),
+        "supportedCatalogSha256": sorted(dataset["supportedCatalogSha256"]),
+        "trainingConfigSha256": metrics["trainingConfigSha256"],
+        "files": sorted(files, key=lambda item: item["path"]),
+        "gates": sorted(gates, key=lambda item: item["name"]),
+        "futureTestEvaluated": False,
+        "notes": "Behavioral BuildLM candidate produced from TRAIN/VALIDATION/SHADOW_HOLDOUT only. FUTURE_TEST was not decoded or evaluated by the trainer.",
+    }
+    with (bundle_dir / "manifest.json").open("x", encoding="utf-8") as handle:
+        json.dump(manifest, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    print(json.dumps({"status": "PASS", "manifest": str(bundle_dir / "manifest.json")}))
+    return 0
+
+
+def gate(name: str, passed: bool, value: Any, threshold: Any) -> Dict[str, Any]:
+    return {
+        "name": name,
+        "status": "PASS" if passed else "FAIL",
+        "value": value,
+        "threshold": threshold,
+    }
+
+
+def is_git_sha(value: str) -> bool:
+    return len(value) == 40 and all(character in "0123456789abcdefABCDEF" for character in value)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
