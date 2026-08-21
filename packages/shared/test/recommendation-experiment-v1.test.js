@@ -13,7 +13,7 @@ const first = assignRecommendationExperimentByMatchV1('exp-1', 'match-1', arms);
 const repeated = assignRecommendationExperimentByMatchV1('exp-1', 'match-1', arms);
 assert.deepEqual(repeated, first);
 assert.equal(first.assignmentUnit, 'MATCH');
-assert.equal(first.loggingPropensity, 0.5);
+assert.equal(first.armAssignmentPropensity, 0.5);
 assert.equal(first.randomized, true);
 
 const exploration = selectSafeExplorationActionV1('exp-1', 'match-1', 'decision-1', [
@@ -22,7 +22,7 @@ const exploration = selectSafeExplorationActionV1('exp-1', 'match-1', 'decision-
   { actionKey: 'WAIT_SAVE', legal: true, telemetryFresh: true, feasibilityKnown: true, probability: 0.15 },
 ]);
 assert(['BUY_ITEM:1', 'BUY_ITEM:2', 'WAIT_SAVE'].includes(exploration.actionKey));
-assert(exploration.loggingPropensity > 0);
+assert(exploration.actionLoggingPropensity > 0);
 
 assert.throws(
   () => selectSafeExplorationActionV1('exp-1', 'match-1', 'decision-2', [
