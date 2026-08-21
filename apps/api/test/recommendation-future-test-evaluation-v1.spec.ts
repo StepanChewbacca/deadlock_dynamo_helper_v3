@@ -40,7 +40,7 @@ describe('FUTURE_TEST final evaluation control plane', () => {
       evaluator: 'manual',
       evaluatedAt: artifact.evaluatedAt,
       subjectSha256: policyManifestSha256,
-    })).rejects.toThrow('FUTURE_TEST_EVALUATION_REQUIRES_FROZEN_ARTIFACT_MATERIALIZER');
+    })).rejects.toThrow('FUTURE_TEST_EVALUATION_REQUIRES_FROZEN_ARTIFACT_EVALUATOR');
   });
 
   it('materializes the one-time final evaluation only for the exact verified frozen POLICY bundle', async () => {
