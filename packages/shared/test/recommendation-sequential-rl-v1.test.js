@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const {
+  EXACT_ACTION_PROPENSITY_SOURCE,
   RECOMMENDATION_FEATURE_CONTRACT_VERSION,
   evaluateRecommendationSequentialDatasetV1,
 } = require('../dist');
@@ -35,7 +36,7 @@ const valid = [
     action: { actionKey: 'BUY_ITEM:1', actionType: 'BUY_ITEM', targetItemId: 1, effectiveCostSouls: 800 },
     reward: 0.5,
     actionLoggingPropensity: 0.5,
-    loggingPropensitySource: 'RECORDED_AT_ASSIGNMENT',
+    loggingPropensitySource: EXACT_ACTION_PROPENSITY_SOURCE,
     nextState: state('d2', 20_000),
     terminal: false,
     rulesetVersion: 'r1',
@@ -50,7 +51,7 @@ const valid = [
     action: { actionKey: 'WAIT_SAVE', actionType: 'WAIT_SAVE', effectiveCostSouls: 0 },
     reward: 1,
     actionLoggingPropensity: 1,
-    loggingPropensitySource: 'RECORDED_AT_ASSIGNMENT',
+    loggingPropensitySource: EXACT_ACTION_PROPENSITY_SOURCE,
     terminal: true,
     rulesetVersion: 'r1',
     catalogSha256: 'b'.repeat(64),
