@@ -1,8 +1,10 @@
 const assert = require('node:assert/strict');
 const {
   RECOMMENDATION_DATASET_MANIFEST_VERSION,
+  RECOMMENDATION_ROADMAP_EVIDENCE_VERSION,
   evaluateRecommendationBehavioralAblationV1,
   validateRecommendationDatasetManifestV1,
+  validateRecommendationRoadmapEvidenceRecordV1,
 } = require('../dist');
 
 const split = (name, from, to, suffix) => ({
@@ -98,5 +100,19 @@ const unequal = evaluateRecommendationBehavioralAblationV1(
 );
 assert.equal(unequal.passed, false);
 assert(unequal.blockers.includes('EQUAL_OBSERVABLES_CONTRACT_MISMATCH'));
+
+const evidence = {
+  contractVersion: RECOMMENDATION_ROADMAP_EVIDENCE_VERSION,
+  evidenceId: 'evidence-1',
+  gateName: 'datasetV8Empirical',
+  status: 'PASS',
+  evidenceRef: 's3://deadlock-evidence/dataset-v8/report.json',
+  evaluator: 'recommendation-gate-runner-v1',
+  evaluatedAt: '2026-08-21T01:00:00.000Z',
+  subjectSha256: '9'.repeat(64),
+};
+assert.deepEqual(validateRecommendationRoadmapEvidenceRecordV1(evidence), { valid: true, errors: [] });
+const notEvaluated = { ...evidence, evidenceId: 'evidence-2', status: 'NOT_EVALUATED' };
+assert(validateRecommendationRoadmapEvidenceRecordV1(notEvaluated).errors.includes('NOT_EVALUATED_CANNOT_BE_PERSISTED'));
 
 console.log('recommendation artifact/buildlm v1 fixtures: PASS');
