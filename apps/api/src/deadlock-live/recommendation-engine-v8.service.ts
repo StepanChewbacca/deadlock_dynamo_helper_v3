@@ -49,7 +49,7 @@ export class RecommendationEngineV8Service {
     const behaviorProbabilityByAction = input.behavioralModel && input.featureState
       ? predictBehaviorProbabilities(input.behavioralModel, input.featureState, domainCandidates)
       : undefined;
-    let telemetryCandidates = baseTelemetryCandidates.map((candidate) => ({
+    let telemetryCandidates: RecommendationDecisionCandidateV8[] = baseTelemetryCandidates.map((candidate) => ({
       ...candidate,
       behaviorProbability: behaviorProbabilityByAction?.get(candidate.actionKey),
     }));
