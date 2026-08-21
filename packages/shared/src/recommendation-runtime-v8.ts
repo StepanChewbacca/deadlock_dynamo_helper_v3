@@ -81,7 +81,13 @@ export function isSafeFeasibleCandidate(candidate: RecommendationDecisionCandida
     && candidate.slotLegal === true
     && candidate.recipeLegal === true
     && candidate.shopLegal === true
-    && candidate.rulesetLegal === true;
+    && candidate.rulesetLegal === true
+    && candidate.transactionMechanicsKnown === true
+    && candidate.evidence.inventory !== 'UNKNOWN'
+    && candidate.evidence.shopOpportunity !== 'UNKNOWN'
+    && candidate.evidence.ruleset !== 'UNKNOWN'
+    && candidate.evidence.transaction !== 'UNKNOWN'
+    && (candidate.actionType === 'SELL_ITEM' || candidate.evidence.spendableSouls !== 'UNKNOWN');
 }
 
 function candidateDecisionScore(candidate: RecommendationDecisionCandidateV8): number {
