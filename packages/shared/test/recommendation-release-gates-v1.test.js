@@ -56,6 +56,8 @@ const controlled = Array.from({ length: 100 }, (_, index) => ({
   evidenceVersion: SOULS_AFFORDABILITY_EVIDENCE_V2,
   observationId: `obs-${index}`,
   sessionId: `session-${Math.floor(index / 20)}`,
+  matchId: `match-${Math.floor(index / 10)}`,
+  gameTimeSec: 120 + index,
   actionType: index % 3 === 0 ? 'SELL' : index % 2 === 0 ? 'UPGRADE' : 'BUY',
   itemId: 1,
   clientVersion: 'client-1',
