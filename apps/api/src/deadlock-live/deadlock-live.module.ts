@@ -18,6 +18,7 @@ import { ModelBundleRegistryController } from './model-bundle-registry.controlle
 import { ModelBundleRegistryService } from './model-bundle-registry.service';
 import { RecommendationAdvancedEvidenceV8Controller } from './recommendation-advanced-evidence-v8.controller';
 import { RecommendationAdvancedEvidenceV8Service } from './recommendation-advanced-evidence-v8.service';
+import { RecommendationBehavioralServingV1Service } from './recommendation-behavioral-serving-v1.service';
 import { RecommendationEngineV8Service } from './recommendation-engine-v8.service';
 import { RecommendationDecisionV8Service } from './recommendation-decision-v8.service';
 import { RecommendationRealtimeStateV8Service } from './recommendation-realtime-state-v8.service';
@@ -152,6 +153,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     SituationalRecommendationService,
     CatalogContentService,
     ModelBundleRegistryService,
+    RecommendationBehavioralServingV1Service,
     RecommendationEngineV8Service,
     RecommendationDecisionV8Service,
     RecommendationRealtimeStateV8Service,
@@ -192,6 +194,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     SituationalRecommendationService,
     CatalogContentService,
     ModelBundleRegistryService,
+    RecommendationBehavioralServingV1Service,
     RecommendationEngineV8Service,
     RecommendationDecisionV8Service,
     RecommendationRealtimeStateV8Service,
