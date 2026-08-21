@@ -18,6 +18,8 @@ import { RecommendationDecisionCandidateV8 } from './deadlock-live/entities/reco
 import { RecommendationDecisionV8 } from './deadlock-live/entities/recommendation-decision.entity';
 import { RecommendationExposureAckV8 } from './deadlock-live/entities/recommendation-exposure-ack.entity';
 import { RecommendationTelemetryEvent } from './deadlock-live/entities/recommendation-telemetry-event.entity';
+import { RecommendationTelemetryRejectionV8 } from './deadlock-live/entities/recommendation-telemetry-rejection.entity';
+import { SoulsAffordabilityEvidenceV2Entity } from './deadlock-live/entities/souls-affordability-evidence-v2.entity';
 import { ShadowModeDecision } from './deadlock-live/entities/shadow-mode-decision.entity';
 
 @Module({
@@ -41,9 +43,11 @@ import { ShadowModeDecision } from './deadlock-live/entities/shadow-mode-decisio
         ItemCatalogItem,
         ItemCatalogRecipe,
         RecommendationTelemetryEvent,
+        RecommendationTelemetryRejectionV8,
         RecommendationDecisionV8,
         RecommendationDecisionCandidateV8,
         RecommendationExposureAckV8,
+        SoulsAffordabilityEvidenceV2Entity,
         ModelBundleRegistryV1,
         CrawlerRun,
         CrawlerState,
