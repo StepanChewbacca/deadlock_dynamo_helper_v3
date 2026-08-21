@@ -16,10 +16,25 @@ import { SituationalRecommendationService } from './situational-recommendation.s
 import { CatalogContentService } from './catalog-content.service';
 import { ModelBundleRegistryService } from './model-bundle-registry.service';
 import { RecommendationEngineV8Service } from './recommendation-engine-v8.service';
+import { RecommendationDecisionV8Service } from './recommendation-decision-v8.service';
+import { RecommendationRealtimeStateV8Service } from './recommendation-realtime-state-v8.service';
 import { RecommendationObservabilityController } from './recommendation-observability.controller';
 import { RecommendationObservabilityReportService } from './recommendation-observability-report.service';
 import { RecommendationTelemetryController } from './recommendation-telemetry.controller';
 import { RecommendationTelemetryStoreService } from './recommendation-telemetry-store.service';
+import { RecommendationTelemetryIngestV8Service } from './recommendation-telemetry-ingest-v8.service';
+import { RecommendationFeatureStoreV8Controller } from './recommendation-feature-store-v8.controller';
+import { RecommendationFeatureStoreV8Service } from './recommendation-feature-store-v8.service';
+import { RecommendationDatasetV8Controller } from './recommendation-dataset-v8.controller';
+import { RecommendationDatasetV8ReportService } from './recommendation-dataset-v8-report.service';
+import { RecommendationShadowController } from './recommendation-shadow.controller';
+import { RecommendationShadowReportService } from './recommendation-shadow-report.service';
+import { RecommendationOpeController } from './recommendation-ope.controller';
+import { RecommendationOpeReportService } from './recommendation-ope-report.service';
+import { RecommendationAbController } from './recommendation-ab.controller';
+import { RecommendationAbReportService } from './recommendation-ab-report.service';
+import { SoulsAffordabilityEvidenceV2Controller } from './souls-affordability-evidence-v2.controller';
+import { SoulsAffordabilityEvidenceV2Service } from './souls-affordability-evidence-v2.service';
 import { CrawlerRun } from './entities/crawler-run.entity';
 import { CrawlerState } from './entities/crawler-state.entity';
 import { Hero } from './entities/hero.entity';
@@ -37,6 +52,8 @@ import { RecommendationDecisionCandidateV8 } from './entities/recommendation-dec
 import { RecommendationDecisionV8 } from './entities/recommendation-decision.entity';
 import { RecommendationExposureAckV8 } from './entities/recommendation-exposure-ack.entity';
 import { RecommendationTelemetryEvent } from './entities/recommendation-telemetry-event.entity';
+import { RecommendationTelemetryRejectionV8 } from './entities/recommendation-telemetry-rejection.entity';
+import { SoulsAffordabilityEvidenceV2Entity } from './entities/souls-affordability-evidence-v2.entity';
 import { ReferenceDataImportService } from './reference-data-import.service';
 import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
 
@@ -54,9 +71,11 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
       ItemCatalogItem,
       ItemCatalogRecipe,
       RecommendationTelemetryEvent,
+      RecommendationTelemetryRejectionV8,
       RecommendationDecisionV8,
       RecommendationDecisionCandidateV8,
       RecommendationExposureAckV8,
+      SoulsAffordabilityEvidenceV2Entity,
       ModelBundleRegistryV1,
       CrawlerRun,
       CrawlerState,
@@ -71,6 +90,12 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     IngestStatusController,
     RecommendationTelemetryController,
     RecommendationObservabilityController,
+    RecommendationFeatureStoreV8Controller,
+    RecommendationDatasetV8Controller,
+    RecommendationShadowController,
+    RecommendationOpeController,
+    RecommendationAbController,
+    SoulsAffordabilityEvidenceV2Controller,
   ],
   providers: [
     LiveMatchStateService,
@@ -83,8 +108,17 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     CatalogContentService,
     ModelBundleRegistryService,
     RecommendationEngineV8Service,
+    RecommendationDecisionV8Service,
+    RecommendationRealtimeStateV8Service,
     RecommendationTelemetryStoreService,
+    RecommendationTelemetryIngestV8Service,
     RecommendationObservabilityReportService,
+    RecommendationFeatureStoreV8Service,
+    RecommendationDatasetV8ReportService,
+    RecommendationShadowReportService,
+    RecommendationOpeReportService,
+    RecommendationAbReportService,
+    SoulsAffordabilityEvidenceV2Service,
     ReferenceDataImportService,
     IngestStatusService,
   ],
@@ -99,8 +133,17 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     CatalogContentService,
     ModelBundleRegistryService,
     RecommendationEngineV8Service,
+    RecommendationDecisionV8Service,
+    RecommendationRealtimeStateV8Service,
     RecommendationTelemetryStoreService,
+    RecommendationTelemetryIngestV8Service,
     RecommendationObservabilityReportService,
+    RecommendationFeatureStoreV8Service,
+    RecommendationDatasetV8ReportService,
+    RecommendationShadowReportService,
+    RecommendationOpeReportService,
+    RecommendationAbReportService,
+    SoulsAffordabilityEvidenceV2Service,
     ReferenceDataImportService,
     IngestStatusService,
   ],
