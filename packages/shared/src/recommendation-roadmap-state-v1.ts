@@ -33,6 +33,7 @@ export interface RecommendationRoadmapEvidenceV1 {
   causalValueRelease: RecommendationRoadmapGateStateV1;
   policyAbRelease: RecommendationRoadmapGateStateV1;
   sequentialRlResearchGate: RecommendationRoadmapGateStateV1;
+  futureTestEvaluation?: RecommendationRoadmapGateStateV1;
   futureTestUntouched: boolean;
 }
 
@@ -53,67 +54,41 @@ const PHASE_REQUIREMENTS: ReadonlyArray<{
   phase: RecommendationRoadmapPhaseV1;
   gates: readonly (keyof RecommendationRoadmapEvidenceV1)[];
 }> = [
-  {
-    phase: 'DATA_CONTRACT',
-    gates: ['canonicalGepV2', 'controlledSoulsValidation', 'versionedRulesetCatalog'],
-  },
-  {
-    phase: 'LEGALITY_ENGINE',
-    gates: ['deterministicLegality', 'recommendationTelemetryV8'],
-  },
-  {
-    phase: 'PROSPECTIVE_DATA',
-    gates: ['observabilityCoverage', 'datasetV8Structural', 'datasetV8Empirical'],
-  },
-  {
-    phase: 'BEHAVIORAL_BUILDLM',
-    gates: ['behavioralOffline'],
-  },
-  {
-    phase: 'SHADOW',
-    gates: ['shadowSafety'],
-  },
-  {
-    phase: 'MATCH_LEVEL_AB',
-    gates: ['matchLevelAbSafety'],
-  },
-  {
-    phase: 'SAFE_EXPLORATION',
-    gates: ['exactActionPropensity', 'safeExplorationSafety'],
-  },
-  {
-    phase: 'CAUSAL_VALUE',
-    gates: ['valueActionSensitivity', 'offPolicySupport', 'causalValueRelease'],
-  },
-  {
-    phase: 'POLICY_V1',
-    gates: ['policyAbRelease'],
-  },
-  {
-    phase: 'SEQUENTIAL_RL_RESEARCH',
-    gates: ['sequentialRlResearchGate'],
-  },
+  { phase: 'DATA_CONTRACT', gates: ['canonicalGepV2', 'controlledSoulsValidation', 'versionedRulesetCatalog'] },
+  { phase: 'LEGALITY_ENGINE', gates: ['deterministicLegality', 'recommendationTelemetryV8'] },
+  { phase: 'PROSPECTIVE_DATA', gates: ['observabilityCoverage', 'datasetV8Structural', 'datasetV8Empirical'] },
+  { phase: 'BEHAVIORAL_BUILDLM', gates: ['behavioralOffline'] },
+  { phase: 'SHADOW', gates: ['shadowSafety'] },
+  { phase: 'MATCH_LEVEL_AB', gates: ['matchLevelAbSafety'] },
+  { phase: 'SAFE_EXPLORATION', gates: ['exactActionPropensity', 'safeExplorationSafety'] },
+  { phase: 'CAUSAL_VALUE', gates: ['valueActionSensitivity', 'offPolicySupport', 'causalValueRelease'] },
+  { phase: 'POLICY_V1', gates: ['policyAbRelease'] },
+  { phase: 'SEQUENTIAL_RL_RESEARCH', gates: ['futureTestEvaluation', 'sequentialRlResearchGate'] },
 ];
 
 export function evaluateRecommendationRoadmapStateV1(
   evidence: RecommendationRoadmapEvidenceV1,
 ): RecommendationRoadmapStateReportV1 {
   const phases: RecommendationRoadmapPhaseStateV1[] = [];
+  const futureTestEvaluation = evidence.futureTestEvaluation ?? 'NOT_EVALUATED';
   let previousUnlocked = true;
+
   for (const requirement of PHASE_REQUIREMENTS) {
     const blockers: string[] = [];
     if (!previousUnlocked) blockers.push('PREREQUISITE_PHASE_NOT_UNLOCKED');
     for (const gateName of requirement.gates) {
-      const value = evidence[gateName];
-      if (value !== 'PASS') blockers.push(`${String(gateName)}:${String(value)}`);
+      const value = gateName === 'futureTestEvaluation'
+        ? futureTestEvaluation
+        : evidence[gateName];
+      if (value !== 'PASS') blockers.push(`${String(gateName)}:${String(value ?? 'NOT_EVALUATED')}`);
     }
-    if (!evidence.futureTestUntouched && requirement.phase !== 'SEQUENTIAL_RL_RESEARCH') {
-      blockers.push('FUTURE_TEST_ALREADY_TOUCHED');
-    }
+    if (!evidence.futureTestUntouched) blockers.push('FUTURE_TEST_INTEGRITY_VIOLATION');
+
     const unlocked = blockers.length === 0;
     phases.push({ phase: requirement.phase, unlocked, blockers: blockers.sort() });
     previousUnlocked = unlocked;
   }
+
   const highestUnlockedPhase = [...phases].reverse().find((phase) => phase.unlocked)?.phase;
   const hardBlockers = [...new Set(phases.flatMap((phase) => phase.blockers))].sort();
   return {

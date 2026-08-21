@@ -6,11 +6,20 @@ import {
   generateRecommendationCandidates,
 } from '@deadlock-live-probe/build-domain';
 import {
+  RecommendationActionFeatureV8,
+  RecommendationBehavioralRuntimePredictorV1,
   RecommendationBehavioralV8Decision,
   RecommendationBehavioralV8LinearModel,
   RecommendationDecisionCandidateV8,
   RecommendationFeatureStateV8,
-  predictRecommendationBehavioralV8Linear,
+  RecommendationPolicyDistributionV1,
+  RecommendationPolicyV1Config,
+  RecommendationValueV8Model,
+  attachRecommendationPolicyScoresV1,
+  buildRecommendationPolicyDistributionV1,
+  createRecommendationBehavioralLinearRuntimePredictorV1,
+  predictRecommendationBehavioralRuntimeV1,
+  predictRecommendationValueV8,
 } from '@deadlock-live-probe/shared';
 
 export interface RecommendationEngineV8Input {
@@ -18,11 +27,18 @@ export interface RecommendationEngineV8Input {
   itemGraph: RecommendationItemGraph;
   featureState?: RecommendationFeatureStateV8;
   behavioralModel?: RecommendationBehavioralV8LinearModel;
+  behavioralPredictor?: RecommendationBehavioralRuntimePredictorV1;
+  valueModel?: RecommendationValueV8Model;
+  policyConfig?: RecommendationPolicyV1Config;
 }
 
 export interface RecommendationEngineV8Result {
   domainCandidates: readonly RecommendationCandidate[];
   telemetryCandidates: readonly RecommendationDecisionCandidateV8[];
+  policyAttempted: boolean;
+  policyReady: boolean;
+  policyBlockers: readonly string[];
+  policyDistribution?: RecommendationPolicyDistributionV1;
 }
 
 @Injectable()
@@ -33,14 +49,74 @@ export class RecommendationEngineV8Service {
       itemGraph: input.itemGraph,
     });
     const baseTelemetryCandidates = domainCandidates.map(toTelemetryCandidate);
-    const behaviorProbabilityByAction = input.behavioralModel && input.featureState
-      ? predictBehaviorProbabilities(input.behavioralModel, input.featureState, domainCandidates)
+    const behavioralPredictor = input.behavioralPredictor
+      ?? (input.behavioralModel ? createRecommendationBehavioralLinearRuntimePredictorV1(input.behavioralModel) : undefined);
+    const behaviorProbabilityByAction = behavioralPredictor && input.featureState
+      ? predictBehaviorProbabilities(behavioralPredictor, input.featureState, domainCandidates)
       : undefined;
-    const telemetryCandidates = baseTelemetryCandidates.map((candidate) => ({
+    let telemetryCandidates: RecommendationDecisionCandidateV8[] = baseTelemetryCandidates.map((candidate) => ({
       ...candidate,
       behaviorProbability: behaviorProbabilityByAction?.get(candidate.actionKey),
     }));
-    return { domainCandidates, telemetryCandidates };
+
+    const valueModel = input.valueModel;
+    const featureState = input.featureState;
+    if (valueModel && featureState) {
+      telemetryCandidates = telemetryCandidates.map((candidate) => ({
+        ...candidate,
+        valueScore: candidate.feasible
+          ? predictRecommendationValueV8(valueModel, featureState, toActionFeature(candidate)).value
+          : undefined,
+      }));
+    }
+
+    const policyAttempted = input.valueModel !== undefined || input.policyConfig !== undefined;
+    if (!policyAttempted) {
+      return {
+        domainCandidates,
+        telemetryCandidates,
+        policyAttempted: false,
+        policyReady: true,
+        policyBlockers: [],
+      };
+    }
+    if (!input.featureState) {
+      return policyFailure(domainCandidates, telemetryCandidates, 'POLICY_FEATURE_STATE_MISSING');
+    }
+    if (!behavioralPredictor) {
+      return policyFailure(domainCandidates, telemetryCandidates, 'POLICY_BEHAVIORAL_MODEL_MISSING');
+    }
+    if (!input.valueModel) {
+      return policyFailure(domainCandidates, telemetryCandidates, 'POLICY_VALUE_MODEL_MISSING');
+    }
+    if (!input.policyConfig) {
+      return policyFailure(domainCandidates, telemetryCandidates, 'POLICY_CONFIG_MISSING');
+    }
+
+    try {
+      const policyDistribution = buildRecommendationPolicyDistributionV1(
+        telemetryCandidates,
+        input.policyConfig,
+      );
+      telemetryCandidates = attachRecommendationPolicyScoresV1(
+        telemetryCandidates,
+        policyDistribution,
+      );
+      return {
+        domainCandidates,
+        telemetryCandidates,
+        policyAttempted: true,
+        policyReady: true,
+        policyBlockers: [],
+        policyDistribution,
+      };
+    } catch (error) {
+      return policyFailure(
+        domainCandidates,
+        telemetryCandidates,
+        `POLICY_BUILD_FAILED:${errorMessage(error)}`,
+      );
+    }
   }
 }
 
@@ -97,7 +173,7 @@ export function toTelemetryCandidate(candidate: RecommendationCandidate): Recomm
 }
 
 function predictBehaviorProbabilities(
-  model: RecommendationBehavioralV8LinearModel,
+  predictor: RecommendationBehavioralRuntimePredictorV1,
   featureState: RecommendationFeatureStateV8,
   candidates: readonly RecommendationCandidate[],
 ): Map<string, number> {
@@ -106,29 +182,54 @@ function predictBehaviorProbabilities(
   const decision: RecommendationBehavioralV8Decision = {
     decisionId: featureState.decisionId,
     state: featureState,
-    candidates: feasible.map((candidate) => {
-      const action = candidate.action;
-      return {
-        actionKey: candidate.actionId,
-        actionType: action.type,
-        targetItemId: action.type === 'BUY_ITEM'
-          || action.type === 'UPGRADE_ITEM'
-          || action.type === 'SELL_ITEM'
-          ? action.itemId
-          : action.type === 'REPLACE_ITEM'
-            ? action.buyItemId
-            : action.targetItemId,
-        sellItemId: action.type === 'REPLACE_ITEM' ? action.sellItemId : undefined,
-        recipeId: action.type === 'UPGRADE_ITEM' ? action.recipeId : undefined,
-        effectiveCostSouls: candidate.effectiveCostSouls,
-        feasible: true as const,
-      };
-    }),
+    candidates: feasible.map((candidate) => ({
+      ...toActionFeature(toTelemetryCandidate(candidate)),
+      feasible: true as const,
+    })),
   };
-  const prediction = predictRecommendationBehavioralV8Linear(model, decision);
+  const prediction = predictRecommendationBehavioralRuntimeV1(predictor, decision);
   const probabilities = new Map(prediction.candidates.map((candidate) => [candidate.actionKey, candidate.probability]));
   for (const candidate of candidates) {
     if (!candidate.feasible) probabilities.set(candidate.actionId, 0);
   }
   return probabilities;
+}
+
+function toActionFeature(candidate: RecommendationDecisionCandidateV8): RecommendationActionFeatureV8 {
+  return {
+    actionKey: candidate.actionKey,
+    actionType: candidate.actionType,
+    targetItemId: candidate.targetItemId,
+    sellItemId: candidate.sellItemId,
+    recipeId: candidate.recipeId,
+    effectiveCostSouls: candidate.effectiveCostSouls,
+  };
+}
+
+function policyFailure(
+  domainCandidates: readonly RecommendationCandidate[],
+  telemetryCandidates: readonly RecommendationDecisionCandidateV8[],
+  blocker: string,
+): RecommendationEngineV8Result {
+  return {
+    domainCandidates,
+    telemetryCandidates: stripUnsafeValueOnlyScores(telemetryCandidates),
+    policyAttempted: true,
+    policyReady: false,
+    policyBlockers: [blocker],
+  };
+}
+
+function stripUnsafeValueOnlyScores(
+  candidates: readonly RecommendationDecisionCandidateV8[],
+): RecommendationDecisionCandidateV8[] {
+  return candidates.map((candidate) => ({
+    ...candidate,
+    valueScore: undefined,
+    policyScore: undefined,
+  }));
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

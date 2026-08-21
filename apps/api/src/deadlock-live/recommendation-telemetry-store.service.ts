@@ -7,23 +7,28 @@ import {
   RecommendationDecisionEventV8,
   RecommendationExposureAckEventV8,
   RecommendationOutcomeEventV8,
+  RecommendationRuntimeHealthEventV8,
   recommendationTelemetryDeduplicationKeyV8,
   validatePlayerStateEventV8,
   validateRecommendationDecisionEventV8,
   validateRecommendationExposureAckEventV8,
+  validateRecommendationOutcomeEventV8,
+  validateRecommendationRuntimeHealthEventV8,
   validateRecommendationTelemetryEnvelopeV8,
 } from '@deadlock-live-probe/shared';
 import { RecommendationDecisionCandidateV8 } from './entities/recommendation-decision-candidate.entity';
 import { RecommendationDecisionV8 } from './entities/recommendation-decision.entity';
 import { RecommendationExposureAckV8 } from './entities/recommendation-exposure-ack.entity';
 import { RecommendationTelemetryEvent } from './entities/recommendation-telemetry-event.entity';
+import { RecommendationTelemetryRejectionV8 } from './entities/recommendation-telemetry-rejection.entity';
 
 type RecommendationTelemetryInputV8 =
   | PlayerStateEventV8
   | InventorySnapshotEventV8
   | RecommendationDecisionEventV8
   | RecommendationExposureAckEventV8
-  | RecommendationOutcomeEventV8;
+  | RecommendationOutcomeEventV8
+  | RecommendationRuntimeHealthEventV8;
 
 export interface AppendRecommendationTelemetryResult {
   status: 'APPENDED' | 'DUPLICATE';
@@ -37,11 +42,14 @@ export class RecommendationTelemetryStoreService {
     private readonly dataSource: DataSource,
     @InjectRepository(RecommendationTelemetryEvent)
     private readonly eventRepo: Repository<RecommendationTelemetryEvent>,
+    @InjectRepository(RecommendationTelemetryRejectionV8)
+    private readonly rejectionRepo: Repository<RecommendationTelemetryRejectionV8>,
   ) {}
 
   async append(event: RecommendationTelemetryInputV8): Promise<AppendRecommendationTelemetryResult> {
     const validation = this.validate(event);
     if (!validation.valid) {
+      await this.reject(event, validation.errors);
       throw new Error(`Invalid recommendation telemetry event ${event.eventId}: ${validation.errors.join(',')}`);
     }
 
@@ -98,8 +106,13 @@ export class RecommendationTelemetryStoreService {
             experimentId: event.payload.experiment.experimentId,
             experimentArm: event.payload.experiment.arm,
             assignmentVersion: event.payload.experiment.assignmentVersion,
-            loggingPropensity: event.payload.experiment.loggingPropensity,
+            armAssignmentPropensity: event.payload.experiment.armAssignmentPropensity,
+            actionLoggingPropensity: event.payload.actionLoggingPropensity,
             randomized: event.payload.experiment.randomized,
+            runtimeMode: event.payload.runtimeMode,
+            fallbackUsed: event.payload.fallbackUsed,
+            fallbackReasons: [...event.payload.fallbackReasons],
+            inferenceLatencyMs: event.payload.inferenceLatencyMs,
             observedActionInjected: event.payload.observedActionInjected,
           }));
           const candidates = event.payload.candidates.map((candidate) => candidateRepo.create({
@@ -151,6 +164,20 @@ export class RecommendationTelemetryStoreService {
     return { status: 'APPENDED', eventId: event.eventId, deduplicationKey };
   }
 
+  async reject(event: Partial<RecommendationTelemetryInputV8>, errors: readonly string[]): Promise<void> {
+    const payload = isRecord(event.payload) ? event.payload : undefined;
+    const runtimeMode = stringValue(payload?.runtimeMode);
+    await this.rejectionRepo.save(this.rejectionRepo.create({
+      eventId: stringValue(event.eventId),
+      eventType: stringValue(event.eventType),
+      matchId: stringValue(event.matchId),
+      playerKey: stringValue(event.playerKey),
+      source: stringValue(event.source),
+      runtimeMode,
+      errors: [...new Set(errors)].sort(),
+    }));
+  }
+
   private validate(event: RecommendationTelemetryInputV8) {
     switch (event.eventType) {
       case 'PLAYER_STATE':
@@ -159,6 +186,10 @@ export class RecommendationTelemetryStoreService {
         return validateRecommendationDecisionEventV8(event);
       case 'RECOMMENDATION_EXPOSURE_ACK':
         return validateRecommendationExposureAckEventV8(event);
+      case 'RECOMMENDATION_OUTCOME':
+        return validateRecommendationOutcomeEventV8(event);
+      case 'RECOMMENDATION_RUNTIME_HEALTH':
+        return validateRecommendationRuntimeHealthEventV8(event);
       default:
         return validateRecommendationTelemetryEnvelopeV8(event);
     }
@@ -167,4 +198,12 @@ export class RecommendationTelemetryStoreService {
 
 function isUniqueViolation(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
 }

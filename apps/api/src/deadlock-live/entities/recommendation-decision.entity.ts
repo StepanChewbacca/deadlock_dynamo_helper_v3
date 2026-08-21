@@ -54,10 +54,26 @@ export class RecommendationDecisionV8 {
   assignmentVersion!: string;
 
   @Column({ type: 'double precision' })
-  loggingPropensity!: number;
+  armAssignmentPropensity!: number;
+
+  @Column({ type: 'double precision' })
+  actionLoggingPropensity!: number;
 
   @Column({ type: 'boolean' })
   randomized!: boolean;
+
+  @Index('idx_recommendation_decisions_v8_runtime_mode')
+  @Column({ type: 'varchar', length: 32 })
+  runtimeMode!: string;
+
+  @Column({ type: 'boolean', default: false })
+  fallbackUsed!: boolean;
+
+  @Column({ type: 'jsonb', default: () => "'[]'::jsonb" })
+  fallbackReasons!: string[];
+
+  @Column({ type: 'double precision', default: 0 })
+  inferenceLatencyMs!: number;
 
   @Column({ type: 'boolean', default: false })
   observedActionInjected!: boolean;

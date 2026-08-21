@@ -8,7 +8,10 @@ import {
   validateModelBundleManifestV1,
   validateModelBundleRuntimeCompatibilityV1,
 } from '@deadlock-live-probe/shared';
-import { ModelBundleRegistryV1 } from './entities/model-bundle-registry.entity';
+import {
+  ModelBundleArtifactVerificationV1,
+  ModelBundleRegistryV1,
+} from './entities/model-bundle-registry.entity';
 
 export interface RegisterModelBundleV1Input {
   manifest: ModelBundleManifestV1;
@@ -22,6 +25,15 @@ export interface RegisterModelBundleV1Result {
   modelVersion: string;
   manifestSha256: string;
   status: string;
+}
+
+export interface VerifyModelBundleV1Input {
+  modelId: string;
+  modelVersion: string;
+  verifier: string;
+  manifestSha256: string;
+  files: readonly { path: string; sha256: string; sizeBytes: number }[];
+  attestationRef?: string;
 }
 
 export interface ActivateModelBundleV1Input {
@@ -81,6 +93,35 @@ export class ModelBundleRegistryService {
     }
   }
 
+  async verify(input: VerifyModelBundleV1Input): Promise<ModelBundleRegistryV1> {
+    if (!input.verifier) throw new Error('verifier is required');
+    const target = await this.registryRepo.findOne({
+      where: { modelId: input.modelId, modelVersion: input.modelVersion },
+    });
+    if (!target) throw new Error(`Model bundle not found: ${input.modelId}@${input.modelVersion}`);
+    if (target.status === 'ACTIVE' || target.status === 'RETIRED') {
+      throw new Error(`Model bundle verification cannot mutate ${target.status} artifact`);
+    }
+    if (target.manifestSha256 !== input.manifestSha256) {
+      throw new Error('Verified manifest SHA does not match registered manifest');
+    }
+    const expectedFiles = normalizedFiles(target.manifest.files);
+    const verifiedFiles = normalizedFiles(input.files);
+    if (JSON.stringify(expectedFiles) !== JSON.stringify(verifiedFiles)) {
+      throw new Error('Verified artifact files do not exactly match model manifest');
+    }
+    const verification: ModelBundleArtifactVerificationV1 = {
+      verifier: input.verifier,
+      verifiedManifestSha256: input.manifestSha256,
+      verifiedFiles,
+      attestationRef: input.attestationRef,
+    };
+    target.verification = verification;
+    target.verifiedAt = new Date();
+    target.status = 'VERIFIED';
+    return this.registryRepo.save(target);
+  }
+
   async activate(input: ActivateModelBundleV1Input): Promise<ModelBundleRegistryV1> {
     return this.dataSource.transaction(async (manager) => {
       const repo = manager.getRepository(ModelBundleRegistryV1);
@@ -88,6 +129,12 @@ export class ModelBundleRegistryService {
         where: { modelId: input.modelId, modelVersion: input.modelVersion },
       });
       if (!target) throw new Error(`Model bundle not found: ${input.modelId}@${input.modelVersion}`);
+      if (target.status !== 'VERIFIED' && target.status !== 'ACTIVE') {
+        throw new Error(`Model bundle is not verified: ${target.status}`);
+      }
+      if (!target.verification || target.verification.verifiedManifestSha256 !== target.manifestSha256) {
+        throw new Error('Model bundle verification evidence is missing or stale');
+      }
       const compatibility = validateModelBundleRuntimeCompatibilityV1(target.manifest, input.runtime);
       if (!compatibility.valid) {
         throw new Error(`Model bundle is not runtime-compatible: ${compatibility.errors.join(',')}`);
@@ -113,7 +160,7 @@ export class ModelBundleRegistryService {
     runtime: ModelBundleRuntimeCompatibilityV1,
   ): Promise<ModelBundleRegistryV1 | undefined> {
     const active = await this.registryRepo.findOne({ where: { modelId, status: 'ACTIVE' } });
-    if (!active) return undefined;
+    if (!active || !active.verification || active.verification.verifiedManifestSha256 !== active.manifestSha256) return undefined;
     const compatibility = validateModelBundleRuntimeCompatibilityV1(active.manifest, runtime);
     return compatibility.valid ? active : undefined;
   }
@@ -137,10 +184,19 @@ function validateArtifactBaseUri(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) throw new Error('artifactBaseUri is required');
   if (trimmed.includes('..')) throw new Error('artifactBaseUri must not contain parent traversal');
-  if (!/^(s3|gs|https|file):\/\//.test(trimmed)) {
-    throw new Error('artifactBaseUri must use s3://, gs://, https:// or file://');
+  if (/^(s3|gs|https):\/\//.test(trimmed)) return trimmed.replace(/\/+$/, '');
+  if (process.env.NODE_ENV !== 'production' && process.env.RECOMMENDATION_ALLOW_LOCAL_ARTIFACTS === 'true' && trimmed.startsWith('file://')) {
+    return trimmed.replace(/\/+$/, '');
   }
-  return trimmed.replace(/\/+$/, '');
+  throw new Error('artifactBaseUri must use an approved immutable remote store');
+}
+
+function normalizedFiles(
+  files: readonly { path: string; sha256: string; sizeBytes: number }[],
+): Array<{ path: string; sha256: string; sizeBytes: number }> {
+  return files
+    .map((file) => ({ path: file.path, sha256: file.sha256, sizeBytes: file.sizeBytes }))
+    .sort((left, right) => left.path.localeCompare(right.path));
 }
 
 function toRegisterResult(entity: ModelBundleRegistryV1, created: boolean): RegisterModelBundleV1Result {

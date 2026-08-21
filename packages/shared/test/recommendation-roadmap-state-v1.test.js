@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { evaluateRecommendationRoadmapStateV1 } = require('../dist');
 
-const allPass = {
+const allPassBeforeFutureTest = {
   canonicalGepV2: 'PASS',
   controlledSoulsValidation: 'PASS',
   versionedRulesetCatalog: 'PASS',
@@ -20,15 +20,24 @@ const allPass = {
   causalValueRelease: 'PASS',
   policyAbRelease: 'PASS',
   sequentialRlResearchGate: 'PASS',
+  futureTestEvaluation: 'NOT_EVALUATED',
   futureTestUntouched: true,
 };
 
-const complete = evaluateRecommendationRoadmapStateV1(allPass);
+const beforeFutureTest = evaluateRecommendationRoadmapStateV1(allPassBeforeFutureTest);
+assert.equal(beforeFutureTest.highestUnlockedPhase, 'POLICY_V1');
+assert.equal(beforeFutureTest.phases.find((phase) => phase.phase === 'SEQUENTIAL_RL_RESEARCH').unlocked, false);
+assert(beforeFutureTest.phases.find((phase) => phase.phase === 'SEQUENTIAL_RL_RESEARCH').blockers.includes('futureTestEvaluation:NOT_EVALUATED'));
+
+const complete = evaluateRecommendationRoadmapStateV1({
+  ...allPassBeforeFutureTest,
+  futureTestEvaluation: 'PASS',
+});
 assert.equal(complete.highestUnlockedPhase, 'SEQUENTIAL_RL_RESEARCH');
 assert(complete.phases.every((phase) => phase.unlocked));
 
 const blocked = evaluateRecommendationRoadmapStateV1({
-  ...allPass,
+  ...allPassBeforeFutureTest,
   controlledSoulsValidation: 'INSUFFICIENT_EVIDENCE',
   observabilityCoverage: 'NOT_EVALUATED',
   datasetV8Empirical: 'NOT_EVALUATED',
@@ -47,8 +56,12 @@ assert.equal(blocked.highestUnlockedPhase, undefined);
 assert(blocked.phases.find((phase) => phase.phase === 'DATA_CONTRACT').blockers.includes('controlledSoulsValidation:INSUFFICIENT_EVIDENCE'));
 assert(blocked.phases.find((phase) => phase.phase === 'BEHAVIORAL_BUILDLM').blockers.includes('PREREQUISITE_PHASE_NOT_UNLOCKED'));
 
-const futureTouched = evaluateRecommendationRoadmapStateV1({ ...allPass, futureTestUntouched: false });
-assert.equal(futureTouched.phases.find((phase) => phase.phase === 'DATA_CONTRACT').unlocked, false);
-assert(futureTouched.hardBlockers.includes('FUTURE_TEST_ALREADY_TOUCHED'));
+const futureIntegrityViolation = evaluateRecommendationRoadmapStateV1({
+  ...allPassBeforeFutureTest,
+  futureTestEvaluation: 'PASS',
+  futureTestUntouched: false,
+});
+assert.equal(futureIntegrityViolation.phases.find((phase) => phase.phase === 'DATA_CONTRACT').unlocked, false);
+assert(futureIntegrityViolation.hardBlockers.includes('FUTURE_TEST_INTEGRITY_VIOLATION'));
 
 console.log('recommendation roadmap state v1 fixtures: PASS');

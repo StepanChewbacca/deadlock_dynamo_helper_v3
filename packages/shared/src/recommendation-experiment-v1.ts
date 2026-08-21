@@ -9,7 +9,7 @@ export interface RecommendationExperimentAssignmentV1 {
   experimentId: string;
   arm: string;
   assignmentUnit: 'MATCH';
-  loggingPropensity: number;
+  armAssignmentPropensity: number;
   randomized: boolean;
   assignmentVersion: typeof RECOMMENDATION_EXPERIMENT_ASSIGNMENT_VERSION;
   deterministicBucket: number;
@@ -42,7 +42,7 @@ export function assignRecommendationExperimentByMatchV1(
         experimentId,
         arm: arm.arm,
         assignmentUnit: 'MATCH',
-        loggingPropensity: arm.probability,
+        armAssignmentPropensity: arm.probability,
         randomized: arms.length > 1,
         assignmentVersion: RECOMMENDATION_EXPERIMENT_ASSIGNMENT_VERSION,
         deterministicBucket: bucket,
@@ -58,7 +58,9 @@ export function selectSafeExplorationActionV1(
   matchId: string,
   decisionId: string,
   candidates: readonly SafeExplorationCandidateV1[],
-): { actionKey: string; loggingPropensity: number; selectionBucket: number } {
+): { actionKey: string; actionLoggingPropensity: number; selectionBucket: number } {
+  if (!experimentId) throw new Error('experimentId is required');
+  if (!matchId) throw new Error('matchId is required');
   if (!decisionId) throw new Error('decisionId is required');
   if (candidates.length < 2) throw new Error('Safe exploration requires at least two candidates');
   for (const candidate of candidates) {
@@ -79,7 +81,7 @@ export function selectSafeExplorationActionV1(
     if (bucket < cumulative || index === candidates.length - 1) {
       return {
         actionKey: candidate.actionKey,
-        loggingPropensity: candidate.probability,
+        actionLoggingPropensity: candidate.probability,
         selectionBucket: bucket,
       };
     }

@@ -1,4 +1,5 @@
 import { RecommendationActionFeatureV8, RecommendationFeatureStateV8, validateRecommendationFeatureStateV8 } from './recommendation-feature-store-v8';
+import { EXACT_ACTION_PROPENSITY_SOURCE } from './off-policy-evaluation-v1';
 
 export const RECOMMENDATION_SEQUENTIAL_RL_V1_CONTRACT = 'recommendation-sequential-rl-v1' as const;
 
@@ -11,7 +12,7 @@ export interface RecommendationSequentialTransitionV1 {
   action: RecommendationActionFeatureV8;
   reward: number;
   actionLoggingPropensity: number;
-  loggingPropensitySource: 'RECORDED_AT_ASSIGNMENT';
+  loggingPropensitySource: typeof EXACT_ACTION_PROPENSITY_SOURCE;
   nextState?: RecommendationFeatureStateV8;
   terminal: boolean;
   rulesetVersion: string;
@@ -56,7 +57,7 @@ export function evaluateRecommendationSequentialDatasetV1(
     ) {
       rulesetMismatchTransitionIds.push(transition.transitionId);
     }
-    if (transition.loggingPropensitySource !== 'RECORDED_AT_ASSIGNMENT') {
+    if (transition.loggingPropensitySource !== EXACT_ACTION_PROPENSITY_SOURCE) {
       reconstructedPropensityTransitionIds.push(transition.transitionId);
     }
   }
@@ -103,7 +104,7 @@ function validateTransition(transition: RecommendationSequentialTransitionV1): s
     || transition.actionLoggingPropensity > 1) {
     errors.push('ACTION_LOGGING_PROPENSITY_INVALID');
   }
-  if (transition.loggingPropensitySource !== 'RECORDED_AT_ASSIGNMENT') {
+  if (transition.loggingPropensitySource !== EXACT_ACTION_PROPENSITY_SOURCE) {
     errors.push('RECONSTRUCTED_PROPENSITY_FORBIDDEN');
   }
   if (!transition.rulesetVersion) errors.push('RULESET_VERSION_REQUIRED');

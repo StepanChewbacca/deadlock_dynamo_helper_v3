@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - agent/add-inventory-simulator
+      - agent/recommendation-roadmap-v8-runtime-finalization
   pull_request:
 
 permissions:
@@ -23,6 +24,11 @@ jobs:
           node-version: '20'
           cache: yarn
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
@@ -37,3 +43,10 @@ jobs:
 
       - name: Test API
         run: yarn workspace @deadlock-live-probe/api test
+
+      - name: Compile training Python
+        run: python -m py_compile training/recommendation_v8/common.py training/recommendation_v8/model.py training/recommendation_v8/train_behavioral.py training/recommendation_v8/compare_behavioral.py training/recommendation_v8/build_model_bundle.py training/recommendation_v8/smoke_test.py
+
+      - name: Test training data contract
+        working-directory: training/recommendation_v8
+        run: python smoke_test.py

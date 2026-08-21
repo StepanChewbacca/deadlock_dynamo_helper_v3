@@ -1,10 +1,11 @@
 export const OFF_POLICY_EVALUATION_VERSION = 'off-policy-evaluation-v1' as const;
+export const EXACT_ACTION_PROPENSITY_SOURCE = 'RECORDED_AT_ACTION_SELECTION' as const;
 
 export interface LoggedBanditDecisionV1 {
   decisionId: string;
   reward: number;
   loggingPropensity: number;
-  loggingPropensitySource: 'RECORDED_AT_ASSIGNMENT';
+  loggingPropensitySource: typeof EXACT_ACTION_PROPENSITY_SOURCE;
   targetProbability: number;
   qLogged?: number;
   qTargetExpected?: number;
@@ -138,7 +139,7 @@ export function evaluateValueActionSensitivityV1(
 function validateRow(row: LoggedBanditDecisionV1): void {
   if (!row.decisionId) throw new Error('decisionId is required');
   if (!Number.isFinite(row.reward)) throw new Error(`Invalid reward for decision ${row.decisionId}`);
-  if (row.loggingPropensitySource !== 'RECORDED_AT_ASSIGNMENT') {
+  if (row.loggingPropensitySource !== EXACT_ACTION_PROPENSITY_SOURCE) {
     throw new Error(`Reconstructed logging propensity is forbidden for decision ${row.decisionId}`);
   }
   if (!Number.isFinite(row.loggingPropensity) || row.loggingPropensity <= 0 || row.loggingPropensity > 1) {

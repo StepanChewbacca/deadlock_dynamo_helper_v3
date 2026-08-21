@@ -3,6 +3,8 @@ const {
   RECOMMENDATION_TELEMETRY_CONTRACT_VERSION,
   validatePlayerStateEventV8,
   validateRecommendationDecisionEventV8,
+  validateRecommendationOutcomeEventV8,
+  validateRecommendationRuntimeHealthEventV8,
   recommendationTelemetryDeduplicationKeyV8,
 } = require('../dist');
 
@@ -44,6 +46,7 @@ const knownEvidence = {
 const decision = {
   ...base,
   eventType: 'RECOMMENDATION_DECISION',
+  source: 'RECOMMENDATION_ENGINE',
   payload: {
     decisionId: 'decision-1',
     stateRevision: 'state-1',
@@ -89,20 +92,25 @@ const decision = {
     ],
     selectedActionKey: 'BUY_ITEM:1',
     modelVersion: 'baseline-v1',
-    policyProbability: 1,
+    policyProbability: 0.75,
+    actionLoggingPropensity: 1,
     experiment: {
       arm: 'CONTROL',
       assignmentUnit: 'MATCH',
-      loggingPropensity: 1,
+      armAssignmentPropensity: 1,
       randomized: false,
       assignmentVersion: 'assignment-v1',
     },
+    runtimeMode: 'SHADOW',
+    fallbackUsed: false,
+    fallbackReasons: [],
+    inferenceLatencyMs: 4,
     observedActionInjected: false,
   },
 };
 
 assert.deepEqual(validateRecommendationDecisionEventV8(decision), { valid: true, errors: [] });
-assert.equal(recommendationTelemetryDeduplicationKeyV8(decision), 'match-1:OVERWOLF_GEP:seq-1');
+assert.equal(recommendationTelemetryDeduplicationKeyV8(decision), 'match-1:RECOMMENDATION_ENGINE:seq-1');
 
 const injected = structuredClone(decision);
 injected.payload.observedActionInjected = true;
@@ -126,6 +134,16 @@ const missingPlayer = structuredClone(decision);
 delete missingPlayer.playerKey;
 assert(validateRecommendationDecisionEventV8(missingPlayer).errors.includes('PLAYER_KEY_REQUIRED'));
 
+const reconstructedActionProbability = structuredClone(decision);
+delete reconstructedActionProbability.payload.actionLoggingPropensity;
+assert(validateRecommendationDecisionEventV8(reconstructedActionProbability).errors.includes('ACTION_LOGGING_PROPENSITY_INVALID'));
+
+const fallbackWithNonUnitProbability = structuredClone(decision);
+fallbackWithNonUnitProbability.payload.fallbackUsed = true;
+fallbackWithNonUnitProbability.payload.fallbackReasons = ['SAFE_EXPLORATION_DISTRIBUTION_INCOMPLETE'];
+fallbackWithNonUnitProbability.payload.actionLoggingPropensity = 0.5;
+assert(validateRecommendationDecisionEventV8(fallbackWithNonUnitProbability).errors.includes('FALLBACK_ACTION_LOGGING_PROPENSITY_MUST_BE_ONE'));
+
 const unknownTransaction = structuredClone(decision);
 unknownTransaction.payload.candidates[0].transactionMechanicsKnown = false;
 unknownTransaction.payload.candidates[0].evidence.transaction = 'UNKNOWN';
@@ -143,5 +161,45 @@ assert.deepEqual(validatePlayerStateEventV8(unverifiedPlayer), { valid: true, er
 const verifiedWithoutContract = structuredClone(unverifiedPlayer);
 verifiedWithoutContract.payload.spendableSoulsVerified = { value: 3510, verificationContractVersion: '' };
 assert(validatePlayerStateEventV8(verifiedWithoutContract).errors.includes('SPENDABLE_SOULS_VERIFICATION_CONTRACT_REQUIRED'));
+
+const inferredShop = structuredClone(unverifiedPlayer);
+inferredShop.payload.shopOpportunity = 'AVAILABLE';
+const inferredShopErrors = validatePlayerStateEventV8(inferredShop).errors;
+assert(inferredShopErrors.includes('SHOP_OPPORTUNITY_DIRECT_PROVENANCE_REQUIRED'));
+assert(inferredShopErrors.includes('SHOP_OPPORTUNITY_SOURCE_FIELD_REQUIRED'));
+
+const directShop = structuredClone(inferredShop);
+directShop.payload.shopOpportunityProvenance = {
+  type: 'DIRECT_SOURCE_SIGNAL',
+  sourceField: 'shop_available',
+};
+assert.deepEqual(validatePlayerStateEventV8(directShop), { valid: true, errors: [] });
+
+const outcome = {
+  ...base,
+  eventType: 'RECOMMENDATION_OUTCOME',
+  payload: {
+    decisionId: 'decision-1',
+    recommendationAccepted: false,
+    sessionAbandoned: true,
+    finalPlayerWon: false,
+  },
+};
+assert.deepEqual(validateRecommendationOutcomeEventV8(outcome), { valid: true, errors: [] });
+
+const runtimeHealth = {
+  ...base,
+  eventType: 'RECOMMENDATION_RUNTIME_HEALTH',
+  payload: {
+    runtimeMode: 'SHADOW',
+    healthType: 'HEARTBEAT',
+    crashCountDelta: 0,
+    recommendationReady: true,
+  },
+};
+assert.deepEqual(validateRecommendationRuntimeHealthEventV8(runtimeHealth), { valid: true, errors: [] });
+const fakeHealthyCrash = structuredClone(runtimeHealth);
+fakeHealthyCrash.payload.crashCountDelta = 1;
+assert(validateRecommendationRuntimeHealthEventV8(fakeHealthyCrash).errors.includes('HEARTBEAT_CRASH_DELTA_MUST_BE_ZERO'));
 
 console.log('recommendation telemetry v8 fixtures: PASS');

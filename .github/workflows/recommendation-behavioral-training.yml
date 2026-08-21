@@ -1,0 +1,250 @@
+name: Recommendation Behavioral Training
+
+on:
+  workflow_dispatch:
+    inputs:
+      dataset_id:
+        description: Verified Recommendation Dataset V8 registry id
+        required: true
+        type: string
+      dataset_dir:
+        description: Pre-staged immutable dataset directory on the secure training runner
+        required: true
+        type: string
+      expected_dataset_sha256:
+        description: Expected immutable dataset SHA256
+        required: true
+        type: string
+      expected_manifest_sha256:
+        description: Expected canonical manifest SHA256 from the dataset registry
+        required: true
+        type: string
+      model_version_prefix:
+        description: Optional immutable version prefix; defaults to the workflow run identity
+        required: false
+        type: string
+      action_contract_version:
+        description: Action contract used by the dataset
+        required: true
+        default: recommendation-actions-v1
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-behavioral-training
+  cancel-in-progress: false
+
+jobs:
+  train-buildlm:
+    environment: recommendation-training
+    runs-on: [self-hosted, linux, x64, recommendation-training]
+    timeout-minutes: 360
+    env:
+      DATASET_ID: ${{ inputs.dataset_id }}
+      DATASET_DIR: ${{ inputs.dataset_dir }}
+      EXPECTED_DATASET_SHA256: ${{ inputs.expected_dataset_sha256 }}
+      EXPECTED_MANIFEST_SHA256: ${{ inputs.expected_manifest_sha256 }}
+      MODEL_VERSION_PREFIX_INPUT: ${{ inputs.model_version_prefix }}
+      ACTION_CONTRACT_VERSION: ${{ inputs.action_contract_version }}
+      TRAINING_PREFLIGHT_URL: ${{ vars.RECOMMENDATION_TRAINING_PREFLIGHT_URL }}
+      TRAINING_TOKEN: ${{ secrets.RECOMMENDATION_TRAINING_TOKEN }}
+    steps:
+      - name: Checkout frozen training code
+        uses: actions/checkout@v4
+
+      - name: Validate secure runner contract and inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${RECOMMENDATION_TRAINING_OUTPUT_ROOT:-}" || { echo "RECOMMENDATION_TRAINING_OUTPUT_ROOT is required on the secure runner" >&2; exit 1; }
+          test -n "${RECOMMENDATION_DATASET_STAGING_ROOT:-}" || { echo "RECOMMENDATION_DATASET_STAGING_ROOT is required on the secure runner" >&2; exit 1; }
+          test -n "${RECOMMENDATION_TRAINING_WHEELHOUSE:-}" || { echo "RECOMMENDATION_TRAINING_WHEELHOUSE is required on the secure runner" >&2; exit 1; }
+          test -n "$TRAINING_PREFLIGHT_URL" || { echo "RECOMMENDATION_TRAINING_PREFLIGHT_URL repository/environment variable is required" >&2; exit 1; }
+          test -n "$TRAINING_TOKEN" || { echo "RECOMMENDATION_TRAINING_TOKEN environment secret is required" >&2; exit 1; }
+          [[ "$DATASET_ID" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || { echo "dataset_id contains unsafe characters" >&2; exit 1; }
+          [[ "$EXPECTED_DATASET_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || { echo "expected_dataset_sha256 is invalid" >&2; exit 1; }
+          [[ "$EXPECTED_MANIFEST_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || { echo "expected_manifest_sha256 is invalid" >&2; exit 1; }
+          [[ "$ACTION_CONTRACT_VERSION" =~ ^[A-Za-z0-9._:-]{1,128}$ ]] || { echo "action_contract_version contains unsafe characters" >&2; exit 1; }
+          case "$RECOMMENDATION_TRAINING_OUTPUT_ROOT" in
+            /*) ;;
+            *) echo "RECOMMENDATION_TRAINING_OUTPUT_ROOT must be absolute" >&2; exit 1 ;;
+          esac
+          case "$RECOMMENDATION_DATASET_STAGING_ROOT" in
+            /*) ;;
+            *) echo "RECOMMENDATION_DATASET_STAGING_ROOT must be absolute" >&2; exit 1 ;;
+          esac
+          case "$RECOMMENDATION_TRAINING_WHEELHOUSE" in
+            /*) ;;
+            *) echo "RECOMMENDATION_TRAINING_WHEELHOUSE must be absolute" >&2; exit 1 ;;
+          esac
+          OUTPUT_ROOT="$(realpath -e "$RECOMMENDATION_TRAINING_OUTPUT_ROOT")"
+          STAGING_ROOT="$(realpath -e "$RECOMMENDATION_DATASET_STAGING_ROOT")"
+          WHEELHOUSE="$(realpath -e "$RECOMMENDATION_TRAINING_WHEELHOUSE")"
+          DATASET_REAL="$(realpath -e "$DATASET_DIR")"
+          test -d "$OUTPUT_ROOT" || { echo "Training output root must be a directory" >&2; exit 1; }
+          test -d "$STAGING_ROOT" || { echo "Dataset staging root must be a directory" >&2; exit 1; }
+          test -d "$WHEELHOUSE" || { echo "Training wheelhouse must be a directory" >&2; exit 1; }
+          test -d "$DATASET_REAL" || { echo "Dataset directory does not exist" >&2; exit 1; }
+          case "$DATASET_REAL" in
+            "$STAGING_ROOT"/*) ;;
+            *) echo "Dataset directory must be inside RECOMMENDATION_DATASET_STAGING_ROOT" >&2; exit 1 ;;
+          esac
+          RUN_ROOT="$OUTPUT_ROOT/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$RUN_ROOT" || { echo "Training run output already exists: $RUN_ROOT" >&2; exit 1; }
+          mkdir "$RUN_ROOT"
+          echo "RUN_ROOT=$RUN_ROOT" >> "$GITHUB_ENV"
+          echo "DATASET_DIR=$DATASET_REAL" >> "$GITHUB_ENV"
+          echo "TRAINING_WHEELHOUSE=$WHEELHOUSE" >> "$GITHUB_ENV"
+          PREFIX="$MODEL_VERSION_PREFIX_INPUT"
+          if [ -z "$PREFIX" ]; then PREFIX="buildlm-v8-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"; fi
+          [[ "$PREFIX" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || { echo "model_version_prefix contains unsafe characters" >&2; exit 1; }
+          echo "MODEL_VERSION_PREFIX=$PREFIX" >> "$GITHUB_ENV"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Create isolated training environment from approved wheelhouse
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUN_ROOT/venv"
+          "$RUN_ROOT/venv/bin/pip" install --no-index --find-links "$TRAINING_WHEELHOUSE" -r training/recommendation_v8/requirements-training.txt
+
+      - name: Verify immutable dataset bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUN_ROOT/venv/bin/python" training/recommendation_v8/verify_dataset.py \
+            --dataset-dir "$DATASET_DIR" \
+            --expected-dataset-sha256 "$EXPECTED_DATASET_SHA256" \
+            --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256" \
+            | tee "$RUN_ROOT/dataset-verification.json"
+
+      - name: Require roadmap and registry preflight for RNN
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            -H "content-type: application/json" \
+            -H "x-recommendation-training-token: $TRAINING_TOKEN" \
+            --data-binary @<(python -c 'import json; print(json.dumps({"config": json.load(open("training/recommendation_v8/config/rnn.json"))}))') \
+            "$TRAINING_PREFLIGHT_URL/$DATASET_ID" \
+            > "$RUN_ROOT/preflight-rnn.json"
+          python - "$RUN_ROOT/preflight-rnn.json" "$EXPECTED_DATASET_SHA256" <<'PY'
+          import json, sys
+          data = json.load(open(sys.argv[1]))
+          if data.get("ready") is not True:
+              raise SystemExit("RNN training preflight blocked: " + ",".join(data.get("blockers", [])))
+          if data.get("datasetSha256") != sys.argv[2]:
+              raise SystemExit("RNN preflight dataset SHA mismatch")
+          PY
+
+      - name: Require roadmap and registry preflight for Transformer
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            -H "content-type: application/json" \
+            -H "x-recommendation-training-token: $TRAINING_TOKEN" \
+            --data-binary @<(python -c 'import json; print(json.dumps({"config": json.load(open("training/recommendation_v8/config/transformer.json"))}))') \
+            "$TRAINING_PREFLIGHT_URL/$DATASET_ID" \
+            > "$RUN_ROOT/preflight-transformer.json"
+          python - "$RUN_ROOT/preflight-transformer.json" "$EXPECTED_DATASET_SHA256" <<'PY'
+          import json, sys
+          data = json.load(open(sys.argv[1]))
+          if data.get("ready") is not True:
+              raise SystemExit("Transformer training preflight blocked: " + ",".join(data.get("blockers", [])))
+          if data.get("datasetSha256") != sys.argv[2]:
+              raise SystemExit("Transformer preflight dataset SHA mismatch")
+          PY
+
+      - name: Train RNN baseline
+        shell: bash
+        env:
+          PYTHONHASHSEED: '0'
+          CUBLAS_WORKSPACE_CONFIG: ':4096:8'
+        run: |
+          set -euo pipefail
+          set +e
+          "$RUN_ROOT/venv/bin/python" training/recommendation_v8/train_behavioral.py \
+            --dataset-dir "$DATASET_DIR" \
+            --config training/recommendation_v8/config/rnn.json \
+            --output-dir "$RUN_ROOT/rnn" \
+            --model-id deadlock-buildlm-behavioral-v8 \
+            --model-version "$MODEL_VERSION_PREFIX-rnn" \
+            --source-commit-sha "$GITHUB_SHA" \
+            --expected-dataset-sha256 "$EXPECTED_DATASET_SHA256" \
+            --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256"
+          STATUS=$?
+          set -e
+          if [ "$STATUS" -ne 0 ] && [ "$STATUS" -ne 2 ]; then exit "$STATUS"; fi
+          echo "RNN_GATE_EXIT=$STATUS" >> "$GITHUB_ENV"
+
+      - name: Train Transformer BuildLM candidate
+        shell: bash
+        env:
+          PYTHONHASHSEED: '0'
+          CUBLAS_WORKSPACE_CONFIG: ':4096:8'
+        run: |
+          set -euo pipefail
+          set +e
+          "$RUN_ROOT/venv/bin/python" training/recommendation_v8/train_behavioral.py \
+            --dataset-dir "$DATASET_DIR" \
+            --config training/recommendation_v8/config/transformer.json \
+            --output-dir "$RUN_ROOT/transformer" \
+            --model-id deadlock-buildlm-behavioral-v8 \
+            --model-version "$MODEL_VERSION_PREFIX-transformer" \
+            --source-commit-sha "$GITHUB_SHA" \
+            --expected-dataset-sha256 "$EXPECTED_DATASET_SHA256" \
+            --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256"
+          STATUS=$?
+          set -e
+          if [ "$STATUS" -ne 0 ] && [ "$STATUS" -ne 2 ]; then exit "$STATUS"; fi
+          echo "TRANSFORMER_GATE_EXIT=$STATUS" >> "$GITHUB_ENV"
+
+      - name: Compare equal-observables architectures
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUN_ROOT/venv/bin/python" training/recommendation_v8/compare_behavioral.py \
+            --rnn-metrics "$RUN_ROOT/rnn/metrics.json" \
+            --transformer-metrics "$RUN_ROOT/transformer/metrics.json" \
+            --output "$RUN_ROOT/ablation-report.json"
+
+      - name: Build immutable Transformer model bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$TRANSFORMER_GATE_EXIT" -eq 0 || { echo "Transformer Behavioral gate failed" >&2; exit 1; }
+          "$RUN_ROOT/venv/bin/python" training/recommendation_v8/build_model_bundle.py \
+            --training-output "$RUN_ROOT/transformer" \
+            --dataset-dir "$DATASET_DIR" \
+            --ablation-report "$RUN_ROOT/ablation-report.json" \
+            --bundle-dir "$RUN_ROOT/bundle" \
+            --action-contract-version "$ACTION_CONTRACT_VERSION" \
+            --source-commit-sha "$GITHUB_SHA"
+
+      - name: Emit immutable staging summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - "$RUN_ROOT" <<'PY'
+          import hashlib, json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          manifest = root / "bundle" / "manifest.json"
+          raw = manifest.read_bytes()
+          summary = {
+              "status": "TRAINING_COMPLETE_NOT_ACTIVATED",
+              "runRoot": str(root),
+              "bundleManifest": str(manifest),
+              "bundleManifestSha256Bytes": hashlib.sha256(raw).hexdigest(),
+              "nextRequiredStep": "Upload bundle to approved immutable artifact store, register, independently verify hashes, then activate only with required serving gates.",
+              "futureTestEvaluated": False,
+          }
+          (root / "run-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+          print(json.dumps(summary))
+          PY

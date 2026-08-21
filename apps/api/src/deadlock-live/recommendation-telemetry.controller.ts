@@ -5,22 +5,24 @@ import {
   RecommendationDecisionEventV8,
   RecommendationExposureAckEventV8,
   RecommendationOutcomeEventV8,
+  RecommendationRuntimeHealthEventV8,
 } from '@deadlock-live-probe/shared';
-import { RecommendationTelemetryStoreService } from './recommendation-telemetry-store.service';
+import { RecommendationTelemetryIngestV8Service } from './recommendation-telemetry-ingest-v8.service';
 
 type RecommendationTelemetryInputV8 =
   | PlayerStateEventV8
   | InventorySnapshotEventV8
   | RecommendationDecisionEventV8
   | RecommendationExposureAckEventV8
-  | RecommendationOutcomeEventV8;
+  | RecommendationOutcomeEventV8
+  | RecommendationRuntimeHealthEventV8;
 
 @Controller('deadlock-live/recommendation-telemetry/v8')
 export class RecommendationTelemetryController {
-  constructor(private readonly store: RecommendationTelemetryStoreService) {}
+  constructor(private readonly ingest: RecommendationTelemetryIngestV8Service) {}
 
   @Post()
   append(@Body() event: RecommendationTelemetryInputV8) {
-    return this.store.append(event);
+    return this.ingest.appendExternal(event);
   }
 }

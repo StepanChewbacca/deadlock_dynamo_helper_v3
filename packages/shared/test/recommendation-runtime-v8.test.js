@@ -15,6 +15,14 @@ function candidates() {
       recipeLegal: true,
       shopLegal: true,
       rulesetLegal: true,
+      transactionMechanicsKnown: true,
+      evidence: {
+        spendableSouls: 'OBSERVED',
+        shopOpportunity: 'OBSERVED',
+        inventory: 'OBSERVED',
+        ruleset: 'RECONSTRUCTED',
+        transaction: 'RECONSTRUCTED',
+      },
       behaviorProbability: 0.8,
     },
     {
@@ -28,6 +36,14 @@ function candidates() {
       recipeLegal: true,
       shopLegal: 'UNKNOWN',
       rulesetLegal: true,
+      transactionMechanicsKnown: true,
+      evidence: {
+        spendableSouls: 'UNKNOWN',
+        shopOpportunity: 'UNKNOWN',
+        inventory: 'OBSERVED',
+        ruleset: 'RECONSTRUCTED',
+        transaction: 'RECONSTRUCTED',
+      },
       behaviorProbability: 0.2,
     },
   ];
@@ -73,6 +89,21 @@ const stale = selectRecommendationRuntimeActionV8({
 });
 assert.equal(stale.selectedActionKey, 'WAIT_SAVE');
 assert(stale.fallbackReasons.includes('STALE_TELEMETRY'));
+
+const unknownTransaction = candidates();
+unknownTransaction[0].transactionMechanicsKnown = false;
+unknownTransaction[0].evidence.transaction = 'UNKNOWN';
+const transactionBlocked = selectRecommendationRuntimeActionV8({
+  mode: 'LIVE',
+  telemetryFresh: true,
+  observabilityGatePassed: true,
+  modelRuntimeCompatible: true,
+  shadowGatePassed: true,
+  exactSpendableSoulsKnown: true,
+  shopOpportunityKnown: true,
+  candidates: unknownTransaction,
+});
+assert.equal(transactionBlocked.selectedActionKey, 'WAIT_SAVE');
 
 const live = selectRecommendationRuntimeActionV8({
   mode: 'LIVE',

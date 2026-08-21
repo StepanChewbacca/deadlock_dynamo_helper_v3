@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
-import { evaluateOffPolicyV1 } from '@deadlock-live-probe/shared';
+import { EXACT_ACTION_PROPENSITY_SOURCE, evaluateOffPolicyV1 } from '@deadlock-live-probe/shared';
 
 export type RecommendationOpeRewardV1 =
   | 'economyDelta120s'
@@ -82,7 +82,7 @@ export class RecommendationOpeReportService {
         decisionId: row.decisionId,
         reward,
         loggingPropensity,
-        loggingPropensitySource: 'RECORDED_AT_ASSIGNMENT' as const,
+        loggingPropensitySource: EXACT_ACTION_PROPENSITY_SOURCE,
         targetProbability,
         qLogged,
         qTargetExpected,

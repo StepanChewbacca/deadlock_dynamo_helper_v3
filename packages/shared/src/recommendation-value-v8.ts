@@ -6,6 +6,7 @@ import {
   recommendationStateTokensV8,
   validateRecommendationFeatureStateV8,
 } from './recommendation-feature-store-v8';
+import { EXACT_ACTION_PROPENSITY_SOURCE } from './off-policy-evaluation-v1';
 
 export const RECOMMENDATION_VALUE_V8_CONTRACT = 'recommendation-value-v8' as const;
 export const RECOMMENDATION_VALUE_V8_OBJECTIVE = 'INVERSE_PROPENSITY_WEIGHTED_ACTION_VALUE_REGRESSION' as const;
@@ -27,7 +28,7 @@ export interface RecommendationValueTrainingExampleV8 {
   action: RecommendationActionFeatureV8;
   reward: number;
   actionLoggingPropensity: number;
-  loggingPropensitySource: 'RECORDED_AT_ASSIGNMENT';
+  loggingPropensitySource: typeof EXACT_ACTION_PROPENSITY_SOURCE;
 }
 
 export interface RecommendationValueTrainingOptionsV8 {
@@ -196,7 +197,7 @@ function validateModel(model: RecommendationValueV8Model): void {
 function validateExample(example: RecommendationValueTrainingExampleV8): void {
   if (!example.decisionId) throw new Error('decisionId is required');
   if (!Number.isFinite(example.reward)) throw new Error(`Invalid reward for ${example.decisionId}`);
-  if (example.loggingPropensitySource !== 'RECORDED_AT_ASSIGNMENT') {
+  if (example.loggingPropensitySource !== EXACT_ACTION_PROPENSITY_SOURCE) {
     throw new Error(`Reconstructed action propensity is forbidden for ${example.decisionId}`);
   }
   if (!Number.isFinite(example.actionLoggingPropensity) || example.actionLoggingPropensity <= 0 || example.actionLoggingPropensity > 1) {
