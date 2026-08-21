@@ -39,6 +39,21 @@ export class RecommendationRoadmapEvidenceService {
       }
       return { status: 'DUPLICATE', evidenceId: record.evidenceId };
     }
+
+    if (record.gateName === 'futureTestEvaluation') {
+      const current = await this.report();
+      const policy = current.state.phases.find((phase) => phase.phase === 'POLICY_V1');
+      if (!current.evidence.futureTestUntouched) {
+        throw new Error('FUTURE_TEST_INTEGRITY_VIOLATION');
+      }
+      if (!policy?.unlocked) {
+        throw new Error(`FUTURE_TEST_EVALUATION_NOT_AUTHORIZED:${policy?.blockers.join(',') ?? 'POLICY_V1_NOT_FOUND'}`);
+      }
+      if (current.evidence.futureTestEvaluation && current.evidence.futureTestEvaluation !== 'NOT_EVALUATED') {
+        throw new Error('FUTURE_TEST_EVALUATION_ALREADY_RECORDED');
+      }
+    }
+
     try {
       await this.evidenceRepo.save(this.evidenceRepo.create({
         evidenceId: record.evidenceId,
@@ -88,6 +103,7 @@ export class RecommendationRoadmapEvidenceService {
       causalValueRelease: gate('causalValueRelease'),
       policyAbRelease: gate('policyAbRelease'),
       sequentialRlResearchGate: gate('sequentialRlResearchGate'),
+      futureTestEvaluation: gate('futureTestEvaluation'),
       futureTestUntouched: futureTestRecord ? futureTestRecord.status === 'PASS' : true,
     };
     return {
