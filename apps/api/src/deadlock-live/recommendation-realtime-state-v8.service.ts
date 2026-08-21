@@ -4,10 +4,10 @@ import { DataSource } from 'typeorm';
 import {
   RecommendationDecisionState,
   RecommendationItemGraph,
+  ShopOpportunity,
   buildInventoryInstancesForRecommendation,
   buildRecommendationRulesetCatalogV1,
   compileStrictRecommendationCatalogV1,
-  createRecommendationItemGraph,
   observedFact,
   unknownFact,
 } from '@deadlock-live-probe/build-domain';
@@ -170,28 +170,42 @@ export class RecommendationRealtimeStateV8Service {
 
     const catalog = await this.loadCatalog(playerRow.catalogSha256);
     if (!catalog) return { ready: false, blockers: ['CATALOG_VERSION_NOT_FOUND'] };
-    const compiled = compileStrictRecommendationCatalogV1(catalog.catalog);
-    if (compiled.itemDefinitions.length === 0) {
+
+    let itemGraph: RecommendationItemGraph;
+    let compiledRulesetId: string;
+    try {
+      const compiled = compileStrictRecommendationCatalogV1(catalog);
+      itemGraph = compiled.graph;
+      compiledRulesetId = compiled.rulesetId;
+    } catch (error) {
+      return { ready: false, blockers: [`STRICT_RECOMMENDATION_CATALOG_INVALID:${errorMessage(error)}`] };
+    }
+    if (itemGraph.getAllItems().length === 0) {
       return { ready: false, blockers: ['STRICT_RECOMMENDATION_CATALOG_EMPTY'] };
     }
-    let itemGraph: RecommendationItemGraph;
-    try {
-      itemGraph = createRecommendationItemGraph(compiled.itemDefinitions);
-    } catch (error) {
-      return { ready: false, blockers: [`ITEM_GRAPH_INVALID:${errorMessage(error)}`] };
+    if (compiledRulesetId !== playerRow.rulesetVersion) {
+      return {
+        ready: false,
+        blockers: ['CATALOG_RULESET_MISMATCH'],
+        rulesetVersion: playerRow.rulesetVersion,
+        catalogSha256: playerRow.catalogSha256,
+      };
     }
 
     const playerPayload = playerRow.payload as unknown as PlayerStatePayloadV8;
     const inventoryPayload = inventoryRow.payload as unknown as InventorySnapshotPayloadV8;
     const heroId = playerPayload.heroId;
     if (heroId === undefined || !Number.isInteger(heroId) || heroId <= 0) blockers.push('HERO_ID_MISSING');
-    const itemIds = inventoryPayload.items?.map((item) => item.itemId) ?? [];
-    for (const itemId of itemIds) {
-      if (!itemGraph.hasItem(itemId)) blockers.push(`INVENTORY_ITEM_NOT_IN_STRICT_CATALOG:${itemId}`);
-      const telemetrySlot = inventoryPayload.items.find((item) => item.itemId === itemId)?.slotType;
-      const catalogSlot = compiled.itemDefinitions.find((item) => item.itemId === itemId)?.slotType;
-      if (telemetrySlot && catalogSlot && telemetrySlot !== catalogSlot) {
-        blockers.push(`INVENTORY_SLOT_CATALOG_MISMATCH:${itemId}`);
+    const inventoryItems = inventoryPayload.items ?? [];
+    const itemIds = inventoryItems.map((item) => item.itemId);
+    for (const inventoryItem of inventoryItems) {
+      const catalogItem = itemGraph.getItem(inventoryItem.itemId);
+      if (!catalogItem) {
+        blockers.push(`INVENTORY_ITEM_NOT_IN_STRICT_CATALOG:${inventoryItem.itemId}`);
+        continue;
+      }
+      if (inventoryItem.slotType && inventoryItem.slotType !== catalogItem.slotType) {
+        blockers.push(`INVENTORY_SLOT_CATALOG_MISMATCH:${inventoryItem.itemId}`);
       }
     }
     if (blockers.length > 0) {
@@ -203,9 +217,7 @@ export class RecommendationRealtimeStateV8Service {
       };
     }
 
-    const directShopOpportunity = hasDirectShopOpportunity(playerPayload)
-      ? playerPayload.shopOpportunity
-      : 'UNKNOWN';
+    const directShopOpportunity = directShopOpportunityValue(playerPayload);
     const verifiedWallet = playerPayload.spendableSoulsVerified;
     const state: RecommendationDecisionState = {
       decisionId: request.decisionId,
@@ -225,14 +237,17 @@ export class RecommendationRealtimeStateV8Service {
           ? observedFact(verifiedWallet.value, verifiedWallet.verificationContractVersion)
           : unknownFact('spendableSouls is not server-verified'),
         shopOpportunity: directShopOpportunity === 'UNKNOWN'
-          ? unknownFact('shop opportunity direct signal unavailable')
-          : observedFact(directShopOpportunity, `direct:${playerPayload.shopOpportunityProvenance?.sourceField}`),
+          ? unknownFact<ShopOpportunity>('shop opportunity direct signal unavailable')
+          : observedFact<ShopOpportunity>(
+              directShopOpportunity,
+              `direct:${playerPayload.shopOpportunityProvenance?.sourceField}`,
+            ),
       },
     };
 
     const slotTypeByItemId = new Map<number, 'weapon' | 'vitality' | 'spirit'>();
     const activeItemIds = new Set<number>();
-    for (const definition of compiled.itemDefinitions) {
+    for (const definition of itemGraph.getAllItems()) {
       slotTypeByItemId.set(definition.itemId, definition.slotType);
       if (definition.active) activeItemIds.add(definition.itemId);
     }
@@ -346,7 +361,7 @@ export class RecommendationRealtimeStateV8Service {
         catalogVersionId: version.catalogVersionId,
         contentCatalogVersionId: version.contentCatalogVersionId,
         clientVersion: version.clientVersion,
-        rulesetId: version.rulesetId === undefined ? undefined : Number(version.rulesetId),
+        rulesetId: version.rulesetId === undefined ? undefined : String(version.rulesetId),
         rulesetKey: version.rulesetKey,
         source: version.source,
         payloadSha256: version.payloadSha256,
@@ -394,10 +409,15 @@ function validateRequest(request: RecommendationRealtimeStateV8Request): string[
   return errors.sort();
 }
 
-function hasDirectShopOpportunity(payload: PlayerStatePayloadV8): boolean {
-  return (payload.shopOpportunity === 'AVAILABLE' || payload.shopOpportunity === 'UNAVAILABLE')
+function directShopOpportunityValue(payload: PlayerStatePayloadV8): ShopOpportunity {
+  if (
+    (payload.shopOpportunity === 'AVAILABLE' || payload.shopOpportunity === 'UNAVAILABLE')
     && payload.shopOpportunityProvenance?.type === 'DIRECT_SOURCE_SIGNAL'
-    && Boolean(payload.shopOpportunityProvenance.sourceField);
+    && Boolean(payload.shopOpportunityProvenance.sourceField)
+  ) {
+    return payload.shopOpportunity;
+  }
+  return 'UNKNOWN';
 }
 
 function createStateRevision(player: TelemetryRow, inventory: TelemetryRow): string {
