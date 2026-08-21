@@ -4,10 +4,12 @@ import {
   RecommendationTelemetryEventType,
   RecommendationTelemetryEnvelopeV8,
 } from '@deadlock-live-probe/shared';
+import {
+  configuredDirectShopSourceAllowlist,
+  directShopSourceApprovalKey,
+} from './recommendation-direct-shop-source-v8';
 import { RecommendationTelemetryStoreService } from './recommendation-telemetry-store.service';
 import { SoulsAffordabilityEvidenceV2Service } from './souls-affordability-evidence-v2.service';
-
-const DIRECT_SHOP_SOURCE_ALLOWLIST_ENV = 'RECOMMENDATION_DIRECT_SHOP_SOURCE_ALLOWLIST';
 
 @Injectable()
 export class RecommendationTelemetryIngestV8Service {
@@ -45,8 +47,8 @@ export class RecommendationTelemetryIngestV8Service {
   private async requireApprovedDirectShopSource(event: PlayerStateEventV8): Promise<void> {
     if (event.payload?.shopOpportunity !== 'AVAILABLE' && event.payload?.shopOpportunity !== 'UNAVAILABLE') return;
     const sourceField = event.payload.shopOpportunityProvenance?.sourceField?.trim();
-    const allowlistKey = sourceField ? `${event.source}:${sourceField}` : '';
-    const approved = parseDirectShopSourceAllowlist(process.env[DIRECT_SHOP_SOURCE_ALLOWLIST_ENV]);
+    const allowlistKey = sourceField ? directShopSourceApprovalKey(event.source, sourceField) : '';
+    const approved = new Set(configuredDirectShopSourceAllowlist());
     if (!allowlistKey || !approved.has(allowlistKey)) {
       await this.telemetryStore.reject(event, ['EXTERNAL_DIRECT_SHOP_SOURCE_NOT_APPROVED']);
       throw new Error(
@@ -70,13 +72,4 @@ export class RecommendationTelemetryIngestV8Service {
       },
     };
   }
-}
-
-export function parseDirectShopSourceAllowlist(value: string | undefined): ReadonlySet<string> {
-  return new Set(
-    (value ?? '')
-      .split(',')
-      .map((entry) => entry.trim())
-      .filter(Boolean),
-  );
 }
