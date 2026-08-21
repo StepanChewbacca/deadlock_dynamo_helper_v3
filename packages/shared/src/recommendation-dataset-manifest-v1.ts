@@ -20,6 +20,7 @@ export interface RecommendationDatasetSplitDescriptorV1 {
   matchCount: number;
   decisionCount: number;
   matchSetSha256: string;
+  sealed: boolean;
 }
 
 export interface RecommendationDatasetManifestV1 {
@@ -51,6 +52,11 @@ const REQUIRED_SPLITS: readonly RecommendationDatasetSplitV1[] = [
   'VALIDATION',
   'SHADOW_HOLDOUT',
   'FUTURE_TEST',
+];
+const DEVELOPMENT_SPLITS: readonly RecommendationDatasetSplitV1[] = [
+  'TRAIN',
+  'VALIDATION',
+  'SHADOW_HOLDOUT',
 ];
 
 export function validateRecommendationDatasetManifestV1(
@@ -84,6 +90,12 @@ export function validateRecommendationDatasetManifestV1(
     if (!Number.isInteger(split.matchCount) || split.matchCount < 0) errors.push(`SPLIT_MATCH_COUNT_INVALID:${split.split}`);
     if (!Number.isInteger(split.decisionCount) || split.decisionCount < 0) errors.push(`SPLIT_DECISION_COUNT_INVALID:${split.split}`);
     if (!isSha256(split.matchSetSha256)) errors.push(`SPLIT_MATCH_SET_SHA_INVALID:${split.split}`);
+    if (split.split === 'FUTURE_TEST') {
+      if (split.sealed !== true) errors.push('FUTURE_TEST_MUST_BE_SEALED');
+      if (split.matchCount !== 0 || split.decisionCount !== 0) errors.push('FUTURE_TEST_COUNTS_MUST_BE_HIDDEN');
+    } else if (split.sealed !== false) {
+      errors.push(`DEVELOPMENT_SPLIT_MUST_BE_UNSEALED:${split.split}`);
+    }
   }
   for (const split of REQUIRED_SPLITS) {
     if (!splitByName.has(split)) errors.push(`REQUIRED_SPLIT_MISSING:${split}`);
@@ -98,8 +110,16 @@ export function validateRecommendationDatasetManifestV1(
     if (!isSha256(file.sha256)) errors.push(`DATASET_ARTIFACT_SHA_INVALID:${file.path}`);
     if (!Number.isInteger(file.sizeBytes) || file.sizeBytes < 0) errors.push(`DATASET_ARTIFACT_SIZE_INVALID:${file.path}`);
     if (!Number.isInteger(file.rowCount) || file.rowCount < 0) errors.push(`DATASET_ARTIFACT_ROW_COUNT_INVALID:${file.path}`);
+    if (file.path.replace(/\\/g, '/').endsWith('/future_test.jsonl.gz')) {
+      errors.push('FUTURE_TEST_ARTIFACT_FORBIDDEN_DURING_MODEL_DEVELOPMENT');
+    }
   }
   if (manifest.files.length === 0) errors.push('DATASET_ARTIFACT_FILES_REQUIRED');
+  for (const split of DEVELOPMENT_SPLITS) {
+    const suffix = `/${split.toLowerCase()}.jsonl.gz`;
+    const count = manifest.files.filter((file) => `/${file.path.replace(/\\/g, '/')}`.endsWith(suffix)).length;
+    if (count !== 1) errors.push(`DEVELOPMENT_SPLIT_ARTIFACT_COUNT_INVALID:${split}:${count}`);
+  }
 
   return { valid: errors.length === 0, errors: [...new Set(errors)].sort() };
 }
