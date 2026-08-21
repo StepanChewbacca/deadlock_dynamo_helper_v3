@@ -1,0 +1,58 @@
+# Recommendation Behavioral V8 training
+
+This directory is the model-development path for the `BEHAVIORAL_BUILDLM` roadmap phase. It deliberately does not provide a switch that can bypass prospective-data, immutable-dataset, registry, or FUTURE_TEST gates.
+
+## Required state before training
+
+Training is authorized only when all of the following are true:
+
+1. Controlled souls evidence can mark spendable souls as verified.
+2. Direct shop opportunity is observed with `DIRECT_SOURCE_SIGNAL` provenance.
+3. Dataset V8 structural and empirical reports pass on the development window.
+4. The roadmap evidence ledger unlocks `PROSPECTIVE_DATA`.
+5. The Dataset V8 artifact is registered and independently `VERIFIED` with exact manifest/file hashes.
+6. `futureTestUntouched=true` and `futureTestEvaluation=NOT_EVALUATED`.
+
+The API endpoint `POST /deadlock-live/recommendation-training/v8/preflight/:datasetId` enforces the registry and roadmap checks. It is disabled unless `RECOMMENDATION_TRAINING_TOKEN` is configured.
+
+## Dataset construction
+
+Use the manual `Recommendation Dataset Export` workflow on the dedicated `recommendation-dataset-export` runner. The workflow requires explicit chronological windows in this order:
+
+`TRAIN -> VALIDATION -> SHADOW_HOLDOUT -> FUTURE_TEST`
+
+Match assignment uses the first Decision V8 timestamp for the match, so a match cannot cross splits. The export uses the causal Feature Store V8 assembler and the persisted deterministic feasible candidate set. Observed actions are never injected into the candidate set. Development quality gates stop at the end of `SHADOW_HOLDOUT`; FUTURE_TEST diagnostics are not exposed.
+
+After export, upload the directory to an approved immutable object store, register the manifest through the protected dataset-registry endpoint, and independently verify the exact manifest SHA and all file SHA/size/row-count values. Training accepts only a registry-verified dataset id.
+
+## Model training
+
+The manual `Recommendation Behavioral Training` workflow runs only on the protected `recommendation-training` environment and a self-hosted runner with the `recommendation-training` label. It has no push, pull-request, or schedule trigger.
+
+The workflow:
+
+1. verifies local dataset bytes against the registry SHA values;
+2. asks the API for roadmap/registry preflight for both architectures;
+3. trains the RNN baseline on `TRAIN`, with early stopping on `VALIDATION`;
+4. trains the Transformer candidate on exactly the same observables and split contract;
+5. evaluates both on `SHADOW_HOLDOUT` only;
+6. runs the equal-observables RNN/Transformer ablation gate;
+7. builds an immutable Transformer model bundle only if the Behavioral and ablation gates pass.
+
+`FUTURE_TEST` is never decoded by `train_behavioral.py` or `compare_behavioral.py`. The immutable file may be cryptographically hashed as part of dataset verification, but no example from it can enter training, validation, architecture selection, or model-bundle metrics.
+
+## Objective and probabilities
+
+Both architectures optimize grouped listwise cross entropy over the complete deterministic feasible choice set. Probabilities are raw softmax probabilities over that set. Probability floors are forbidden.
+
+The RNN and Transformer use the same state, history, action tokenization, hash dimension, history limit, dataset SHA, feature contract, and candidate-generator version. Architecture-specific parameters are the sequence encoder only. The ablation report refuses comparison when the equal-observables identity differs.
+
+## Artifacts
+
+A successful run leaves a staging directory on the secure runner containing RNN metrics/checkpoint, Transformer metrics/checkpoint, the ablation report, and a model bundle. The bundle is not active merely because training succeeded.
+
+The next control-plane sequence is:
+
+`upload immutable bundle -> model registry REGISTERED -> independent hash verification -> VERIFIED -> runtime compatibility/gate check -> ACTIVE`
+
+Do not use FUTURE_TEST to choose the Behavioral architecture or hyperparameters. The formal roadmap allows the single frozen FUTURE_TEST evaluation only after `POLICY_V1` is unlocked; that evaluation is recorded separately as `futureTestEvaluation` evidence before `SEQUENTIAL_RL_RESEARCH` can unlock.
