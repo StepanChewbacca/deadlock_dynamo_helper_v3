@@ -27,26 +27,40 @@ for (const name of fs.existsSync(workflowDir) ? fs.readdirSync(workflowDir) : []
     errors.push(`${name}: expanded docker compose config may materialize .env secrets`);
   }
 
+  const causalValueTraining = /^recommendation-value-training\.ya?ml$/i.test(name);
   const privilegedTraining = /recommendation-.*training/i.test(name);
   if (privilegedTraining) {
-    auditManualSelfHostedWorkflow(name, normalized, {
-      label: 'recommendation-training',
-      environment: 'recommendation-training',
-      purpose: 'privileged training',
-    });
+    auditManualSelfHostedWorkflow(name, normalized, causalValueTraining
+      ? {
+          label: 'recommendation-value-training',
+          environment: 'recommendation-value-training',
+          purpose: 'privileged causal Value training',
+        }
+      : {
+          label: 'recommendation-training',
+          environment: 'recommendation-training',
+          purpose: 'privileged training',
+        });
     auditNoGitHubExpressionsInsideRunBlocks(name, normalized);
-    if (!/pip[^\n]*install[^\n]*--no-index[^\n]*--find-links/m.test(normalized)) {
-      errors.push(`${name}: privileged training dependencies must be installed from an approved offline wheelhouse`);
+    if (!causalValueTraining && !/pip[^\n]*install[^\n]*--no-index[^\n]*--find-links/m.test(normalized)) {
+      errors.push(`${name}: privileged Python training dependencies must be installed from an approved offline wheelhouse`);
     }
   }
 
+  const causalValueDatasetExport = /^recommendation-value-dataset-export\.ya?ml$/i.test(name);
   const privilegedDatasetExport = /recommendation-.*dataset-export/i.test(name);
   if (privilegedDatasetExport) {
-    auditManualSelfHostedWorkflow(name, normalized, {
-      label: 'recommendation-dataset-export',
-      environment: 'recommendation-dataset-export',
-      purpose: 'privileged dataset export',
-    });
+    auditManualSelfHostedWorkflow(name, normalized, causalValueDatasetExport
+      ? {
+          label: 'recommendation-value-dataset-export',
+          environment: 'recommendation-value-dataset-export',
+          purpose: 'privileged causal Value dataset export',
+        }
+      : {
+          label: 'recommendation-dataset-export',
+          environment: 'recommendation-dataset-export',
+          purpose: 'privileged dataset export',
+        });
     auditNoGitHubExpressionsInsideRunBlocks(name, normalized);
   }
 
@@ -72,6 +86,13 @@ const trainingConfigDir = path.resolve('training/recommendation_v8/config');
 for (const name of fs.existsSync(trainingConfigDir) ? fs.readdirSync(trainingConfigDir) : []) {
   if (!name.endsWith('.json')) continue;
   const config = JSON.parse(fs.readFileSync(path.join(trainingConfigDir, name), 'utf8'));
+  if (config.contractVersion === 'recommendation-value-training-config-v1') {
+    if (!Number.isInteger(config.hashDimension) || config.hashDimension < 128) errors.push(`${name}: causal Value hashDimension is invalid`);
+    if (!Number.isFinite(config.minActionEffectMae) || config.minActionEffectMae <= 0) errors.push(`${name}: causal Value action-effect gate is invalid`);
+    if (!Number.isFinite(config.minPermutationResponseMae) || config.minPermutationResponseMae <= 0) errors.push(`${name}: causal Value permutation gate is invalid`);
+    if (!Number.isFinite(config.minActionResidualVariance) || config.minActionResidualVariance <= 0) errors.push(`${name}: causal Value residual-variance gate is invalid`);
+    continue;
+  }
   if (config.futureTestAllowed !== false) errors.push(`${name}: FUTURE_TEST must be disabled for model-development training`);
   if (config.deterministic !== true) errors.push(`${name}: deterministic training must be enabled`);
   if (config.trainSplit !== 'TRAIN' || config.validationSplit !== 'VALIDATION' || config.selectionSplit !== 'SHADOW_HOLDOUT') {
