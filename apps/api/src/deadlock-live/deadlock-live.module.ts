@@ -16,6 +16,8 @@ import { SituationalRecommendationService } from './situational-recommendation.s
 import { CatalogContentService } from './catalog-content.service';
 import { ModelBundleRegistryController } from './model-bundle-registry.controller';
 import { ModelBundleRegistryService } from './model-bundle-registry.service';
+import { RecommendationAdvancedEvidenceV8Controller } from './recommendation-advanced-evidence-v8.controller';
+import { RecommendationAdvancedEvidenceV8Service } from './recommendation-advanced-evidence-v8.service';
 import { RecommendationEngineV8Service } from './recommendation-engine-v8.service';
 import { RecommendationDecisionV8Service } from './recommendation-decision-v8.service';
 import { RecommendationRealtimeStateV8Service } from './recommendation-realtime-state-v8.service';
@@ -116,6 +118,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationTrainingLaunchV8Controller,
     ModelBundleRegistryController,
     RecommendationRoadmapEvidenceController,
+    RecommendationAdvancedEvidenceV8Controller,
     RecommendationShadowController,
     RecommendationOpeController,
     RecommendationAbController,
@@ -146,6 +149,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationTrainingDatasetV8Service,
     RecommendationTrainingLaunchV8Service,
     RecommendationEvidenceMaterializerV8Service,
+    RecommendationAdvancedEvidenceV8Service,
     RecommendationRoadmapEvidenceService,
     RecommendationShadowReportService,
     RecommendationOpeReportService,
@@ -179,6 +183,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationTrainingDatasetV8Service,
     RecommendationTrainingLaunchV8Service,
     RecommendationEvidenceMaterializerV8Service,
+    RecommendationAdvancedEvidenceV8Service,
     RecommendationRoadmapEvidenceService,
     RecommendationShadowReportService,
     RecommendationOpeReportService,
