@@ -52,6 +52,8 @@ export interface RecommendationExperimentEvidenceInputV8 extends RecommendationA
   treatmentArm: string;
   reward: RecommendationOpeRewardV1;
   gateName: RecommendationExperimentEvidenceGateV8;
+  modelId?: string;
+  modelVersion?: string;
 }
 
 export interface RecommendationOpeEvidenceInputV8 extends RecommendationAdvancedEvidenceWindowV8 {
@@ -137,8 +139,35 @@ export class RecommendationAdvancedEvidenceV8Service {
       ...report.blockers,
       ...(report.gate?.checks.filter((check) => !check.passed).map((check) => check.name) ?? []),
     ];
+
+    let gateReport: unknown = report;
+    if (input.gateName === 'policyAbRelease') {
+      if (!input.modelId || !input.modelVersion) {
+        throw new Error('POLICY_AB_RELEASE_REQUIRES_FROZEN_POLICY_MODEL');
+      }
+      const policy = await this.modelRegistry.getVerified(input.modelId, input.modelVersion);
+      if (policy.manifest.modelKind !== 'POLICY') {
+        throw new Error(`Policy A/B evidence requires a POLICY bundle, got ${policy.manifest.modelKind}`);
+      }
+      if (policy.manifest.futureTestEvaluated) {
+        throw new Error('Policy A/B release must be evaluated before FUTURE_TEST');
+      }
+      gateReport = {
+        generatedAt: report.generatedAt,
+        policy: {
+          modelId: input.modelId,
+          modelVersion: input.modelVersion,
+          manifestSha256: policy.manifestSha256,
+          registryStatus: policy.status,
+          verifiedAt: policy.verifiedAt?.toISOString(),
+          futureTestEvaluated: policy.manifest.futureTestEvaluated,
+        },
+        experiment: report,
+      };
+    }
+
     return [
-      await this.persistGate(input.gateName, safetyStatus, report, blockers),
+      await this.persistGate(input.gateName, safetyStatus, gateReport, blockers),
       await this.persistGate(
         'exactActionPropensity',
         exactPropensityStatus,
