@@ -1,5 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { LiveIngestController } from '../src/deadlock-live/live-ingest.controller';
+import { InventoryShadowReplayService } from '../src/deadlock-live/inventory-shadow-replay.service';
 import { LiveMatchStateService } from '../src/deadlock-live/live-match-state.service';
 import { RawEventLogService } from '../src/deadlock-live/raw-event-log.service';
 import { RecentLiveEventsService } from '../src/deadlock-live/recent-live-events.service';
@@ -14,6 +15,14 @@ describe('LiveIngestController', () => {
         {
           provide: RawEventLogService,
           useValue: { appendEvents: jest.fn().mockResolvedValue(undefined) },
+        },
+        {
+          provide: InventoryShadowReplayService,
+          useValue: {
+            applyBatch: jest.fn(),
+            getMatchTimelines: jest.fn().mockReturnValue([]),
+            getPlayerTimeline: jest.fn().mockReturnValue(undefined),
+          },
         },
       ],
     }).compile();
