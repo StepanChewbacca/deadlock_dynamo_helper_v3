@@ -13,6 +13,8 @@ import { ModelBundleRegistryService } from './model-bundle-registry.service';
 import { RecommendationEvidenceSnapshotV8 } from './entities/recommendation-evidence-snapshot-v8.entity';
 import { RecommendationRoadmapEvidenceService } from './recommendation-roadmap-evidence.service';
 
+const ADVANCED_EVIDENCE_EVALUATOR = 'recommendation-advanced-evidence-v8';
+
 export interface RecommendationFutureTestMaterializationV1 {
   gateName: 'futureTestEvaluation';
   status: 'PASS' | 'FAIL';
@@ -60,6 +62,23 @@ export class RecommendationFutureTestEvaluationV1Service {
       throw new Error(`FUTURE_TEST_EVALUATION_NOT_AUTHORIZED:${policyPhase?.blockers.join(',') ?? 'POLICY_V1_NOT_FOUND'}`);
     }
 
+    const policyRelease = roadmap.latestEvidenceByGate?.policyAbRelease;
+    if (policyRelease?.status !== 'PASS' || !policyRelease.subjectSha256) {
+      throw new Error('FUTURE_TEST_REQUIRES_POLICY_AB_RELEASE_EVIDENCE');
+    }
+    const policyReleaseSnapshot = await this.snapshotRepo.findOne({
+      where: { subjectSha256: policyRelease.subjectSha256 },
+    });
+    if (!policyReleaseSnapshot
+      || policyReleaseSnapshot.gateName !== 'policyAbRelease'
+      || policyReleaseSnapshot.evaluator !== ADVANCED_EVIDENCE_EVALUATOR) {
+      throw new Error('FUTURE_TEST_POLICY_AB_RELEASE_SNAPSHOT_INVALID');
+    }
+    const releasedPolicyManifestSha256 = policyManifestShaFromReleaseSnapshot(policyReleaseSnapshot.report);
+    if (releasedPolicyManifestSha256 !== policy.manifestSha256) {
+      throw new Error('FUTURE_TEST_POLICY_DOES_NOT_MATCH_POLICY_AB_RELEASE');
+    }
+
     const report = {
       contractVersion: artifact.contractVersion,
       generatedAt: new Date().toISOString(),
@@ -71,6 +90,8 @@ export class RecommendationFutureTestEvaluationV1Service {
         manifestSha256: policy.manifestSha256,
         registryStatus: policy.status,
         verifiedAt: policy.verifiedAt?.toISOString(),
+        policyAbReleaseEvidenceId: policyRelease.evidenceId,
+        policyAbReleaseSnapshotSha256: policyRelease.subjectSha256,
       },
       evaluationPlanSha256: artifact.evaluationPlanSha256,
       evaluationArtifactSha256: artifact.evaluationArtifactSha256,
@@ -138,6 +159,14 @@ export class RecommendationFutureTestEvaluationV1Service {
       return 'DUPLICATE';
     }
   }
+}
+
+function policyManifestShaFromReleaseSnapshot(report: unknown): string | undefined {
+  if (typeof report !== 'object' || report === null || !('policy' in report)) return undefined;
+  const policy = (report as { policy?: unknown }).policy;
+  if (typeof policy !== 'object' || policy === null || !('manifestSha256' in policy)) return undefined;
+  const value = (policy as { manifestSha256?: unknown }).manifestSha256;
+  return typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value) ? value : undefined;
 }
 
 function validateImmutableArtifactRef(value: string): void {
