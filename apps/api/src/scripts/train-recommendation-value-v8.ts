@@ -183,7 +183,7 @@ async function main(): Promise<void> {
     validationDecisionCount: validation.length,
     shadowHoldoutDecisionCount: shadow.length,
     trainedUpdateCount: model.trainedDecisionCount,
-    bestValidationWeightedMse,
+    bestValidationWeightedMse: bestValidationMse,
     shadowEvaluation,
     actionSensitivity: sensitivity,
     actionResidualVariance,
