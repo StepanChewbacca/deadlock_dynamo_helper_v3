@@ -1,6 +1,14 @@
 import { createHash } from 'crypto';
 import { once } from 'events';
-import { createWriteStream, mkdirSync, statSync, writeFileSync } from 'fs';
+import {
+  createReadStream,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from 'fs';
 import { join, resolve } from 'path';
 import { createGzip } from 'zlib';
 import { Injectable } from '@nestjs/common';
@@ -136,6 +144,7 @@ export class RecommendationValueTrainingDatasetV8Service {
     const preflight = await this.preflight(options);
     if (!preflight.ready) throw new Error(`Causal Value dataset export is blocked: ${preflight.blockers.join(',')}`);
     const outputDir = resolve(options.outputDir);
+    assertFreshOutputDirectory(outputDir);
     mkdirSync(join(outputDir, 'splits'), { recursive: true });
     const files: RecommendationValueDatasetFileV1[] = [];
     const splitDescriptors: RecommendationValueDatasetSplitV1[] = [];
@@ -320,14 +329,14 @@ WHERE d."randomized" IS TRUE
   AND m.first_decision_at >= $2::timestamptz
   AND m.first_decision_at < $3::timestamptz
   AND (${rewardExpression}) IS NOT NULL
-ORDER BY d."decidedAt", d."decisionId";
+ORDER BY d."decidedAt", d."decisionId"
 `;
 }
 
 function countSql(rewardExpression: string): string {
   return `
 WITH rows AS (${decisionSql(rewardExpression)})
-SELECT COUNT(DISTINCT "matchId") AS "matchCount", COUNT(*) AS "decisionCount" FROM rows;
+SELECT COUNT(DISTINCT "matchId") AS "matchCount", COUNT(*) AS "decisionCount" FROM rows
 `;
 }
 
@@ -358,6 +367,18 @@ function validateOptions(options: RecommendationValueTrainingDatasetExportV1Opti
   if (!options.actionContractVersion) errors.push('ACTION_CONTRACT_VERSION_REQUIRED');
   if (!options.candidateGeneratorVersion) errors.push('CANDIDATE_GENERATOR_VERSION_REQUIRED');
   if (!options.outputDir) errors.push('OUTPUT_DIR_REQUIRED');
+  if (
+    options.maximumAlignmentAgeMs !== undefined
+    && (!Number.isInteger(options.maximumAlignmentAgeMs) || options.maximumAlignmentAgeMs < 0)
+  ) errors.push('MAXIMUM_ALIGNMENT_AGE_INVALID');
+  if (
+    options.maximumHistoryEvents !== undefined
+    && (!Number.isInteger(options.maximumHistoryEvents) || options.maximumHistoryEvents < 0)
+  ) errors.push('MAXIMUM_HISTORY_EVENTS_INVALID');
+  if (
+    options.minimumExportCoverage !== undefined
+    && (!Number.isFinite(options.minimumExportCoverage) || options.minimumExportCoverage < 0.99 || options.minimumExportCoverage > 1)
+  ) errors.push('MINIMUM_EXPORT_COVERAGE_INVALID');
   if (options.splits.length !== REQUIRED_SPLITS.length) errors.push('SPLIT_COUNT_INVALID');
   let previousTo: number | undefined;
   for (let index = 0; index < options.splits.length; index += 1) {
@@ -369,25 +390,37 @@ function validateOptions(options: RecommendationValueTrainingDatasetExportV1Opti
     if (previousTo !== undefined && from !== previousTo) errors.push(`SPLIT_BOUNDARY_NOT_CONTIGUOUS:${split.split}`);
     previousTo = to;
   }
-  if (options.minimumExportCoverage !== undefined && (!Number.isFinite(options.minimumExportCoverage) || options.minimumExportCoverage < 0 || options.minimumExportCoverage > 1)) {
-    errors.push('MINIMUM_EXPORT_COVERAGE_INVALID');
-  }
   return [...new Set(errors)].sort();
 }
 
+function assertFreshOutputDirectory(outputDir: string): void {
+  if (!existsSync(outputDir)) {
+    mkdirSync(outputDir, { recursive: true });
+    return;
+  }
+  if (!statSync(outputDir).isDirectory()) throw new Error('Causal Value dataset output path is not a directory');
+  if (readdirSync(outputDir).length > 0) throw new Error('Causal Value dataset output directory must be empty');
+}
+
 async function artifactFile(path: string, absolutePath: string, rowCount: number): Promise<RecommendationValueDatasetFileV1> {
-  const buffer = await import('fs/promises').then(({ readFile }) => readFile(absolutePath));
+  const digest = createHash('sha256');
+  const stream = createReadStream(absolutePath);
+  for await (const chunk of stream) digest.update(chunk);
   return {
     path,
-    sha256: createHash('sha256').update(buffer).digest('hex'),
+    sha256: digest.digest('hex'),
     sizeBytes: statSync(absolutePath).size,
     rowCount,
   };
 }
 
-async function endGzip(gzip: ReturnType<typeof createGzip>, output: ReturnType<typeof createWriteStream>): Promise<void> {
-  gzip.end();
-  await once(output, 'close');
+function endGzip(gzip: ReturnType<typeof createGzip>, output: ReturnType<typeof createWriteStream>): Promise<void> {
+  return new Promise((resolvePromise, reject) => {
+    output.once('finish', resolvePromise);
+    output.once('error', reject);
+    gzip.once('error', reject);
+    gzip.end();
+  });
 }
 
 function increment(map: Map<string, number>, key: string): void {
