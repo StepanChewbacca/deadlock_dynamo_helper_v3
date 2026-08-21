@@ -41,7 +41,7 @@ describe('RecommendationTelemetryIngestV8Service', () => {
   it('keeps raw souls unverified until controlled evidence passes', async () => {
     const append = jest.fn(async (value) => value);
     const service = new RecommendationTelemetryIngestV8Service(
-      { append } as never,
+      { append, reject: jest.fn() } as never,
       {
         report: jest.fn(async () => ({
           contractVersion: 'souls-affordability-v1',
@@ -58,7 +58,7 @@ describe('RecommendationTelemetryIngestV8Service', () => {
   it('marks raw souls verified only after the controlled evidence report passes', async () => {
     const append = jest.fn(async (value) => value);
     const service = new RecommendationTelemetryIngestV8Service(
-      { append } as never,
+      { append, reject: jest.fn() } as never,
       {
         report: jest.fn(async () => ({
           contractVersion: 'souls-affordability-v1',
@@ -74,10 +74,11 @@ describe('RecommendationTelemetryIngestV8Service', () => {
     });
   });
 
-  it('rejects client self-asserted spendable souls verification', async () => {
+  it('rejects and records client self-asserted spendable souls verification', async () => {
     const append = jest.fn();
+    const reject = jest.fn();
     const service = new RecommendationTelemetryIngestV8Service(
-      { append } as never,
+      { append, reject } as never,
       { report: jest.fn() } as never,
     );
     const selfAsserted = event();
@@ -88,5 +89,24 @@ describe('RecommendationTelemetryIngestV8Service', () => {
 
     await expect(service.appendExternal(selfAsserted)).rejects.toThrow(/must not self-assert/);
     expect(append).not.toHaveBeenCalled();
+    expect(reject).toHaveBeenCalledWith(selfAsserted, ['EXTERNAL_SPENDABLE_SOULS_VERIFICATION_FORBIDDEN']);
+  });
+
+  it('rejects server-owned decision telemetry on the external endpoint', async () => {
+    const append = jest.fn();
+    const reject = jest.fn();
+    const service = new RecommendationTelemetryIngestV8Service(
+      { append, reject } as never,
+      { report: jest.fn() } as never,
+    );
+    const decision = {
+      ...event(),
+      eventType: 'RECOMMENDATION_DECISION' as const,
+      payload: {},
+    };
+
+    await expect(service.appendExternal(decision as never)).rejects.toThrow(/server-owned/);
+    expect(append).not.toHaveBeenCalled();
+    expect(reject).toHaveBeenCalledWith(decision, ['SERVER_OWNED_EVENT_TYPE']);
   });
 });
