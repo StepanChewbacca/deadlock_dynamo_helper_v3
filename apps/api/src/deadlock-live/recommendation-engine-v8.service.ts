@@ -7,6 +7,7 @@ import {
 } from '@deadlock-live-probe/build-domain';
 import {
   RecommendationActionFeatureV8,
+  RecommendationBehavioralRuntimePredictorV1,
   RecommendationBehavioralV8Decision,
   RecommendationBehavioralV8LinearModel,
   RecommendationDecisionCandidateV8,
@@ -16,7 +17,8 @@ import {
   RecommendationValueV8Model,
   attachRecommendationPolicyScoresV1,
   buildRecommendationPolicyDistributionV1,
-  predictRecommendationBehavioralV8Linear,
+  createRecommendationBehavioralLinearRuntimePredictorV1,
+  predictRecommendationBehavioralRuntimeV1,
   predictRecommendationValueV8,
 } from '@deadlock-live-probe/shared';
 
@@ -25,6 +27,7 @@ export interface RecommendationEngineV8Input {
   itemGraph: RecommendationItemGraph;
   featureState?: RecommendationFeatureStateV8;
   behavioralModel?: RecommendationBehavioralV8LinearModel;
+  behavioralPredictor?: RecommendationBehavioralRuntimePredictorV1;
   valueModel?: RecommendationValueV8Model;
   policyConfig?: RecommendationPolicyV1Config;
 }
@@ -46,8 +49,10 @@ export class RecommendationEngineV8Service {
       itemGraph: input.itemGraph,
     });
     const baseTelemetryCandidates = domainCandidates.map(toTelemetryCandidate);
-    const behaviorProbabilityByAction = input.behavioralModel && input.featureState
-      ? predictBehaviorProbabilities(input.behavioralModel, input.featureState, domainCandidates)
+    const behavioralPredictor = input.behavioralPredictor
+      ?? (input.behavioralModel ? createRecommendationBehavioralLinearRuntimePredictorV1(input.behavioralModel) : undefined);
+    const behaviorProbabilityByAction = behavioralPredictor && input.featureState
+      ? predictBehaviorProbabilities(behavioralPredictor, input.featureState, domainCandidates)
       : undefined;
     let telemetryCandidates: RecommendationDecisionCandidateV8[] = baseTelemetryCandidates.map((candidate) => ({
       ...candidate,
@@ -58,7 +63,7 @@ export class RecommendationEngineV8Service {
       telemetryCandidates = telemetryCandidates.map((candidate) => ({
         ...candidate,
         valueScore: candidate.feasible
-          ? predictRecommendationValueV8(input.valueModel as RecommendationValueV8Model, input.featureState as RecommendationFeatureStateV8, toActionFeature(candidate)).value
+          ? predictRecommendationValueV8(input.valueModel, input.featureState as RecommendationFeatureStateV8, toActionFeature(candidate)).value
           : undefined,
       }));
     }
@@ -76,7 +81,7 @@ export class RecommendationEngineV8Service {
     if (!input.featureState) {
       return policyFailure(domainCandidates, telemetryCandidates, 'POLICY_FEATURE_STATE_MISSING');
     }
-    if (!input.behavioralModel) {
+    if (!behavioralPredictor) {
       return policyFailure(domainCandidates, telemetryCandidates, 'POLICY_BEHAVIORAL_MODEL_MISSING');
     }
     if (!input.valueModel) {
@@ -166,7 +171,7 @@ export function toTelemetryCandidate(candidate: RecommendationCandidate): Recomm
 }
 
 function predictBehaviorProbabilities(
-  model: RecommendationBehavioralV8LinearModel,
+  predictor: RecommendationBehavioralRuntimePredictorV1,
   featureState: RecommendationFeatureStateV8,
   candidates: readonly RecommendationCandidate[],
 ): Map<string, number> {
@@ -180,7 +185,7 @@ function predictBehaviorProbabilities(
       feasible: true as const,
     })),
   };
-  const prediction = predictRecommendationBehavioralV8Linear(model, decision);
+  const prediction = predictRecommendationBehavioralRuntimeV1(predictor, decision);
   const probabilities = new Map(prediction.candidates.map((candidate) => [candidate.actionKey, candidate.probability]));
   for (const candidate of candidates) {
     if (!candidate.feasible) probabilities.set(candidate.actionId, 0);
