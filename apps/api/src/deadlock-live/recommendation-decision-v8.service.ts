@@ -8,6 +8,7 @@ import {
   RECOMMENDATION_TELEMETRY_SCHEMA_VERSION,
   RecommendationBehavioralRuntimePredictorV1,
   RecommendationBehavioralV8LinearModel,
+  RecommendationBehavioralV8Prediction,
   RecommendationDecisionEventV8,
   RecommendationExperimentAssignmentV1,
   RecommendationFeatureStateV8,
@@ -20,7 +21,10 @@ import {
   selectRecommendationRuntimeActionV8,
   selectSafeExplorationActionV1,
 } from '@deadlock-live-probe/shared';
-import { RecommendationEngineV8Service } from './recommendation-engine-v8.service';
+import {
+  RecommendationEngineBehavioralPreparationV8,
+  RecommendationEngineV8Service,
+} from './recommendation-engine-v8.service';
 
 export type RecommendationActionSelectionModeV8 = 'DETERMINISTIC' | 'SAFE_EXPLORATION';
 
@@ -41,6 +45,7 @@ export interface RecommendationDecisionV8Request {
   featureState?: RecommendationFeatureStateV8;
   behavioralModel?: RecommendationBehavioralV8LinearModel;
   behavioralPredictor?: RecommendationBehavioralRuntimePredictorV1;
+  behavioralPrediction?: RecommendationBehavioralV8Prediction;
   valueModel?: RecommendationValueV8Model;
   policyConfig?: RecommendationPolicyV1Config;
   runtimeMode: RecommendationRuntimeModeV8;
@@ -50,6 +55,7 @@ export interface RecommendationDecisionV8Request {
   experiment: RecommendationExperimentAssignmentV1;
   selectionMode: RecommendationActionSelectionModeV8;
   explorationProbabilityByActionKey?: Readonly<Record<string, number>>;
+  upstreamInferenceLatencyMs?: number;
 }
 
 export interface RecommendationDecisionV8Result {
@@ -63,6 +69,14 @@ export interface RecommendationDecisionV8Result {
 export class RecommendationDecisionV8Service {
   constructor(private readonly engine: RecommendationEngineV8Service) {}
 
+  prepareBehavioralDecision(
+    state: RecommendationDecisionState,
+    itemGraph: RecommendationItemGraph,
+    featureState: RecommendationFeatureStateV8,
+  ): RecommendationEngineBehavioralPreparationV8 {
+    return this.engine.prepareBehavioralDecision({ state, itemGraph, featureState });
+  }
+
   createDecision(request: RecommendationDecisionV8Request): RecommendationDecisionV8Result {
     const startedAt = process.hrtime.bigint();
     validateRequest(request);
@@ -72,6 +86,7 @@ export class RecommendationDecisionV8Service {
       featureState: request.featureState,
       behavioralModel: request.behavioralModel,
       behavioralPredictor: request.behavioralPredictor,
+      behavioralPrediction: request.behavioralPrediction,
       valueModel: request.valueModel,
       policyConfig: request.policyConfig,
     });
@@ -161,7 +176,8 @@ export class RecommendationDecisionV8Service {
       ?? selectedCandidate.behaviorProbability
       ?? 1;
     const uniqueFallbackReasons = [...new Set(fallbackReasons)].sort();
-    const inferenceLatencyMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+    const localInferenceLatencyMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+    const inferenceLatencyMs = localInferenceLatencyMs + (request.upstreamInferenceLatencyMs ?? 0);
 
     const event: RecommendationDecisionEventV8 = {
       schemaVersion: RECOMMENDATION_TELEMETRY_SCHEMA_VERSION,
@@ -220,8 +236,13 @@ function validateRequest(request: RecommendationDecisionV8Request): void {
   if (!request.modelVersion) throw new Error('modelVersion is required');
   if (!Number.isFinite(request.sourceOccurredAtMs)) throw new Error('sourceOccurredAtMs is invalid');
   if (!Number.isFinite(request.receivedAtMs)) throw new Error('receivedAtMs is invalid');
-  if (request.behavioralModel && request.behavioralPredictor) {
-    throw new Error('Provide either behavioralModel or behavioralPredictor, not both');
+  const behavioralSourceCount = Number(request.behavioralModel !== undefined)
+    + Number(request.behavioralPredictor !== undefined)
+    + Number(request.behavioralPrediction !== undefined);
+  if (behavioralSourceCount > 1) throw new Error('Provide exactly one Behavioral runtime source');
+  if (request.upstreamInferenceLatencyMs !== undefined
+    && (!Number.isFinite(request.upstreamInferenceLatencyMs) || request.upstreamInferenceLatencyMs < 0)) {
+    throw new Error('upstreamInferenceLatencyMs is invalid');
   }
   if (request.selectionMode === 'SAFE_EXPLORATION' && !request.experiment.randomized) {
     throw new Error('SAFE_EXPLORATION requires a randomized experiment assignment');
