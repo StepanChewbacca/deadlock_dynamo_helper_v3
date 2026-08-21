@@ -46,6 +46,7 @@ jobs:
       DATASET_DIR: ${{ inputs.dataset_dir }}
       EXPECTED_DATASET_SHA256: ${{ inputs.expected_dataset_sha256 }}
       EXPECTED_MANIFEST_SHA256: ${{ inputs.expected_manifest_sha256 }}
+      MODEL_VERSION_PREFIX_INPUT: ${{ inputs.model_version_prefix }}
       ACTION_CONTRACT_VERSION: ${{ inputs.action_contract_version }}
       TRAINING_PREFLIGHT_URL: ${{ vars.RECOMMENDATION_TRAINING_PREFLIGHT_URL }}
       TRAINING_TOKEN: ${{ secrets.RECOMMENDATION_TRAINING_TOKEN }}
@@ -53,24 +54,52 @@ jobs:
       - name: Checkout frozen training code
         uses: actions/checkout@v4
 
-      - name: Validate secure runner contract
+      - name: Validate secure runner contract and inputs
         shell: bash
         run: |
           set -euo pipefail
           test -n "${RECOMMENDATION_TRAINING_OUTPUT_ROOT:-}" || { echo "RECOMMENDATION_TRAINING_OUTPUT_ROOT is required on the secure runner" >&2; exit 1; }
-          test -d "$DATASET_DIR" || { echo "Dataset directory does not exist: $DATASET_DIR" >&2; exit 1; }
+          test -n "${RECOMMENDATION_DATASET_STAGING_ROOT:-}" || { echo "RECOMMENDATION_DATASET_STAGING_ROOT is required on the secure runner" >&2; exit 1; }
+          test -n "${RECOMMENDATION_TRAINING_WHEELHOUSE:-}" || { echo "RECOMMENDATION_TRAINING_WHEELHOUSE is required on the secure runner" >&2; exit 1; }
           test -n "$TRAINING_PREFLIGHT_URL" || { echo "RECOMMENDATION_TRAINING_PREFLIGHT_URL repository/environment variable is required" >&2; exit 1; }
           test -n "$TRAINING_TOKEN" || { echo "RECOMMENDATION_TRAINING_TOKEN environment secret is required" >&2; exit 1; }
+          [[ "$DATASET_ID" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || { echo "dataset_id contains unsafe characters" >&2; exit 1; }
+          [[ "$EXPECTED_DATASET_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || { echo "expected_dataset_sha256 is invalid" >&2; exit 1; }
+          [[ "$EXPECTED_MANIFEST_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || { echo "expected_manifest_sha256 is invalid" >&2; exit 1; }
+          [[ "$ACTION_CONTRACT_VERSION" =~ ^[A-Za-z0-9._:-]{1,128}$ ]] || { echo "action_contract_version contains unsafe characters" >&2; exit 1; }
           case "$RECOMMENDATION_TRAINING_OUTPUT_ROOT" in
             /*) ;;
             *) echo "RECOMMENDATION_TRAINING_OUTPUT_ROOT must be absolute" >&2; exit 1 ;;
           esac
-          RUN_ROOT="$RECOMMENDATION_TRAINING_OUTPUT_ROOT/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          case "$RECOMMENDATION_DATASET_STAGING_ROOT" in
+            /*) ;;
+            *) echo "RECOMMENDATION_DATASET_STAGING_ROOT must be absolute" >&2; exit 1 ;;
+          esac
+          case "$RECOMMENDATION_TRAINING_WHEELHOUSE" in
+            /*) ;;
+            *) echo "RECOMMENDATION_TRAINING_WHEELHOUSE must be absolute" >&2; exit 1 ;;
+          esac
+          OUTPUT_ROOT="$(realpath -e "$RECOMMENDATION_TRAINING_OUTPUT_ROOT")"
+          STAGING_ROOT="$(realpath -e "$RECOMMENDATION_DATASET_STAGING_ROOT")"
+          WHEELHOUSE="$(realpath -e "$RECOMMENDATION_TRAINING_WHEELHOUSE")"
+          DATASET_REAL="$(realpath -e "$DATASET_DIR")"
+          test -d "$OUTPUT_ROOT" || { echo "Training output root must be a directory" >&2; exit 1; }
+          test -d "$STAGING_ROOT" || { echo "Dataset staging root must be a directory" >&2; exit 1; }
+          test -d "$WHEELHOUSE" || { echo "Training wheelhouse must be a directory" >&2; exit 1; }
+          test -d "$DATASET_REAL" || { echo "Dataset directory does not exist" >&2; exit 1; }
+          case "$DATASET_REAL" in
+            "$STAGING_ROOT"/*) ;;
+            *) echo "Dataset directory must be inside RECOMMENDATION_DATASET_STAGING_ROOT" >&2; exit 1 ;;
+          esac
+          RUN_ROOT="$OUTPUT_ROOT/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           test ! -e "$RUN_ROOT" || { echo "Training run output already exists: $RUN_ROOT" >&2; exit 1; }
-          mkdir -p "$RUN_ROOT"
+          mkdir "$RUN_ROOT"
           echo "RUN_ROOT=$RUN_ROOT" >> "$GITHUB_ENV"
-          PREFIX='${{ inputs.model_version_prefix }}'
+          echo "DATASET_DIR=$DATASET_REAL" >> "$GITHUB_ENV"
+          echo "TRAINING_WHEELHOUSE=$WHEELHOUSE" >> "$GITHUB_ENV"
+          PREFIX="$MODEL_VERSION_PREFIX_INPUT"
           if [ -z "$PREFIX" ]; then PREFIX="buildlm-v8-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"; fi
+          [[ "$PREFIX" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || { echo "model_version_prefix contains unsafe characters" >&2; exit 1; }
           echo "MODEL_VERSION_PREFIX=$PREFIX" >> "$GITHUB_ENV"
 
       - name: Setup Python
@@ -78,13 +107,12 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Create isolated training environment
+      - name: Create isolated training environment from approved wheelhouse
         shell: bash
         run: |
           set -euo pipefail
           python -m venv "$RUN_ROOT/venv"
-          "$RUN_ROOT/venv/bin/python" -m pip install --upgrade pip
-          "$RUN_ROOT/venv/bin/pip" install -r training/recommendation_v8/requirements-training.txt
+          "$RUN_ROOT/venv/bin/pip" install --no-index --find-links "$TRAINING_WHEELHOUSE" -r training/recommendation_v8/requirements-training.txt
 
       - name: Verify immutable dataset bytes
         shell: bash
@@ -136,6 +164,9 @@ jobs:
 
       - name: Train RNN baseline
         shell: bash
+        env:
+          PYTHONHASHSEED: '0'
+          CUBLAS_WORKSPACE_CONFIG: ':4096:8'
         run: |
           set -euo pipefail
           set +e
@@ -155,6 +186,9 @@ jobs:
 
       - name: Train Transformer BuildLM candidate
         shell: bash
+        env:
+          PYTHONHASHSEED: '0'
+          CUBLAS_WORKSPACE_CONFIG: ':4096:8'
         run: |
           set -euo pipefail
           set +e
