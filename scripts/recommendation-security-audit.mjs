@@ -29,17 +29,36 @@ for (const name of fs.existsSync(workflowDir) ? fs.readdirSync(workflowDir) : []
 
   const privilegedTraining = /recommendation-.*training/i.test(name);
   if (privilegedTraining) {
-    if (!hasWorkflowDispatch) errors.push(`${name}: privileged training must require workflow_dispatch`);
-    if (hasPullRequest || hasPush || hasSchedule) errors.push(`${name}: privileged training must not have automatic triggers`);
-    if (!hasSelfHosted) errors.push(`${name}: privileged training must run on a dedicated self-hosted runner`);
-    if (!/runs-on\s*:\s*\[[^\]]*recommendation-training/i.test(normalized)) {
-      errors.push(`${name}: privileged training runner must include recommendation-training label`);
+    auditManualSelfHostedWorkflow(name, normalized, {
+      label: 'recommendation-training',
+      environment: 'recommendation-training',
+      purpose: 'privileged training',
+    });
+  }
+
+  const privilegedDatasetExport = /recommendation-.*dataset-export/i.test(name);
+  if (privilegedDatasetExport) {
+    auditManualSelfHostedWorkflow(name, normalized, {
+      label: 'recommendation-dataset-export',
+      environment: 'recommendation-dataset-export',
+      purpose: 'privileged dataset export',
+    });
+  }
+
+  function auditManualSelfHostedWorkflow(workflowName, workflowText, contract) {
+    if (!hasWorkflowDispatch) errors.push(`${workflowName}: ${contract.purpose} must require workflow_dispatch`);
+    if (hasPullRequest || hasPush || hasSchedule) errors.push(`${workflowName}: ${contract.purpose} must not have automatic triggers`);
+    if (!hasSelfHosted) errors.push(`${workflowName}: ${contract.purpose} must run on a dedicated self-hosted runner`);
+    const labelPattern = new RegExp(`runs-on\\s*:\\s*\\[[^\\]]*${contract.label}`, 'i');
+    if (!labelPattern.test(workflowText)) {
+      errors.push(`${workflowName}: runner must include ${contract.label} label`);
     }
-    if (!/^\s*environment\s*:\s*recommendation-training\s*$/m.test(normalized)) {
-      errors.push(`${name}: privileged training must use the recommendation-training protected environment`);
+    const environmentPattern = new RegExp(`^\\s*environment\\s*:\\s*${contract.environment}\\s*$`, 'm');
+    if (!environmentPattern.test(workflowText)) {
+      errors.push(`${workflowName}: must use the ${contract.environment} protected environment`);
     }
-    if (!/permissions:\s*\n\s*contents:\s*read/m.test(normalized)) {
-      errors.push(`${name}: privileged training must use read-only repository contents permission`);
+    if (!/permissions:\s*\n\s*contents:\s*read/m.test(workflowText)) {
+      errors.push(`${workflowName}: must use read-only repository contents permission`);
     }
   }
 }
