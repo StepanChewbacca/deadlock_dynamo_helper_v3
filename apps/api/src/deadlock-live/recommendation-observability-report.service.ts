@@ -133,11 +133,19 @@ WITH decisions AS (
     a.*,
     ((a.player_payload->'spendableSoulsVerified'->>'value') IS NOT NULL
       AND (a.player_payload->'spendableSoulsVerified'->>'verificationContractVersion') IS NOT NULL) AS exact_wallet_known,
-    ((a.player_payload->>'shopOpportunity') IN ('AVAILABLE', 'UNAVAILABLE')) AS shop_known,
+    ((a.player_payload->>'shopOpportunity') IN ('AVAILABLE', 'UNAVAILABLE')
+      AND a.player_payload->'shopOpportunityProvenance'->>'type' = 'DIRECT_SOURCE_SIGNAL'
+      AND COALESCE(a.player_payload->'shopOpportunityProvenance'->>'sourceField', '') <> '') AS shop_known,
     (a.inventory_payload IS NOT NULL
       AND (a.inventory_payload->>'snapshotSha256') ~ '^[a-fA-F0-9]{64}$') AS inventory_known,
     (COALESCE(a."rulesetVersion", '') <> ''
-      AND COALESCE(a."catalogSha256", '') ~ '^[a-fA-F0-9]{64}$') AS ruleset_catalog_known,
+      AND COALESCE(a."catalogSha256", '') ~ '^[a-fA-F0-9]{64}$'
+      AND EXISTS (
+        SELECT 1
+        FROM item_catalog_versions cv
+        WHERE cv."payloadSha256" = a."catalogSha256"
+          AND COALESCE(cv."rulesetKey", cv."rulesetId"::text, cv."clientVersion") = a."rulesetVersion"
+      )) AS ruleset_catalog_known,
     NOT EXISTS (
       SELECT 1
       FROM recommendation_decision_candidates_v8 c
