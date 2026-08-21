@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const {
+  EXACT_ACTION_PROPENSITY_SOURCE,
   RECOMMENDATION_FEATURE_CONTRACT_VERSION,
   buildRecommendationPolicyDistributionV1,
   createRecommendationValueV8Model,
@@ -38,7 +39,7 @@ for (let index = 0; index < 200; index += 1) {
     action: buy,
     reward: 1,
     actionLoggingPropensity: 0.5,
-    loggingPropensitySource: 'RECORDED_AT_ASSIGNMENT',
+    loggingPropensitySource: EXACT_ACTION_PROPENSITY_SOURCE,
   }, {
     learningRate: 0.01,
     l2: 1e-5,
@@ -51,7 +52,7 @@ for (let index = 0; index < 200; index += 1) {
     action: wait,
     reward: 0,
     actionLoggingPropensity: 0.5,
-    loggingPropensitySource: 'RECORDED_AT_ASSIGNMENT',
+    loggingPropensitySource: EXACT_ACTION_PROPENSITY_SOURCE,
   }, {
     learningRate: 0.01,
     l2: 1e-5,
@@ -72,7 +73,7 @@ const evaluation = evaluateRecommendationValueV8(model, [
     action: buy,
     reward: 1,
     actionLoggingPropensity: 0.5,
-    loggingPropensitySource: 'RECORDED_AT_ASSIGNMENT',
+    loggingPropensitySource: EXACT_ACTION_PROPENSITY_SOURCE,
   },
   {
     decisionId: 'eval-wait',
@@ -80,7 +81,7 @@ const evaluation = evaluateRecommendationValueV8(model, [
     action: wait,
     reward: 0,
     actionLoggingPropensity: 0.5,
-    loggingPropensitySource: 'RECORDED_AT_ASSIGNMENT',
+    loggingPropensitySource: EXACT_ACTION_PROPENSITY_SOURCE,
   },
 ]);
 assert.equal(evaluation.decisionCount, 2);
