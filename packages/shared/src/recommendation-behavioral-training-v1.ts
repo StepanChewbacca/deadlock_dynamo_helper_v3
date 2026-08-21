@@ -45,17 +45,34 @@ export interface RecommendationBehavioralTrainingConfigV1 {
   validationSplit: 'VALIDATION';
   selectionSplit: 'SHADOW_HOLDOUT';
   futureTestAllowed: false;
+  device?: string;
   maxEpochs: number;
   batchSize: number;
+  evaluationBatchSize?: number;
   learningRate: number;
+  minimumLearningRate?: number;
   weightDecay: number;
   gradientClip: number;
   maximumHistoryEvents: number;
+  hashDimension?: number;
   embeddingDimension: number;
   hiddenDimension: number;
   layerCount: number;
   attentionHeads?: number;
+  dropout?: number;
   earlyStoppingPatience: number;
+  earlyStoppingMinDelta?: number;
+  lrPlateauPatience?: number;
+  lrPlateauFactor?: number;
+  shuffleBufferDecisions?: number;
+  supportProbabilityThreshold?: number;
+  majorCohortMinDecisions?: number;
+  majorCohortMinFraction?: number;
+  gateMinDecisions?: number;
+  gateMinCandidateCoverage?: number;
+  gateMinSupport?: number;
+  gateMinMajorCohortSupport?: number;
+  gateMaxFloorSensitivity?: number;
 }
 
 export interface RecommendationBehavioralTrainingLaunchInputV1 {
@@ -106,6 +123,9 @@ export function validateRecommendationBehavioralTrainingExampleV1(
       errors.push('ACTION_LOGGING_PROPENSITY_INVALID');
     }
     if (!example.actionLoggingPropensitySource) errors.push('ACTION_LOGGING_PROPENSITY_SOURCE_REQUIRED');
+    if (example.actionLoggingPropensitySource === 'RECONSTRUCTED') {
+      errors.push('RECONSTRUCTED_ACTION_PROPENSITY_FORBIDDEN');
+    }
   } else if (example.actionLoggingPropensitySource) {
     errors.push('ACTION_LOGGING_PROPENSITY_REQUIRED');
   }
@@ -119,13 +139,15 @@ export function evaluateRecommendationBehavioralTrainingLaunchV1(
   const blockers: string[] = [];
   const manifestValidation = validateRecommendationDatasetManifestV1(input.manifest);
   for (const error of manifestValidation.errors) blockers.push(`DATASET_MANIFEST:${error}`);
-  const configErrors = validateTrainingConfig(input.config);
-  blockers.push(...configErrors);
+  blockers.push(...validateTrainingConfig(input.config));
 
   const roadmap = evaluateRecommendationRoadmapStateV1(input.evidence);
   const prospectiveData = roadmap.phases.find((phase) => phase.phase === 'PROSPECTIVE_DATA');
   if (!prospectiveData?.unlocked) {
-    blockers.push(...(prospectiveData?.blockers.map((blocker) => `PROSPECTIVE_DATA:${blocker}`) ?? ['PROSPECTIVE_DATA:PHASE_NOT_FOUND']));
+    blockers.push(...(
+      prospectiveData?.blockers.map((blocker) => `PROSPECTIVE_DATA:${blocker}`)
+      ?? ['PROSPECTIVE_DATA:PHASE_NOT_FOUND']
+    ));
   }
   if (!input.evidence.futureTestUntouched) blockers.push('FUTURE_TEST_INTEGRITY_VIOLATION');
   if ((input.evidence.futureTestEvaluation ?? 'NOT_EVALUATED') !== 'NOT_EVALUATED') blockers.push('FUTURE_TEST_ALREADY_EVALUATED');
@@ -158,16 +180,33 @@ function validateTrainingConfig(config: RecommendationBehavioralTrainingConfigV1
   if (config.validationSplit !== 'VALIDATION') errors.push('VALIDATION_SPLIT_MUST_BE_VALIDATION');
   if (config.selectionSplit !== 'SHADOW_HOLDOUT') errors.push('SELECTION_SPLIT_MUST_BE_SHADOW_HOLDOUT');
   if (config.futureTestAllowed !== false) errors.push('FUTURE_TEST_MUST_BE_BLOCKED');
+  if (config.device !== undefined && !config.device.trim()) errors.push('DEVICE_INVALID');
   positiveInteger('MAX_EPOCHS', config.maxEpochs, errors);
   positiveInteger('BATCH_SIZE', config.batchSize, errors);
+  optionalPositiveInteger('EVALUATION_BATCH_SIZE', config.evaluationBatchSize, errors);
   positiveNumber('LEARNING_RATE', config.learningRate, errors);
+  optionalPositiveNumber('MINIMUM_LEARNING_RATE', config.minimumLearningRate, errors);
   nonNegativeNumber('WEIGHT_DECAY', config.weightDecay, errors);
   positiveNumber('GRADIENT_CLIP', config.gradientClip, errors);
   nonNegativeInteger('MAXIMUM_HISTORY_EVENTS', config.maximumHistoryEvents, errors);
+  optionalPositiveInteger('HASH_DIMENSION', config.hashDimension, errors, 1024);
   positiveInteger('EMBEDDING_DIMENSION', config.embeddingDimension, errors);
   positiveInteger('HIDDEN_DIMENSION', config.hiddenDimension, errors);
   positiveInteger('LAYER_COUNT', config.layerCount, errors);
+  optionalUnitInterval('DROPOUT', config.dropout, errors, true);
   positiveInteger('EARLY_STOPPING_PATIENCE', config.earlyStoppingPatience, errors);
+  optionalNonNegativeNumber('EARLY_STOPPING_MIN_DELTA', config.earlyStoppingMinDelta, errors);
+  optionalPositiveInteger('LR_PLATEAU_PATIENCE', config.lrPlateauPatience, errors);
+  optionalUnitInterval('LR_PLATEAU_FACTOR', config.lrPlateauFactor, errors, false);
+  optionalPositiveInteger('SHUFFLE_BUFFER_DECISIONS', config.shuffleBufferDecisions, errors);
+  optionalUnitInterval('SUPPORT_PROBABILITY_THRESHOLD', config.supportProbabilityThreshold, errors, false);
+  optionalPositiveInteger('MAJOR_COHORT_MIN_DECISIONS', config.majorCohortMinDecisions, errors);
+  optionalUnitInterval('MAJOR_COHORT_MIN_FRACTION', config.majorCohortMinFraction, errors, true);
+  optionalPositiveInteger('GATE_MIN_DECISIONS', config.gateMinDecisions, errors);
+  optionalUnitInterval('GATE_MIN_CANDIDATE_COVERAGE', config.gateMinCandidateCoverage, errors, true);
+  optionalUnitInterval('GATE_MIN_SUPPORT', config.gateMinSupport, errors, true);
+  optionalUnitInterval('GATE_MIN_MAJOR_COHORT_SUPPORT', config.gateMinMajorCohortSupport, errors, true);
+  optionalNonNegativeNumber('GATE_MAX_FLOOR_SENSITIVITY', config.gateMaxFloorSensitivity, errors);
   if (config.family === 'SEQUENCE_TRANSFORMER') {
     if (!Number.isInteger(config.attentionHeads) || (config.attentionHeads ?? 0) <= 0) errors.push('ATTENTION_HEADS_REQUIRED');
     else if (config.hiddenDimension % (config.attentionHeads as number) !== 0) errors.push('HIDDEN_DIMENSION_NOT_DIVISIBLE_BY_ATTENTION_HEADS');
@@ -189,4 +228,28 @@ function positiveNumber(name: string, value: number, errors: string[]): void {
 
 function nonNegativeNumber(name: string, value: number, errors: string[]): void {
   if (!Number.isFinite(value) || value < 0) errors.push(`${name}_INVALID`);
+}
+
+function optionalPositiveInteger(name: string, value: number | undefined, errors: string[], minimum = 1): void {
+  if (value !== undefined && (!Number.isInteger(value) || value < minimum)) errors.push(`${name}_INVALID`);
+}
+
+function optionalPositiveNumber(name: string, value: number | undefined, errors: string[]): void {
+  if (value !== undefined && (!Number.isFinite(value) || value <= 0)) errors.push(`${name}_INVALID`);
+}
+
+function optionalNonNegativeNumber(name: string, value: number | undefined, errors: string[]): void {
+  if (value !== undefined && (!Number.isFinite(value) || value < 0)) errors.push(`${name}_INVALID`);
+}
+
+function optionalUnitInterval(
+  name: string,
+  value: number | undefined,
+  errors: string[],
+  allowZeroOrOne: boolean,
+): void {
+  if (value === undefined) return;
+  const lowerValid = allowZeroOrOne ? value >= 0 : value > 0;
+  const upperValid = allowZeroOrOne ? value <= 1 : value < 1;
+  if (!Number.isFinite(value) || !lowerValid || !upperValid) errors.push(`${name}_INVALID`);
 }
