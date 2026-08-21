@@ -3,10 +3,8 @@ import {
   RECOMMENDATION_TELEMETRY_SCHEMA_VERSION,
   PlayerStateEventV8,
 } from '@deadlock-live-probe/shared';
-import {
-  RecommendationTelemetryIngestV8Service,
-  parseDirectShopSourceAllowlist,
-} from '../src/deadlock-live/recommendation-telemetry-ingest-v8.service';
+import { parseDirectShopSourceAllowlist } from '../src/deadlock-live/recommendation-direct-shop-source-v8';
+import { RecommendationTelemetryIngestV8Service } from '../src/deadlock-live/recommendation-telemetry-ingest-v8.service';
 
 const DIRECT_SHOP_ALLOWLIST_ENV = 'RECOMMENDATION_DIRECT_SHOP_SOURCE_ALLOWLIST';
 
