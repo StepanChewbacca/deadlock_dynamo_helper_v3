@@ -19,7 +19,7 @@ function roadmapEvidence() {
   };
 }
 
-function modelBundle(kind: 'BEHAVIORAL' | 'VALUE', gates: any[]) {
+function modelBundle(kind: 'BEHAVIORAL' | 'VALUE' | 'POLICY', gates: any[]) {
   return {
     status: 'VERIFIED',
     manifestSha256: 'a'.repeat(64),
@@ -143,6 +143,79 @@ describe('RecommendationAdvancedEvidenceV8Service', () => {
       ['safeExplorationSafety', 'PASS'],
       ['exactActionPropensity', 'PASS'],
     ]);
+  });
+
+  it('binds Policy A/B release PASS to the exact verified frozen POLICY bundle', async () => {
+    const policy = modelBundle('POLICY', []);
+    const { service, snapshots, roadmap } = createService({
+      model: policy,
+      ab: {
+        generatedAt: '2026-08-22T00:00:00.000Z',
+        experimentId: 'policy-exp',
+        controlArm: 'control',
+        treatmentArm: 'policy',
+        reward: 'economyDelta120s',
+        matchCount: 1000,
+        decisionCount: 100000,
+        controlMatchCount: 500,
+        treatmentMatchCount: 500,
+        runtimeHealthCoverage: 1,
+        abandonmentCoverage: 1,
+        evidenceSufficient: true,
+        blockers: [],
+        metrics: { exactLoggedPropensityRate: 1 },
+        gate: { passed: true, checks: [] },
+      },
+    });
+
+    const results = await service.materializeExperiment({
+      experimentId: 'policy-exp',
+      controlArm: 'control',
+      treatmentArm: 'policy',
+      reward: 'economyDelta120s',
+      gateName: 'policyAbRelease',
+      modelId: 'deadlock-policy-v1',
+      modelVersion: 'policy-frozen-1',
+    });
+
+    const policyGate = results.find((entry) => entry.gateName === 'policyAbRelease');
+    expect(policyGate?.status).toBe('PASS');
+    const snapshot = snapshots.rows.get(policyGate?.subjectSha256 as string);
+    expect(snapshot.report.policy.manifestSha256).toBe(policy.manifestSha256);
+    expect(roadmap.append).toHaveBeenCalledWith(expect.objectContaining({
+      gateName: 'policyAbRelease',
+      status: 'PASS',
+    }));
+  });
+
+  it('rejects Policy A/B release evidence without a frozen POLICY identity', async () => {
+    const { service } = createService({
+      ab: {
+        generatedAt: '2026-08-22T00:00:00.000Z',
+        experimentId: 'policy-exp',
+        controlArm: 'control',
+        treatmentArm: 'policy',
+        reward: 'economyDelta120s',
+        matchCount: 1000,
+        decisionCount: 100000,
+        controlMatchCount: 500,
+        treatmentMatchCount: 500,
+        runtimeHealthCoverage: 1,
+        abandonmentCoverage: 1,
+        evidenceSufficient: true,
+        blockers: [],
+        metrics: { exactLoggedPropensityRate: 1 },
+        gate: { passed: true, checks: [] },
+      },
+    });
+
+    await expect(service.materializeExperiment({
+      experimentId: 'policy-exp',
+      controlArm: 'control',
+      treatmentArm: 'policy',
+      reward: 'economyDelta120s',
+      gateName: 'policyAbRelease',
+    })).rejects.toThrow('POLICY_AB_RELEASE_REQUIRES_FROZEN_POLICY_MODEL');
   });
 
   it('keeps OPE blocked when randomized evidence is incomplete', async () => {
