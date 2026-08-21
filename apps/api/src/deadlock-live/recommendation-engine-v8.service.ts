@@ -10,6 +10,7 @@ import {
   RecommendationBehavioralRuntimePredictorV1,
   RecommendationBehavioralV8Decision,
   RecommendationBehavioralV8LinearModel,
+  RecommendationBehavioralV8Prediction,
   RecommendationDecisionCandidateV8,
   RecommendationFeatureStateV8,
   RecommendationPolicyDistributionV1,
@@ -20,6 +21,7 @@ import {
   createRecommendationBehavioralLinearRuntimePredictorV1,
   predictRecommendationBehavioralRuntimeV1,
   predictRecommendationValueV8,
+  validateRawBehaviorProbabilityVectorV8,
 } from '@deadlock-live-probe/shared';
 
 export interface RecommendationEngineV8Input {
@@ -28,8 +30,14 @@ export interface RecommendationEngineV8Input {
   featureState?: RecommendationFeatureStateV8;
   behavioralModel?: RecommendationBehavioralV8LinearModel;
   behavioralPredictor?: RecommendationBehavioralRuntimePredictorV1;
+  behavioralPrediction?: RecommendationBehavioralV8Prediction;
   valueModel?: RecommendationValueV8Model;
   policyConfig?: RecommendationPolicyV1Config;
+}
+
+export interface RecommendationEngineBehavioralPreparationV8 {
+  domainCandidates: readonly RecommendationCandidate[];
+  decision: RecommendationBehavioralV8Decision;
 }
 
 export interface RecommendationEngineV8Result {
@@ -43,7 +51,23 @@ export interface RecommendationEngineV8Result {
 
 @Injectable()
 export class RecommendationEngineV8Service {
+  prepareBehavioralDecision(input: {
+    state: RecommendationDecisionState;
+    itemGraph: RecommendationItemGraph;
+    featureState: RecommendationFeatureStateV8;
+  }): RecommendationEngineBehavioralPreparationV8 {
+    const domainCandidates = generateRecommendationCandidates({
+      state: input.state,
+      itemGraph: input.itemGraph,
+    });
+    return {
+      domainCandidates,
+      decision: toBehavioralDecision(input.featureState, domainCandidates),
+    };
+  }
+
   evaluate(input: RecommendationEngineV8Input): RecommendationEngineV8Result {
+    validateBehavioralSources(input);
     const domainCandidates = generateRecommendationCandidates({
       state: input.state,
       itemGraph: input.itemGraph,
@@ -51,9 +75,11 @@ export class RecommendationEngineV8Service {
     const baseTelemetryCandidates = domainCandidates.map(toTelemetryCandidate);
     const behavioralPredictor = input.behavioralPredictor
       ?? (input.behavioralModel ? createRecommendationBehavioralLinearRuntimePredictorV1(input.behavioralModel) : undefined);
-    const behaviorProbabilityByAction = behavioralPredictor && input.featureState
-      ? predictBehaviorProbabilities(behavioralPredictor, input.featureState, domainCandidates)
-      : undefined;
+    const behaviorProbabilityByAction = input.behavioralPrediction
+      ? externalBehaviorProbabilities(input.behavioralPrediction, input.featureState, domainCandidates)
+      : behavioralPredictor && input.featureState
+        ? predictBehaviorProbabilities(behavioralPredictor, input.featureState, domainCandidates)
+        : undefined;
     let telemetryCandidates: RecommendationDecisionCandidateV8[] = baseTelemetryCandidates.map((candidate) => ({
       ...candidate,
       behaviorProbability: behaviorProbabilityByAction?.get(candidate.actionKey),
@@ -83,7 +109,7 @@ export class RecommendationEngineV8Service {
     if (!input.featureState) {
       return policyFailure(domainCandidates, telemetryCandidates, 'POLICY_FEATURE_STATE_MISSING');
     }
-    if (!behavioralPredictor) {
+    if (!behaviorProbabilityByAction) {
       return policyFailure(domainCandidates, telemetryCandidates, 'POLICY_BEHAVIORAL_MODEL_MISSING');
     }
     if (!input.valueModel) {
@@ -177,9 +203,45 @@ function predictBehaviorProbabilities(
   featureState: RecommendationFeatureStateV8,
   candidates: readonly RecommendationCandidate[],
 ): Map<string, number> {
+  const decision = toBehavioralDecision(featureState, candidates);
+  const prediction = predictRecommendationBehavioralRuntimeV1(predictor, decision);
+  return predictionMap(prediction, candidates);
+}
+
+function externalBehaviorProbabilities(
+  prediction: RecommendationBehavioralV8Prediction,
+  featureState: RecommendationFeatureStateV8 | undefined,
+  candidates: readonly RecommendationCandidate[],
+): Map<string, number> {
+  if (!featureState) throw new Error('External Behavioral prediction requires featureState');
+  if (prediction.decisionId !== featureState.decisionId) throw new Error('External Behavioral prediction decisionId mismatch');
+  validateRawBehaviorProbabilityVectorV8(prediction, 1e-6);
+  const expected = toBehavioralDecision(featureState, candidates).candidates.map((candidate) => candidate.actionKey).sort();
+  const actual = prediction.candidates.map((candidate) => candidate.actionKey).sort();
+  if (JSON.stringify(expected) !== JSON.stringify(actual)) {
+    throw new Error('External Behavioral prediction must cover exactly the feasible choice set');
+  }
+  return predictionMap(prediction, candidates);
+}
+
+function predictionMap(
+  prediction: RecommendationBehavioralV8Prediction,
+  candidates: readonly RecommendationCandidate[],
+): Map<string, number> {
+  const probabilities = new Map(prediction.candidates.map((candidate) => [candidate.actionKey, candidate.probability]));
+  for (const candidate of candidates) {
+    if (!candidate.feasible) probabilities.set(candidate.actionId, 0);
+  }
+  return probabilities;
+}
+
+function toBehavioralDecision(
+  featureState: RecommendationFeatureStateV8,
+  candidates: readonly RecommendationCandidate[],
+): RecommendationBehavioralV8Decision {
   const feasible = candidates.filter((candidate) => candidate.feasible);
-  if (feasible.length === 0) return new Map();
-  const decision: RecommendationBehavioralV8Decision = {
+  if (feasible.length === 0) throw new Error('Behavioral serving requires at least one feasible candidate');
+  return {
     decisionId: featureState.decisionId,
     state: featureState,
     candidates: feasible.map((candidate) => ({
@@ -187,12 +249,6 @@ function predictBehaviorProbabilities(
       feasible: true as const,
     })),
   };
-  const prediction = predictRecommendationBehavioralRuntimeV1(predictor, decision);
-  const probabilities = new Map(prediction.candidates.map((candidate) => [candidate.actionKey, candidate.probability]));
-  for (const candidate of candidates) {
-    if (!candidate.feasible) probabilities.set(candidate.actionId, 0);
-  }
-  return probabilities;
 }
 
 function toActionFeature(candidate: RecommendationDecisionCandidateV8): RecommendationActionFeatureV8 {
@@ -204,6 +260,13 @@ function toActionFeature(candidate: RecommendationDecisionCandidateV8): Recommen
     recipeId: candidate.recipeId,
     effectiveCostSouls: candidate.effectiveCostSouls,
   };
+}
+
+function validateBehavioralSources(input: RecommendationEngineV8Input): void {
+  const count = Number(input.behavioralModel !== undefined)
+    + Number(input.behavioralPredictor !== undefined)
+    + Number(input.behavioralPrediction !== undefined);
+  if (count > 1) throw new Error('Provide exactly one Behavioral runtime source');
 }
 
 function policyFailure(
