@@ -6,6 +6,7 @@ import {
 import {
   RECOMMENDATION_TELEMETRY_CONTRACT_VERSION,
   RECOMMENDATION_TELEMETRY_SCHEMA_VERSION,
+  RecommendationBehavioralRuntimePredictorV1,
   RecommendationBehavioralV8LinearModel,
   RecommendationDecisionEventV8,
   RecommendationExperimentAssignmentV1,
@@ -39,6 +40,7 @@ export interface RecommendationDecisionV8Request {
   itemGraph: RecommendationItemGraph;
   featureState?: RecommendationFeatureStateV8;
   behavioralModel?: RecommendationBehavioralV8LinearModel;
+  behavioralPredictor?: RecommendationBehavioralRuntimePredictorV1;
   valueModel?: RecommendationValueV8Model;
   policyConfig?: RecommendationPolicyV1Config;
   runtimeMode: RecommendationRuntimeModeV8;
@@ -69,6 +71,7 @@ export class RecommendationDecisionV8Service {
       itemGraph: request.itemGraph,
       featureState: request.featureState,
       behavioralModel: request.behavioralModel,
+      behavioralPredictor: request.behavioralPredictor,
       valueModel: request.valueModel,
       policyConfig: request.policyConfig,
     });
@@ -217,6 +220,9 @@ function validateRequest(request: RecommendationDecisionV8Request): void {
   if (!request.modelVersion) throw new Error('modelVersion is required');
   if (!Number.isFinite(request.sourceOccurredAtMs)) throw new Error('sourceOccurredAtMs is invalid');
   if (!Number.isFinite(request.receivedAtMs)) throw new Error('receivedAtMs is invalid');
+  if (request.behavioralModel && request.behavioralPredictor) {
+    throw new Error('Provide either behavioralModel or behavioralPredictor, not both');
+  }
   if (request.selectionMode === 'SAFE_EXPLORATION' && !request.experiment.randomized) {
     throw new Error('SAFE_EXPLORATION requires a randomized experiment assignment');
   }
