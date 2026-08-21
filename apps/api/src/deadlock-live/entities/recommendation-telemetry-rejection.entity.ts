@@ -24,6 +24,10 @@ export class RecommendationTelemetryRejectionV8 {
   @Column({ type: 'varchar', length: 128, nullable: true })
   source?: string;
 
+  @Index('idx_recommendation_telemetry_rejections_v8_runtime_mode')
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  runtimeMode?: string;
+
   @Column({ type: 'jsonb' })
   errors!: string[];
 }
