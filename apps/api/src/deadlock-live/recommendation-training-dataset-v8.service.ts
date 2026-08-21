@@ -55,6 +55,7 @@ export interface RecommendationTrainingDatasetPreflightV1 {
   labeledDecisionCount: number;
   developmentWindowTo: string;
   futureTestSealed: true;
+  futureTestMaterialized: false;
   splitMatchCounts: Readonly<Record<string, number>>;
   splitDecisionCounts: Readonly<Record<string, number>>;
 }
@@ -66,6 +67,7 @@ export interface RecommendationTrainingDatasetExportReportV1 {
   skippedDevelopmentDecisionCount: number;
   developmentSkipReasons: Readonly<Record<string, number>>;
   futureTestSealed: true;
+  futureTestMaterialized: false;
   futureTestDiagnosticMetricsExposed: false;
   manifest: RecommendationDatasetManifestV1;
 }
@@ -127,6 +129,7 @@ export class RecommendationTrainingDatasetV8Service {
         labeledDecisionCount: 0,
         developmentWindowTo,
         futureTestSealed: true,
+        futureTestMaterialized: false,
         splitMatchCounts,
         splitDecisionCounts,
       };
@@ -164,6 +167,11 @@ export class RecommendationTrainingDatasetV8Service {
     }
 
     for (const split of options.splits) {
+      if (split.split === 'FUTURE_TEST') {
+        splitMatchCounts[split.split] = 0;
+        splitDecisionCounts[split.split] = 0;
+        continue;
+      }
       const counts = await this.splitCounts(options.candidateGeneratorVersion, split);
       splitMatchCounts[split.split] = counts.matchCount;
       splitDecisionCounts[split.split] = counts.decisionCount;
@@ -178,6 +186,7 @@ export class RecommendationTrainingDatasetV8Service {
       labeledDecisionCount: dataset.labeledDecisionCount,
       developmentWindowTo,
       futureTestSealed: true,
+      futureTestMaterialized: false,
       splitMatchCounts,
       splitDecisionCounts,
     };
@@ -202,6 +211,19 @@ export class RecommendationTrainingDatasetV8Service {
     let skippedDevelopmentDecisionCount = 0;
 
     for (const split of options.splits) {
+      if (split.split === 'FUTURE_TEST') {
+        splitDescriptors.push({
+          split: 'FUTURE_TEST',
+          from: new Date(split.from).toISOString(),
+          to: new Date(split.to).toISOString(),
+          matchCount: 0,
+          decisionCount: 0,
+          matchSetSha256: hashStrings([]),
+          sealed: true,
+        });
+        continue;
+      }
+
       const relativePath = `splits/${split.split.toLowerCase()}.jsonl.gz`;
       const absolutePath = join(outputDir, relativePath);
       const decisions = await this.loadSplitDecisions(options.candidateGeneratorVersion, split);
@@ -210,18 +232,12 @@ export class RecommendationTrainingDatasetV8Service {
       const output = createWriteStream(absolutePath, { flags: 'wx' });
       gzip.pipe(output);
       let rowCount = 0;
-      let skippedCount = 0;
 
       for (const decision of decisions) {
         const built = await this.buildExample(decision, split.split, options);
         if (!built.example) {
-          skippedCount += 1;
-          if (split.split === 'FUTURE_TEST') {
-            increment(developmentSkipReasons, 'SEALED_FUTURE_TEST_ROW_EXCLUDED_BY_FROZEN_PIPELINE');
-          } else {
-            skippedDevelopmentDecisionCount += 1;
-            increment(developmentSkipReasons, built.reason ?? 'UNKNOWN_SKIP_REASON');
-          }
+          skippedDevelopmentDecisionCount += 1;
+          increment(developmentSkipReasons, built.reason ?? 'UNKNOWN_SKIP_REASON');
           continue;
         }
         if (!gzip.write(`${JSON.stringify(built.example)}\n`)) await once(gzip, 'drain');
@@ -229,20 +245,16 @@ export class RecommendationTrainingDatasetV8Service {
         supportedRulesets.add(decision.rulesetVersion);
         supportedCatalogs.add(decision.catalogSha256);
         rowCount += 1;
-        if (split.split !== 'FUTURE_TEST') emittedDevelopmentDecisionCount += 1;
+        emittedDevelopmentDecisionCount += 1;
       }
 
       await endGzip(gzip, output);
-      if (rowCount === 0) throw new Error(`Exported split is empty: ${split.split}`);
-      if (split.split !== 'FUTURE_TEST') {
-        const coverage = decisions.length > 0 ? rowCount / decisions.length : 0;
-        if (coverage < minimumDevelopmentExportCoverage) {
-          throw new Error(
-            `Development export coverage below gate for ${split.split}: ${coverage} < ${minimumDevelopmentExportCoverage}`,
-          );
-        }
-      } else if (skippedCount > 0) {
-        throw new Error('FUTURE_TEST_EXPORT_INTEGRITY_FAILURE');
+      if (rowCount === 0) throw new Error(`Exported development split is empty: ${split.split}`);
+      const coverage = decisions.length > 0 ? rowCount / decisions.length : 0;
+      if (coverage < minimumDevelopmentExportCoverage) {
+        throw new Error(
+          `Development export coverage below gate for ${split.split}: ${coverage} < ${minimumDevelopmentExportCoverage}`,
+        );
       }
 
       files.push(await artifactFile(relativePath, absolutePath, rowCount));
@@ -253,6 +265,7 @@ export class RecommendationTrainingDatasetV8Service {
         matchCount: matchIds.size,
         decisionCount: rowCount,
         matchSetSha256: hashStrings([...matchIds].sort()),
+        sealed: false,
       });
     }
 
@@ -285,11 +298,10 @@ export class RecommendationTrainingDatasetV8Service {
       emittedDevelopmentDecisionCount,
       skippedDevelopmentDecisionCount,
       developmentSkipReasons: Object.fromEntries(
-        [...developmentSkipReasons.entries()]
-          .filter(([reason]) => reason !== 'SEALED_FUTURE_TEST_ROW_EXCLUDED_BY_FROZEN_PIPELINE')
-          .sort(([left], [right]) => left.localeCompare(right)),
+        [...developmentSkipReasons.entries()].sort(([left], [right]) => left.localeCompare(right)),
       ),
       futureTestSealed: true,
+      futureTestMaterialized: false,
       futureTestDiagnosticMetricsExposed: false,
       manifest,
     };
@@ -302,6 +314,7 @@ export class RecommendationTrainingDatasetV8Service {
     split: RecommendationDatasetSplitV1,
     options: RecommendationTrainingDatasetExportV1Options,
   ): Promise<{ example?: RecommendationBehavioralTrainingExampleV1; reason?: string }> {
+    if (split === 'FUTURE_TEST') throw new Error('FUTURE_TEST_ACCESS_FORBIDDEN_DURING_MODEL_DEVELOPMENT');
     if (decision.observedActionInjected) return { reason: 'OBSERVED_ACTION_INJECTED' };
     if (!decision.observedActionKey) return { reason: 'OBSERVED_ACTION_MISSING' };
     const feature = await this.featureStore.buildForDecision(
@@ -347,6 +360,7 @@ export class RecommendationTrainingDatasetV8Service {
     candidateGeneratorVersion: string,
     split: RecommendationTrainingSplitWindowV1,
   ): Promise<ExportDecisionRow[]> {
+    if (split.split === 'FUTURE_TEST') throw new Error('FUTURE_TEST_ACCESS_FORBIDDEN_DURING_MODEL_DEVELOPMENT');
     return this.dataSource.query(
       `WITH match_first AS (
          SELECT "matchId", MIN("decidedAt") AS first_decision_at
@@ -389,6 +403,7 @@ export class RecommendationTrainingDatasetV8Service {
     candidateGeneratorVersion: string,
     split: RecommendationTrainingSplitWindowV1,
   ): Promise<{ matchCount: number; decisionCount: number }> {
+    if (split.split === 'FUTURE_TEST') throw new Error('FUTURE_TEST_ACCESS_FORBIDDEN_DURING_MODEL_DEVELOPMENT');
     const rows = await this.dataSource.query(
       `WITH match_first AS (
          SELECT "matchId", MIN("decidedAt") AS first_decision_at
