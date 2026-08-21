@@ -59,11 +59,13 @@ export class RecommendationEngineV8Service {
       behaviorProbability: behaviorProbabilityByAction?.get(candidate.actionKey),
     }));
 
-    if (input.valueModel && input.featureState) {
+    const valueModel = input.valueModel;
+    const featureState = input.featureState;
+    if (valueModel && featureState) {
       telemetryCandidates = telemetryCandidates.map((candidate) => ({
         ...candidate,
         valueScore: candidate.feasible
-          ? predictRecommendationValueV8(input.valueModel, input.featureState as RecommendationFeatureStateV8, toActionFeature(candidate)).value
+          ? predictRecommendationValueV8(valueModel, featureState, toActionFeature(candidate)).value
           : undefined,
       }));
     }
