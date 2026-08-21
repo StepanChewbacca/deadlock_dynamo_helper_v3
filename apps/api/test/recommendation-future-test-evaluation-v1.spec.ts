@@ -8,6 +8,7 @@ import { RecommendationRoadmapEvidenceService } from '../src/deadlock-live/recom
 
 describe('FUTURE_TEST final evaluation control plane', () => {
   const policyManifestSha256 = 'a'.repeat(64);
+  const policyReleaseSnapshotSha256 = 'e'.repeat(64);
   const artifact = {
     contractVersion: RECOMMENDATION_FUTURE_TEST_EVALUATION_V1,
     policyModelId: 'deadlock-policy-v1',
@@ -43,9 +44,20 @@ describe('FUTURE_TEST final evaluation control plane', () => {
     })).rejects.toThrow('FUTURE_TEST_EVALUATION_REQUIRES_FROZEN_ARTIFACT_EVALUATOR');
   });
 
-  it('materializes the one-time final evaluation only for the exact verified frozen POLICY bundle', async () => {
+  it('materializes the one-time final evaluation only for the exact verified and A/B-released frozen POLICY bundle', async () => {
     const snapshotRepo = {
-      findOne: jest.fn(async () => undefined),
+      findOne: jest.fn(async ({ where }: any) => where.subjectSha256 === policyReleaseSnapshotSha256
+        ? {
+            subjectSha256: policyReleaseSnapshotSha256,
+            gateName: 'policyAbRelease',
+            evaluator: 'recommendation-advanced-evidence-v8',
+            evaluatedAt: new Date('2026-08-21T23:30:00.000Z'),
+            report: {
+              policy: { manifestSha256: policyManifestSha256 },
+              experiment: { gate: { passed: true } },
+            },
+          }
+        : undefined),
       create: jest.fn((value) => value),
       save: jest.fn(async (value) => value),
     };
@@ -69,6 +81,14 @@ describe('FUTURE_TEST final evaluation control plane', () => {
         },
         state: {
           phases: [{ phase: 'POLICY_V1', unlocked: true, blockers: [] }],
+        },
+        latestEvidenceByGate: {
+          policyAbRelease: {
+            evidenceId: 'v8:policyAbRelease:released',
+            gateName: 'policyAbRelease',
+            status: 'PASS',
+            subjectSha256: policyReleaseSnapshotSha256,
+          },
         },
       })),
       append: jest.fn(async () => ({ status: 'APPENDED', evidenceId: 'future-test-evidence' })),
@@ -102,7 +122,7 @@ describe('FUTURE_TEST final evaluation control plane', () => {
         manifest: { modelKind: 'POLICY', futureTestEvaluated: false },
       })),
     };
-    const roadmapEvidence = { report: jest.fn() };
+    const roadmapEvidence = { report: jest.fn(async () => ({})) };
     const service = new RecommendationFutureTestEvaluationV1Service(
       snapshotRepo as never,
       modelRegistry as never,
@@ -111,6 +131,48 @@ describe('FUTURE_TEST final evaluation control plane', () => {
 
     await expect(service.materialize(artifact)).rejects.toThrow(
       'FUTURE_TEST policy manifest SHA does not match the verified registry artifact',
+    );
+  });
+
+  it('rejects a verified policy that is not the policy that passed Policy A/B', async () => {
+    const snapshotRepo = {
+      findOne: jest.fn(async () => ({
+        subjectSha256: policyReleaseSnapshotSha256,
+        gateName: 'policyAbRelease',
+        evaluator: 'recommendation-advanced-evidence-v8',
+        evaluatedAt: new Date('2026-08-21T23:30:00.000Z'),
+        report: { policy: { manifestSha256: 'f'.repeat(64) } },
+      })),
+    };
+    const modelRegistry = {
+      getVerified: jest.fn(async () => ({
+        manifestSha256: policyManifestSha256,
+        status: 'VERIFIED',
+        verifiedAt: new Date('2026-08-21T23:00:00.000Z'),
+        manifest: { modelKind: 'POLICY', futureTestEvaluated: false },
+      })),
+    };
+    const roadmapEvidence = {
+      report: jest.fn(async () => ({
+        evidence: { futureTestUntouched: true, futureTestEvaluation: 'NOT_EVALUATED' },
+        state: { phases: [{ phase: 'POLICY_V1', unlocked: true, blockers: [] }] },
+        latestEvidenceByGate: {
+          policyAbRelease: {
+            evidenceId: 'v8:policyAbRelease:released',
+            status: 'PASS',
+            subjectSha256: policyReleaseSnapshotSha256,
+          },
+        },
+      })),
+    };
+    const service = new RecommendationFutureTestEvaluationV1Service(
+      snapshotRepo as never,
+      modelRegistry as never,
+      roadmapEvidence as never,
+    );
+
+    await expect(service.materialize(artifact)).rejects.toThrow(
+      'FUTURE_TEST_POLICY_DOES_NOT_MATCH_POLICY_AB_RELEASE',
     );
   });
 });
