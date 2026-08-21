@@ -46,6 +46,8 @@ import { RecommendationValueModelTrainingLaunchV8Service } from './recommendatio
 import { RecommendationValueTrainingDatasetV8Service } from './recommendation-value-training-dataset-v8.service';
 import { RecommendationValueTrainingLaunchV8Controller } from './recommendation-value-training-launch-v8.controller';
 import { RecommendationValueTrainingLaunchV8Service } from './recommendation-value-training-launch-v8.service';
+import { RecommendationPolicyBuildV1Controller } from './recommendation-policy-build-v1.controller';
+import { RecommendationPolicyBuildV1Service } from './recommendation-policy-build-v1.service';
 import { RecommendationEvidenceMaterializerV8Service } from './recommendation-evidence-materializer-v8.service';
 import { RecommendationRoadmapEvidenceController } from './recommendation-roadmap-evidence.controller';
 import { RecommendationRoadmapEvidenceService } from './recommendation-roadmap-evidence.service';
@@ -130,6 +132,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationTrainingLaunchV8Controller,
     RecommendationValueTrainingLaunchV8Controller,
     RecommendationValueModelTrainingLaunchV8Controller,
+    RecommendationPolicyBuildV1Controller,
     ModelBundleRegistryController,
     RecommendationRoadmapEvidenceController,
     RecommendationAdvancedEvidenceV8Controller,
@@ -167,6 +170,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationValueTrainingDatasetV8Service,
     RecommendationValueTrainingLaunchV8Service,
     RecommendationValueModelTrainingLaunchV8Service,
+    RecommendationPolicyBuildV1Service,
     RecommendationEvidenceMaterializerV8Service,
     RecommendationAdvancedEvidenceV8Service,
     RecommendationRoadmapEvidenceService,
@@ -206,6 +210,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationValueTrainingDatasetV8Service,
     RecommendationValueTrainingLaunchV8Service,
     RecommendationValueModelTrainingLaunchV8Service,
+    RecommendationPolicyBuildV1Service,
     RecommendationEvidenceMaterializerV8Service,
     RecommendationAdvancedEvidenceV8Service,
     RecommendationRoadmapEvidenceService,
