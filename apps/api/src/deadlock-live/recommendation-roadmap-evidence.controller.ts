@@ -1,11 +1,21 @@
 import { timingSafeEqual } from 'crypto';
-import { Body, Controller, Get, Headers, Post } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, Post } from '@nestjs/common';
 import { RecommendationRoadmapEvidenceRecordV1 } from '@deadlock-live-probe/shared';
+import { RecommendationEvidenceMaterializerV8Service } from './recommendation-evidence-materializer-v8.service';
 import { RecommendationRoadmapEvidenceService } from './recommendation-roadmap-evidence.service';
+
+interface RecommendationFoundationalEvidenceRequestV8 {
+  from?: string;
+  to?: string;
+  maximumAlignmentAgeMs?: number;
+}
 
 @Controller('deadlock-live/recommendation-roadmap/v1')
 export class RecommendationRoadmapEvidenceController {
-  constructor(private readonly evidence: RecommendationRoadmapEvidenceService) {}
+  constructor(
+    private readonly evidence: RecommendationRoadmapEvidenceService,
+    private readonly materializer: RecommendationEvidenceMaterializerV8Service,
+  ) {}
 
   @Post('evidence')
   append(
@@ -14,6 +24,28 @@ export class RecommendationRoadmapEvidenceController {
   ) {
     requireRoadmapToken(token);
     return this.evidence.append(record);
+  }
+
+  @Post('materialize/foundational')
+  materializeFoundational(
+    @Headers('x-recommendation-roadmap-token') token: string | undefined,
+    @Body() body: RecommendationFoundationalEvidenceRequestV8,
+  ) {
+    requireRoadmapToken(token);
+    return this.materializer.materializeFoundational({
+      from: optionalDate(body.from, 'from'),
+      to: optionalDate(body.to, 'to'),
+      maximumAlignmentAgeMs: body.maximumAlignmentAgeMs,
+    });
+  }
+
+  @Get('evidence-snapshots/:subjectSha256')
+  snapshot(
+    @Headers('x-recommendation-roadmap-token') token: string | undefined,
+    @Param('subjectSha256') subjectSha256: string,
+  ) {
+    requireRoadmapToken(token);
+    return this.materializer.getSnapshot(subjectSha256);
   }
 
   @Get('report')
@@ -28,6 +60,13 @@ function requireRoadmapToken(provided: string | undefined): void {
   if (!expected || !provided || !safeEqual(expected, provided)) {
     throw new Error('Recommendation roadmap evidence endpoint is disabled or unauthorized');
   }
+}
+
+function optionalDate(value: string | undefined, name: string): Date | undefined {
+  if (value === undefined) return undefined;
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) throw new Error(`${name} is invalid`);
+  return date;
 }
 
 function safeEqual(left: string, right: string): boolean {
