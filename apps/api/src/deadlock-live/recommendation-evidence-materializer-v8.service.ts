@@ -62,12 +62,14 @@ export class RecommendationEvidenceMaterializerV8Service {
       }),
       this.dataset.buildReport({ from: options.from, to: options.to }),
     ]);
+    const generatedAt = new Date().toISOString();
+    const soulsSnapshot = { generatedAt, report: souls };
 
     const materialized = [] as RecommendationMaterializedGateEvidenceV8[];
     materialized.push(await this.persistGate(
       'controlledSoulsValidation',
       controlledSoulsStatus(souls),
-      souls,
+      soulsSnapshot,
       souls.affordability.gateFailures,
     ));
     materialized.push(await this.persistGate(
@@ -90,7 +92,7 @@ export class RecommendationEvidenceMaterializerV8Service {
     ));
 
     return {
-      generatedAt: new Date().toISOString(),
+      generatedAt,
       from: options.from?.toISOString(),
       to: options.to?.toISOString(),
       gates: materialized,
