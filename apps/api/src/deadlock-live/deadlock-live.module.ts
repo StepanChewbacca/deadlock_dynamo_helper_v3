@@ -29,6 +29,8 @@ import { RecommendationFeatureStoreV8Controller } from './recommendation-feature
 import { RecommendationFeatureStoreV8Service } from './recommendation-feature-store-v8.service';
 import { RecommendationDatasetV8Controller } from './recommendation-dataset-v8.controller';
 import { RecommendationDatasetV8ReportService } from './recommendation-dataset-v8-report.service';
+import { RecommendationDatasetRegistryController } from './recommendation-dataset-registry.controller';
+import { RecommendationDatasetRegistryService } from './recommendation-dataset-registry.service';
 import { RecommendationShadowController } from './recommendation-shadow.controller';
 import { RecommendationShadowReportService } from './recommendation-shadow-report.service';
 import { RecommendationOpeController } from './recommendation-ope.controller';
@@ -50,6 +52,7 @@ import { MatchPlayerItem } from './entities/match-player-item.entity';
 import { MatchPlayer } from './entities/match-player.entity';
 import { MatchPlayerSkillUpgrade } from './entities/match-player-skill-upgrade.entity';
 import { ModelBundleRegistryV1 } from './entities/model-bundle-registry.entity';
+import { RecommendationDatasetRegistryV1 } from './entities/recommendation-dataset-registry.entity';
 import { RecommendationDecisionCandidateV8 } from './entities/recommendation-decision-candidate.entity';
 import { RecommendationDecisionV8 } from './entities/recommendation-decision.entity';
 import { RecommendationExposureAckV8 } from './entities/recommendation-exposure-ack.entity';
@@ -79,6 +82,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
       RecommendationExposureAckV8,
       SoulsAffordabilityEvidenceV2Entity,
       ModelBundleRegistryV1,
+      RecommendationDatasetRegistryV1,
       CrawlerRun,
       CrawlerState,
       ShadowModeDecision,
@@ -94,6 +98,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationObservabilityController,
     RecommendationFeatureStoreV8Controller,
     RecommendationDatasetV8Controller,
+    RecommendationDatasetRegistryController,
     RecommendationShadowController,
     RecommendationOpeController,
     RecommendationAbController,
@@ -119,6 +124,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationObservabilityReportService,
     RecommendationFeatureStoreV8Service,
     RecommendationDatasetV8ReportService,
+    RecommendationDatasetRegistryService,
     RecommendationShadowReportService,
     RecommendationOpeReportService,
     RecommendationAbReportService,
@@ -146,6 +152,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationObservabilityReportService,
     RecommendationFeatureStoreV8Service,
     RecommendationDatasetV8ReportService,
+    RecommendationDatasetRegistryService,
     RecommendationShadowReportService,
     RecommendationOpeReportService,
     RecommendationAbReportService,
