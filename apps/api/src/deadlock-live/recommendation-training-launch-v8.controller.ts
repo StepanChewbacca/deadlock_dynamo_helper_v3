@@ -1,5 +1,13 @@
 import { timingSafeEqual } from 'crypto';
-import { Body, Controller, Headers, Param, Post } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Headers,
+  Param,
+  Post,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { RecommendationBehavioralTrainingConfigV1 } from '@deadlock-live-probe/shared';
 import { RecommendationTrainingLaunchV8Service } from './recommendation-training-launch-v8.service';
 
@@ -18,7 +26,7 @@ export class RecommendationTrainingLaunchV8Controller {
     @Body() body: RecommendationTrainingPreflightBodyV8,
   ) {
     requireTrainingToken(token);
-    if (!body?.config) throw new Error('training config is required');
+    if (!body?.config) throw new BadRequestException('training config is required');
     return this.trainingLaunch.preflight(datasetId, body.config);
   }
 }
@@ -26,7 +34,7 @@ export class RecommendationTrainingLaunchV8Controller {
 function requireTrainingToken(provided: string | undefined): void {
   const expected = process.env.RECOMMENDATION_TRAINING_TOKEN;
   if (!expected || !provided || !safeEqual(expected, provided)) {
-    throw new Error('Recommendation training endpoint is disabled or unauthorized');
+    throw new UnauthorizedException('Recommendation training endpoint is disabled or unauthorized');
   }
 }
 
