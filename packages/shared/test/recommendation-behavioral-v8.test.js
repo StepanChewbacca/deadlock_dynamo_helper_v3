@@ -1,8 +1,11 @@
 const assert = require('node:assert/strict');
 const {
+  RECOMMENDATION_BEHAVIORAL_RUNTIME_VERSION,
   RECOMMENDATION_FEATURE_CONTRACT_VERSION,
+  createRecommendationBehavioralLinearRuntimePredictorV1,
   createRecommendationBehavioralV8LinearModel,
   evaluateRecommendationBehavioralV8Linear,
+  predictRecommendationBehavioralRuntimeV1,
   predictRecommendationBehavioralV8Linear,
   recommendationStateTokensV8,
   trainRecommendationBehavioralV8LinearDecision,
@@ -71,6 +74,27 @@ const after = predictRecommendationBehavioralV8Linear(model, decision);
 validateRawBehaviorProbabilityVectorV8(after);
 assert(after.observedActionProbability > before.observedActionProbability);
 assert.equal(after.candidates[0].actionKey, 'BUY_ITEM:1');
+
+const runtimePredictor = createRecommendationBehavioralLinearRuntimePredictorV1(model);
+const runtimePrediction = predictRecommendationBehavioralRuntimeV1(runtimePredictor, decision);
+assert.equal(runtimePrediction.candidates.length, decision.candidates.length);
+
+const incompleteTransformer = {
+  runtimeContract: RECOMMENDATION_BEHAVIORAL_RUNTIME_VERSION,
+  family: 'SEQUENCE_TRANSFORMER',
+  modelVersion: 'buildlm-v1',
+  featureContractVersion: RECOMMENDATION_FEATURE_CONTRACT_VERSION,
+  predict: (input) => ({
+    decisionId: input.decisionId,
+    probabilityContract: 'RAW_SOFTMAX_FEASIBLE_CHOICE_SET',
+    candidates: [{ actionKey: 'WAIT_SAVE', score: 0, probability: 1, rank: 1 }],
+    entropy: 0,
+  }),
+};
+assert.throws(
+  () => predictRecommendationBehavioralRuntimeV1(incompleteTransformer, decision),
+  /exactly the feasible choice set/,
+);
 
 const evaluation = evaluateRecommendationBehavioralV8Linear(model, [decision]);
 assert.equal(evaluation.candidateCoverage, 1);
