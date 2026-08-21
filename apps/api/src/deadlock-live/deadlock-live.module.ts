@@ -41,6 +41,8 @@ import { RecommendationTrainingLaunchV8Controller } from './recommendation-train
 import { RecommendationTrainingLaunchV8Service } from './recommendation-training-launch-v8.service';
 import { RecommendationValueDatasetRegistryController } from './recommendation-value-dataset-registry.controller';
 import { RecommendationValueDatasetRegistryService } from './recommendation-value-dataset-registry.service';
+import { RecommendationValueModelTrainingLaunchV8Controller } from './recommendation-value-model-training-launch-v8.controller';
+import { RecommendationValueModelTrainingLaunchV8Service } from './recommendation-value-model-training-launch-v8.service';
 import { RecommendationValueTrainingDatasetV8Service } from './recommendation-value-training-dataset-v8.service';
 import { RecommendationValueTrainingLaunchV8Controller } from './recommendation-value-training-launch-v8.controller';
 import { RecommendationValueTrainingLaunchV8Service } from './recommendation-value-training-launch-v8.service';
@@ -125,6 +127,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationValueDatasetRegistryController,
     RecommendationTrainingLaunchV8Controller,
     RecommendationValueTrainingLaunchV8Controller,
+    RecommendationValueModelTrainingLaunchV8Controller,
     ModelBundleRegistryController,
     RecommendationRoadmapEvidenceController,
     RecommendationAdvancedEvidenceV8Controller,
@@ -160,6 +163,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationTrainingLaunchV8Service,
     RecommendationValueTrainingDatasetV8Service,
     RecommendationValueTrainingLaunchV8Service,
+    RecommendationValueModelTrainingLaunchV8Service,
     RecommendationEvidenceMaterializerV8Service,
     RecommendationAdvancedEvidenceV8Service,
     RecommendationRoadmapEvidenceService,
@@ -197,6 +201,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationTrainingLaunchV8Service,
     RecommendationValueTrainingDatasetV8Service,
     RecommendationValueTrainingLaunchV8Service,
+    RecommendationValueModelTrainingLaunchV8Service,
     RecommendationEvidenceMaterializerV8Service,
     RecommendationAdvancedEvidenceV8Service,
     RecommendationRoadmapEvidenceService,
