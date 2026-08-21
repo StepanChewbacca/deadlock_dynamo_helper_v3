@@ -10,9 +10,11 @@ import {
   RecommendationDecisionEventV8,
   RecommendationExperimentAssignmentV1,
   RecommendationFeatureStateV8,
+  RecommendationPolicyV1Config,
   RecommendationRuntimeModeV8,
   RecommendationTelemetryQualityV8,
   RecommendationTelemetryVersionsV8,
+  RecommendationValueV8Model,
   isSafeFeasibleCandidate,
   selectRecommendationRuntimeActionV8,
   selectSafeExplorationActionV1,
@@ -37,6 +39,8 @@ export interface RecommendationDecisionV8Request {
   itemGraph: RecommendationItemGraph;
   featureState?: RecommendationFeatureStateV8;
   behavioralModel?: RecommendationBehavioralV8LinearModel;
+  valueModel?: RecommendationValueV8Model;
+  policyConfig?: RecommendationPolicyV1Config;
   runtimeMode: RecommendationRuntimeModeV8;
   observabilityGatePassed: boolean;
   modelRuntimeCompatible: boolean;
@@ -65,6 +69,8 @@ export class RecommendationDecisionV8Service {
       itemGraph: request.itemGraph,
       featureState: request.featureState,
       behavioralModel: request.behavioralModel,
+      valueModel: request.valueModel,
+      policyConfig: request.policyConfig,
     });
     const exactSpendableSoulsKnown = request.state.economy.spendableSouls.evidence !== 'UNKNOWN'
       && request.state.economy.spendableSouls.value !== undefined;
@@ -76,7 +82,7 @@ export class RecommendationDecisionV8Service {
       mode: request.runtimeMode,
       telemetryFresh: !request.quality.stale,
       observabilityGatePassed: request.observabilityGatePassed,
-      modelRuntimeCompatible: request.modelRuntimeCompatible,
+      modelRuntimeCompatible: request.modelRuntimeCompatible && engineResult.policyReady,
       shadowGatePassed: request.shadowGatePassed,
       exactSpendableSoulsKnown,
       shopOpportunityKnown,
@@ -86,7 +92,10 @@ export class RecommendationDecisionV8Service {
     let selectedActionKey = runtime.selectedActionKey;
     let actionLoggingPropensity = 1;
     let fallbackUsed = runtime.fallbackUsed;
-    const fallbackReasons = [...runtime.fallbackReasons];
+    const fallbackReasons = [
+      ...runtime.fallbackReasons,
+      ...(engineResult.policyReady ? [] : engineResult.policyBlockers),
+    ];
 
     if (
       request.selectionMode === 'SAFE_EXPLORATION'
@@ -145,7 +154,9 @@ export class RecommendationDecisionV8Service {
     if (!selectedCandidate || !selectedCandidate.feasible) {
       throw new Error(`Selected recommendation action is not feasible: ${selectedActionKey}`);
     }
-    const policyProbability = selectedCandidate.behaviorProbability ?? 1;
+    const policyProbability = selectedCandidate.policyScore
+      ?? selectedCandidate.behaviorProbability
+      ?? 1;
     const uniqueFallbackReasons = [...new Set(fallbackReasons)].sort();
     const inferenceLatencyMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
 
