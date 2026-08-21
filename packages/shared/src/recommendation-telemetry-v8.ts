@@ -8,9 +8,11 @@ export type RecommendationTelemetryEventType =
   | 'INVENTORY_SNAPSHOT'
   | 'RECOMMENDATION_DECISION'
   | 'RECOMMENDATION_EXPOSURE_ACK'
-  | 'RECOMMENDATION_OUTCOME';
+  | 'RECOMMENDATION_OUTCOME'
+  | 'RECOMMENDATION_RUNTIME_HEALTH';
 
 export type RecommendationEvidenceV8 = 'OBSERVED' | 'RECONSTRUCTED' | 'UNKNOWN';
+export type RecommendationRuntimeModeTelemetryV8 = 'DISABLED' | 'SHADOW' | 'LIVE';
 
 export interface RecommendationTelemetryVersionsV8 {
   client: string;
@@ -50,6 +52,11 @@ export interface VerifiedSpendableSoulsV8 {
   verificationContractVersion: string;
 }
 
+export interface DirectShopOpportunityProvenanceV8 {
+  type: 'DIRECT_SOURCE_SIGNAL';
+  sourceField: string;
+}
+
 export interface PlayerStatePayloadV8 {
   heroId?: number;
   teamId?: number;
@@ -57,6 +64,7 @@ export interface PlayerStatePayloadV8 {
   soulsRaw?: number;
   spendableSoulsVerified?: VerifiedSpendableSoulsV8;
   shopOpportunity?: 'AVAILABLE' | 'UNAVAILABLE' | 'UNKNOWN';
+  shopOpportunityProvenance?: DirectShopOpportunityProvenanceV8;
   health?: number;
   maxHealth?: number;
   alive?: boolean;
@@ -117,7 +125,7 @@ export interface RecommendationExperimentAssignmentV8 {
   experimentId?: string;
   arm: string;
   assignmentUnit: 'MATCH';
-  loggingPropensity: number;
+  armAssignmentPropensity: number;
   randomized: boolean;
   assignmentVersion: string;
 }
@@ -130,7 +138,12 @@ export interface RecommendationDecisionPayloadV8 {
   selectedActionKey: string;
   modelVersion: string;
   policyProbability: number;
+  actionLoggingPropensity: number;
   experiment: RecommendationExperimentAssignmentV8;
+  runtimeMode: RecommendationRuntimeModeTelemetryV8;
+  fallbackUsed: boolean;
+  fallbackReasons: readonly string[];
+  inferenceLatencyMs: number;
   observedActionInjected: false;
 }
 
@@ -147,6 +160,7 @@ export interface RecommendationOutcomePayloadV8 {
   observedActionKey?: string;
   observedActionAtMs?: number;
   recommendationAccepted?: boolean;
+  sessionAbandoned?: boolean;
   economyDelta120s?: number;
   economyDelta300s?: number;
   survived120s?: boolean;
@@ -155,11 +169,20 @@ export interface RecommendationOutcomePayloadV8 {
   finalPlayerWon?: boolean;
 }
 
+export interface RecommendationRuntimeHealthPayloadV8 {
+  runtimeMode: RecommendationRuntimeModeTelemetryV8;
+  healthType: 'HEARTBEAT' | 'CRASH_RECOVERY';
+  crashCountDelta: number;
+  modelVersion?: string;
+  recommendationReady: boolean;
+}
+
 export type PlayerStateEventV8 = RecommendationTelemetryEnvelopeV8<'PLAYER_STATE', PlayerStatePayloadV8>;
 export type InventorySnapshotEventV8 = RecommendationTelemetryEnvelopeV8<'INVENTORY_SNAPSHOT', InventorySnapshotPayloadV8>;
 export type RecommendationDecisionEventV8 = RecommendationTelemetryEnvelopeV8<'RECOMMENDATION_DECISION', RecommendationDecisionPayloadV8>;
 export type RecommendationExposureAckEventV8 = RecommendationTelemetryEnvelopeV8<'RECOMMENDATION_EXPOSURE_ACK', RecommendationExposureAckPayloadV8>;
 export type RecommendationOutcomeEventV8 = RecommendationTelemetryEnvelopeV8<'RECOMMENDATION_OUTCOME', RecommendationOutcomePayloadV8>;
+export type RecommendationRuntimeHealthEventV8 = RecommendationTelemetryEnvelopeV8<'RECOMMENDATION_RUNTIME_HEALTH', RecommendationRuntimeHealthPayloadV8>;
 
 export interface RecommendationTelemetryValidationV8 {
   valid: boolean;
@@ -190,29 +213,36 @@ export function validateRecommendationTelemetryEnvelopeV8(
   if (event.sequenceNo !== undefined && (!Number.isInteger(event.sequenceNo) || event.sequenceNo < 0)) {
     errors.push('SEQUENCE_INVALID');
   }
-  if (!event.versions.client) errors.push('CLIENT_VERSION_REQUIRED');
-  if (!event.versions.gep) errors.push('GEP_VERSION_REQUIRED');
-  if (!event.versions.normalizer) errors.push('NORMALIZER_VERSION_REQUIRED');
-  if (!event.versions.ruleset) errors.push('RULESET_VERSION_REQUIRED');
-  if (!isSha256(event.versions.catalogSha256)) errors.push('CATALOG_SHA256_REQUIRED');
-  if (!Number.isFinite(event.quality.alignmentAgeMs) || event.quality.alignmentAgeMs < 0) errors.push('ALIGNMENT_AGE_INVALID');
-  return { valid: errors.length === 0, errors };
+  if (!event.versions?.client) errors.push('CLIENT_VERSION_REQUIRED');
+  if (!event.versions?.gep) errors.push('GEP_VERSION_REQUIRED');
+  if (!event.versions?.normalizer) errors.push('NORMALIZER_VERSION_REQUIRED');
+  if (!event.versions?.ruleset) errors.push('RULESET_VERSION_REQUIRED');
+  if (!isSha256(event.versions?.catalogSha256 ?? '')) errors.push('CATALOG_SHA256_REQUIRED');
+  if (!Number.isFinite(event.quality?.alignmentAgeMs) || event.quality.alignmentAgeMs < 0) errors.push('ALIGNMENT_AGE_INVALID');
+  return { valid: errors.length === 0, errors: [...new Set(errors)].sort() };
 }
 
 export function validatePlayerStateEventV8(event: PlayerStateEventV8): RecommendationTelemetryValidationV8 {
   const errors = [...validateRecommendationTelemetryEnvelopeV8(event).errors];
-  const verified = event.payload.spendableSoulsVerified;
-  if (event.payload.soulsRaw !== undefined && (!Number.isFinite(event.payload.soulsRaw) || event.payload.soulsRaw < 0)) {
+  const verified = event.payload?.spendableSoulsVerified;
+  if (event.payload?.soulsRaw !== undefined && (!Number.isFinite(event.payload.soulsRaw) || event.payload.soulsRaw < 0)) {
     errors.push('SOULS_RAW_INVALID');
   }
   if (verified) {
     if (!Number.isFinite(verified.value) || verified.value < 0) errors.push('VERIFIED_SPENDABLE_SOULS_INVALID');
     if (!verified.verificationContractVersion) errors.push('SPENDABLE_SOULS_VERIFICATION_CONTRACT_REQUIRED');
   }
-  if (event.payload.shopOpportunity && !['AVAILABLE', 'UNAVAILABLE', 'UNKNOWN'].includes(event.payload.shopOpportunity)) {
-    errors.push('SHOP_OPPORTUNITY_INVALID');
+  const shop = event.payload?.shopOpportunity;
+  if (shop && !['AVAILABLE', 'UNAVAILABLE', 'UNKNOWN'].includes(shop)) errors.push('SHOP_OPPORTUNITY_INVALID');
+  if (shop === 'AVAILABLE' || shop === 'UNAVAILABLE') {
+    if (event.payload.shopOpportunityProvenance?.type !== 'DIRECT_SOURCE_SIGNAL') {
+      errors.push('SHOP_OPPORTUNITY_DIRECT_PROVENANCE_REQUIRED');
+    }
+    if (!event.payload.shopOpportunityProvenance?.sourceField) {
+      errors.push('SHOP_OPPORTUNITY_SOURCE_FIELD_REQUIRED');
+    }
   }
-  return { valid: errors.length === 0, errors };
+  return { valid: errors.length === 0, errors: [...new Set(errors)].sort() };
 }
 
 export function validateRecommendationDecisionEventV8(
@@ -221,23 +251,28 @@ export function validateRecommendationDecisionEventV8(
   const errors = [...validateRecommendationTelemetryEnvelopeV8(event).errors];
   const payload = event.payload;
   if (!event.playerKey) errors.push('PLAYER_KEY_REQUIRED');
-  if (!payload.decisionId) errors.push('DECISION_ID_REQUIRED');
-  if (!payload.stateRevision) errors.push('STATE_REVISION_REQUIRED');
-  if (!payload.candidateGeneratorVersion) errors.push('CANDIDATE_GENERATOR_VERSION_REQUIRED');
-  if (!payload.modelVersion) errors.push('MODEL_VERSION_REQUIRED');
-  if (payload.observedActionInjected !== false) errors.push('OBSERVED_ACTION_INJECTION_FORBIDDEN');
-  if (!probability(payload.policyProbability, false)) errors.push('POLICY_PROBABILITY_INVALID');
-  if (!payload.experiment.assignmentVersion) errors.push('ASSIGNMENT_VERSION_REQUIRED');
-  if (payload.experiment.assignmentUnit !== 'MATCH') errors.push('ASSIGNMENT_UNIT_MUST_BE_MATCH');
-  if (!probability(payload.experiment.loggingPropensity, false)) errors.push('LOGGING_PROPENSITY_INVALID');
-  if (payload.experiment.randomized && !payload.experiment.experimentId) errors.push('RANDOMIZED_EXPERIMENT_ID_REQUIRED');
-  if (payload.candidates.length === 0) errors.push('CANDIDATE_SET_EMPTY');
+  if (!payload?.decisionId) errors.push('DECISION_ID_REQUIRED');
+  if (!payload?.stateRevision) errors.push('STATE_REVISION_REQUIRED');
+  if (!payload?.candidateGeneratorVersion) errors.push('CANDIDATE_GENERATOR_VERSION_REQUIRED');
+  if (!payload?.modelVersion) errors.push('MODEL_VERSION_REQUIRED');
+  if (payload?.observedActionInjected !== false) errors.push('OBSERVED_ACTION_INJECTION_FORBIDDEN');
+  if (!probability(payload?.policyProbability, false)) errors.push('POLICY_PROBABILITY_INVALID');
+  if (!probability(payload?.actionLoggingPropensity, false)) errors.push('ACTION_LOGGING_PROPENSITY_INVALID');
+  if (!payload?.experiment?.assignmentVersion) errors.push('ASSIGNMENT_VERSION_REQUIRED');
+  if (payload?.experiment?.assignmentUnit !== 'MATCH') errors.push('ASSIGNMENT_UNIT_MUST_BE_MATCH');
+  if (!probability(payload?.experiment?.armAssignmentPropensity, false)) errors.push('ARM_ASSIGNMENT_PROPENSITY_INVALID');
+  if (payload?.experiment?.randomized && !payload.experiment.experimentId) errors.push('RANDOMIZED_EXPERIMENT_ID_REQUIRED');
+  if (!['DISABLED', 'SHADOW', 'LIVE'].includes(payload?.runtimeMode)) errors.push('RUNTIME_MODE_INVALID');
+  if (typeof payload?.fallbackUsed !== 'boolean') errors.push('FALLBACK_USED_REQUIRED');
+  if (!Array.isArray(payload?.fallbackReasons)) errors.push('FALLBACK_REASONS_REQUIRED');
+  if (!Number.isFinite(payload?.inferenceLatencyMs) || payload.inferenceLatencyMs < 0) errors.push('INFERENCE_LATENCY_INVALID');
+  if (!Array.isArray(payload?.candidates) || payload.candidates.length === 0) errors.push('CANDIDATE_SET_EMPTY');
 
   const actionKeys = new Set<string>();
   const feasibleBehaviorProbabilities: number[] = [];
   let feasibleWithBehaviorProbability = 0;
   let feasibleCount = 0;
-  for (const candidate of payload.candidates) {
+  for (const candidate of payload?.candidates ?? []) {
     if (!candidate.actionKey) errors.push('CANDIDATE_ACTION_KEY_REQUIRED');
     if (actionKeys.has(candidate.actionKey)) errors.push(`DUPLICATE_CANDIDATE:${candidate.actionKey}`);
     actionKeys.add(candidate.actionKey);
@@ -281,9 +316,12 @@ export function validateRecommendationDecisionEventV8(
     }
   }
 
-  const selected = payload.candidates.find((candidate) => candidate.actionKey === payload.selectedActionKey);
+  const selected = (payload?.candidates ?? []).find((candidate) => candidate.actionKey === payload?.selectedActionKey);
   if (!selected) errors.push('SELECTED_ACTION_NOT_IN_CANDIDATE_SET');
   else if (!selected.feasible) errors.push('SELECTED_ACTION_NOT_FEASIBLE');
+  if (payload?.fallbackUsed && payload.actionLoggingPropensity !== 1) {
+    errors.push('FALLBACK_ACTION_LOGGING_PROPENSITY_MUST_BE_ONE');
+  }
 
   return { valid: errors.length === 0, errors: [...new Set(errors)].sort() };
 }
@@ -293,12 +331,47 @@ export function validateRecommendationExposureAckEventV8(
 ): RecommendationTelemetryValidationV8 {
   const errors = [...validateRecommendationTelemetryEnvelopeV8(event).errors];
   if (!event.playerKey) errors.push('PLAYER_KEY_REQUIRED');
-  if (!event.payload.decisionId) errors.push('DECISION_ID_REQUIRED');
-  if (!event.payload.selectedActionKey) errors.push('SELECTED_ACTION_KEY_REQUIRED');
-  if (!Number.isFinite(event.payload.displayedAtMs)) errors.push('DISPLAYED_AT_INVALID');
-  if (!Number.isFinite(event.payload.ttlMs) || event.payload.ttlMs <= 0) errors.push('TTL_INVALID');
-  if (!event.payload.displayOrder.includes(event.payload.selectedActionKey)) errors.push('SELECTED_ACTION_NOT_DISPLAYED');
-  if (new Set(event.payload.displayOrder).size !== event.payload.displayOrder.length) errors.push('DISPLAY_ORDER_DUPLICATE_ACTION');
+  if (!event.payload?.decisionId) errors.push('DECISION_ID_REQUIRED');
+  if (!event.payload?.selectedActionKey) errors.push('SELECTED_ACTION_KEY_REQUIRED');
+  if (!Number.isFinite(event.payload?.displayedAtMs)) errors.push('DISPLAYED_AT_INVALID');
+  if (!Number.isFinite(event.payload?.ttlMs) || event.payload.ttlMs <= 0) errors.push('TTL_INVALID');
+  if (!event.payload?.displayOrder?.includes(event.payload.selectedActionKey)) errors.push('SELECTED_ACTION_NOT_DISPLAYED');
+  if (new Set(event.payload?.displayOrder ?? []).size !== (event.payload?.displayOrder?.length ?? 0)) errors.push('DISPLAY_ORDER_DUPLICATE_ACTION');
+  return { valid: errors.length === 0, errors: [...new Set(errors)].sort() };
+}
+
+export function validateRecommendationOutcomeEventV8(
+  event: RecommendationOutcomeEventV8,
+): RecommendationTelemetryValidationV8 {
+  const errors = [...validateRecommendationTelemetryEnvelopeV8(event).errors];
+  if (!event.playerKey) errors.push('PLAYER_KEY_REQUIRED');
+  if (!event.payload?.decisionId) errors.push('DECISION_ID_REQUIRED');
+  if (event.payload?.observedActionAtMs !== undefined && !Number.isFinite(event.payload.observedActionAtMs)) {
+    errors.push('OBSERVED_ACTION_AT_INVALID');
+  }
+  if (event.payload?.observedActionAtMs !== undefined && !event.payload.observedActionKey) {
+    errors.push('OBSERVED_ACTION_KEY_REQUIRED_WITH_TIMESTAMP');
+  }
+  for (const key of ['economyDelta120s', 'economyDelta300s', 'objectiveDelta300s'] as const) {
+    const value = event.payload?.[key];
+    if (value !== undefined && !Number.isFinite(value)) errors.push(`${key.toUpperCase()}_INVALID`);
+  }
+  for (const key of ['recommendationAccepted', 'sessionAbandoned', 'survived120s', 'survived300s', 'finalPlayerWon'] as const) {
+    const value = event.payload?.[key];
+    if (value !== undefined && typeof value !== 'boolean') errors.push(`${key.toUpperCase()}_INVALID`);
+  }
+  return { valid: errors.length === 0, errors: [...new Set(errors)].sort() };
+}
+
+export function validateRecommendationRuntimeHealthEventV8(
+  event: RecommendationRuntimeHealthEventV8,
+): RecommendationTelemetryValidationV8 {
+  const errors = [...validateRecommendationTelemetryEnvelopeV8(event).errors];
+  if (!['DISABLED', 'SHADOW', 'LIVE'].includes(event.payload?.runtimeMode)) errors.push('RUNTIME_MODE_INVALID');
+  if (!['HEARTBEAT', 'CRASH_RECOVERY'].includes(event.payload?.healthType)) errors.push('RUNTIME_HEALTH_TYPE_INVALID');
+  if (!Number.isInteger(event.payload?.crashCountDelta) || event.payload.crashCountDelta < 0) errors.push('CRASH_COUNT_DELTA_INVALID');
+  if (event.payload?.healthType === 'HEARTBEAT' && event.payload.crashCountDelta !== 0) errors.push('HEARTBEAT_CRASH_DELTA_MUST_BE_ZERO');
+  if (typeof event.payload?.recommendationReady !== 'boolean') errors.push('RECOMMENDATION_READY_REQUIRED');
   return { valid: errors.length === 0, errors: [...new Set(errors)].sort() };
 }
 
@@ -310,8 +383,8 @@ export function recommendationTelemetryDeduplicationKeyV8(
     : `${event.matchId}:${event.source}:${event.eventId}`;
 }
 
-function probability(value: number, allowZero: boolean): boolean {
-  return Number.isFinite(value) && value <= 1 && (allowZero ? value >= 0 : value > 0);
+function probability(value: number | undefined, allowZero: boolean): boolean {
+  return value !== undefined && Number.isFinite(value) && value <= 1 && (allowZero ? value >= 0 : value > 0);
 }
 
 function isSha256(value: string): boolean {
