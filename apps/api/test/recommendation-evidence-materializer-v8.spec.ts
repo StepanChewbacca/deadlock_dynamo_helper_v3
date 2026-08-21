@@ -19,8 +19,8 @@ describe('RecommendationEvidenceMaterializerV8Service', () => {
       }),
     };
     const soulsEvidence = { report: jest.fn(async () => input.souls) };
-    const observability = { buildReport: jest.fn(async () => input.observability) };
-    const dataset = { buildReport: jest.fn(async () => input.dataset) };
+    const observabilityService = { buildReport: jest.fn(async () => input.observability) };
+    const datasetService = { buildReport: jest.fn(async () => input.dataset) };
     const roadmapEvidence = {
       append: jest.fn(async (record: any) => {
         const existing = evidenceRecords.get(record.evidenceId);
@@ -35,11 +35,20 @@ describe('RecommendationEvidenceMaterializerV8Service', () => {
     const service = new RecommendationEvidenceMaterializerV8Service(
       snapshotRepo as never,
       soulsEvidence as never,
-      observability as never,
-      dataset as never,
+      observabilityService as never,
+      datasetService as never,
       roadmapEvidence as never,
     );
-    return { service, snapshotRepo, roadmapEvidence, snapshots, evidenceRecords };
+    return {
+      service,
+      snapshotRepo,
+      soulsEvidence,
+      observabilityService,
+      datasetService,
+      roadmapEvidence,
+      snapshots,
+      evidenceRecords,
+    };
   }
 
   function souls(verdict: 'PASS' | 'FAIL' | 'INSUFFICIENT_EVIDENCE', invalidObservationIds: string[] = []) {
@@ -117,7 +126,11 @@ describe('RecommendationEvidenceMaterializerV8Service', () => {
     expect(report.gates.every((gate) => gate.status === 'PASS')).toBe(true);
     expect(report.from).toBe('2026-08-01T00:00:00.000Z');
     expect(report.to).toBe('2026-08-22T00:00:00.000Z');
-    expect(harness.observability).toBeUndefined();
+    expect(harness.observabilityService.buildReport).toHaveBeenCalledWith({
+      from: new Date('2026-08-01T00:00:00.000Z'),
+      to: new Date('2026-08-22T00:00:00.000Z'),
+      maximumAlignmentAgeMs: 5_000,
+    });
     const firstRecord = [...harness.evidenceRecords.values()][0];
     expect(firstRecord.subjectSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(firstRecord.evidenceRef).toContain(firstRecord.subjectSha256);
