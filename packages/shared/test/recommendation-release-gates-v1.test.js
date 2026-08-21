@@ -1,7 +1,9 @@
 const assert = require('node:assert/strict');
 const {
+  EXACT_ACTION_PROPENSITY_SOURCE,
   SOULS_AFFORDABILITY_EVIDENCE_V2,
   evaluateBehavioralTrainingReadinessV1,
+  evaluateOffPolicyV1,
   evaluatePolicyAbGateV1,
   evaluateSoulsAffordabilityEvidenceV2,
   evaluateValuePolicyReleaseGateV1,
@@ -51,6 +53,46 @@ const valueBlocked = evaluateValuePolicyReleaseGateV1({
 assert.equal(valueBlocked.passed, false);
 assert(valueBlocked.blockers.includes('VALUE_ACTION_SENSITIVITY_NOT_PASS'));
 assert(valueBlocked.blockers.includes('ACTION_RESIDUAL_COLLAPSE'));
+
+const opeRows = Array.from({ length: 200 }, (_, index) => ({
+  decisionId: `ope-${index}`,
+  reward: index % 2,
+  loggingPropensity: 0.5,
+  loggingPropensitySource: EXACT_ACTION_PROPENSITY_SOURCE,
+  targetProbability: 0.5,
+  qLogged: index % 2,
+  qTargetExpected: (index % 2) + 0.1,
+}));
+const ope = evaluateOffPolicyV1(opeRows);
+assert.equal(ope.passedSupportGate, true);
+assert.equal(ope.effectiveSampleSizeRatio, 1);
+assert.equal(ope.clippedDecisionRate, 0);
+assert(Math.abs(ope.doublyRobustUplift - 0.1) < 1e-12);
+assert(ope.doublyRobustUpliftCiLow > 0);
+assert(ope.doublyRobustUpliftCiHigh > 0);
+
+const lowEssRows = Array.from({ length: 200 }, (_, index) => ({
+  decisionId: `low-ess-${index}`,
+  reward: 1,
+  loggingPropensity: index === 0 ? 0.001 : 1,
+  loggingPropensitySource: EXACT_ACTION_PROPENSITY_SOURCE,
+  targetProbability: 1,
+  qLogged: 1,
+  qTargetExpected: 1.1,
+}));
+const lowEss = evaluateOffPolicyV1(lowEssRows, { minEffectiveSampleSize: 1 });
+assert.equal(lowEss.passedSupportGate, false);
+assert(lowEss.effectiveSampleSizeRatio < 0.5);
+
+const clipped = evaluateOffPolicyV1(lowEssRows, {
+  maxImportanceWeight: 2,
+  minEffectiveSampleSize: 1,
+  minEffectiveSampleSizeRatio: 0,
+  maxClippedDecisionRate: 0,
+});
+assert.equal(clipped.clippedDecisionCount, 1);
+assert.equal(clipped.clippedDecisionRate, 1 / 200);
+assert.equal(clipped.passedSupportGate, false);
 
 const controlled = Array.from({ length: 100 }, (_, index) => ({
   evidenceVersion: SOULS_AFFORDABILITY_EVIDENCE_V2,
