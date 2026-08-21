@@ -62,8 +62,9 @@ export function validateRecommendationRoadmapEvidenceRecordV1(
   if (record.gateName === 'futureTestUntouched' && record.status === 'INSUFFICIENT_EVIDENCE') {
     errors.push('FUTURE_TEST_UNTOUCHED_REQUIRES_PASS_OR_FAIL');
   }
-  if (record.gateName === 'futureTestEvaluation' && record.status === 'INSUFFICIENT_EVIDENCE') {
-    errors.push('FUTURE_TEST_EVALUATION_REQUIRES_PASS_OR_FAIL');
+  if (record.gateName === 'futureTestEvaluation') {
+    if (record.status === 'INSUFFICIENT_EVIDENCE') errors.push('FUTURE_TEST_EVALUATION_REQUIRES_PASS_OR_FAIL');
+    if (!record.subjectSha256) errors.push('FUTURE_TEST_EVALUATION_SUBJECT_SHA256_REQUIRED');
   }
   return { valid: errors.length === 0, errors: [...new Set(errors)].sort() };
 }
