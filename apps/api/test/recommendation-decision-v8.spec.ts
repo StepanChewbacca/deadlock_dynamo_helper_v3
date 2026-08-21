@@ -26,7 +26,7 @@ function fixture() {
     sellTransition: { soulsRefund: 400, returnedItemIds: [] },
     maxCopies: 1,
   }];
-  const graph = createRecommendationItemGraph(definitions);
+  const itemGraph = createRecommendationItemGraph(definitions);
   const state: RecommendationDecisionState = {
     decisionId: 'd1',
     matchId: 'm1',
@@ -36,7 +36,7 @@ function fixture() {
     heroId: 1,
     inventory: {
       initializedFromSnapshot: true,
-      heldByItemId: buildInventoryInstancesForRecommendation([], graph),
+      heldByItemId: buildInventoryInstancesForRecommendation([], itemGraph),
       lifecycleCountByItemId: new Map(),
       nextInstanceSequence: 1,
     },
@@ -63,7 +63,7 @@ function fixture() {
     rulesetVersion: 'r1',
     catalogSha256: 'b'.repeat(64),
   };
-  return { graph, state, featureState };
+  return { itemGraph, state, featureState };
 }
 
 function requestBase() {
