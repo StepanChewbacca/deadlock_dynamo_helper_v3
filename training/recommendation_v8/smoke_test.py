@@ -53,6 +53,17 @@ def main() -> int:
         ]
         split_descriptors = []
         for split, start, end in split_ranges:
+            if split == "FUTURE_TEST":
+                split_descriptors.append({
+                    "split": split,
+                    "from": start,
+                    "to": end,
+                    "matchCount": 0,
+                    "decisionCount": 0,
+                    "matchSetSha256": hashlib.sha256(b"").hexdigest(),
+                    "sealed": True,
+                })
+                continue
             relative = f"splits/{split.lower()}.jsonl.gz"
             path = root / relative
             row = dict(example)
@@ -68,6 +79,7 @@ def main() -> int:
                 "matchCount": 1,
                 "decisionCount": 1,
                 "matchSetSha256": hashlib.sha256(b"m1").hexdigest(),
+                "sealed": False,
             })
 
         base = {
@@ -92,6 +104,7 @@ def main() -> int:
         (root / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         verified = verify_dataset_manifest(root)
         assert len(list(iter_examples(root, verified, "TRAIN"))) == 1
+        assert not (root / "splits" / "future_test.jsonl.gz").exists()
         try:
             list(iter_examples(root, verified, "FUTURE_TEST"))
         except ValueError as error:
