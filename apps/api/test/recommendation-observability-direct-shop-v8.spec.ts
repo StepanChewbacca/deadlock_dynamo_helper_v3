@@ -1,6 +1,11 @@
 import { RecommendationObservabilityReportService } from '../src/deadlock-live/recommendation-observability-report.service';
 
 const ENV = 'RECOMMENDATION_DIRECT_SHOP_SOURCE_ALLOWLIST';
+type QueryCall = [string, unknown[]];
+
+function queryMock() {
+  return jest.fn<Promise<unknown[]>, QueryCall>(async () => []);
+}
 
 describe('RecommendationObservabilityReportService direct shop approval', () => {
   const original = process.env[ENV];
@@ -15,7 +20,7 @@ describe('RecommendationObservabilityReportService direct shop approval', () => 
       'OVERWOLF_GEP:onInfoUpdates2|match_info|match_info|shop_state',
       'OVERWOLF_GEP:onNewEvents|match_info||shop_enter',
     ].join(',');
-    const query = jest.fn(async () => []);
+    const query = queryMock();
     const service = new RecommendationObservabilityReportService({ query } as never);
 
     const report = await service.buildReport({ maximumAlignmentAgeMs: 5000 });
@@ -25,7 +30,7 @@ describe('RecommendationObservabilityReportService direct shop approval', () => 
       'OVERWOLF_GEP:onNewEvents|match_info||shop_enter',
     ]);
     expect(query).toHaveBeenCalledTimes(1);
-    const [sql, params] = query.mock.calls[0];
+    const [sql, params] = query.mock.calls[0]!;
     expect(sql).toContain('ANY($4::text[])');
     expect(sql).toContain('player_source');
     expect(params[3]).toEqual(report.approvedDirectShopSourceKeys);
@@ -33,13 +38,13 @@ describe('RecommendationObservabilityReportService direct shop approval', () => 
 
   it('uses an empty allowlist by default so historical unapproved claims cannot count as coverage', async () => {
     delete process.env[ENV];
-    const query = jest.fn(async () => []);
+    const query = queryMock();
     const service = new RecommendationObservabilityReportService({ query } as never);
 
     const report = await service.buildReport();
 
     expect(report.approvedDirectShopSourceKeys).toEqual([]);
-    expect(query.mock.calls[0][1][3]).toEqual([]);
+    expect(query.mock.calls[0]![1][3]).toEqual([]);
     expect(report.metrics.shopOpportunityCoverage).toBe(0);
   });
 });
