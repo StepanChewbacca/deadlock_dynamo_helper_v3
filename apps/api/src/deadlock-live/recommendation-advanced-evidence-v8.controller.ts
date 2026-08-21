@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'crypto';
-import { Body, Controller, Headers, Post } from '@nestjs/common';
+import { Body, Controller, Headers, Post, UnauthorizedException } from '@nestjs/common';
 import {
   RecommendationAdvancedEvidenceV8Service,
   RecommendationExperimentEvidenceGateV8,
@@ -22,6 +22,8 @@ interface ExperimentEvidenceBodyV8 extends EvidenceWindowBodyV8 {
   treatmentArm: string;
   reward: RecommendationOpeRewardV1;
   gateName: RecommendationExperimentEvidenceGateV8;
+  modelId?: string;
+  modelVersion?: string;
 }
 
 interface OpeEvidenceBodyV8 extends EvidenceWindowBodyV8 {
@@ -67,6 +69,8 @@ export class RecommendationAdvancedEvidenceV8Controller {
       treatmentArm: body.treatmentArm,
       reward: body.reward,
       gateName: body.gateName,
+      modelId: body.modelId,
+      modelVersion: body.modelVersion,
       ...window(body),
     });
   }
@@ -112,7 +116,7 @@ function optionalDate(value: string | undefined, name: string): Date | undefined
 function requireRoadmapToken(provided: string | undefined): void {
   const expected = process.env.RECOMMENDATION_ROADMAP_EVIDENCE_TOKEN;
   if (!expected || !provided || !safeEqual(expected, provided)) {
-    throw new Error('Recommendation roadmap evidence endpoint is disabled or unauthorized');
+    throw new UnauthorizedException('Recommendation roadmap evidence endpoint is disabled or unauthorized');
   }
 }
 
