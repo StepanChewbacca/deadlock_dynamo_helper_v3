@@ -14,6 +14,7 @@ import { AllHeroesAnalysisService } from './all-heroes-analysis.service';
 import { AllHeroesAnalysisController } from './all-heroes-analysis.controller';
 import { SituationalRecommendationService } from './situational-recommendation.service';
 import { CatalogContentService } from './catalog-content.service';
+import { ModelBundleRegistryController } from './model-bundle-registry.controller';
 import { ModelBundleRegistryService } from './model-bundle-registry.service';
 import { RecommendationEngineV8Service } from './recommendation-engine-v8.service';
 import { RecommendationDecisionV8Service } from './recommendation-decision-v8.service';
@@ -106,6 +107,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationFeatureStoreV8Controller,
     RecommendationDatasetV8Controller,
     RecommendationDatasetRegistryController,
+    ModelBundleRegistryController,
     RecommendationRoadmapEvidenceController,
     RecommendationShadowController,
     RecommendationOpeController,
