@@ -39,6 +39,9 @@ import { RecommendationDatasetRegistryService } from './recommendation-dataset-r
 import { RecommendationTrainingDatasetV8Service } from './recommendation-training-dataset-v8.service';
 import { RecommendationTrainingLaunchV8Controller } from './recommendation-training-launch-v8.controller';
 import { RecommendationTrainingLaunchV8Service } from './recommendation-training-launch-v8.service';
+import { RecommendationValueDatasetRegistryController } from './recommendation-value-dataset-registry.controller';
+import { RecommendationValueDatasetRegistryService } from './recommendation-value-dataset-registry.service';
+import { RecommendationValueTrainingDatasetV8Service } from './recommendation-value-training-dataset-v8.service';
 import { RecommendationValueTrainingLaunchV8Controller } from './recommendation-value-training-launch-v8.controller';
 import { RecommendationValueTrainingLaunchV8Service } from './recommendation-value-training-launch-v8.service';
 import { RecommendationEvidenceMaterializerV8Service } from './recommendation-evidence-materializer-v8.service';
@@ -73,6 +76,7 @@ import { RecommendationExposureAckV8 } from './entities/recommendation-exposure-
 import { RecommendationRoadmapEvidenceEntityV1 } from './entities/recommendation-roadmap-evidence.entity';
 import { RecommendationTelemetryEvent } from './entities/recommendation-telemetry-event.entity';
 import { RecommendationTelemetryRejectionV8 } from './entities/recommendation-telemetry-rejection.entity';
+import { RecommendationValueDatasetRegistryV1 } from './entities/recommendation-value-dataset-registry.entity';
 import { SoulsAffordabilityEvidenceV2Entity } from './entities/souls-affordability-evidence-v2.entity';
 import { ReferenceDataImportService } from './reference-data-import.service';
 import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
@@ -99,6 +103,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
       SoulsAffordabilityEvidenceV2Entity,
       ModelBundleRegistryV1,
       RecommendationDatasetRegistryV1,
+      RecommendationValueDatasetRegistryV1,
       RecommendationRoadmapEvidenceEntityV1,
       CrawlerRun,
       CrawlerState,
@@ -117,6 +122,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationFeatureStoreV8Controller,
     RecommendationDatasetV8Controller,
     RecommendationDatasetRegistryController,
+    RecommendationValueDatasetRegistryController,
     RecommendationTrainingLaunchV8Controller,
     RecommendationValueTrainingLaunchV8Controller,
     ModelBundleRegistryController,
@@ -149,8 +155,10 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationFeatureStoreV8Service,
     RecommendationDatasetV8ReportService,
     RecommendationDatasetRegistryService,
+    RecommendationValueDatasetRegistryService,
     RecommendationTrainingDatasetV8Service,
     RecommendationTrainingLaunchV8Service,
+    RecommendationValueTrainingDatasetV8Service,
     RecommendationValueTrainingLaunchV8Service,
     RecommendationEvidenceMaterializerV8Service,
     RecommendationAdvancedEvidenceV8Service,
@@ -184,8 +192,10 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationFeatureStoreV8Service,
     RecommendationDatasetV8ReportService,
     RecommendationDatasetRegistryService,
+    RecommendationValueDatasetRegistryService,
     RecommendationTrainingDatasetV8Service,
     RecommendationTrainingLaunchV8Service,
+    RecommendationValueTrainingDatasetV8Service,
     RecommendationValueTrainingLaunchV8Service,
     RecommendationEvidenceMaterializerV8Service,
     RecommendationAdvancedEvidenceV8Service,
