@@ -63,16 +63,15 @@ const manifest = {
   supportedRulesetVersions: ['r1'],
   supportedCatalogSha256: ['b'.repeat(64)],
   splits: [
-    { split: 'TRAIN', from: '2026-07-01T00:00:00.000Z', to: '2026-07-10T00:00:00.000Z', matchCount: 8000, decisionCount: 80000, matchSetSha256: '1'.repeat(64) },
-    { split: 'VALIDATION', from: '2026-07-10T00:00:00.000Z', to: '2026-07-15T00:00:00.000Z', matchCount: 1000, decisionCount: 10000, matchSetSha256: '2'.repeat(64) },
-    { split: 'SHADOW_HOLDOUT', from: '2026-07-15T00:00:00.000Z', to: '2026-07-20T00:00:00.000Z', matchCount: 1000, decisionCount: 10000, matchSetSha256: '3'.repeat(64) },
-    { split: 'FUTURE_TEST', from: '2026-07-20T00:00:00.000Z', to: '2026-07-25T00:00:00.000Z', matchCount: 1000, decisionCount: 10000, matchSetSha256: '4'.repeat(64) },
+    { split: 'TRAIN', from: '2026-07-01T00:00:00.000Z', to: '2026-07-10T00:00:00.000Z', matchCount: 8000, decisionCount: 80000, matchSetSha256: '1'.repeat(64), sealed: false },
+    { split: 'VALIDATION', from: '2026-07-10T00:00:00.000Z', to: '2026-07-15T00:00:00.000Z', matchCount: 1000, decisionCount: 10000, matchSetSha256: '2'.repeat(64), sealed: false },
+    { split: 'SHADOW_HOLDOUT', from: '2026-07-15T00:00:00.000Z', to: '2026-07-20T00:00:00.000Z', matchCount: 1000, decisionCount: 10000, matchSetSha256: '3'.repeat(64), sealed: false },
+    { split: 'FUTURE_TEST', from: '2026-07-20T00:00:00.000Z', to: '2026-07-25T00:00:00.000Z', matchCount: 0, decisionCount: 0, matchSetSha256: '4'.repeat(64), sealed: true },
   ],
   files: [
     { path: 'splits/train.jsonl.gz', sha256: '5'.repeat(64), sizeBytes: 1000, rowCount: 80000 },
     { path: 'splits/validation.jsonl.gz', sha256: '6'.repeat(64), sizeBytes: 1000, rowCount: 10000 },
     { path: 'splits/shadow_holdout.jsonl.gz', sha256: '7'.repeat(64), sizeBytes: 1000, rowCount: 10000 },
-    { path: 'splits/future_test.jsonl.gz', sha256: '8'.repeat(64), sizeBytes: 1000, rowCount: 10000 },
   ],
 };
 
