@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  RecommendationBehavioralRuntimePredictorV1,
   RecommendationBehavioralV8LinearModel,
   RecommendationExperimentAssignmentV1,
   RecommendationPolicyV1Config,
@@ -16,6 +17,7 @@ import { RecommendationTelemetryIngestV8Service } from './recommendation-telemet
 
 export interface RecommendationRealtimeModelsV8 {
   behavioralModel?: RecommendationBehavioralV8LinearModel;
+  behavioralPredictor?: RecommendationBehavioralRuntimePredictorV1;
   valueModel?: RecommendationValueV8Model;
   policyConfig?: RecommendationPolicyV1Config;
 }
@@ -107,6 +109,7 @@ export class RecommendationRealtimeCoordinatorV8Service {
       itemGraph: realtime.itemGraph,
       featureState: realtime.featureState,
       behavioralModel: models.behavioralModel,
+      behavioralPredictor: models.behavioralPredictor,
       valueModel: models.valueModel,
       policyConfig: models.policyConfig,
       runtimeMode: request.runtimeMode,
@@ -140,10 +143,13 @@ function validateRequest(
   if (!Number.isFinite(request.decisionAtMs)) errors.push('DECISION_AT_INVALID');
   if (!request.candidateGeneratorVersion) errors.push('CANDIDATE_GENERATOR_VERSION_REQUIRED');
   if (!request.modelVersion) errors.push('MODEL_VERSION_REQUIRED');
+  if (models.behavioralModel && models.behavioralPredictor) errors.push('MULTIPLE_BEHAVIORAL_RUNTIME_SOURCES');
   if (models.behavioralModel && models.behavioralModel.modelVersion === '') errors.push('BEHAVIORAL_MODEL_VERSION_REQUIRED');
+  if (models.behavioralPredictor && models.behavioralPredictor.modelVersion === '') errors.push('BEHAVIORAL_MODEL_VERSION_REQUIRED');
   if (models.valueModel && models.valueModel.modelVersion === '') errors.push('VALUE_MODEL_VERSION_REQUIRED');
-  if (models.valueModel && !models.behavioralModel) errors.push('VALUE_REQUIRES_BEHAVIORAL_MODEL');
-  if (models.policyConfig && (!models.behavioralModel || !models.valueModel)) errors.push('POLICY_REQUIRES_BEHAVIORAL_AND_VALUE_MODELS');
+  const hasBehavioral = Boolean(models.behavioralModel || models.behavioralPredictor);
+  if (models.valueModel && !hasBehavioral) errors.push('VALUE_REQUIRES_BEHAVIORAL_MODEL');
+  if (models.policyConfig && (!hasBehavioral || !models.valueModel)) errors.push('POLICY_REQUIRES_BEHAVIORAL_AND_VALUE_MODELS');
   if (request.selectionMode === 'SAFE_EXPLORATION' && !request.experiment.randomized) {
     errors.push('SAFE_EXPLORATION_REQUIRES_RANDOMIZED_EXPERIMENT');
   }
