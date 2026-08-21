@@ -33,6 +33,8 @@ import { RecommendationDatasetV8Controller } from './recommendation-dataset-v8.c
 import { RecommendationDatasetV8ReportService } from './recommendation-dataset-v8-report.service';
 import { RecommendationDatasetRegistryController } from './recommendation-dataset-registry.controller';
 import { RecommendationDatasetRegistryService } from './recommendation-dataset-registry.service';
+import { RecommendationRoadmapEvidenceController } from './recommendation-roadmap-evidence.controller';
+import { RecommendationRoadmapEvidenceService } from './recommendation-roadmap-evidence.service';
 import { RecommendationShadowController } from './recommendation-shadow.controller';
 import { RecommendationShadowReportService } from './recommendation-shadow-report.service';
 import { RecommendationOpeController } from './recommendation-ope.controller';
@@ -58,6 +60,7 @@ import { RecommendationDatasetRegistryV1 } from './entities/recommendation-datas
 import { RecommendationDecisionCandidateV8 } from './entities/recommendation-decision-candidate.entity';
 import { RecommendationDecisionV8 } from './entities/recommendation-decision.entity';
 import { RecommendationExposureAckV8 } from './entities/recommendation-exposure-ack.entity';
+import { RecommendationRoadmapEvidenceEntityV1 } from './entities/recommendation-roadmap-evidence.entity';
 import { RecommendationTelemetryEvent } from './entities/recommendation-telemetry-event.entity';
 import { RecommendationTelemetryRejectionV8 } from './entities/recommendation-telemetry-rejection.entity';
 import { SoulsAffordabilityEvidenceV2Entity } from './entities/souls-affordability-evidence-v2.entity';
@@ -85,6 +88,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
       SoulsAffordabilityEvidenceV2Entity,
       ModelBundleRegistryV1,
       RecommendationDatasetRegistryV1,
+      RecommendationRoadmapEvidenceEntityV1,
       CrawlerRun,
       CrawlerState,
       ShadowModeDecision,
@@ -102,6 +106,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationFeatureStoreV8Controller,
     RecommendationDatasetV8Controller,
     RecommendationDatasetRegistryController,
+    RecommendationRoadmapEvidenceController,
     RecommendationShadowController,
     RecommendationOpeController,
     RecommendationAbController,
@@ -129,6 +134,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationFeatureStoreV8Service,
     RecommendationDatasetV8ReportService,
     RecommendationDatasetRegistryService,
+    RecommendationRoadmapEvidenceService,
     RecommendationShadowReportService,
     RecommendationOpeReportService,
     RecommendationAbReportService,
@@ -158,6 +164,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationFeatureStoreV8Service,
     RecommendationDatasetV8ReportService,
     RecommendationDatasetRegistryService,
+    RecommendationRoadmapEvidenceService,
     RecommendationShadowReportService,
     RecommendationOpeReportService,
     RecommendationAbReportService,
