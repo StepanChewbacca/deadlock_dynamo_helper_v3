@@ -7,13 +7,14 @@ const {
   validateRecommendationRoadmapEvidenceRecordV1,
 } = require('../dist');
 
-const split = (name, from, to, suffix) => ({
+const split = (name, from, to, suffix, sealed = false) => ({
   split: name,
   from,
   to,
-  matchCount: 100,
-  decisionCount: 2500,
+  matchCount: sealed ? 0 : 100,
+  decisionCount: sealed ? 0 : 2500,
   matchSetSha256: suffix.repeat(64),
+  sealed,
 });
 
 const manifest = {
@@ -35,19 +36,30 @@ const manifest = {
     split('TRAIN', '2026-07-01T00:00:00.000Z', '2026-07-10T00:00:00.000Z', '1'),
     split('VALIDATION', '2026-07-10T00:00:00.000Z', '2026-07-15T00:00:00.000Z', '2'),
     split('SHADOW_HOLDOUT', '2026-07-15T00:00:00.000Z', '2026-07-20T00:00:00.000Z', '3'),
-    split('FUTURE_TEST', '2026-07-20T00:00:00.000Z', '2026-07-25T00:00:00.000Z', '4'),
+    split('FUTURE_TEST', '2026-07-20T00:00:00.000Z', '2026-07-25T00:00:00.000Z', '4', true),
   ],
-  files: [{ path: 'dataset/train.parquet', sha256: 'd'.repeat(64), sizeBytes: 100, rowCount: 2500 }],
+  files: [
+    { path: 'splits/train.jsonl.gz', sha256: 'd'.repeat(64), sizeBytes: 100, rowCount: 2500 },
+    { path: 'splits/validation.jsonl.gz', sha256: 'e'.repeat(64), sizeBytes: 100, rowCount: 2500 },
+    { path: 'splits/shadow_holdout.jsonl.gz', sha256: 'f'.repeat(64), sizeBytes: 100, rowCount: 2500 },
+  ],
 };
 assert.deepEqual(validateRecommendationDatasetManifestV1(manifest), { valid: true, errors: [] });
 
 const leaked = structuredClone(manifest);
 leaked.futureTestTouched = true;
 leaked.observedActionInjected = true;
+leaked.splits[3].sealed = false;
+leaked.splits[3].matchCount = 100;
+leaked.splits[3].decisionCount = 2500;
+leaked.files.push({ path: 'splits/future_test.jsonl.gz', sha256: '9'.repeat(64), sizeBytes: 100, rowCount: 2500 });
 const leakedValidation = validateRecommendationDatasetManifestV1(leaked);
 assert.equal(leakedValidation.valid, false);
 assert(leakedValidation.errors.includes('FUTURE_TEST_ALREADY_TOUCHED'));
 assert(leakedValidation.errors.includes('OBSERVED_ACTION_INJECTION_FORBIDDEN'));
+assert(leakedValidation.errors.includes('FUTURE_TEST_MUST_BE_SEALED'));
+assert(leakedValidation.errors.includes('FUTURE_TEST_COUNTS_MUST_BE_HIDDEN'));
+assert(leakedValidation.errors.includes('FUTURE_TEST_ARTIFACT_FORBIDDEN_DURING_MODEL_DEVELOPMENT'));
 
 const overlapping = structuredClone(manifest);
 overlapping.splits[1].from = '2026-07-09T00:00:00.000Z';
