@@ -47,6 +47,9 @@ describe('analyzeShopSignalCandidatesV1', () => {
     expect(report.candidateOnly).toBe(true);
     expect(report.canPromoteToDirectSource).toBe(false);
     expect(report.candidates[0].channel.key).toBe('undocumented_candidate');
+    expect(report.candidates[0].provenanceSourceField).toBe(
+      'onInfoUpdates2|match_info|match_info|undocumented_candidate',
+    );
     expect(report.candidates[0].markerCoverage).toBe(1);
     expect(report.candidates[0].distinctPayloadCount).toBe(2);
     expect(report.candidates[0].lowCardinality).toBe(true);
@@ -72,6 +75,24 @@ describe('analyzeShopSignalCandidatesV1', () => {
     expect(report.blockers).toContain('SHOP_MARKER_COUNT_BELOW_6');
     expect(report.blockers).toContain('NO_LOW_CARDINALITY_SEPARATING_CANDIDATE');
     expect(report.canPromoteToDirectSource).toBe(false);
+  });
+
+  it('does not correlate a marker with entries from another known match', () => {
+    const report = analyzeShopSignalCandidatesV1(
+      [{
+        sequence: 1,
+        receivedAt: iso(100),
+        source: 'onInfoUpdates2',
+        feature: 'match_info',
+        category: 'match_info',
+        key: 'candidate',
+        matchId: 'match-2',
+        rawPayload: true,
+      }],
+      [{ id: 'marker-1', createdAt: iso(0), matchId: 'match-1', action: 'SHOP_AVAILABLE' }],
+    );
+
+    expect(report.candidateCount).toBe(0);
   });
 
   it('ignores unrelated diagnostic/system channels and malformed timestamps', () => {
