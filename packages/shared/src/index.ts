@@ -13,3 +13,7 @@ export * from './recommendation-training-readiness-v1';
 export * from './recommendation-feature-store-v8';
 export * from './recommendation-behavioral-v8';
 export * from './recommendation-runtime-v8';
+export * from './recommendation-value-v8';
+export * from './recommendation-policy-v1';
+export * from './recommendation-roadmap-state-v1';
+export * from './recommendation-sequential-rl-v1';
