@@ -38,6 +38,9 @@ jobs:
       - name: Test deterministic build domain
         run: yarn workspace @deadlock-live-probe/build-domain test
 
+      - name: Test Overwolf evidence diagnostics
+        run: yarn workspace @deadlock-live-probe/overwolf-client test
+
       - name: Build API
         run: yarn workspace @deadlock-live-probe/api build
 

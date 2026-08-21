@@ -4,6 +4,10 @@ import {
   RecommendationTelemetryEventType,
   RecommendationTelemetryEnvelopeV8,
 } from '@deadlock-live-probe/shared';
+import {
+  configuredDirectShopSourceAllowlist,
+  directShopSourceApprovalKey,
+} from './recommendation-direct-shop-source-v8';
 import { RecommendationTelemetryStoreService } from './recommendation-telemetry-store.service';
 import { SoulsAffordabilityEvidenceV2Service } from './souls-affordability-evidence-v2.service';
 
@@ -29,6 +33,7 @@ export class RecommendationTelemetryIngestV8Service {
       await this.telemetryStore.reject(playerState, ['EXTERNAL_SPENDABLE_SOULS_VERIFICATION_FORBIDDEN']);
       throw new Error('External PLAYER_STATE events must not self-assert spendableSoulsVerified');
     }
+    await this.requireApprovedDirectShopSource(playerState);
     const verifiedEvent = await this.applyServerWalletVerification(playerState);
     return this.telemetryStore.append(verifiedEvent);
   }
@@ -37,6 +42,19 @@ export class RecommendationTelemetryIngestV8Service {
     event: RecommendationTelemetryEnvelopeV8<RecommendationTelemetryEventType, unknown>,
   ) {
     return this.telemetryStore.append(event as never);
+  }
+
+  private async requireApprovedDirectShopSource(event: PlayerStateEventV8): Promise<void> {
+    if (event.payload?.shopOpportunity !== 'AVAILABLE' && event.payload?.shopOpportunity !== 'UNAVAILABLE') return;
+    const sourceField = event.payload.shopOpportunityProvenance?.sourceField?.trim();
+    const allowlistKey = sourceField ? directShopSourceApprovalKey(event.source, sourceField) : '';
+    const approved = new Set(configuredDirectShopSourceAllowlist());
+    if (!allowlistKey || !approved.has(allowlistKey)) {
+      await this.telemetryStore.reject(event, ['EXTERNAL_DIRECT_SHOP_SOURCE_NOT_APPROVED']);
+      throw new Error(
+        'External direct shop opportunity is not server-approved; keep shopOpportunity UNKNOWN until a validated direct source is allowlisted',
+      );
+    }
   }
 
   private async applyServerWalletVerification(event: PlayerStateEventV8): Promise<PlayerStateEventV8> {

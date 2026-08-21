@@ -6,6 +6,7 @@ import {
   RecommendationObservabilityMetricsV1,
   evaluateRecommendationObservabilityGateV1,
 } from '@deadlock-live-probe/shared';
+import { configuredDirectShopSourceAllowlist } from './recommendation-direct-shop-source-v8';
 
 export interface RecommendationObservabilityReportOptions {
   from?: Date;
@@ -18,6 +19,7 @@ export interface RecommendationObservabilityReport {
   from?: string;
   to?: string;
   maximumAlignmentAgeMs: number;
+  approvedDirectShopSourceKeys: readonly string[];
   metrics: RecommendationObservabilityMetricsV1;
   cohorts: readonly RecommendationObservabilityCohortMetricsV1[];
   gate: RecommendationObservabilityGateReportV1;
@@ -48,9 +50,15 @@ export class RecommendationObservabilityReportService {
     if (!Number.isInteger(maximumAlignmentAgeMs) || maximumAlignmentAgeMs < 0) {
       throw new Error('maximumAlignmentAgeMs must be a non-negative integer');
     }
+    const approvedDirectShopSourceKeys = configuredDirectShopSourceAllowlist();
     const rows = await this.dataSource.query(
       observabilitySql(),
-      [options.from?.toISOString() ?? null, options.to?.toISOString() ?? null, maximumAlignmentAgeMs],
+      [
+        options.from?.toISOString() ?? null,
+        options.to?.toISOString() ?? null,
+        maximumAlignmentAgeMs,
+        approvedDirectShopSourceKeys,
+      ],
     ) as ObservabilityAggregateRow[];
     const overallRow = rows.find((row) => row.cohortKey === 'overall');
     const metrics = overallRow ? toMetrics(overallRow) : emptyMetrics();
@@ -64,6 +72,7 @@ export class RecommendationObservabilityReportService {
       from: options.from?.toISOString(),
       to: options.to?.toISOString(),
       maximumAlignmentAgeMs,
+      approvedDirectShopSourceKeys,
       metrics,
       cohorts,
       gate,
@@ -93,6 +102,7 @@ WITH decisions AS (
   SELECT
     d.*,
     ps."payload" AS player_payload,
+    ps."source" AS player_source,
     ps."sourceOccurredAt" AS player_source_at,
     ps."directlyObserved" AS player_directly_observed,
     ps."stale" AS player_stale,
@@ -135,7 +145,10 @@ WITH decisions AS (
       AND (a.player_payload->'spendableSoulsVerified'->>'verificationContractVersion') IS NOT NULL) AS exact_wallet_known,
     ((a.player_payload->>'shopOpportunity') IN ('AVAILABLE', 'UNAVAILABLE')
       AND a.player_payload->'shopOpportunityProvenance'->>'type' = 'DIRECT_SOURCE_SIGNAL'
-      AND COALESCE(a.player_payload->'shopOpportunityProvenance'->>'sourceField', '') <> '') AS shop_known,
+      AND COALESCE(a.player_payload->'shopOpportunityProvenance'->>'sourceField', '') <> ''
+      AND (
+        COALESCE(a.player_source, '') || ':' || COALESCE(a.player_payload->'shopOpportunityProvenance'->>'sourceField', '')
+      ) = ANY($4::text[])) AS shop_known,
     (a.inventory_payload IS NOT NULL
       AND (a.inventory_payload->>'snapshotSha256') ~ '^[a-fA-F0-9]{64}$') AS inventory_known,
     (COALESCE(a."rulesetVersion", '') <> ''

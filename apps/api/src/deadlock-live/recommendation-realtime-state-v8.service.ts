@@ -20,6 +20,10 @@ import {
   RecommendationTelemetryVersionsV8,
 } from '@deadlock-live-probe/shared';
 import { assembleRecommendationFeatureStateV8 } from './recommendation-feature-assembler-v8';
+import {
+  configuredDirectShopSourceAllowlist,
+  directShopSourceApprovalKey,
+} from './recommendation-direct-shop-source-v8';
 
 export interface RecommendationRealtimeStateV8Request {
   decisionId: string;
@@ -48,6 +52,7 @@ interface TelemetryRow {
   eventId: string;
   sourceEventId?: string;
   eventType: string;
+  source: string;
   sourceOccurredAt: Date | string;
   receivedAt: Date | string;
   gameTimeMs?: number;
@@ -105,9 +110,11 @@ export class RecommendationRealtimeStateV8Service {
     if (requestErrors.length > 0) return { ready: false, blockers: requestErrors };
     const maximumAlignmentAgeMs = request.maximumAlignmentAgeMs ?? 5_000;
     const maximumHistoryEvents = request.maximumHistoryEvents ?? 64;
+    const approvedDirectShopSourceKeys = configuredDirectShopSourceAllowlist();
+    const approvedDirectShopSources = new Set(approvedDirectShopSourceKeys);
     const from = new Date(request.decisionAtMs - maximumAlignmentAgeMs).toISOString();
     const to = new Date(request.decisionAtMs).toISOString();
-    const telemetrySelect = `"eventId", "sourceEventId", "eventType", "sourceOccurredAt", "receivedAt", "gameTimeMs", "clientVersion", "gepVersion", "normalizerVersion", "rulesetVersion", "catalogSha256", "directlyObserved", "reconstructed", "stale", "alignmentAgeMs", "payload"`;
+    const telemetrySelect = `"eventId", "sourceEventId", "eventType", "source", "sourceOccurredAt", "receivedAt", "gameTimeMs", "clientVersion", "gepVersion", "normalizerVersion", "rulesetVersion", "catalogSha256", "directlyObserved", "reconstructed", "stale", "alignmentAgeMs", "payload"`;
     const [playerRows, inventoryRows, historyRows] = await Promise.all([
       this.dataSource.query(
         `SELECT ${telemetrySelect}
@@ -217,7 +224,11 @@ export class RecommendationRealtimeStateV8Service {
       };
     }
 
-    const directShopOpportunity = directShopOpportunityValue(playerPayload);
+    const directShopOpportunity = directShopOpportunityValue(
+      playerPayload,
+      playerRow.source,
+      approvedDirectShopSources,
+    );
     const verifiedWallet = playerPayload.spendableSoulsVerified;
     const state: RecommendationDecisionState = {
       decisionId: request.decisionId,
@@ -237,10 +248,10 @@ export class RecommendationRealtimeStateV8Service {
           ? observedFact(verifiedWallet.value, verifiedWallet.verificationContractVersion)
           : unknownFact('spendableSouls is not server-verified'),
         shopOpportunity: directShopOpportunity === 'UNKNOWN'
-          ? unknownFact<ShopOpportunity>('shop opportunity direct signal unavailable')
+          ? unknownFact<ShopOpportunity>('shop opportunity direct signal unavailable or unapproved')
           : observedFact<ShopOpportunity>(
               directShopOpportunity,
-              `direct:${playerPayload.shopOpportunityProvenance?.sourceField}`,
+              `direct:${playerRow.source}:${playerPayload.shopOpportunityProvenance?.sourceField}`,
             ),
       },
     };
@@ -312,7 +323,7 @@ export class RecommendationRealtimeStateV8Service {
       stale: playerRow.stale || inventoryRow.stale || alignmentAgeMs > maximumAlignmentAgeMs,
       alignmentAgeMs,
     };
-    const stateRevision = createStateRevision(playerRow, inventoryRow);
+    const stateRevision = createStateRevision(playerRow, inventoryRow, approvedDirectShopSourceKeys);
 
     return {
       ready: true,
@@ -409,18 +420,28 @@ function validateRequest(request: RecommendationRealtimeStateV8Request): string[
   return errors.sort();
 }
 
-function directShopOpportunityValue(payload: PlayerStatePayloadV8): ShopOpportunity {
+function directShopOpportunityValue(
+  payload: PlayerStatePayloadV8,
+  source: string,
+  approvedSourceKeys: ReadonlySet<string>,
+): ShopOpportunity {
+  const sourceField = payload.shopOpportunityProvenance?.sourceField?.trim();
   if (
     (payload.shopOpportunity === 'AVAILABLE' || payload.shopOpportunity === 'UNAVAILABLE')
     && payload.shopOpportunityProvenance?.type === 'DIRECT_SOURCE_SIGNAL'
-    && Boolean(payload.shopOpportunityProvenance.sourceField)
+    && sourceField
+    && approvedSourceKeys.has(directShopSourceApprovalKey(source, sourceField))
   ) {
     return payload.shopOpportunity;
   }
   return 'UNKNOWN';
 }
 
-function createStateRevision(player: TelemetryRow, inventory: TelemetryRow): string {
+function createStateRevision(
+  player: TelemetryRow,
+  inventory: TelemetryRow,
+  approvedDirectShopSourceKeys: readonly string[],
+): string {
   const digest = createHash('sha256')
     .update(JSON.stringify({
       playerEventId: player.eventId,
@@ -429,6 +450,7 @@ function createStateRevision(player: TelemetryRow, inventory: TelemetryRow): str
       inventorySourceEventId: inventory.sourceEventId,
       rulesetVersion: player.rulesetVersion,
       catalogSha256: player.catalogSha256,
+      approvedDirectShopSourceKeys: [...approvedDirectShopSourceKeys].sort(),
     }))
     .digest('hex');
   return `recommendation-state-v8:${digest}`;

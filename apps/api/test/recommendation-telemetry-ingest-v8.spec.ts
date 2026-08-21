@@ -3,9 +3,14 @@ import {
   RECOMMENDATION_TELEMETRY_SCHEMA_VERSION,
   PlayerStateEventV8,
 } from '@deadlock-live-probe/shared';
+import { parseDirectShopSourceAllowlist } from '../src/deadlock-live/recommendation-direct-shop-source-v8';
 import { RecommendationTelemetryIngestV8Service } from '../src/deadlock-live/recommendation-telemetry-ingest-v8.service';
 
+const DIRECT_SHOP_ALLOWLIST_ENV = 'RECOMMENDATION_DIRECT_SHOP_SOURCE_ALLOWLIST';
+
 describe('RecommendationTelemetryIngestV8Service', () => {
+  const originalDirectShopAllowlist = process.env[DIRECT_SHOP_ALLOWLIST_ENV];
+
   function event(): PlayerStateEventV8 {
     return {
       schemaVersion: RECOMMENDATION_TELEMETRY_SCHEMA_VERSION,
@@ -37,6 +42,11 @@ describe('RecommendationTelemetryIngestV8Service', () => {
       },
     };
   }
+
+  afterEach(() => {
+    if (originalDirectShopAllowlist === undefined) delete process.env[DIRECT_SHOP_ALLOWLIST_ENV];
+    else process.env[DIRECT_SHOP_ALLOWLIST_ENV] = originalDirectShopAllowlist;
+  });
 
   it('keeps raw souls unverified until controlled evidence passes', async () => {
     const append = jest.fn(async (value) => value);
@@ -90,6 +100,61 @@ describe('RecommendationTelemetryIngestV8Service', () => {
     await expect(service.appendExternal(selfAsserted)).rejects.toThrow(/must not self-assert/);
     expect(append).not.toHaveBeenCalled();
     expect(reject).toHaveBeenCalledWith(selfAsserted, ['EXTERNAL_SPENDABLE_SOULS_VERIFICATION_FORBIDDEN']);
+  });
+
+  it('rejects a client direct-shop claim until the exact source is server-approved', async () => {
+    delete process.env[DIRECT_SHOP_ALLOWLIST_ENV];
+    const append = jest.fn();
+    const reject = jest.fn();
+    const service = new RecommendationTelemetryIngestV8Service(
+      { append, reject } as never,
+      { report: jest.fn() } as never,
+    );
+    const directShop = event();
+    directShop.payload.shopOpportunity = 'AVAILABLE';
+    directShop.payload.shopOpportunityProvenance = {
+      type: 'DIRECT_SOURCE_SIGNAL',
+      sourceField: 'onInfoUpdates2|match_info|match_info|candidate_shop_state',
+    };
+
+    await expect(service.appendExternal(directShop)).rejects.toThrow(/not server-approved/);
+    expect(append).not.toHaveBeenCalled();
+    expect(reject).toHaveBeenCalledWith(directShop, ['EXTERNAL_DIRECT_SHOP_SOURCE_NOT_APPROVED']);
+  });
+
+  it('accepts a direct-shop claim only for an exact server-approved source key', async () => {
+    const sourceField = 'onInfoUpdates2|match_info|match_info|candidate_shop_state';
+    process.env[DIRECT_SHOP_ALLOWLIST_ENV] = `OVERWOLF_GEP:${sourceField}`;
+    const append = jest.fn(async (value) => value);
+    const reject = jest.fn();
+    const service = new RecommendationTelemetryIngestV8Service(
+      { append, reject } as never,
+      {
+        report: jest.fn(async () => ({
+          contractVersion: 'souls-affordability-v1',
+          canMarkSpendableSoulsVerified: false,
+        })),
+      } as never,
+    );
+    const directShop = event();
+    directShop.payload.shopOpportunity = 'UNAVAILABLE';
+    directShop.payload.shopOpportunityProvenance = {
+      type: 'DIRECT_SOURCE_SIGNAL',
+      sourceField,
+    };
+
+    await service.appendExternal(directShop);
+
+    expect(reject).not.toHaveBeenCalled();
+    expect(append).toHaveBeenCalledWith(directShop);
+  });
+
+  it('parses the direct-shop source allowlist conservatively', () => {
+    expect([...parseDirectShopSourceAllowlist(' OVERWOLF_GEP:a ,OVERWOLF_GEP:b,, ')]).toEqual([
+      'OVERWOLF_GEP:a',
+      'OVERWOLF_GEP:b',
+    ]);
+    expect([...parseDirectShopSourceAllowlist(undefined)]).toEqual([]);
   });
 
   it('rejects server-owned decision telemetry on the external endpoint', async () => {

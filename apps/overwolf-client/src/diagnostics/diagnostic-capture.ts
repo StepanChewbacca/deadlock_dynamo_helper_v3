@@ -1,3 +1,5 @@
+import { analyzeShopSignalCandidatesV1 } from './shop-signal-candidate-analysis';
+
 export type DiagnosticRawSource = 'onInfoUpdates2' | 'onNewEvents';
 
 export interface DiagnosticRawEvent {
@@ -26,6 +28,7 @@ type DiagnosticEntry = {
 type DiagnosticNote = {
   id: string;
   createdAt: string;
+  matchId?: string;
   approximateGameTime?: string;
   action: string;
   item?: string;
@@ -141,15 +144,7 @@ function collectVersionCandidates(value: unknown, result = new Set<string>(), de
 
 function shouldCapture(event: DiagnosticRawEvent): boolean {
   if (event.source === 'onNewEvents') return true;
-  const category = event.category || '';
-  const key = event.key || '';
-  return (
-    ['match_info', 'game_info', 'roster', 'items'].includes(category) ||
-    key === 'match_id' ||
-    key === 'match_state' ||
-    key.startsWith('items_') ||
-    key.startsWith('roster_')
-  );
+  return Boolean(event.key);
 }
 
 function write16(view: DataView, offset: number, value: number): void {
@@ -400,6 +395,7 @@ export class DiagnosticCapture {
     this.state.notes.push({
       id: randomId('note'),
       createdAt: nowIso(),
+      matchId: this.state.currentMatchId,
       action: action.value,
       item: item?.value.trim() || undefined,
       approximateGameTime: gameTime?.value.trim() || undefined,
@@ -430,6 +426,7 @@ export class DiagnosticCapture {
     const candidates = Array.from(
       this.state.entries.reduce((result, entry) => collectVersionCandidates(entry.rawPayload, result), new Set<string>()),
     ).sort();
+    const shopSignalAnalysis = analyzeShopSignalCandidatesV1(this.state.entries, this.state.notes);
     const sessionInfo = {
       schemaVersion: 1,
       createdAt: this.state.createdAt,
@@ -446,6 +443,7 @@ export class DiagnosticCapture {
       { name: 'overwolf-events.ndjson', content: this.state.entries.map((entry) => stringify(entry)).join('\n') },
       { name: 'session-info.json', content: stringify(sessionInfo, 2) },
       { name: 'notes.json', content: stringify(this.state.notes, 2) },
+      { name: 'shop-signal-candidates.json', content: stringify(shopSignalAnalysis, 2) },
       {
         name: 'steam-build.txt',
         content: [
@@ -462,6 +460,11 @@ export class DiagnosticCapture {
           '',
           'Upload this ZIP without editing it.',
           'It contains raw deduplicated GEP values, startup snapshots, match IDs, and manual action markers.',
+          '',
+          'Direct-shop discovery:',
+          '- Add SHOP_AVAILABLE and SHOP_UNAVAILABLE markers immediately when you manually observe each state.',
+          '- shop-signal-candidates.json only ranks correlated raw GEP channels.',
+          '- A candidate is never promoted automatically to DIRECT_SOURCE_SIGNAL; independent validation is required.',
         ].join('\n'),
       },
     ]);
@@ -499,7 +502,7 @@ export class DiagnosticCapture {
     panel.id = 'diagnostic-capture-panel';
     panel.innerHTML = `
       <div class="row"><span class="title">Diagnostic Capture</span><span class="status" id="diagnostic-status"></span><button class="primary" id="diagnostic-export">Export ZIP</button><button class="danger" id="diagnostic-clear">Clear</button></div>
-      <div class="row"><input id="diagnostic-steam-build" placeholder="Steam build ID (optional)"><select id="diagnostic-action"><option>BUY</option><option>UPGRADE</option><option>SELL</option><option>REBUY</option><option>CONSUME</option><option>RECONNECT</option><option>OTHER</option></select><input id="diagnostic-item" placeholder="Item name"><input id="diagnostic-game-time" placeholder="Game time MM:SS"><input id="diagnostic-note" placeholder="Optional note"><button id="diagnostic-add-note">Add marker</button></div>
+      <div class="row"><input id="diagnostic-steam-build" placeholder="Steam build ID (optional)"><select id="diagnostic-action"><option>SHOP_AVAILABLE</option><option>SHOP_UNAVAILABLE</option><option>BUY</option><option>UPGRADE</option><option>SELL</option><option>REBUY</option><option>CONSUME</option><option>RECONNECT</option><option>OTHER</option></select><input id="diagnostic-item" placeholder="Item name"><input id="diagnostic-game-time" placeholder="Game time MM:SS"><input id="diagnostic-note" placeholder="Optional note"><button id="diagnostic-add-note">Add marker</button></div>
     `;
     const appLayout = document.querySelector('.app-layout');
     appLayout?.parentElement ? appLayout.parentElement.insertBefore(panel, appLayout) : document.body.prepend(panel);

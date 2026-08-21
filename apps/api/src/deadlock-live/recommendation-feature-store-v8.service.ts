@@ -9,6 +9,10 @@ import {
   RecommendationFeatureAssemblerResultV8,
   assembleRecommendationFeatureStateV8,
 } from './recommendation-feature-assembler-v8';
+import {
+  configuredDirectShopSourceAllowlist,
+  sanitizePlayerStateDirectShopV8,
+} from './recommendation-direct-shop-source-v8';
 
 interface DecisionRow {
   decisionId: string;
@@ -22,6 +26,7 @@ interface DecisionRow {
 
 interface EventRow {
   eventType: string;
+  source: string;
   sourceOccurredAt: Date | string;
   payload: Record<string, unknown>;
 }
@@ -63,10 +68,11 @@ export class RecommendationFeatureStoreV8Service {
     const decisionAt = new Date(decision.decidedAt);
     if (!Number.isFinite(decisionAt.getTime())) return { ready: false, blockers: ['DECISION_TIMESTAMP_INVALID'] };
     const lowerBound = new Date(decisionAt.getTime() - maximumAlignmentAgeMs);
+    const approvedDirectShopSources = new Set(configuredDirectShopSourceAllowlist());
 
     const [playerRows, inventoryRows, catalogRows, historyRows] = await Promise.all([
       this.dataSource.query(
-        `SELECT "eventType", "sourceOccurredAt", "payload"
+        `SELECT "eventType", "source", "sourceOccurredAt", "payload"
          FROM recommendation_telemetry_events
          WHERE "matchId" = $1
            AND "playerKey" = $2
@@ -78,7 +84,7 @@ export class RecommendationFeatureStoreV8Service {
         [decision.matchId, decision.playerKey, lowerBound.toISOString(), decisionAt.toISOString()],
       ),
       this.dataSource.query(
-        `SELECT "eventType", "sourceOccurredAt", "payload"
+        `SELECT "eventType", "source", "sourceOccurredAt", "payload"
          FROM recommendation_telemetry_events
          WHERE "matchId" = $1
            AND "playerKey" = $2
@@ -99,7 +105,7 @@ export class RecommendationFeatureStoreV8Service {
       maximumHistoryEvents === 0
         ? Promise.resolve([])
         : this.dataSource.query(
-            `SELECT "eventType", "sourceOccurredAt", "payload"
+            `SELECT "eventType", "source", "sourceOccurredAt", "payload"
              FROM recommendation_telemetry_events
              WHERE "matchId" = $1
                AND "playerKey" = $2
@@ -125,6 +131,13 @@ export class RecommendationFeatureStoreV8Service {
       .reverse()
       .map(toHistoryEvent)
       .filter((event): event is RecommendationFeatureHistoryEventV8 => event !== undefined);
+    const playerPayload = player
+      ? sanitizePlayerStateDirectShopV8(
+          player.payload as unknown as PlayerStatePayloadV8,
+          player.source,
+          approvedDirectShopSources,
+        )
+      : undefined;
 
     return assembleRecommendationFeatureStateV8({
       decision: {
@@ -136,10 +149,10 @@ export class RecommendationFeatureStoreV8Service {
         rulesetVersion: decision.rulesetVersion,
         catalogSha256: decision.catalogSha256,
       },
-      playerState: player
+      playerState: player && playerPayload
         ? {
             sourceOccurredAtMs: new Date(player.sourceOccurredAt).getTime(),
-            payload: player.payload as unknown as PlayerStatePayloadV8,
+            payload: playerPayload,
           }
         : undefined,
       inventorySnapshot: inventory
