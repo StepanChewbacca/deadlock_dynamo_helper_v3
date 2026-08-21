@@ -29,6 +29,7 @@ export interface ShopSignalChannelV1 {
 
 export interface ShopSignalCandidateV1 {
   channel: ShopSignalChannelV1;
+  provenanceSourceField: string;
   markerHitCount: number;
   availableMarkerHitCount: number;
   unavailableMarkerHitCount: number;
@@ -130,6 +131,7 @@ export function analyzeShopSignalCandidatesV1(
 
     return [{
       channel: bucket.channel,
+      provenanceSourceField: channelSourceField(bucket.channel),
       markerHitCount,
       availableMarkerHitCount,
       unavailableMarkerHitCount,
@@ -176,7 +178,7 @@ function nearestEntry<T extends { timestampMs: number; matchId?: string }>(
   let best: T | undefined;
   let bestDistance = Number.POSITIVE_INFINITY;
   for (const entry of entries) {
-    if (markerMatchId && entry.matchId && entry.matchId !== markerMatchId) continue;
+    if (markerMatchId && entry.matchId !== markerMatchId) continue;
     const distance = Math.abs(entry.timestampMs - markerTimestampMs);
     if (distance > analysisWindowMs) continue;
     if (distance < bestDistance || (distance === bestDistance && entry.timestampMs <= markerTimestampMs)) {
@@ -194,7 +196,11 @@ function compareCandidates(left: ShopSignalCandidateV1, right: ShopSignalCandida
   if (left.lowCardinality !== right.lowCardinality) return left.lowCardinality ? -1 : 1;
   if (left.markerCoverage !== right.markerCoverage) return right.markerCoverage - left.markerCoverage;
   if (left.markerHitCount !== right.markerHitCount) return right.markerHitCount - left.markerHitCount;
-  return canonicalJson(left.channel).localeCompare(canonicalJson(right.channel));
+  return left.provenanceSourceField.localeCompare(right.provenanceSourceField);
+}
+
+function channelSourceField(channel: ShopSignalChannelV1): string {
+  return [channel.source, channel.feature ?? '', channel.category ?? '', channel.key].join('|');
 }
 
 function areDisjoint(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
@@ -213,6 +219,7 @@ function fingerprintCanonical(value: unknown): string {
 }
 
 function canonicalJson(value: unknown): string {
+  if (value === undefined) return 'undefined';
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
   const record = value as Record<string, unknown>;
