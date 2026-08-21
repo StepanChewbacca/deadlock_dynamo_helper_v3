@@ -1,7 +1,14 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 import { ModelBundleManifestV1 } from '@deadlock-live-probe/shared';
 
-export type ModelBundleRegistryStatus = 'REGISTERED' | 'ACTIVE' | 'RETIRED';
+export type ModelBundleRegistryStatus = 'REGISTERED' | 'VERIFIED' | 'ACTIVE' | 'RETIRED';
+
+export interface ModelBundleArtifactVerificationV1 {
+  verifier: string;
+  verifiedManifestSha256: string;
+  verifiedFiles: readonly { path: string; sha256: string; sizeBytes: number }[];
+  attestationRef?: string;
+}
 
 @Entity('model_bundle_registry_v1')
 @Index('idx_model_bundle_registry_v1_identity', ['modelId', 'modelVersion'], { unique: true })
@@ -30,8 +37,14 @@ export class ModelBundleRegistryV1 {
   @Column({ type: 'varchar', length: 32, default: 'REGISTERED' })
   status!: ModelBundleRegistryStatus;
 
+  @Column({ type: 'jsonb', nullable: true })
+  verification?: ModelBundleArtifactVerificationV1;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt!: Date;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  verifiedAt?: Date;
 
   @Column({ type: 'timestamptz', nullable: true })
   activatedAt?: Date;
