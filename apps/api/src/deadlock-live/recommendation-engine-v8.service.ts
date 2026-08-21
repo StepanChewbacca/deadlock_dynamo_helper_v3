@@ -74,40 +74,16 @@ export class RecommendationEngineV8Service {
       };
     }
     if (!input.featureState) {
-      return {
-        domainCandidates,
-        telemetryCandidates: stripUnsafeValueOnlyScores(telemetryCandidates),
-        policyAttempted: true,
-        policyReady: false,
-        policyBlockers: ['POLICY_FEATURE_STATE_MISSING'],
-      };
+      return policyFailure(domainCandidates, telemetryCandidates, 'POLICY_FEATURE_STATE_MISSING');
     }
     if (!input.behavioralModel) {
-      return {
-        domainCandidates,
-        telemetryCandidates: stripUnsafeValueOnlyScores(telemetryCandidates),
-        policyAttempted: true,
-        policyReady: false,
-        policyBlockers: ['POLICY_BEHAVIORAL_MODEL_MISSING'],
-      };
+      return policyFailure(domainCandidates, telemetryCandidates, 'POLICY_BEHAVIORAL_MODEL_MISSING');
     }
     if (!input.valueModel) {
-      return {
-        domainCandidates,
-        telemetryCandidates,
-        policyAttempted: true,
-        policyReady: false,
-        policyBlockers: ['POLICY_VALUE_MODEL_MISSING'],
-      };
+      return policyFailure(domainCandidates, telemetryCandidates, 'POLICY_VALUE_MODEL_MISSING');
     }
     if (!input.policyConfig) {
-      return {
-        domainCandidates,
-        telemetryCandidates: stripUnsafeValueOnlyScores(telemetryCandidates),
-        policyAttempted: true,
-        policyReady: false,
-        policyBlockers: ['POLICY_CONFIG_MISSING'],
-      };
+      return policyFailure(domainCandidates, telemetryCandidates, 'POLICY_CONFIG_MISSING');
     }
 
     try {
@@ -128,13 +104,11 @@ export class RecommendationEngineV8Service {
         policyDistribution,
       };
     } catch (error) {
-      return {
+      return policyFailure(
         domainCandidates,
-        telemetryCandidates: stripUnsafeValueOnlyScores(telemetryCandidates),
-        policyAttempted: true,
-        policyReady: false,
-        policyBlockers: [`POLICY_BUILD_FAILED:${errorMessage(error)}`],
-      };
+        telemetryCandidates,
+        `POLICY_BUILD_FAILED:${errorMessage(error)}`,
+      );
     }
   }
 }
@@ -201,7 +175,10 @@ function predictBehaviorProbabilities(
   const decision: RecommendationBehavioralV8Decision = {
     decisionId: featureState.decisionId,
     state: featureState,
-    candidates: feasible.map((candidate) => toActionFeature(toTelemetryCandidate(candidate))),
+    candidates: feasible.map((candidate) => ({
+      ...toActionFeature(toTelemetryCandidate(candidate)),
+      feasible: true as const,
+    })),
   };
   const prediction = predictRecommendationBehavioralV8Linear(model, decision);
   const probabilities = new Map(prediction.candidates.map((candidate) => [candidate.actionKey, candidate.probability]));
@@ -219,6 +196,20 @@ function toActionFeature(candidate: RecommendationDecisionCandidateV8): Recommen
     sellItemId: candidate.sellItemId,
     recipeId: candidate.recipeId,
     effectiveCostSouls: candidate.effectiveCostSouls,
+  };
+}
+
+function policyFailure(
+  domainCandidates: readonly RecommendationCandidate[],
+  telemetryCandidates: readonly RecommendationDecisionCandidateV8[],
+  blocker: string,
+): RecommendationEngineV8Result {
+  return {
+    domainCandidates,
+    telemetryCandidates: stripUnsafeValueOnlyScores(telemetryCandidates),
+    policyAttempted: true,
+    policyReady: false,
+    policyBlockers: [blocker],
   };
 }
 
