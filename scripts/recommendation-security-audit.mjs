@@ -34,6 +34,10 @@ for (const name of fs.existsSync(workflowDir) ? fs.readdirSync(workflowDir) : []
       environment: 'recommendation-training',
       purpose: 'privileged training',
     });
+    auditNoGitHubExpressionsInsideRunBlocks(name, normalized);
+    if (!/pip[^\n]*install[^\n]*--no-index[^\n]*--find-links/m.test(normalized)) {
+      errors.push(`${name}: privileged training dependencies must be installed from an approved offline wheelhouse`);
+    }
   }
 
   const privilegedDatasetExport = /recommendation-.*dataset-export/i.test(name);
@@ -43,6 +47,7 @@ for (const name of fs.existsSync(workflowDir) ? fs.readdirSync(workflowDir) : []
       environment: 'recommendation-dataset-export',
       purpose: 'privileged dataset export',
     });
+    auditNoGitHubExpressionsInsideRunBlocks(name, normalized);
   }
 
   function auditManualSelfHostedWorkflow(workflowName, workflowText, contract) {
@@ -74,9 +79,42 @@ for (const name of fs.existsSync(trainingConfigDir) ? fs.readdirSync(trainingCon
   }
 }
 
+const trainingRequirements = path.resolve('training/recommendation_v8/requirements-training.txt');
+if (fs.existsSync(trainingRequirements)) {
+  const requirementLines = fs.readFileSync(trainingRequirements, 'utf8')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'));
+  if (requirementLines.length === 0) errors.push('requirements-training.txt: at least one pinned dependency is required');
+  for (const line of requirementLines) {
+    if (!/^[A-Za-z0-9_.-]+==[A-Za-z0-9_.+!-]+$/.test(line)) {
+      errors.push(`requirements-training.txt: dependency must be exactly pinned: ${line}`);
+    }
+  }
+}
+
 if (errors.length > 0) {
   console.error('recommendation security audit: FAIL');
   for (const error of errors) console.error(`- ${error}`);
   process.exit(1);
 }
 console.log('recommendation security audit: PASS');
+
+function auditNoGitHubExpressionsInsideRunBlocks(workflowName, workflowText) {
+  const lines = workflowText.split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = lines[index].match(/^(\s*)run:\s*\|[-+]?\s*$/);
+    if (!match) continue;
+    const runIndent = match[1].length;
+    for (let inner = index + 1; inner < lines.length; inner += 1) {
+      const line = lines[inner];
+      if (line.trim() === '') continue;
+      const indent = line.match(/^\s*/)?.[0].length ?? 0;
+      if (indent <= runIndent) break;
+      if (line.includes('${{')) {
+        errors.push(`${workflowName}: GitHub expressions are forbidden inside privileged run blocks; map values through env instead`);
+        break;
+      }
+    }
+  }
+}
