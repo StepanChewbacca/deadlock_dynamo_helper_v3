@@ -20,6 +20,8 @@ import { RecommendationDecisionV8Service } from './recommendation-decision-v8.se
 import { RecommendationRealtimeStateV8Service } from './recommendation-realtime-state-v8.service';
 import { RecommendationRealtimeCoordinatorV8Service } from './recommendation-realtime-coordinator-v8.service';
 import { RecommendationRuntimeHealthV8Service } from './recommendation-runtime-health-v8.service';
+import { RecommendationReadinessV8Controller } from './recommendation-readiness-v8.controller';
+import { RecommendationReadinessV8Service } from './recommendation-readiness-v8.service';
 import { RecommendationObservabilityController } from './recommendation-observability.controller';
 import { RecommendationObservabilityReportService } from './recommendation-observability-report.service';
 import { RecommendationTelemetryController } from './recommendation-telemetry.controller';
@@ -96,6 +98,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     IngestStatusController,
     RecommendationTelemetryController,
     RecommendationObservabilityController,
+    RecommendationReadinessV8Controller,
     RecommendationFeatureStoreV8Controller,
     RecommendationDatasetV8Controller,
     RecommendationDatasetRegistryController,
@@ -119,6 +122,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationRealtimeStateV8Service,
     RecommendationRealtimeCoordinatorV8Service,
     RecommendationRuntimeHealthV8Service,
+    RecommendationReadinessV8Service,
     RecommendationTelemetryStoreService,
     RecommendationTelemetryIngestV8Service,
     RecommendationObservabilityReportService,
@@ -147,6 +151,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationRealtimeStateV8Service,
     RecommendationRealtimeCoordinatorV8Service,
     RecommendationRuntimeHealthV8Service,
+    RecommendationReadinessV8Service,
     RecommendationTelemetryStoreService,
     RecommendationTelemetryIngestV8Service,
     RecommendationObservabilityReportService,
