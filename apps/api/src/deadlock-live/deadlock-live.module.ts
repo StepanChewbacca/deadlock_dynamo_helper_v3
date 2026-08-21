@@ -34,6 +34,9 @@ import { RecommendationDatasetV8Controller } from './recommendation-dataset-v8.c
 import { RecommendationDatasetV8ReportService } from './recommendation-dataset-v8-report.service';
 import { RecommendationDatasetRegistryController } from './recommendation-dataset-registry.controller';
 import { RecommendationDatasetRegistryService } from './recommendation-dataset-registry.service';
+import { RecommendationTrainingDatasetV8Service } from './recommendation-training-dataset-v8.service';
+import { RecommendationTrainingLaunchV8Controller } from './recommendation-training-launch-v8.controller';
+import { RecommendationTrainingLaunchV8Service } from './recommendation-training-launch-v8.service';
 import { RecommendationRoadmapEvidenceController } from './recommendation-roadmap-evidence.controller';
 import { RecommendationRoadmapEvidenceService } from './recommendation-roadmap-evidence.service';
 import { RecommendationShadowController } from './recommendation-shadow.controller';
@@ -107,6 +110,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationFeatureStoreV8Controller,
     RecommendationDatasetV8Controller,
     RecommendationDatasetRegistryController,
+    RecommendationTrainingLaunchV8Controller,
     ModelBundleRegistryController,
     RecommendationRoadmapEvidenceController,
     RecommendationShadowController,
@@ -136,6 +140,8 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationFeatureStoreV8Service,
     RecommendationDatasetV8ReportService,
     RecommendationDatasetRegistryService,
+    RecommendationTrainingDatasetV8Service,
+    RecommendationTrainingLaunchV8Service,
     RecommendationRoadmapEvidenceService,
     RecommendationShadowReportService,
     RecommendationOpeReportService,
@@ -166,6 +172,8 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationFeatureStoreV8Service,
     RecommendationDatasetV8ReportService,
     RecommendationDatasetRegistryService,
+    RecommendationTrainingDatasetV8Service,
+    RecommendationTrainingLaunchV8Service,
     RecommendationRoadmapEvidenceService,
     RecommendationShadowReportService,
     RecommendationOpeReportService,
