@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const {
+  EXACT_ACTION_PROPENSITY_SOURCE,
   MODEL_BUNDLE_CONTRACT_VERSION,
   evaluateBehavioralModelGateV1,
   evaluateOffPolicyV1,
@@ -96,7 +97,7 @@ const opeRows = Array.from({ length: 200 }, (_, index) => ({
   decisionId: `d-${index}`,
   reward: 1,
   loggingPropensity: 0.5,
-  loggingPropensitySource: 'RECORDED_AT_ASSIGNMENT',
+  loggingPropensitySource: EXACT_ACTION_PROPENSITY_SOURCE,
   targetProbability: 0.5,
   qLogged: 0.8,
   qTargetExpected: 0.8,
@@ -108,8 +109,12 @@ assert(Math.abs(ope.doublyRobust - 1) < 1e-12);
 assert.equal(ope.passedSupportGate, true);
 
 assert.throws(
-  () => evaluateOffPolicyV1([{ ...opeRows[0], loggingPropensitySource: 'RECORDED_AT_ASSIGNMENT', loggingPropensity: 0 }]),
+  () => evaluateOffPolicyV1([{ ...opeRows[0], loggingPropensity: 0 }]),
   /Invalid logging propensity/,
+);
+assert.throws(
+  () => evaluateOffPolicyV1([{ ...opeRows[0], loggingPropensitySource: 'RECONSTRUCTED' }]),
+  /Reconstructed logging propensity is forbidden/,
 );
 
 const sensitivity = evaluateValueActionSensitivityV1({
