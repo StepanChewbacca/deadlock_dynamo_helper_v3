@@ -44,6 +44,7 @@ export interface SoulsAffordabilityEvidenceV2Report {
   catalogCount: number;
   invalidObservationIds: readonly string[];
   affordability: SoulsAffordabilityReportV1;
+  verdict: SoulsAffordabilityReportV1['verdict'];
   canMarkSpendableSoulsVerified: boolean;
 }
 
@@ -69,6 +70,7 @@ export function evaluateSoulsAffordabilityEvidenceV2(
     catalogCount: new Set(validObservations.map((observation) => observation.catalogSha256)).size,
     invalidObservationIds,
     affordability,
+    verdict: affordability.verdict,
     canMarkSpendableSoulsVerified: invalidObservationIds.length === 0 && affordability.verdict === 'PASS',
   };
 }
