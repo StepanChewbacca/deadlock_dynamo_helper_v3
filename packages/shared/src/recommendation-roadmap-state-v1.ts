@@ -33,6 +33,7 @@ export interface RecommendationRoadmapEvidenceV1 {
   causalValueRelease: RecommendationRoadmapGateStateV1;
   policyAbRelease: RecommendationRoadmapGateStateV1;
   sequentialRlResearchGate: RecommendationRoadmapGateStateV1;
+  futureTestEvaluation?: RecommendationRoadmapGateStateV1;
   futureTestUntouched: boolean;
 }
 
@@ -91,7 +92,7 @@ const PHASE_REQUIREMENTS: ReadonlyArray<{
   },
   {
     phase: 'SEQUENTIAL_RL_RESEARCH',
-    gates: ['sequentialRlResearchGate'],
+    gates: ['futureTestEvaluation', 'sequentialRlResearchGate'],
   },
 ];
 
@@ -99,21 +100,32 @@ export function evaluateRecommendationRoadmapStateV1(
   evidence: RecommendationRoadmapEvidenceV1,
 ): RecommendationRoadmapStateReportV1 {
   const phases: RecommendationRoadmapPhaseStateV1[] = [];
+  const futureTestEvaluation = evidence.futureTestEvaluation ?? 'NOT_EVALUATED';
   let previousUnlocked = true;
+
   for (const requirement of PHASE_REQUIREMENTS) {
     const blockers: string[] = [];
     if (!previousUnlocked) blockers.push('PREREQUISITE_PHASE_NOT_UNLOCKED');
     for (const gateName of requirement.gates) {
-      const value = evidence[gateName];
-      if (value !== 'PASS') blockers.push(`${String(gateName)}:${String(value)}`);
+      const value = gateName === 'futureTestEvaluation'
+        ? futureTestEvaluation
+        : evidence[gateName];
+      if (value !== 'PASS') blockers.push(`${String(gateName)}:${String(value ?? 'NOT_EVALUATED')}`);
     }
-    if (!evidence.futureTestUntouched && requirement.phase !== 'SEQUENTIAL_RL_RESEARCH') {
-      blockers.push('FUTURE_TEST_ALREADY_TOUCHED');
+
+    if (
+      requirement.phase !== 'SEQUENTIAL_RL_RESEARCH'
+      && !evidence.futureTestUntouched
+      && futureTestEvaluation !== 'PASS'
+    ) {
+      blockers.push('FUTURE_TEST_TOUCHED_BEFORE_AUTHORIZED_FINAL_EVALUATION');
     }
+
     const unlocked = blockers.length === 0;
     phases.push({ phase: requirement.phase, unlocked, blockers: blockers.sort() });
     previousUnlocked = unlocked;
   }
+
   const highestUnlockedPhase = [...phases].reverse().find((phase) => phase.unlocked)?.phase;
   const hardBlockers = [...new Set(phases.flatMap((phase) => phase.blockers))].sort();
   return {
