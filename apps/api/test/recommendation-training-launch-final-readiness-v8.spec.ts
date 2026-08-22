@@ -1,9 +1,14 @@
+import {
+  RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_EVALUATOR_V1,
+  RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_V1,
+} from '@deadlock-live-probe/shared';
 import { RecommendationTrainingLaunchV8Service } from '../src/deadlock-live/recommendation-training-launch-v8.service';
 
 const sha = (value: string) => value.repeat(64).slice(0, 64);
 const SHOP_ENV = 'RECOMMENDATION_DIRECT_SHOP_SOURCE_ALLOWLIST';
 const CANDIDATE_GENERATOR_VERSION = 'candidate-v8';
 const DIRECT_SHOP_SOURCE_APPROVAL_KEY = 'OVERWOLF_GEP:onInfoUpdates2|match_info|match_info|shop_state';
+const DIRECT_SHOP_SUBJECT_SHA = sha('8');
 
 function manifest() {
   return {
@@ -68,6 +73,7 @@ function roadmapEvidence() {
   return {
     canonicalGepV2: 'PASS' as const,
     controlledSoulsValidation: 'PASS' as const,
+    directShopSourceValidation: 'PASS' as const,
     versionedRulesetCatalog: 'PASS' as const,
     deterministicLegality: 'PASS' as const,
     recommendationTelemetryV8: 'PASS' as const,
@@ -86,6 +92,18 @@ function roadmapEvidence() {
     sequentialRlResearchGate: 'NOT_EVALUATED' as const,
     futureTestEvaluation: 'NOT_EVALUATED' as const,
     futureTestUntouched: true,
+  };
+}
+
+function roadmapReport() {
+  return {
+    evidence: roadmapEvidence(),
+    latestEvidenceByGate: {
+      directShopSourceValidation: {
+        subjectSha256: DIRECT_SHOP_SUBJECT_SHA,
+        evaluator: RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_EVALUATOR_V1,
+      },
+    },
   };
 }
 
@@ -111,6 +129,49 @@ function currentObservability() {
   };
 }
 
+function validationSnapshot() {
+  return {
+    subjectSha256: DIRECT_SHOP_SUBJECT_SHA,
+    gateName: 'directShopSourceValidation',
+    evaluator: RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_EVALUATOR_V1,
+    report: {
+      contractVersion: RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_V1,
+      status: 'PASS',
+      approvalKey: DIRECT_SHOP_SOURCE_APPROVAL_KEY,
+      canActivateDirectShopSource: true,
+      blockers: [],
+    },
+  };
+}
+
+function createService(datasetOverrides: Record<string, unknown> = {}) {
+  const dataset = manifest();
+  const datasetRegistry = {
+    getVerified: jest.fn(async () => ({
+      datasetId: dataset.datasetId,
+      datasetSha256: dataset.datasetSha256,
+      manifestSha256: sha('9'),
+      objectBaseUri: 's3://immutable/dataset-v8-final',
+      manifest: dataset,
+      verification: { verifiedManifestSha256: sha('9') },
+    })),
+  };
+  const roadmap = { report: jest.fn(async () => roadmapReport()) };
+  const datasetReport = { buildReport: jest.fn(async () => currentDataset(datasetOverrides)) };
+  const observability = { buildReport: jest.fn(async () => currentObservability()) };
+  const souls = { report: jest.fn(async () => ({ verdict: 'PASS' as const, canMarkSpendableSoulsVerified: true })) };
+  const materializer = { getSnapshot: jest.fn(async () => validationSnapshot()) };
+  const service = new RecommendationTrainingLaunchV8Service(
+    datasetRegistry as never,
+    roadmap as never,
+    datasetReport as never,
+    observability as never,
+    souls as never,
+    materializer as never,
+  );
+  return { service, datasetReport, observability };
+}
+
 describe('RecommendationTrainingLaunchV8Service final data readiness', () => {
   const originalShopEnv = process.env[SHOP_ENV];
 
@@ -124,30 +185,9 @@ describe('RecommendationTrainingLaunchV8Service final data readiness', () => {
   });
 
   it('rechecks current data over the immutable dataset development window', async () => {
-    const dataset = manifest();
-    const datasetRegistry = {
-      getVerified: jest.fn(async () => ({
-        datasetId: dataset.datasetId,
-        datasetSha256: dataset.datasetSha256,
-        manifestSha256: sha('9'),
-        objectBaseUri: 's3://immutable/dataset-v8-final',
-        manifest: dataset,
-        verification: { verifiedManifestSha256: sha('9') },
-      })),
-    };
-    const roadmap = { report: jest.fn(async () => ({ evidence: roadmapEvidence() })) };
-    const datasetReport = { buildReport: jest.fn(async () => currentDataset()) };
-    const observability = { buildReport: jest.fn(async () => currentObservability()) };
-    const souls = { report: jest.fn(async () => ({ verdict: 'PASS' as const, canMarkSpendableSoulsVerified: true })) };
-    const service = new RecommendationTrainingLaunchV8Service(
-      datasetRegistry as never,
-      roadmap as never,
-      datasetReport as never,
-      observability as never,
-      souls as never,
-    );
+    const { service, datasetReport, observability } = createService();
 
-    const report = await service.preflight(dataset.datasetId, config());
+    const report = await service.preflight('dataset-v8-final', config());
 
     expect(report.ready).toBe(true);
     expect(datasetReport.buildReport).toHaveBeenCalledWith({
@@ -162,35 +202,18 @@ describe('RecommendationTrainingLaunchV8Service final data readiness', () => {
     });
     expect(report.currentDataGates.candidateGeneratorVersion).toBe(CANDIDATE_GENERATOR_VERSION);
     expect(report.currentDataGates.directShopSourceApprovalKeys).toEqual([DIRECT_SHOP_SOURCE_APPROVAL_KEY]);
+    expect(report.currentDataGates.directShopSourceValidation).toBe('PASS');
     expect(report.currentDataGates.explicitFeasibilityCoverage).toBe(0.997);
   });
 
   it('blocks a previously green roadmap when current Dataset V8 evidence no longer passes', async () => {
-    const dataset = manifest();
-    const service = new RecommendationTrainingLaunchV8Service(
-      {
-        getVerified: jest.fn(async () => ({
-          datasetId: dataset.datasetId,
-          datasetSha256: dataset.datasetSha256,
-          manifestSha256: sha('9'),
-          objectBaseUri: 's3://immutable/dataset-v8-final',
-          manifest: dataset,
-          verification: { verifiedManifestSha256: sha('9') },
-        })),
-      } as never,
-      { report: jest.fn(async () => ({ evidence: roadmapEvidence() })) } as never,
-      {
-        buildReport: jest.fn(async () => currentDataset({
-          passedEmpiricalGate: false,
-          blockers: ['EXPLICIT_FEASIBILITY_COVERAGE_BELOW_0_995'],
-          explicitFeasibilityCoverage: 0.99,
-        })),
-      } as never,
-      { buildReport: jest.fn(async () => currentObservability()) } as never,
-      { report: jest.fn(async () => ({ verdict: 'PASS' as const, canMarkSpendableSoulsVerified: true })) } as never,
-    );
+    const { service } = createService({
+      passedEmpiricalGate: false,
+      blockers: ['EXPLICIT_FEASIBILITY_COVERAGE_BELOW_0_995'],
+      explicitFeasibilityCoverage: 0.99,
+    });
 
-    const report = await service.preflight(dataset.datasetId, config());
+    const report = await service.preflight('dataset-v8-final', config());
 
     expect(report.ready).toBe(false);
     expect(report.blockers).toContain('CURRENT_DATASET_EMPIRICAL:EXPLICIT_FEASIBILITY_COVERAGE_BELOW_0_995');
