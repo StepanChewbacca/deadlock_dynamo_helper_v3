@@ -7,6 +7,8 @@ const {
   validateRecommendationDatasetManifestV1,
 } = require('../dist');
 
+const DIRECT_SHOP_SOURCE_APPROVAL_KEY = 'OVERWOLF_GEP:onInfoUpdates2|match_info|match_info|shop_state';
+
 function manifest(shadowDecisions = 10000) {
   return {
     contractVersion: RECOMMENDATION_DATASET_MANIFEST_VERSION,
@@ -18,6 +20,7 @@ function manifest(shadowDecisions = 10000) {
     featureContractVersion: RECOMMENDATION_FEATURE_CONTRACT_VERSION,
     actionContractVersion: 'recommendation-actions-v1',
     candidateGeneratorVersion: 'candidate-v1',
+    directShopSourceApprovalKeys: [DIRECT_SHOP_SOURCE_APPROVAL_KEY],
     pointInTimeCorrect: true,
     observedActionInjected: false,
     futureTestTouched: false,
@@ -137,6 +140,18 @@ function evidence() {
 
 const valid = manifest();
 assert.deepEqual(validateRecommendationDatasetManifestV1(valid), { valid: true, errors: [] });
+
+const invalidApprovalKeys = {
+  ...valid,
+  directShopSourceApprovalKeys: [DIRECT_SHOP_SOURCE_APPROVAL_KEY, DIRECT_SHOP_SOURCE_APPROVAL_KEY],
+};
+assert(validateRecommendationDatasetManifestV1(invalidApprovalKeys).errors.includes('DIRECT_SHOP_SOURCE_APPROVAL_KEYS_NOT_CANONICAL'));
+
+const invalidApprovalKey = {
+  ...valid,
+  directShopSourceApprovalKeys: ['invalid-key-without-source-separator'],
+};
+assert(validateRecommendationDatasetManifestV1(invalidApprovalKey).errors.includes('DIRECT_SHOP_SOURCE_APPROVAL_KEY_INVALID'));
 
 const reordered = { ...valid, splits: [valid.splits[1], valid.splits[0], ...valid.splits.slice(2)] };
 assert(validateRecommendationDatasetManifestV1(reordered).errors.includes('DATASET_SPLIT_ORDER_INVALID'));

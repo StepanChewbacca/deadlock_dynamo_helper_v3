@@ -17,6 +17,7 @@ interface RecommendationFoundationalEvidenceRequestV8 {
   from?: string;
   to?: string;
   maximumAlignmentAgeMs?: number;
+  candidateGeneratorVersion?: string;
 }
 
 @Controller('deadlock-live/recommendation-roadmap/v1')
@@ -50,6 +51,7 @@ export class RecommendationRoadmapEvidenceController {
       from: optionalDate(body.from, 'from'),
       to: optionalDate(body.to, 'to'),
       maximumAlignmentAgeMs: body.maximumAlignmentAgeMs,
+      candidateGeneratorVersion: body.candidateGeneratorVersion,
     });
   }
 

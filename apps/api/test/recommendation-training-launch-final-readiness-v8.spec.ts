@@ -1,6 +1,9 @@
 import { RecommendationTrainingLaunchV8Service } from '../src/deadlock-live/recommendation-training-launch-v8.service';
 
 const sha = (value: string) => value.repeat(64).slice(0, 64);
+const SHOP_ENV = 'RECOMMENDATION_DIRECT_SHOP_SOURCE_ALLOWLIST';
+const CANDIDATE_GENERATOR_VERSION = 'candidate-v8';
+const DIRECT_SHOP_SOURCE_APPROVAL_KEY = 'OVERWOLF_GEP:onInfoUpdates2|match_info|match_info|shop_state';
 
 function manifest() {
   return {
@@ -12,7 +15,8 @@ function manifest() {
     datasetContractVersion: 'recommendation-dataset-v8',
     featureContractVersion: 'recommendation-features-v8',
     actionContractVersion: 'recommendation-actions-v1',
-    candidateGeneratorVersion: 'candidate-v8',
+    candidateGeneratorVersion: CANDIDATE_GENERATOR_VERSION,
+    directShopSourceApprovalKeys: [DIRECT_SHOP_SOURCE_APPROVAL_KEY],
     pointInTimeCorrect: true,
     observedActionInjected: false,
     futureTestTouched: false,
@@ -87,6 +91,7 @@ function roadmapEvidence() {
 
 function currentDataset(overrides: Record<string, unknown> = {}) {
   return {
+    candidateGeneratorVersion: CANDIDATE_GENERATOR_VERSION,
     passedStructuralGate: true,
     passedEmpiricalGate: true,
     blockers: [],
@@ -98,7 +103,26 @@ function currentDataset(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function currentObservability() {
+  return {
+    candidateGeneratorVersion: CANDIDATE_GENERATOR_VERSION,
+    approvedDirectShopSourceKeys: [DIRECT_SHOP_SOURCE_APPROVAL_KEY],
+    gate: { passed: true, blockers: [] },
+  };
+}
+
 describe('RecommendationTrainingLaunchV8Service final data readiness', () => {
+  const originalShopEnv = process.env[SHOP_ENV];
+
+  beforeEach(() => {
+    process.env[SHOP_ENV] = DIRECT_SHOP_SOURCE_APPROVAL_KEY;
+  });
+
+  afterEach(() => {
+    if (originalShopEnv === undefined) delete process.env[SHOP_ENV];
+    else process.env[SHOP_ENV] = originalShopEnv;
+  });
+
   it('rechecks current data over the immutable dataset development window', async () => {
     const dataset = manifest();
     const datasetRegistry = {
@@ -113,7 +137,7 @@ describe('RecommendationTrainingLaunchV8Service final data readiness', () => {
     };
     const roadmap = { report: jest.fn(async () => ({ evidence: roadmapEvidence() })) };
     const datasetReport = { buildReport: jest.fn(async () => currentDataset()) };
-    const observability = { buildReport: jest.fn(async () => ({ gate: { passed: true, blockers: [] } })) };
+    const observability = { buildReport: jest.fn(async () => currentObservability()) };
     const souls = { report: jest.fn(async () => ({ verdict: 'PASS' as const, canMarkSpendableSoulsVerified: true })) };
     const service = new RecommendationTrainingLaunchV8Service(
       datasetRegistry as never,
@@ -129,11 +153,15 @@ describe('RecommendationTrainingLaunchV8Service final data readiness', () => {
     expect(datasetReport.buildReport).toHaveBeenCalledWith({
       from: new Date('2026-07-01T00:00:00.000Z'),
       to: new Date('2026-08-01T00:00:00.000Z'),
+      candidateGeneratorVersion: CANDIDATE_GENERATOR_VERSION,
     });
     expect(observability.buildReport).toHaveBeenCalledWith({
       from: new Date('2026-07-01T00:00:00.000Z'),
       to: new Date('2026-08-01T00:00:00.000Z'),
+      candidateGeneratorVersion: CANDIDATE_GENERATOR_VERSION,
     });
+    expect(report.currentDataGates.candidateGeneratorVersion).toBe(CANDIDATE_GENERATOR_VERSION);
+    expect(report.currentDataGates.directShopSourceApprovalKeys).toEqual([DIRECT_SHOP_SOURCE_APPROVAL_KEY]);
     expect(report.currentDataGates.explicitFeasibilityCoverage).toBe(0.997);
   });
 
@@ -158,7 +186,7 @@ describe('RecommendationTrainingLaunchV8Service final data readiness', () => {
           explicitFeasibilityCoverage: 0.99,
         })),
       } as never,
-      { buildReport: jest.fn(async () => ({ gate: { passed: true, blockers: [] } })) } as never,
+      { buildReport: jest.fn(async () => currentObservability()) } as never,
       { report: jest.fn(async () => ({ verdict: 'PASS' as const, canMarkSpendableSoulsVerified: true })) } as never,
     );
 

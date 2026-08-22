@@ -6,6 +6,7 @@ import {
 } from '@deadlock-live-probe/shared';
 import { RecommendationDatasetRegistryService } from './recommendation-dataset-registry.service';
 import { RecommendationDatasetV8ReportService } from './recommendation-dataset-v8-report.service';
+import { configuredDirectShopSourceAllowlist } from './recommendation-direct-shop-source-v8';
 import { RecommendationObservabilityReportService } from './recommendation-observability-report.service';
 import { RecommendationRoadmapEvidenceService } from './recommendation-roadmap-evidence.service';
 import { SoulsAffordabilityEvidenceV2Service } from './souls-affordability-evidence-v2.service';
@@ -21,6 +22,8 @@ export interface RecommendationTrainingLaunchPreflightV8 {
   currentDataGates: {
     from: string;
     to: string;
+    candidateGeneratorVersion: string;
+    directShopSourceApprovalKeys: readonly string[];
     controlledSoulsValidation: 'PASS' | 'FAIL' | 'INSUFFICIENT_EVIDENCE';
     observabilityPassed: boolean;
     datasetStructuralPassed: boolean;
@@ -49,11 +52,23 @@ export class RecommendationTrainingLaunchV8Service {
   ): Promise<RecommendationTrainingLaunchPreflightV8> {
     if (!datasetId) throw new Error('datasetId is required');
     const dataset = await this.datasetRegistry.getVerified(datasetId);
+    const candidateGeneratorVersion = dataset.manifest.candidateGeneratorVersion?.trim();
+    if (!candidateGeneratorVersion) throw new Error('Verified dataset candidateGeneratorVersion is missing');
+    const datasetDirectShopSourceApprovalKeys = dataset.manifest.directShopSourceApprovalKeys;
+    const currentDirectShopSourceApprovalKeys = configuredDirectShopSourceAllowlist();
     const window = developmentWindow(dataset.manifest.splits);
     const [roadmap, currentDataset, currentObservability, currentSouls] = await Promise.all([
       this.roadmapEvidence.report(),
-      this.datasetReport.buildReport({ from: window.from, to: window.to }),
-      this.observabilityReport.buildReport({ from: window.from, to: window.to }),
+      this.datasetReport.buildReport({
+        from: window.from,
+        to: window.to,
+        candidateGeneratorVersion,
+      }),
+      this.observabilityReport.buildReport({
+        from: window.from,
+        to: window.to,
+        candidateGeneratorVersion,
+      }),
       this.soulsEvidence.report(),
     ]);
     const training = evaluateRecommendationBehavioralTrainingLaunchV1({
@@ -67,6 +82,20 @@ export class RecommendationTrainingLaunchV8Service {
     }
     if (dataset.datasetSha256 !== dataset.manifest.datasetSha256) {
       blockers.push('DATASET_REGISTRY_SHA_MISMATCH');
+    }
+    if (!datasetDirectShopSourceApprovalKeys || datasetDirectShopSourceApprovalKeys.length === 0) {
+      blockers.push('DATASET_DIRECT_SHOP_SOURCE_APPROVALS_MISSING');
+    } else if (!sameStrings(datasetDirectShopSourceApprovalKeys, currentDirectShopSourceApprovalKeys)) {
+      blockers.push('CURRENT_DIRECT_SHOP_SOURCE_APPROVAL_SET_MISMATCH');
+    }
+    if (currentDataset.candidateGeneratorVersion !== candidateGeneratorVersion) {
+      blockers.push('CURRENT_DATASET_CANDIDATE_GENERATOR_SCOPE_MISMATCH');
+    }
+    if (currentObservability.candidateGeneratorVersion !== candidateGeneratorVersion) {
+      blockers.push('CURRENT_OBSERVABILITY_CANDIDATE_GENERATOR_SCOPE_MISMATCH');
+    }
+    if (!sameStrings(currentObservability.approvedDirectShopSourceKeys ?? [], currentDirectShopSourceApprovalKeys)) {
+      blockers.push('CURRENT_OBSERVABILITY_DIRECT_SHOP_APPROVAL_SCOPE_MISMATCH');
     }
     if (currentSouls.verdict !== 'PASS' || !currentSouls.canMarkSpendableSoulsVerified) {
       blockers.push(`CURRENT_CONTROLLED_SOULS_${currentSouls.verdict}`);
@@ -96,6 +125,8 @@ export class RecommendationTrainingLaunchV8Service {
       currentDataGates: {
         from: window.from.toISOString(),
         to: window.to.toISOString(),
+        candidateGeneratorVersion,
+        directShopSourceApprovalKeys: currentDirectShopSourceApprovalKeys,
         controlledSoulsValidation: currentSouls.verdict,
         observabilityPassed: currentObservability.gate.passed,
         datasetStructuralPassed: currentDataset.passedStructuralGate,
@@ -109,6 +140,10 @@ export class RecommendationTrainingLaunchV8Service {
       blockers: [...new Set(blockers)].sort(),
     };
   }
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return JSON.stringify([...left]) === JSON.stringify([...right]);
 }
 
 function developmentWindow(

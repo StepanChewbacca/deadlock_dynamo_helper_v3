@@ -68,4 +68,35 @@ describe('RecommendationDatasetV8ReportService final pretraining gates', () => {
     expect(report.blockers).toContain('MAJOR_ACTION_PHASE_COHORT_FEASIBLE_COVERAGE_BELOW_0_98');
     expect(report.blockers).toContain('RULESET_EVIDENCE_COVERAGE_BELOW_0_999');
   });
+
+  it('scopes the report to one candidate generator and excludes outcomes arriving after the cutoff', async () => {
+    const calls: Array<[string, unknown[]]> = [];
+    const query = jest.fn(async (sql: string, params: unknown[] = []) => {
+      calls.push([sql, params]);
+      return [];
+    });
+    const service = new RecommendationDatasetV8ReportService({ query } as never);
+    const to = new Date('2026-08-20T12:00:00.000Z');
+
+    const report = await service.buildReport({
+      from: new Date('2026-08-01T00:00:00.000Z'),
+      to,
+      candidateGeneratorVersion: '  candidate-v8.4  ',
+    });
+
+    expect(report.candidateGeneratorVersion).toBe('candidate-v8.4');
+    const [sql, params] = calls[0]!;
+    expect(params[1]).toBe(to.toISOString());
+    expect(params[2]).toBe('candidate-v8.4');
+    expect(sql).toContain('d.\"candidateGeneratorVersion\" = $3::text');
+    expect(sql).toContain('e.\"sourceOccurredAt\" < $2::timestamptz');
+    expect(sql).toContain('e.\"receivedAt\" < $2::timestamptz');
+  });
+
+  it('rejects an empty candidate generator scope instead of silently mixing versions', async () => {
+    const service = new RecommendationDatasetV8ReportService({ query: jest.fn() } as never);
+
+    await expect(service.buildReport({ candidateGeneratorVersion: '   ' }))
+      .rejects.toThrow('candidateGeneratorVersion must be non-empty when provided');
+  });
 });

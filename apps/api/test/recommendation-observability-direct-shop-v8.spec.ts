@@ -47,4 +47,26 @@ describe('RecommendationObservabilityReportService direct shop approval', () => 
     expect(query.mock.calls[0]![1][3]).toEqual([]);
     expect(report.metrics.shopOpportunityCoverage).toBe(0);
   });
+
+  it('scopes observability to one generator and rejects state received after the decision', async () => {
+    const query = queryMock();
+    const service = new RecommendationObservabilityReportService({ query } as never);
+
+    const report = await service.buildReport({ candidateGeneratorVersion: '  candidate-v8.4  ' });
+
+    expect(report.candidateGeneratorVersion).toBe('candidate-v8.4');
+    const [sql, params] = query.mock.calls[0]!;
+    expect(params[4]).toBe('candidate-v8.4');
+    expect(sql).toContain('d.\"candidateGeneratorVersion\" = $5::text');
+    expect(sql).toContain('e.\"receivedAt\" <= d.\"decidedAt\"');
+    expect(sql).toContain('player_received_at');
+    expect(sql).toContain('inventory_received_at');
+  });
+
+  it('rejects an empty candidate generator scope instead of silently mixing versions', async () => {
+    const service = new RecommendationObservabilityReportService({ query: jest.fn() } as never);
+
+    await expect(service.buildReport({ candidateGeneratorVersion: '   ' }))
+      .rejects.toThrow('candidateGeneratorVersion must be non-empty when provided');
+  });
 });

@@ -121,15 +121,23 @@ describe('RecommendationEvidenceMaterializerV8Service', () => {
       from: new Date('2026-08-01T00:00:00.000Z'),
       to: new Date('2026-08-22T00:00:00.000Z'),
       maximumAlignmentAgeMs: 5_000,
+      candidateGeneratorVersion: ' candidate-v8.4 ',
     });
 
     expect(report.gates.every((gate) => gate.status === 'PASS')).toBe(true);
     expect(report.from).toBe('2026-08-01T00:00:00.000Z');
     expect(report.to).toBe('2026-08-22T00:00:00.000Z');
+    expect(report.candidateGeneratorVersion).toBe('candidate-v8.4');
     expect(harness.observabilityService.buildReport).toHaveBeenCalledWith({
       from: new Date('2026-08-01T00:00:00.000Z'),
       to: new Date('2026-08-22T00:00:00.000Z'),
       maximumAlignmentAgeMs: 5_000,
+      candidateGeneratorVersion: 'candidate-v8.4',
+    });
+    expect(harness.datasetService.buildReport).toHaveBeenCalledWith({
+      from: new Date('2026-08-01T00:00:00.000Z'),
+      to: new Date('2026-08-22T00:00:00.000Z'),
+      candidateGeneratorVersion: 'candidate-v8.4',
     });
     const firstRecord = [...harness.evidenceRecords.values()][0];
     expect(firstRecord.subjectSha256).toMatch(/^[a-f0-9]{64}$/);
@@ -169,6 +177,19 @@ describe('RecommendationEvidenceMaterializerV8Service', () => {
     const snapshot = await harness.service.getSnapshot(subjectSha256);
     expect(snapshot.subjectSha256).toBe(subjectSha256);
     expect(snapshot.gateName).toBe('controlledSoulsValidation');
+  });
+
+  it('rejects an empty candidate generator scope', async () => {
+    const harness = createHarness({
+      souls: souls('PASS'),
+      observability: observability(true, true),
+      dataset: dataset(10_000, 10_000, true, true),
+    });
+
+    await expect(harness.service.materializeFoundational({ candidateGeneratorVersion: '   ' }))
+      .rejects.toThrow('candidateGeneratorVersion must be non-empty when provided');
+    expect(harness.observabilityService.buildReport).not.toHaveBeenCalled();
+    expect(harness.datasetService.buildReport).not.toHaveBeenCalled();
   });
 
   it('rejects invalid snapshot hashes', async () => {

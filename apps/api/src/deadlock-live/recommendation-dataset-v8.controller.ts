@@ -9,10 +9,12 @@ export class RecommendationDatasetV8Controller {
   getReport(
     @Query('from') from?: string,
     @Query('to') to?: string,
+    @Query('candidateGeneratorVersion') candidateGeneratorVersion?: string,
   ) {
     return this.reportService.buildReport({
       from: parseOptionalDate(from, 'from'),
       to: parseOptionalDate(to, 'to'),
+      candidateGeneratorVersion,
     });
   }
 }

@@ -21,8 +21,8 @@ import {
 } from '@deadlock-live-probe/shared';
 import { assembleRecommendationFeatureStateV8 } from './recommendation-feature-assembler-v8';
 import {
+  approvedDirectShopOpportunityV8,
   configuredDirectShopSourceAllowlist,
-  directShopSourceApprovalKey,
 } from './recommendation-direct-shop-source-v8';
 
 export interface RecommendationRealtimeStateV8Request {
@@ -124,6 +124,7 @@ export class RecommendationRealtimeStateV8Service {
            AND "eventType" = 'PLAYER_STATE'
            AND "sourceOccurredAt" >= $3
            AND "sourceOccurredAt" <= $4
+           AND "receivedAt" <= $4
          ORDER BY "sourceOccurredAt" DESC, "receivedAt" DESC
          LIMIT 1`,
         [request.matchId, request.playerKey, from, to],
@@ -136,6 +137,7 @@ export class RecommendationRealtimeStateV8Service {
            AND "eventType" = 'INVENTORY_SNAPSHOT'
            AND "sourceOccurredAt" >= $3
            AND "sourceOccurredAt" <= $4
+           AND "receivedAt" <= $4
          ORDER BY "sourceOccurredAt" DESC, "receivedAt" DESC
          LIMIT 1`,
         [request.matchId, request.playerKey, from, to],
@@ -148,6 +150,7 @@ export class RecommendationRealtimeStateV8Service {
              WHERE "matchId" = $1
                AND "playerKey" = $2
                AND "sourceOccurredAt" < $3
+               AND "receivedAt" <= $3
                AND "eventType" IN ('RECOMMENDATION_DECISION', 'RECOMMENDATION_OUTCOME')
              ORDER BY "sourceOccurredAt" DESC, "receivedAt" DESC
              LIMIT $4`,
@@ -169,10 +172,16 @@ export class RecommendationRealtimeStateV8Service {
 
     const playerOccurredAtMs = new Date(playerRow.sourceOccurredAt).getTime();
     const inventoryOccurredAtMs = new Date(inventoryRow.sourceOccurredAt).getTime();
+    const playerReceivedAtMs = new Date(playerRow.receivedAt).getTime();
+    const inventoryReceivedAtMs = new Date(inventoryRow.receivedAt).getTime();
     if (!Number.isFinite(playerOccurredAtMs)) blockers.push('PLAYER_STATE_TIMESTAMP_INVALID');
     if (!Number.isFinite(inventoryOccurredAtMs)) blockers.push('INVENTORY_SNAPSHOT_TIMESTAMP_INVALID');
+    if (!Number.isFinite(playerReceivedAtMs)) blockers.push('PLAYER_STATE_RECEIVED_TIMESTAMP_INVALID');
+    if (!Number.isFinite(inventoryReceivedAtMs)) blockers.push('INVENTORY_SNAPSHOT_RECEIVED_TIMESTAMP_INVALID');
     if (playerOccurredAtMs > request.decisionAtMs) blockers.push('PLAYER_STATE_FROM_FUTURE');
     if (inventoryOccurredAtMs > request.decisionAtMs) blockers.push('INVENTORY_SNAPSHOT_FROM_FUTURE');
+    if (playerReceivedAtMs > request.decisionAtMs) blockers.push('PLAYER_STATE_RECEIVED_AFTER_DECISION');
+    if (inventoryReceivedAtMs > request.decisionAtMs) blockers.push('INVENTORY_SNAPSHOT_RECEIVED_AFTER_DECISION');
     if (blockers.length > 0) return { ready: false, blockers: blockers.sort() };
 
     const catalog = await this.loadCatalog(playerRow.catalogSha256);
@@ -224,7 +233,7 @@ export class RecommendationRealtimeStateV8Service {
       };
     }
 
-    const directShopOpportunity = directShopOpportunityValue(
+    const directShopOpportunity = approvedDirectShopOpportunityV8(
       playerPayload,
       playerRow.source,
       approvedDirectShopSources,
@@ -418,23 +427,6 @@ function validateRequest(request: RecommendationRealtimeStateV8Request): string[
     && (!Number.isInteger(request.maximumHistoryEvents) || request.maximumHistoryEvents < 0)
   ) errors.push('MAXIMUM_HISTORY_EVENTS_INVALID');
   return errors.sort();
-}
-
-function directShopOpportunityValue(
-  payload: PlayerStatePayloadV8,
-  source: string,
-  approvedSourceKeys: ReadonlySet<string>,
-): ShopOpportunity {
-  const sourceField = payload.shopOpportunityProvenance?.sourceField?.trim();
-  if (
-    (payload.shopOpportunity === 'AVAILABLE' || payload.shopOpportunity === 'UNAVAILABLE')
-    && payload.shopOpportunityProvenance?.type === 'DIRECT_SOURCE_SIGNAL'
-    && sourceField
-    && approvedSourceKeys.has(directShopSourceApprovalKey(source, sourceField))
-  ) {
-    return payload.shopOpportunity;
-  }
-  return 'UNKNOWN';
 }
 
 function createStateRevision(

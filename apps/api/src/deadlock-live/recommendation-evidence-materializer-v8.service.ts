@@ -20,6 +20,7 @@ export interface RecommendationFoundationalEvidenceMaterializationOptionsV8 {
   from?: Date;
   to?: Date;
   maximumAlignmentAgeMs?: number;
+  candidateGeneratorVersion?: string;
 }
 
 export interface RecommendationMaterializedGateEvidenceV8 {
@@ -35,6 +36,7 @@ export interface RecommendationFoundationalEvidenceMaterializationReportV8 {
   generatedAt: string;
   from?: string;
   to?: string;
+  candidateGeneratorVersion?: string;
   gates: readonly RecommendationMaterializedGateEvidenceV8[];
 }
 
@@ -53,14 +55,20 @@ export class RecommendationEvidenceMaterializerV8Service {
     options: RecommendationFoundationalEvidenceMaterializationOptionsV8 = {},
   ): Promise<RecommendationFoundationalEvidenceMaterializationReportV8> {
     validateRange(options.from, options.to);
+    const candidateGeneratorVersion = normalizeCandidateGeneratorVersion(options.candidateGeneratorVersion);
     const [souls, observability, dataset] = await Promise.all([
       this.soulsEvidence.report(),
       this.observability.buildReport({
         from: options.from,
         to: options.to,
         maximumAlignmentAgeMs: options.maximumAlignmentAgeMs,
+        candidateGeneratorVersion,
       }),
-      this.dataset.buildReport({ from: options.from, to: options.to }),
+      this.dataset.buildReport({
+        from: options.from,
+        to: options.to,
+        candidateGeneratorVersion,
+      }),
     ]);
     const generatedAt = new Date().toISOString();
     const soulsSnapshot = { generatedAt, report: souls };
@@ -95,6 +103,7 @@ export class RecommendationEvidenceMaterializerV8Service {
       generatedAt,
       from: options.from?.toISOString(),
       to: options.to?.toISOString(),
+      candidateGeneratorVersion,
       gates: materialized,
     };
   }
@@ -228,6 +237,13 @@ function validateRange(from: Date | undefined, to: Date | undefined): void {
   if (from && !Number.isFinite(from.getTime())) throw new Error('from is invalid');
   if (to && !Number.isFinite(to.getTime())) throw new Error('to is invalid');
   if (from && to && from >= to) throw new Error('from must be before to');
+}
+
+function normalizeCandidateGeneratorVersion(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const normalized = value.trim();
+  if (!normalized) throw new Error('candidateGeneratorVersion must be non-empty when provided');
+  return normalized;
 }
 
 function sha256Canonical(value: unknown): string {

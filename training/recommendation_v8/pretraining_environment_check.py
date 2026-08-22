@@ -3,12 +3,15 @@ from __future__ import annotations
 import argparse
 import importlib.metadata
 import json
+import math
+import os
 import platform
 import sys
 from pathlib import Path
 from typing import Any, Dict, Mapping
 
 EXPECTED_PYTHON = (3, 12)
+ALLOWED_CUBLAS_WORKSPACE_CONFIGS = (":4096:8", ":16:8")
 REQUIRED_EQUAL_OBSERVABLE_KEYS = (
     "seed",
     "deterministic",
@@ -166,16 +169,58 @@ def validate_training_device(
         torch.cuda.get_device_name(index)
         for index in range(torch.cuda.device_count())
     ] if torch.cuda.is_available() else []
+    runtime["cudaCapabilities"] = [
+        list(torch.cuda.get_device_capability(index))
+        for index in range(torch.cuda.device_count())
+    ] if torch.cuda.is_available() else []
+    runtime["cublasWorkspaceConfig"] = os.environ.get("CUBLAS_WORKSPACE_CONFIG")
+    runtime["pythonHashSeed"] = os.environ.get("PYTHONHASHSEED")
 
     if any(device.startswith("cuda") for device in requested):
         if not torch.cuda.is_available() or torch.cuda.device_count() <= 0:
             blockers.append("CUDA_REQUESTED_BUT_UNAVAILABLE")
+        if os.environ.get("CUBLAS_WORKSPACE_CONFIG") not in ALLOWED_CUBLAS_WORKSPACE_CONFIGS:
+            blockers.append("CUBLAS_WORKSPACE_CONFIG_REQUIRED_FOR_DETERMINISM")
+        if os.environ.get("PYTHONHASHSEED") is None:
+            blockers.append("PYTHONHASHSEED_REQUIRED_FOR_DETERMINISM")
     for device in requested:
         try:
             torch.device(device)
         except Exception:  # noqa: BLE001
             blockers.append(f"TRAINING_DEVICE_INVALID:{device}")
+
+    if not blockers and any(device.startswith("cuda") for device in requested):
+        blockers.extend(run_cuda_determinism_smoke(torch, int(rnn.get("seed", 0)), runtime))
     return blockers
+
+
+def run_cuda_determinism_smoke(torch: Any, seed: int, runtime: Dict[str, Any]) -> list[str]:
+    try:
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.use_deterministic_algorithms(True, warn_only=False)
+        device = torch.device("cuda:0")
+        left = torch.arange(1, 17, dtype=torch.float32, device=device).reshape(4, 4).requires_grad_(True)
+        right = torch.arange(17, 33, dtype=torch.float32, device=device).reshape(4, 4)
+        output = (left @ right).square().mean()
+        output.backward()
+        torch.cuda.synchronize(device)
+        value = float(output.detach().cpu())
+        gradient_norm = float(left.grad.detach().norm().cpu()) if left.grad is not None else math.nan
+        runtime["cudaDeterminismSmoke"] = {
+            "passed": math.isfinite(value) and math.isfinite(gradient_norm),
+            "value": value,
+            "gradientNorm": gradient_norm,
+        }
+        if not runtime["cudaDeterminismSmoke"]["passed"]:
+            return ["CUDA_DETERMINISM_SMOKE_NONFINITE"]
+        return []
+    except Exception as error:  # noqa: BLE001
+        runtime["cudaDeterminismSmoke"] = {
+            "passed": False,
+            "errorType": type(error).__name__,
+        }
+        return ["CUDA_DETERMINISM_SMOKE_FAILED"]
 
 
 def load_json(path: Path) -> Dict[str, Any]:

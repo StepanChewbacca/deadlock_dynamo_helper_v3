@@ -43,6 +43,9 @@ jobs:
       - name: Test Overwolf evidence diagnostics
         run: yarn workspace @deadlock-live-probe/overwolf-client test
 
+      - name: Build Overwolf production bundle
+        run: yarn workspace @deadlock-live-probe/overwolf-client build:bundle
+
       - name: Build API
         run: yarn workspace @deadlock-live-probe/api build
 
