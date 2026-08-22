@@ -12,6 +12,7 @@ export interface RecommendationObservabilityReportOptions {
   from?: Date;
   to?: Date;
   maximumAlignmentAgeMs?: number;
+  candidateGeneratorVersion?: string;
 }
 
 export interface RecommendationObservabilityReport {
@@ -19,6 +20,7 @@ export interface RecommendationObservabilityReport {
   from?: string;
   to?: string;
   maximumAlignmentAgeMs: number;
+  candidateGeneratorVersion?: string;
   approvedDirectShopSourceKeys: readonly string[];
   metrics: RecommendationObservabilityMetricsV1;
   cohorts: readonly RecommendationObservabilityCohortMetricsV1[];
@@ -50,6 +52,7 @@ export class RecommendationObservabilityReportService {
     if (!Number.isInteger(maximumAlignmentAgeMs) || maximumAlignmentAgeMs < 0) {
       throw new Error('maximumAlignmentAgeMs must be a non-negative integer');
     }
+    const candidateGeneratorVersion = normalizeCandidateGeneratorVersion(options.candidateGeneratorVersion);
     const approvedDirectShopSourceKeys = configuredDirectShopSourceAllowlist();
     const rows = await this.dataSource.query(
       observabilitySql(),
@@ -58,6 +61,7 @@ export class RecommendationObservabilityReportService {
         options.to?.toISOString() ?? null,
         maximumAlignmentAgeMs,
         approvedDirectShopSourceKeys,
+        candidateGeneratorVersion ?? null,
       ],
     ) as ObservabilityAggregateRow[];
     const overallRow = rows.find((row) => row.cohortKey === 'overall');
@@ -72,6 +76,7 @@ export class RecommendationObservabilityReportService {
       from: options.from?.toISOString(),
       to: options.to?.toISOString(),
       maximumAlignmentAgeMs,
+      candidateGeneratorVersion,
       approvedDirectShopSourceKeys,
       metrics,
       cohorts,
@@ -98,16 +103,19 @@ WITH decisions AS (
   JOIN recommendation_telemetry_events e ON e."eventId" = d."eventId"
   WHERE ($1::timestamptz IS NULL OR d."decidedAt" >= $1::timestamptz)
     AND ($2::timestamptz IS NULL OR d."decidedAt" < $2::timestamptz)
+    AND ($5::text IS NULL OR d."candidateGeneratorVersion" = $5::text)
 ), aligned AS (
   SELECT
     d.*,
     ps."payload" AS player_payload,
     ps."source" AS player_source,
     ps."sourceOccurredAt" AS player_source_at,
+    ps."receivedAt" AS player_received_at,
     ps."directlyObserved" AS player_directly_observed,
     ps."stale" AS player_stale,
     inv."payload" AS inventory_payload,
     inv."sourceOccurredAt" AS inventory_source_at,
+    inv."receivedAt" AS inventory_received_at,
     inv."directlyObserved" AS inventory_directly_observed,
     inv."stale" AS inventory_stale,
     CASE
@@ -123,6 +131,7 @@ WITH decisions AS (
       AND e."playerKey" = d."playerKey"
       AND e."eventType" = 'PLAYER_STATE'
       AND e."sourceOccurredAt" <= d.decision_source_at
+      AND e."receivedAt" <= d."decidedAt"
       AND EXTRACT(EPOCH FROM (d.decision_source_at - e."sourceOccurredAt")) * 1000 <= $3
     ORDER BY e."sourceOccurredAt" DESC, e."receivedAt" DESC
     LIMIT 1
@@ -134,6 +143,7 @@ WITH decisions AS (
       AND e."playerKey" = d."playerKey"
       AND e."eventType" = 'INVENTORY_SNAPSHOT'
       AND e."sourceOccurredAt" <= d.decision_source_at
+      AND e."receivedAt" <= d."decidedAt"
       AND EXTRACT(EPOCH FROM (d.decision_source_at - e."sourceOccurredAt")) * 1000 <= $3
     ORDER BY e."sourceOccurredAt" DESC, e."receivedAt" DESC
     LIMIT 1
@@ -179,7 +189,9 @@ WITH decisions AS (
     ) AS transaction_mechanics_known,
     (COALESCE(a."playerKey", '') <> '') AS player_identity_known,
     ((a.player_source_at IS NULL OR a.player_source_at <= a.decision_source_at)
-      AND (a.inventory_source_at IS NULL OR a.inventory_source_at <= a.decision_source_at)) AS non_future_timestamps,
+      AND (a.player_received_at IS NULL OR a.player_received_at <= a."decidedAt")
+      AND (a.inventory_source_at IS NULL OR a.inventory_source_at <= a.decision_source_at)
+      AND (a.inventory_received_at IS NULL OR a.inventory_received_at <= a."decidedAt")) AS non_future_timestamps,
     (COALESCE(a.player_directly_observed, FALSE)
       AND COALESCE(a.inventory_directly_observed, FALSE)) AS directly_observed_state,
     (COALESCE(a.decision_stale, FALSE)
@@ -207,6 +219,13 @@ FROM expanded
 GROUP BY cohort_key
 ORDER BY cohort_key;
 `;
+}
+
+function normalizeCandidateGeneratorVersion(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const normalized = value.trim();
+  if (!normalized) throw new Error('candidateGeneratorVersion must be non-empty when provided');
+  return normalized;
 }
 
 function toMetrics(row: ObservabilityAggregateRow): RecommendationObservabilityMetricsV1 {
