@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import {
+  RECOMMENDATION_DIRECT_SHOP_CANDIDATE_ANALYSIS_VERSION_V1,
   RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_EVALUATOR_V1,
   RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_V1,
 } from '@deadlock-live-probe/shared';
@@ -91,7 +92,7 @@ describe('RecommendationEvidenceMaterializerV8Service', () => {
 
   function directShopCandidateAnalysis(overrides: Record<string, unknown> = {}) {
     return {
-      version: 'shop-signal-candidate-analysis-v1',
+      version: RECOMMENDATION_DIRECT_SHOP_CANDIDATE_ANALYSIS_VERSION_V1,
       candidateOnly: true,
       canPromoteToDirectSource: false,
       markerCount: 8,
@@ -121,6 +122,7 @@ describe('RecommendationEvidenceMaterializerV8Service', () => {
       independentlyValidatedAvailableTransitions: 2,
       independentlyValidatedUnavailableTransitions: 2,
       independentTransitionMismatchCount: 0,
+      independentValidationEvidenceSha256: 'b'.repeat(64),
       validator: 'independent-live-transition-review-v1',
       validatedAt: '2026-08-21T23:55:00.000Z',
       evidenceRef: 'immutable://deadlock/direct-shop-validation/evidence-1',
@@ -261,6 +263,21 @@ describe('RecommendationEvidenceMaterializerV8Service', () => {
     }) as never)).rejects.toThrow('DIRECT_SHOP_CANDIDATE_ANALYSIS_SHA256_MISMATCH');
     expect(harness.snapshotRepo.save).not.toHaveBeenCalled();
     expect(harness.roadmapEvidence.append).not.toHaveBeenCalled();
+  });
+
+  it('materializes direct shop FAIL if the independent validation evidence hash is missing', async () => {
+    const harness = createHarness({
+      souls: souls('PASS'),
+      observability: observability(true, true),
+      dataset: dataset(10_000, 10_000, true, true),
+    });
+
+    const report = await harness.service.materializeDirectShopSource(directShopAttestation({
+      independentValidationEvidenceSha256: '',
+    }) as never);
+
+    expect(report.validation.status).toBe('FAIL');
+    expect(report.validation.blockers).toContain('INDEPENDENT_VALIDATION_EVIDENCE_SHA256_INVALID');
   });
 
   it('treats invalid controlled souls observations as a failed gate', async () => {
