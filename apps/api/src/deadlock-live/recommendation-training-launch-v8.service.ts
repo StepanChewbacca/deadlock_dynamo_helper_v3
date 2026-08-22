@@ -21,6 +21,7 @@ export interface RecommendationTrainingLaunchPreflightV8 {
   currentDataGates: {
     from: string;
     to: string;
+    candidateGeneratorVersion: string;
     controlledSoulsValidation: 'PASS' | 'FAIL' | 'INSUFFICIENT_EVIDENCE';
     observabilityPassed: boolean;
     datasetStructuralPassed: boolean;
@@ -49,11 +50,21 @@ export class RecommendationTrainingLaunchV8Service {
   ): Promise<RecommendationTrainingLaunchPreflightV8> {
     if (!datasetId) throw new Error('datasetId is required');
     const dataset = await this.datasetRegistry.getVerified(datasetId);
+    const candidateGeneratorVersion = dataset.manifest.candidateGeneratorVersion?.trim();
+    if (!candidateGeneratorVersion) throw new Error('Verified dataset candidateGeneratorVersion is missing');
     const window = developmentWindow(dataset.manifest.splits);
     const [roadmap, currentDataset, currentObservability, currentSouls] = await Promise.all([
       this.roadmapEvidence.report(),
-      this.datasetReport.buildReport({ from: window.from, to: window.to }),
-      this.observabilityReport.buildReport({ from: window.from, to: window.to }),
+      this.datasetReport.buildReport({
+        from: window.from,
+        to: window.to,
+        candidateGeneratorVersion,
+      }),
+      this.observabilityReport.buildReport({
+        from: window.from,
+        to: window.to,
+        candidateGeneratorVersion,
+      }),
       this.soulsEvidence.report(),
     ]);
     const training = evaluateRecommendationBehavioralTrainingLaunchV1({
@@ -67,6 +78,12 @@ export class RecommendationTrainingLaunchV8Service {
     }
     if (dataset.datasetSha256 !== dataset.manifest.datasetSha256) {
       blockers.push('DATASET_REGISTRY_SHA_MISMATCH');
+    }
+    if (currentDataset.candidateGeneratorVersion !== candidateGeneratorVersion) {
+      blockers.push('CURRENT_DATASET_CANDIDATE_GENERATOR_SCOPE_MISMATCH');
+    }
+    if (currentObservability.candidateGeneratorVersion !== candidateGeneratorVersion) {
+      blockers.push('CURRENT_OBSERVABILITY_CANDIDATE_GENERATOR_SCOPE_MISMATCH');
     }
     if (currentSouls.verdict !== 'PASS' || !currentSouls.canMarkSpendableSoulsVerified) {
       blockers.push(`CURRENT_CONTROLLED_SOULS_${currentSouls.verdict}`);
@@ -96,6 +113,7 @@ export class RecommendationTrainingLaunchV8Service {
       currentDataGates: {
         from: window.from.toISOString(),
         to: window.to.toISOString(),
+        candidateGeneratorVersion,
         controlledSoulsValidation: currentSouls.verdict,
         observabilityPassed: currentObservability.gate.passed,
         datasetStructuralPassed: currentDataset.passedStructuralGate,
