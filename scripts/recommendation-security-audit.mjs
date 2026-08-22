@@ -28,6 +28,7 @@ for (const name of fs.existsSync(workflowDir) ? fs.readdirSync(workflowDir) : []
   }
 
   const causalValueTraining = /^recommendation-value-training\.ya?ml$/i.test(name);
+  const pretrainingReadiness = /^recommendation-pretraining-readiness\.ya?ml$/i.test(name);
   const privilegedTraining = /recommendation-.*training/i.test(name);
   if (privilegedTraining) {
     auditManualSelfHostedWorkflow(name, normalized, causalValueTraining
@@ -39,12 +40,16 @@ for (const name of fs.existsSync(workflowDir) ? fs.readdirSync(workflowDir) : []
       : {
           label: 'recommendation-training',
           environment: 'recommendation-training',
-          purpose: 'privileged training',
+          purpose: pretrainingReadiness ? 'privileged no-training readiness' : 'privileged training',
         });
     auditNoGitHubExpressionsInsideRunBlocks(name, normalized);
     if (!causalValueTraining && !/pip[^\n]*install[^\n]*--no-index[^\n]*--find-links/m.test(normalized)) {
       errors.push(`${name}: privileged Python training dependencies must be installed from an approved offline wheelhouse`);
     }
+  }
+
+  if (pretrainingReadiness) {
+    auditNoTrainingReadinessWorkflow(name, normalized);
   }
 
   const causalValueDatasetExport = /^recommendation-value-dataset-export\.ya?ml$/i.test(name);
@@ -152,6 +157,10 @@ function auditEqualObservablesBehavioralConfigs() {
     'device',
     'hashDimension',
     'maximumHistoryEvents',
+    'embeddingDimension',
+    'hiddenDimension',
+    'layerCount',
+    'dropout',
     'supportProbabilityThreshold',
     'majorCohortMinDecisions',
     'majorCohortMinFraction',
@@ -164,6 +173,34 @@ function auditEqualObservablesBehavioralConfigs() {
   for (const field of equalFields) {
     if (JSON.stringify(rnn.config[field]) !== JSON.stringify(transformer.config[field])) {
       errors.push(`Behavioral equal-observables config mismatch for ${field}: ${rnn.name} vs ${transformer.name}`);
+    }
+  }
+}
+
+function auditNoTrainingReadinessWorkflow(workflowName, workflowText) {
+  const forbidden = [
+    'train_behavioral.py',
+    'compare_behavioral.py',
+    'build_model_bundle.py',
+    'train-recommendation-value-v8',
+    'train-recommendation-value-v8.ts',
+  ];
+  for (const token of forbidden) {
+    if (workflowText.includes(token)) {
+      errors.push(`${workflowName}: no-training readiness workflow must not invoke ${token}`);
+    }
+  }
+  const required = [
+    'pretraining_environment_check.py',
+    'verify_dataset.py',
+    'config/rnn.json',
+    'config/transformer.json',
+    'READY_TO_START_BEHAVIORAL_TRAINING',
+    'trainingPerformed',
+  ];
+  for (const token of required) {
+    if (!workflowText.includes(token)) {
+      errors.push(`${workflowName}: final readiness contract is missing ${token}`);
     }
   }
 }

@@ -32,7 +32,7 @@ export function evaluateBehavioralTrainingReadinessV1(
     blockers.push(`SOULS_AFFORDABILITY_${input.soulsAffordabilityVerdict}`);
   }
   if (input.candidateCoverage < 0.99) blockers.push('CANDIDATE_COVERAGE_BELOW_0_99');
-  if (input.rulesetCatalogCoverage < 0.99) blockers.push('RULESET_CATALOG_COVERAGE_BELOW_0_99');
+  if (input.rulesetCatalogCoverage < 0.999) blockers.push('RULESET_CATALOG_COVERAGE_BELOW_0_999');
   if (input.transactionMechanicsCoverage < 0.99) blockers.push('TRANSACTION_MECHANICS_COVERAGE_BELOW_0_99');
   if (input.futureTestEvaluated) blockers.push('FUTURE_TEST_ALREADY_EVALUATED');
   if (input.observedActionInjectionDetected) blockers.push('OBSERVED_ACTION_INJECTION_DETECTED');

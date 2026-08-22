@@ -114,6 +114,13 @@ jobs:
           python -m venv "$RUN_ROOT/venv"
           "$RUN_ROOT/venv/bin/pip" install --no-index --find-links "$TRAINING_WHEELHOUSE" -r training/recommendation_v8/requirements-training.txt
 
+      - name: Recheck training runtime and CUDA device
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUN_ROOT/venv/bin/python" training/recommendation_v8/pretraining_environment_check.py \
+            | tee "$RUN_ROOT/environment-readiness.json"
+
       - name: Verify immutable dataset bytes
         shell: bash
         run: |
