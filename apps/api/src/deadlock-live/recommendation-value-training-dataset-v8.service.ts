@@ -300,8 +300,8 @@ export class RecommendationValueTrainingDatasetV8Service {
 
 function decisionSql(rewardExpression: string): string {
   return `
-WITH match_first AS (
-  SELECT d."matchId", MIN(d."decidedAt") AS first_decision_at
+WITH match_bounds AS (
+  SELECT d."matchId", MIN(d."decidedAt") AS first_decision_at, MAX(d."decidedAt") AS last_decision_at
   FROM recommendation_decisions_v8 d
   WHERE d."randomized" IS TRUE AND d."candidateGeneratorVersion" = $1
   GROUP BY d."matchId"
@@ -322,12 +322,12 @@ SELECT
   d."actionLoggingPropensity" AS "actionLoggingPropensity",
   ${rewardExpression} AS reward
 FROM recommendation_decisions_v8 d
-JOIN match_first m ON m."matchId" = d."matchId"
+JOIN match_bounds m ON m."matchId" = d."matchId"
 JOIN outcomes o ON o.decision_id = d."decisionId"
 WHERE d."randomized" IS TRUE
   AND d."candidateGeneratorVersion" = $1
   AND m.first_decision_at >= $2::timestamptz
-  AND m.first_decision_at < $3::timestamptz
+  AND m.last_decision_at < $3::timestamptz
   AND (${rewardExpression}) IS NOT NULL
 ORDER BY d."decidedAt", d."decisionId"
 `;
