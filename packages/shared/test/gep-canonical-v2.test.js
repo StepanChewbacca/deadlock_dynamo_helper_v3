@@ -1,52 +1,26 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const {
   GEP_CANONICAL_SCHEMA_VERSION,
   canonicalizeGepRosterPayloadV2,
 } = require('../dist');
 
-const officialShape = canonicalizeGepRosterPayloadV2({
-  steam_id: '76561198000000001',
-  player_name: 'Local',
-  is_local: true,
-  hero_id: 15,
-  hero_name: 'Hero',
-  team_id: 2,
-  assigned_lane: 6,
-  level: 9,
-  souls: 3510,
-  health: 1210,
-  max_health: 1650,
-  kills: 3,
-  deaths: 1,
-  assist: 4,
-  hero_damage: 12000,
-  object_damage: 2500,
-  hero_healing: 800,
-});
+const fixturePath = path.join(__dirname, 'fixtures/gep/deadlock-roster-official-doc-v1.json');
+const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
+assert.equal(fixture.fixtureContract, 'deadlock-gep-official-doc-shape-v1');
 
+const officialShape = canonicalizeGepRosterPayloadV2(fixture.raw);
 assert.equal(officialShape.schemaVersion, GEP_CANONICAL_SCHEMA_VERSION);
 assert.equal(officialShape.normalizerVersion, 'gep-canonical-v2');
-assert.deepEqual(officialShape.canonicalPayload, {
-  steamId: '76561198000000001',
-  playerName: 'Local',
-  isLocal: true,
-  heroId: 15,
-  heroName: 'Hero',
-  teamId: 2,
-  laneId: 6,
-  level: 9,
-  soulsRaw: 3510,
-  health: 1210,
-  maxHealth: 1650,
-  kills: 3,
-  deaths: 1,
-  assists: 4,
-  heroDamage: 12000,
-  objectDamage: 2500,
-  heroHealing: 800,
-});
+assert.deepEqual(officialShape.canonicalPayload, fixture.expectedCanonical);
 assert.deepEqual(officialShape.unknownFields, []);
 assert.equal(officialShape.rawPayload.souls, 3510);
+
+const officialFixtureCoverage = Object.keys(fixture.expectedCanonical).filter(
+  (key) => Object.prototype.hasOwnProperty.call(officialShape.canonicalPayload, key),
+).length / Object.keys(fixture.expectedCanonical).length;
+assert.equal(officialFixtureCoverage, 1);
 
 const compatibilityShape = canonicalizeGepRosterPayloadV2({
   steamId: 's1',
