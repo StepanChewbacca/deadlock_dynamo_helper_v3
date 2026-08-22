@@ -120,10 +120,16 @@ jobs:
           keys = manifest.get("directShopSourceApprovalKeys")
           if not isinstance(keys, list) or len(keys) != 1 or not isinstance(keys[0], str) or not keys[0]:
               raise SystemExit("Dataset must bind exactly one validated direct shop source approval key")
+          subject = manifest.get("directShopSourceValidationSubjectSha256")
+          if not isinstance(subject, str) or len(subject) != 64 or any(c not in "0123456789abcdefABCDEF" for c in subject):
+              raise SystemExit("Dataset direct shop validation subject SHA is invalid")
           PY
           DIRECT_SHOP_APPROVAL_KEY="$("$READINESS_ROOT/venv/bin/python" -c 'import json, os, pathlib; print(json.loads((pathlib.Path(os.environ["DATASET_DIR"]) / "manifest.json").read_text())["directShopSourceApprovalKeys"][0])')"
+          DIRECT_SHOP_VALIDATION_SUBJECT_SHA256="$("$READINESS_ROOT/venv/bin/python" -c 'import json, os, pathlib; print(json.loads((pathlib.Path(os.environ["DATASET_DIR"]) / "manifest.json").read_text())["directShopSourceValidationSubjectSha256"])')"
           test -n "$DIRECT_SHOP_APPROVAL_KEY" || { echo "Direct shop approval key is empty" >&2; exit 1; }
+          [[ "$DIRECT_SHOP_VALIDATION_SUBJECT_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || { echo "Direct shop validation subject SHA is invalid" >&2; exit 1; }
           echo "DIRECT_SHOP_APPROVAL_KEY=$DIRECT_SHOP_APPROVAL_KEY" >> "$GITHUB_ENV"
+          echo "DIRECT_SHOP_VALIDATION_SUBJECT_SHA256=$DIRECT_SHOP_VALIDATION_SUBJECT_SHA256" >> "$GITHUB_ENV"
 
       - name: Require roadmap and verified-registry API preflight for RNN
         shell: bash
@@ -135,7 +141,7 @@ jobs:
             --data-binary @<(python -c 'import json; print(json.dumps({"config": json.load(open("training/recommendation_v8/config/rnn.json"))}))') \
             "$TRAINING_PREFLIGHT_URL/$DATASET_ID" \
             > "$READINESS_ROOT/preflight-rnn.json"
-          python - "$READINESS_ROOT/preflight-rnn.json" "$EXPECTED_DATASET_SHA256" "$DIRECT_SHOP_APPROVAL_KEY" <<'PY'
+          python - "$READINESS_ROOT/preflight-rnn.json" "$EXPECTED_DATASET_SHA256" "$DIRECT_SHOP_APPROVAL_KEY" "$DIRECT_SHOP_VALIDATION_SUBJECT_SHA256" <<'PY'
           import json, sys
           data = json.load(open(sys.argv[1]))
           if data.get("ready") is not True:
@@ -147,6 +153,8 @@ jobs:
               raise SystemExit("RNN API preflight direct shop validation is not PASS")
           if gates.get("directShopSourceApprovalKeys") != [sys.argv[3]]:
               raise SystemExit("RNN API preflight direct shop approval identity mismatch")
+          if str(gates.get("directShopSourceValidationSubjectSha256", "")).lower() != sys.argv[4].lower():
+              raise SystemExit("RNN API preflight direct shop validation snapshot mismatch")
           PY
 
       - name: Require roadmap and verified-registry API preflight for Transformer
@@ -159,7 +167,7 @@ jobs:
             --data-binary @<(python -c 'import json; print(json.dumps({"config": json.load(open("training/recommendation_v8/config/transformer.json"))}))') \
             "$TRAINING_PREFLIGHT_URL/$DATASET_ID" \
             > "$READINESS_ROOT/preflight-transformer.json"
-          python - "$READINESS_ROOT/preflight-transformer.json" "$EXPECTED_DATASET_SHA256" "$DIRECT_SHOP_APPROVAL_KEY" <<'PY'
+          python - "$READINESS_ROOT/preflight-transformer.json" "$EXPECTED_DATASET_SHA256" "$DIRECT_SHOP_APPROVAL_KEY" "$DIRECT_SHOP_VALIDATION_SUBJECT_SHA256" <<'PY'
           import json, sys
           data = json.load(open(sys.argv[1]))
           if data.get("ready") is not True:
@@ -171,13 +179,15 @@ jobs:
               raise SystemExit("Transformer API preflight direct shop validation is not PASS")
           if gates.get("directShopSourceApprovalKeys") != [sys.argv[3]]:
               raise SystemExit("Transformer API preflight direct shop approval identity mismatch")
+          if str(gates.get("directShopSourceValidationSubjectSha256", "")).lower() != sys.argv[4].lower():
+              raise SystemExit("Transformer API preflight direct shop validation snapshot mismatch")
           PY
 
       - name: Emit final no-training readiness attestation
         shell: bash
         run: |
           set -euo pipefail
-          python - "$READINESS_ROOT" "$DATASET_ID" "$EXPECTED_DATASET_SHA256" "$EXPECTED_MANIFEST_SHA256" "$GITHUB_SHA" "$DIRECT_SHOP_APPROVAL_KEY" <<'PY'
+          python - "$READINESS_ROOT" "$DATASET_ID" "$EXPECTED_DATASET_SHA256" "$EXPECTED_MANIFEST_SHA256" "$GITHUB_SHA" "$DIRECT_SHOP_APPROVAL_KEY" "$DIRECT_SHOP_VALIDATION_SUBJECT_SHA256" <<'PY'
           import json, pathlib, sys
           root = pathlib.Path(sys.argv[1])
           rnn = json.loads((root / "preflight-rnn.json").read_text())
@@ -186,6 +196,10 @@ jobs:
           transformer_gates = transformer.get("currentDataGates") or {}
           if rnn_gates.get("candidateGeneratorVersion") != transformer_gates.get("candidateGeneratorVersion"):
               raise SystemExit("RNN and Transformer candidate generator scope mismatch")
+          if rnn_gates.get("directShopSourceApprovalKeys") != transformer_gates.get("directShopSourceApprovalKeys"):
+              raise SystemExit("RNN and Transformer direct shop approval identity mismatch")
+          if rnn_gates.get("directShopSourceValidationSubjectSha256") != transformer_gates.get("directShopSourceValidationSubjectSha256"):
+              raise SystemExit("RNN and Transformer direct shop validation snapshot mismatch")
           report = {
               "contractVersion": "recommendation-pretraining-runner-attestation-v1",
               "status": "READY_TO_START_BEHAVIORAL_TRAINING",
@@ -195,6 +209,7 @@ jobs:
               "sourceCommitSha": sys.argv[5],
               "directShopSourceValidation": "PASS",
               "directShopSourceApprovalKey": sys.argv[6],
+              "directShopSourceValidationSubjectSha256": sys.argv[7].lower(),
               "candidateGeneratorVersion": rnn_gates.get("candidateGeneratorVersion"),
               "environmentReady": True,
               "immutableDatasetBytesVerified": True,
