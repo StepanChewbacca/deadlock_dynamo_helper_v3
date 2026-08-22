@@ -5,7 +5,9 @@ import {
 } from '@deadlock-live-probe/shared';
 import { RecommendationTrainingLaunchV8Service } from '../src/deadlock-live/recommendation-training-launch-v8.service';
 
+const SHOP_ENV = 'RECOMMENDATION_DIRECT_SHOP_SOURCE_ALLOWLIST';
 const candidateGeneratorVersion = 'candidate-v8.4';
+const directShopSourceApprovalKey = 'OVERWOLF_GEP:onInfoUpdates2|match_info|match_info|shop_state';
 
 function manifest() {
   return {
@@ -18,6 +20,7 @@ function manifest() {
     featureContractVersion: RECOMMENDATION_FEATURE_CONTRACT_VERSION,
     actionContractVersion: 'recommendation-actions-v1',
     candidateGeneratorVersion,
+    directShopSourceApprovalKeys: [directShopSourceApprovalKey],
     pointInTimeCorrect: true,
     observedActionInjected: false,
     futureTestTouched: false,
@@ -131,14 +134,22 @@ function currentDataset(version = candidateGeneratorVersion) {
   };
 }
 
-function currentObservability(version = candidateGeneratorVersion) {
+function currentObservability(
+  version = candidateGeneratorVersion,
+  approvedDirectShopSourceKeys: readonly string[] = [directShopSourceApprovalKey],
+) {
   return {
     candidateGeneratorVersion: version,
+    approvedDirectShopSourceKeys,
     gate: { passed: true, blockers: [] },
   };
 }
 
-function harness(datasetVersion = candidateGeneratorVersion, observabilityVersion = candidateGeneratorVersion) {
+function harness(
+  datasetVersion = candidateGeneratorVersion,
+  observabilityVersion = candidateGeneratorVersion,
+  observabilityShopKeys: readonly string[] = [directShopSourceApprovalKey],
+) {
   const datasetManifest = manifest();
   const datasetRegistry = {
     getVerified: jest.fn(async () => ({
@@ -153,7 +164,9 @@ function harness(datasetVersion = candidateGeneratorVersion, observabilityVersio
   };
   const roadmapEvidence = { report: jest.fn(async () => roadmap()) };
   const datasetReport = { buildReport: jest.fn(async () => currentDataset(datasetVersion)) };
-  const observabilityReport = { buildReport: jest.fn(async () => currentObservability(observabilityVersion)) };
+  const observabilityReport = {
+    buildReport: jest.fn(async () => currentObservability(observabilityVersion, observabilityShopKeys)),
+  };
   const soulsEvidence = {
     report: jest.fn(async () => ({ verdict: 'PASS', canMarkSpendableSoulsVerified: true })),
   };
@@ -167,14 +180,26 @@ function harness(datasetVersion = candidateGeneratorVersion, observabilityVersio
   return { service, datasetReport, observabilityReport };
 }
 
-describe('RecommendationTrainingLaunchV8Service generator scope', () => {
-  it('recomputes final data gates on the exact generator version embedded in the verified dataset', async () => {
+describe('RecommendationTrainingLaunchV8Service generator and direct-shop scope', () => {
+  const originalShopEnv = process.env[SHOP_ENV];
+
+  beforeEach(() => {
+    process.env[SHOP_ENV] = directShopSourceApprovalKey;
+  });
+
+  afterEach(() => {
+    if (originalShopEnv === undefined) delete process.env[SHOP_ENV];
+    else process.env[SHOP_ENV] = originalShopEnv;
+  });
+
+  it('recomputes final data gates on the exact generator and shop approval identity embedded in the verified dataset', async () => {
     const { service, datasetReport, observabilityReport } = harness();
 
     const report = await service.preflight('dataset-v8-ready', config() as never);
 
     expect(report.ready).toBe(true);
     expect(report.currentDataGates.candidateGeneratorVersion).toBe(candidateGeneratorVersion);
+    expect(report.currentDataGates.directShopSourceApprovalKeys).toEqual([directShopSourceApprovalKey]);
     expect(datasetReport.buildReport).toHaveBeenCalledWith({
       from: new Date('2026-08-01T00:00:00.000Z'),
       to: new Date('2026-08-16T00:00:00.000Z'),
@@ -195,5 +220,17 @@ describe('RecommendationTrainingLaunchV8Service generator scope', () => {
     expect(report.ready).toBe(false);
     expect(report.blockers).toContain('CURRENT_DATASET_CANDIDATE_GENERATOR_SCOPE_MISMATCH');
     expect(report.blockers).toContain('CURRENT_OBSERVABILITY_CANDIDATE_GENERATOR_SCOPE_MISMATCH');
+  });
+
+  it('fails closed if the configured direct shop approval set changed after immutable dataset export', async () => {
+    const otherApprovalKey = 'OVERWOLF_GEP:onInfoUpdates2|match_info|match_info|other_shop_state';
+    process.env[SHOP_ENV] = otherApprovalKey;
+    const { service } = harness(candidateGeneratorVersion, candidateGeneratorVersion, [otherApprovalKey]);
+
+    const report = await service.preflight('dataset-v8-ready', config() as never);
+
+    expect(report.ready).toBe(false);
+    expect(report.blockers).toContain('CURRENT_DIRECT_SHOP_SOURCE_APPROVAL_SET_MISMATCH');
+    expect(report.blockers).not.toContain('CURRENT_OBSERVABILITY_DIRECT_SHOP_APPROVAL_SCOPE_MISMATCH');
   });
 });
