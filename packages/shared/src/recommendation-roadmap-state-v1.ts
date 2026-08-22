@@ -17,6 +17,7 @@ export type RecommendationRoadmapGateStateV1 = 'PASS' | 'FAIL' | 'INSUFFICIENT_E
 export interface RecommendationRoadmapEvidenceV1 {
   canonicalGepV2: RecommendationRoadmapGateStateV1;
   controlledSoulsValidation: RecommendationRoadmapGateStateV1;
+  directShopSourceValidation: RecommendationRoadmapGateStateV1;
   versionedRulesetCatalog: RecommendationRoadmapGateStateV1;
   deterministicLegality: RecommendationRoadmapGateStateV1;
   recommendationTelemetryV8: RecommendationRoadmapGateStateV1;
@@ -54,7 +55,10 @@ const PHASE_REQUIREMENTS: ReadonlyArray<{
   phase: RecommendationRoadmapPhaseV1;
   gates: readonly (keyof RecommendationRoadmapEvidenceV1)[];
 }> = [
-  { phase: 'DATA_CONTRACT', gates: ['canonicalGepV2', 'controlledSoulsValidation', 'versionedRulesetCatalog'] },
+  {
+    phase: 'DATA_CONTRACT',
+    gates: ['canonicalGepV2', 'controlledSoulsValidation', 'directShopSourceValidation', 'versionedRulesetCatalog'],
+  },
   { phase: 'LEGALITY_ENGINE', gates: ['deterministicLegality', 'recommendationTelemetryV8'] },
   { phase: 'PROSPECTIVE_DATA', gates: ['observabilityCoverage', 'datasetV8Structural', 'datasetV8Empirical'] },
   { phase: 'BEHAVIORAL_BUILDLM', gates: ['behavioralOffline'] },
