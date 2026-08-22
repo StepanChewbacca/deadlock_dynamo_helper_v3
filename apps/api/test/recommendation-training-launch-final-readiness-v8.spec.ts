@@ -1,6 +1,7 @@
 import { RecommendationTrainingLaunchV8Service } from '../src/deadlock-live/recommendation-training-launch-v8.service';
 
 const sha = (value: string) => value.repeat(64).slice(0, 64);
+const CANDIDATE_GENERATOR_VERSION = 'candidate-v8';
 
 function manifest() {
   return {
@@ -12,7 +13,7 @@ function manifest() {
     datasetContractVersion: 'recommendation-dataset-v8',
     featureContractVersion: 'recommendation-features-v8',
     actionContractVersion: 'recommendation-actions-v1',
-    candidateGeneratorVersion: 'candidate-v8',
+    candidateGeneratorVersion: CANDIDATE_GENERATOR_VERSION,
     pointInTimeCorrect: true,
     observedActionInjected: false,
     futureTestTouched: false,
@@ -87,6 +88,7 @@ function roadmapEvidence() {
 
 function currentDataset(overrides: Record<string, unknown> = {}) {
   return {
+    candidateGeneratorVersion: CANDIDATE_GENERATOR_VERSION,
     passedStructuralGate: true,
     passedEmpiricalGate: true,
     blockers: [],
@@ -95,6 +97,13 @@ function currentDataset(overrides: Record<string, unknown> = {}) {
     minimumMajorActionPhaseCohortObservedActionFeasibleCoverage: 0.985,
     rulesetEvidenceCoverage: 0.9995,
     ...overrides,
+  };
+}
+
+function currentObservability() {
+  return {
+    candidateGeneratorVersion: CANDIDATE_GENERATOR_VERSION,
+    gate: { passed: true, blockers: [] },
   };
 }
 
@@ -113,7 +122,7 @@ describe('RecommendationTrainingLaunchV8Service final data readiness', () => {
     };
     const roadmap = { report: jest.fn(async () => ({ evidence: roadmapEvidence() })) };
     const datasetReport = { buildReport: jest.fn(async () => currentDataset()) };
-    const observability = { buildReport: jest.fn(async () => ({ gate: { passed: true, blockers: [] } })) };
+    const observability = { buildReport: jest.fn(async () => currentObservability()) };
     const souls = { report: jest.fn(async () => ({ verdict: 'PASS' as const, canMarkSpendableSoulsVerified: true })) };
     const service = new RecommendationTrainingLaunchV8Service(
       datasetRegistry as never,
@@ -129,11 +138,14 @@ describe('RecommendationTrainingLaunchV8Service final data readiness', () => {
     expect(datasetReport.buildReport).toHaveBeenCalledWith({
       from: new Date('2026-07-01T00:00:00.000Z'),
       to: new Date('2026-08-01T00:00:00.000Z'),
+      candidateGeneratorVersion: CANDIDATE_GENERATOR_VERSION,
     });
     expect(observability.buildReport).toHaveBeenCalledWith({
       from: new Date('2026-07-01T00:00:00.000Z'),
       to: new Date('2026-08-01T00:00:00.000Z'),
+      candidateGeneratorVersion: CANDIDATE_GENERATOR_VERSION,
     });
+    expect(report.currentDataGates.candidateGeneratorVersion).toBe(CANDIDATE_GENERATOR_VERSION);
     expect(report.currentDataGates.explicitFeasibilityCoverage).toBe(0.997);
   });
 
@@ -158,7 +170,7 @@ describe('RecommendationTrainingLaunchV8Service final data readiness', () => {
           explicitFeasibilityCoverage: 0.99,
         })),
       } as never,
-      { buildReport: jest.fn(async () => ({ gate: { passed: true, blockers: [] } })) } as never,
+      { buildReport: jest.fn(async () => currentObservability()) } as never,
       { report: jest.fn(async () => ({ verdict: 'PASS' as const, canMarkSpendableSoulsVerified: true })) } as never,
     );
 
