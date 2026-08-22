@@ -110,11 +110,14 @@ jobs:
             --expected-dataset-sha256 "$EXPECTED_DATASET_SHA256" \
             --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256" \
             | tee "$READINESS_ROOT/dataset-verification.json"
-          "$READINESS_ROOT/venv/bin/python" - "$DATASET_DIR" "$ACTION_CONTRACT_VERSION" <<'PY'
+          "$READINESS_ROOT/venv/bin/python" - "$DATASET_DIR" "$ACTION_CONTRACT_VERSION" "$GITHUB_SHA" <<'PY'
           import json, pathlib, sys
           manifest = json.loads((pathlib.Path(sys.argv[1]) / "manifest.json").read_text())
           if manifest.get("actionContractVersion") != sys.argv[2]:
               raise SystemExit("Dataset action contract mismatch")
+          source_commit = manifest.get("sourceCommitSha")
+          if not isinstance(source_commit, str) or source_commit.lower() != sys.argv[3].lower():
+              raise SystemExit("Readiness workflow commit does not match immutable dataset sourceCommitSha")
           if manifest.get("futureTestTouched") is not False:
               raise SystemExit("FUTURE_TEST is not untouched")
           keys = manifest.get("directShopSourceApprovalKeys")
@@ -206,7 +209,7 @@ jobs:
               "datasetId": sys.argv[2],
               "datasetSha256": sys.argv[3].lower(),
               "manifestSha256": sys.argv[4].lower(),
-              "sourceCommitSha": sys.argv[5],
+              "sourceCommitSha": sys.argv[5].lower(),
               "directShopSourceValidation": "PASS",
               "directShopSourceApprovalKey": sys.argv[6],
               "directShopSourceValidationSubjectSha256": sys.argv[7].lower(),
