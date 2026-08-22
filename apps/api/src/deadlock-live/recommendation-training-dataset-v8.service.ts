@@ -26,6 +26,8 @@ import {
 } from '@deadlock-live-probe/shared';
 import { RecommendationDatasetV8ReportService } from './recommendation-dataset-v8-report.service';
 import { configuredDirectShopSourceAllowlist } from './recommendation-direct-shop-source-v8';
+import { loadRecommendationDirectShopValidationBindingV8 } from './recommendation-direct-shop-validation-binding-v8';
+import { RecommendationEvidenceMaterializerV8Service } from './recommendation-evidence-materializer-v8.service';
 import { RecommendationFeatureStoreV8Service } from './recommendation-feature-store-v8.service';
 import { RecommendationObservabilityReportService } from './recommendation-observability-report.service';
 import { RecommendationRoadmapEvidenceService } from './recommendation-roadmap-evidence.service';
@@ -56,6 +58,7 @@ export interface RecommendationTrainingDatasetPreflightV1 {
   decisionCount: number;
   labeledDecisionCount: number;
   developmentWindowTo: string;
+  directShopSourceApprovalKeys: readonly string[];
   futureTestSealed: true;
   futureTestMaterialized: false;
   splitMatchCounts: Readonly<Record<string, number>>;
@@ -117,12 +120,14 @@ export class RecommendationTrainingDatasetV8Service {
     private readonly observabilityReport: RecommendationObservabilityReportService,
     private readonly soulsEvidence: SoulsAffordabilityEvidenceV2Service,
     private readonly roadmapEvidence: RecommendationRoadmapEvidenceService,
+    private readonly evidenceMaterializer: RecommendationEvidenceMaterializerV8Service,
   ) {}
 
   async preflight(options: RecommendationTrainingDatasetExportV1Options): Promise<RecommendationTrainingDatasetPreflightV1> {
     const blockers = validateOptions(options);
     const splitMatchCounts: Record<string, number> = {};
     const splitDecisionCounts: Record<string, number> = {};
+    const directShopSourceApprovalKeys = configuredDirectShopSourceAllowlist();
     const developmentWindowTo = options.splits.find((split) => split.split === 'SHADOW_HOLDOUT')?.to ?? '';
     if (blockers.length > 0) {
       return {
@@ -131,6 +136,7 @@ export class RecommendationTrainingDatasetV8Service {
         decisionCount: 0,
         labeledDecisionCount: 0,
         developmentWindowTo,
+        directShopSourceApprovalKeys,
         futureTestSealed: true,
         futureTestMaterialized: false,
         splitMatchCounts,
@@ -155,6 +161,20 @@ export class RecommendationTrainingDatasetV8Service {
       this.soulsEvidence.report(),
       this.roadmapEvidence.report(),
     ]);
+    const directShopBinding = await loadRecommendationDirectShopValidationBindingV8(
+      roadmap,
+      this.evidenceMaterializer,
+    );
+    blockers.push(...directShopBinding.blockers.map((blocker) => `DIRECT_SHOP:${blocker}`));
+    if (directShopSourceApprovalKeys.length !== 1) {
+      blockers.push('DIRECT_SHOP_SOURCE_APPROVAL_SET_MUST_CONTAIN_EXACTLY_ONE_KEY');
+    }
+    if (directShopBinding.valid && directShopSourceApprovalKeys[0] !== directShopBinding.approvalKey) {
+      blockers.push('DIRECT_SHOP_SOURCE_APPROVAL_NOT_BOUND_TO_VALIDATION');
+    }
+    if (!sameStrings(observability.approvedDirectShopSourceKeys ?? [], directShopSourceApprovalKeys)) {
+      blockers.push('OBSERVABILITY_DIRECT_SHOP_APPROVAL_SCOPE_MISMATCH');
+    }
 
     if (!dataset.passedStructuralGate) blockers.push(...dataset.blockers.map((blocker) => `DATASET_STRUCTURAL:${blocker}`));
     if (!dataset.passedEmpiricalGate) blockers.push(...dataset.blockers.map((blocker) => `DATASET_EMPIRICAL:${blocker}`));
@@ -199,6 +219,7 @@ export class RecommendationTrainingDatasetV8Service {
       decisionCount: dataset.decisionCount,
       labeledDecisionCount: dataset.labeledDecisionCount,
       developmentWindowTo,
+      directShopSourceApprovalKeys,
       futureTestSealed: true,
       futureTestMaterialized: false,
       splitMatchCounts,
@@ -220,7 +241,7 @@ export class RecommendationTrainingDatasetV8Service {
     const developmentSkipReasons = new Map<string, number>();
     const supportedRulesets = new Set<string>();
     const supportedCatalogs = new Set<string>();
-    const directShopSourceApprovalKeys = configuredDirectShopSourceAllowlist();
+    const directShopSourceApprovalKeys = preflight.directShopSourceApprovalKeys;
     const minimumDevelopmentExportCoverage = options.minimumDevelopmentExportCoverage ?? 0.99;
     let emittedDevelopmentDecisionCount = 0;
     let skippedDevelopmentDecisionCount = 0;
@@ -284,6 +305,9 @@ export class RecommendationTrainingDatasetV8Service {
       });
     }
 
+    if (!sameStrings(configuredDirectShopSourceAllowlist(), directShopSourceApprovalKeys)) {
+      throw new Error('Direct shop source approval set changed during immutable dataset export');
+    }
     const manifestBase = {
       contractVersion: RECOMMENDATION_DATASET_MANIFEST_VERSION,
       datasetId: options.datasetId,
@@ -524,6 +548,10 @@ function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
   const record = value as Record<string, unknown>;
   return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(',')}}`;
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return JSON.stringify([...left]) === JSON.stringify([...right]);
 }
 
 function increment(map: Map<string, number>, key: string): void {
