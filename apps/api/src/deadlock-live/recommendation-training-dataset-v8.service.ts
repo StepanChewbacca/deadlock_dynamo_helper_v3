@@ -59,6 +59,7 @@ export interface RecommendationTrainingDatasetPreflightV1 {
   labeledDecisionCount: number;
   developmentWindowTo: string;
   directShopSourceApprovalKeys: readonly string[];
+  directShopSourceValidationSubjectSha256?: string;
   futureTestSealed: true;
   futureTestMaterialized: false;
   splitMatchCounts: Readonly<Record<string, number>>;
@@ -172,6 +173,9 @@ export class RecommendationTrainingDatasetV8Service {
     if (directShopBinding.valid && directShopSourceApprovalKeys[0] !== directShopBinding.approvalKey) {
       blockers.push('DIRECT_SHOP_SOURCE_APPROVAL_NOT_BOUND_TO_VALIDATION');
     }
+    if (directShopBinding.valid && !isSha256(directShopBinding.subjectSha256 ?? '')) {
+      blockers.push('DIRECT_SHOP_SOURCE_VALIDATION_SUBJECT_SHA256_INVALID');
+    }
     if (!sameStrings(observability.approvedDirectShopSourceKeys ?? [], directShopSourceApprovalKeys)) {
       blockers.push('OBSERVABILITY_DIRECT_SHOP_APPROVAL_SCOPE_MISMATCH');
     }
@@ -220,6 +224,9 @@ export class RecommendationTrainingDatasetV8Service {
       labeledDecisionCount: dataset.labeledDecisionCount,
       developmentWindowTo,
       directShopSourceApprovalKeys,
+      directShopSourceValidationSubjectSha256: directShopBinding.valid
+        ? directShopBinding.subjectSha256
+        : undefined,
       futureTestSealed: true,
       futureTestMaterialized: false,
       splitMatchCounts,
@@ -231,6 +238,10 @@ export class RecommendationTrainingDatasetV8Service {
     const preflight = await this.preflight(options);
     if (!preflight.ready) {
       throw new Error(`Recommendation training dataset export is blocked: ${preflight.blockers.join(',')}`);
+    }
+    const directShopSourceValidationSubjectSha256 = preflight.directShopSourceValidationSubjectSha256;
+    if (!isSha256(directShopSourceValidationSubjectSha256 ?? '')) {
+      throw new Error('Direct shop validation snapshot identity is missing from ready dataset preflight');
     }
     const outputDir = resolve(options.outputDir);
     assertFreshOutputDirectory(outputDir);
@@ -318,6 +329,7 @@ export class RecommendationTrainingDatasetV8Service {
       actionContractVersion: options.actionContractVersion,
       candidateGeneratorVersion: options.candidateGeneratorVersion,
       directShopSourceApprovalKeys,
+      directShopSourceValidationSubjectSha256,
       pointInTimeCorrect: true,
       observedActionInjected: false,
       futureTestTouched: false,
