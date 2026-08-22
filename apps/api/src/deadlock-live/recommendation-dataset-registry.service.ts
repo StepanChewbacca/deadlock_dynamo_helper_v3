@@ -45,6 +45,7 @@ export class RecommendationDatasetRegistryService {
     const manifestSha256 = hashCanonicalJson(input.manifest);
     const existing = await this.datasetRepo.findOne({ where: { datasetId: input.manifest.datasetId } });
     if (existing) {
+      assertRegistryIdentity(existing);
       if (
         existing.datasetSha256 !== input.manifest.datasetSha256
         || existing.manifestSha256 !== manifestSha256
@@ -68,9 +69,10 @@ export class RecommendationDatasetRegistryService {
     } catch (error) {
       if (!isUniqueViolation(error)) throw error;
       const raced = await this.datasetRepo.findOne({ where: { datasetId: input.manifest.datasetId } });
+      if (!raced) throw error;
+      assertRegistryIdentity(raced);
       if (
-        !raced
-        || raced.datasetSha256 !== input.manifest.datasetSha256
+        raced.datasetSha256 !== input.manifest.datasetSha256
         || raced.manifestSha256 !== manifestSha256
         || raced.objectBaseUri !== input.objectBaseUri
       ) {
@@ -84,6 +86,7 @@ export class RecommendationDatasetRegistryService {
     if (!input.datasetId) throw new Error('datasetId is required');
     if (!input.verifier) throw new Error('verifier is required');
     const row = await this.get(input.datasetId);
+    assertRegistryIdentity(row);
     if (row.manifestSha256 !== input.manifestSha256) {
       throw new Error('Verified dataset manifest SHA does not match registry');
     }
@@ -93,10 +96,11 @@ export class RecommendationDatasetRegistryService {
       throw new Error('Verified dataset files do not exactly match dataset manifest');
     }
     if (row.status === 'VERIFIED') {
+      assertFreshVerification(row);
       const current = row.verification;
       if (
         current?.verifiedManifestSha256 !== input.manifestSha256
-        || JSON.stringify(current.verifiedFiles) !== JSON.stringify(verifiedFiles)
+        || JSON.stringify(normalizeFiles(current.verifiedFiles)) !== JSON.stringify(verifiedFiles)
       ) {
         throw new Error(`Immutable verified dataset conflict: ${input.datasetId}`);
       }
@@ -123,13 +127,8 @@ export class RecommendationDatasetRegistryService {
 
   async getVerified(datasetId: string): Promise<RecommendationDatasetRegistryV1> {
     const row = await this.get(datasetId);
-    if (
-      row.status !== 'VERIFIED'
-      || !row.verification
-      || row.verification.verifiedManifestSha256 !== row.manifestSha256
-    ) {
-      throw new Error(`Dataset is not verified: ${datasetId}`);
-    }
+    if (row.status !== 'VERIFIED') throw new Error(`Dataset is not verified: ${datasetId}`);
+    assertFreshVerification(row);
     return row;
   }
 }
@@ -151,6 +150,34 @@ function assertRemoteImmutableUri(value: string): void {
   if (/^(s3|gs|az|https):\/\//i.test(value)) return;
   if (process.env.NODE_ENV !== 'production' && process.env.RECOMMENDATION_ALLOW_LOCAL_ARTIFACTS === 'true' && value.startsWith('file://')) return;
   throw new Error('objectBaseUri must reference an approved remote immutable artifact store');
+}
+
+function assertRegistryIdentity(row: RecommendationDatasetRegistryV1): void {
+  assertRecommendationDatasetManifestV1(row.manifest);
+  if (row.manifest.datasetId !== row.datasetId) {
+    throw new Error('Dataset registry manifest identity is stale');
+  }
+  if (row.manifest.datasetSha256 !== row.datasetSha256) {
+    throw new Error('Dataset registry dataset SHA is stale');
+  }
+  if (hashCanonicalJson(row.manifest) !== row.manifestSha256) {
+    throw new Error('Dataset registry manifest SHA is stale');
+  }
+}
+
+function assertFreshVerification(row: RecommendationDatasetRegistryV1): void {
+  assertRegistryIdentity(row);
+  if (!row.verification || row.verification.verifiedManifestSha256 !== row.manifestSha256) {
+    throw new Error('Dataset registry verification evidence is missing or stale');
+  }
+  const expectedFiles = normalizeFiles(row.manifest.files);
+  const verifiedFiles = normalizeFiles(row.verification.verifiedFiles);
+  if (JSON.stringify(expectedFiles) !== JSON.stringify(verifiedFiles)) {
+    throw new Error('Dataset registry verification files are missing or stale');
+  }
+  if (!row.verifiedAt || !Number.isFinite(row.verifiedAt.getTime())) {
+    throw new Error('Dataset registry verification timestamp is missing or invalid');
+  }
 }
 
 function normalizeFiles(
