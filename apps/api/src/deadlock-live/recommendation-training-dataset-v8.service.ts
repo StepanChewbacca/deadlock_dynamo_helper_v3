@@ -140,11 +140,16 @@ export class RecommendationTrainingDatasetV8Service {
     const from = new Date(options.splits[0].from);
     const developmentTo = new Date(developmentWindowTo);
     const [dataset, observability, souls, roadmap] = await Promise.all([
-      this.datasetReport.buildReport({ from, to: developmentTo }),
+      this.datasetReport.buildReport({
+        from,
+        to: developmentTo,
+        candidateGeneratorVersion: options.candidateGeneratorVersion,
+      }),
       this.observabilityReport.buildReport({
         from,
         to: developmentTo,
         maximumAlignmentAgeMs: options.maximumAlignmentAgeMs,
+        candidateGeneratorVersion: options.candidateGeneratorVersion,
       }),
       this.soulsEvidence.report(),
       this.roadmapEvidence.report(),
