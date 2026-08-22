@@ -1,7 +1,9 @@
 import { RecommendationTrainingLaunchV8Service } from '../src/deadlock-live/recommendation-training-launch-v8.service';
 
 const sha = (value: string) => value.repeat(64).slice(0, 64);
+const SHOP_ENV = 'RECOMMENDATION_DIRECT_SHOP_SOURCE_ALLOWLIST';
 const CANDIDATE_GENERATOR_VERSION = 'candidate-v8';
+const DIRECT_SHOP_SOURCE_APPROVAL_KEY = 'OVERWOLF_GEP:onInfoUpdates2|match_info|match_info|shop_state';
 
 function manifest() {
   return {
@@ -14,6 +16,7 @@ function manifest() {
     featureContractVersion: 'recommendation-features-v8',
     actionContractVersion: 'recommendation-actions-v1',
     candidateGeneratorVersion: CANDIDATE_GENERATOR_VERSION,
+    directShopSourceApprovalKeys: [DIRECT_SHOP_SOURCE_APPROVAL_KEY],
     pointInTimeCorrect: true,
     observedActionInjected: false,
     futureTestTouched: false,
@@ -103,11 +106,23 @@ function currentDataset(overrides: Record<string, unknown> = {}) {
 function currentObservability() {
   return {
     candidateGeneratorVersion: CANDIDATE_GENERATOR_VERSION,
+    approvedDirectShopSourceKeys: [DIRECT_SHOP_SOURCE_APPROVAL_KEY],
     gate: { passed: true, blockers: [] },
   };
 }
 
 describe('RecommendationTrainingLaunchV8Service final data readiness', () => {
+  const originalShopEnv = process.env[SHOP_ENV];
+
+  beforeEach(() => {
+    process.env[SHOP_ENV] = DIRECT_SHOP_SOURCE_APPROVAL_KEY;
+  });
+
+  afterEach(() => {
+    if (originalShopEnv === undefined) delete process.env[SHOP_ENV];
+    else process.env[SHOP_ENV] = originalShopEnv;
+  });
+
   it('rechecks current data over the immutable dataset development window', async () => {
     const dataset = manifest();
     const datasetRegistry = {
@@ -146,6 +161,7 @@ describe('RecommendationTrainingLaunchV8Service final data readiness', () => {
       candidateGeneratorVersion: CANDIDATE_GENERATOR_VERSION,
     });
     expect(report.currentDataGates.candidateGeneratorVersion).toBe(CANDIDATE_GENERATOR_VERSION);
+    expect(report.currentDataGates.directShopSourceApprovalKeys).toEqual([DIRECT_SHOP_SOURCE_APPROVAL_KEY]);
     expect(report.currentDataGates.explicitFeasibilityCoverage).toBe(0.997);
   });
 
