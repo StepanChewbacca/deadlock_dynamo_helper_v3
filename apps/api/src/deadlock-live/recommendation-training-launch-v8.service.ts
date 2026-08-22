@@ -26,6 +26,7 @@ export interface RecommendationTrainingLaunchPreflightV8 {
     to: string;
     candidateGeneratorVersion: string;
     directShopSourceApprovalKeys: readonly string[];
+    directShopSourceValidationSubjectSha256?: string;
     directShopSourceValidation: 'PASS' | 'FAIL' | 'INSUFFICIENT_EVIDENCE' | 'NOT_EVALUATED';
     controlledSoulsValidation: 'PASS' | 'FAIL' | 'INSUFFICIENT_EVIDENCE';
     observabilityPassed: boolean;
@@ -59,6 +60,7 @@ export class RecommendationTrainingLaunchV8Service {
     const candidateGeneratorVersion = dataset.manifest.candidateGeneratorVersion?.trim();
     if (!candidateGeneratorVersion) throw new Error('Verified dataset candidateGeneratorVersion is missing');
     const datasetDirectShopSourceApprovalKeys = dataset.manifest.directShopSourceApprovalKeys;
+    const datasetDirectShopValidationSubjectSha256 = dataset.manifest.directShopSourceValidationSubjectSha256?.toLowerCase();
     const currentDirectShopSourceApprovalKeys = configuredDirectShopSourceAllowlist();
     const window = developmentWindow(dataset.manifest.splits);
     const [roadmap, currentDataset, currentObservability, currentSouls] = await Promise.all([
@@ -98,6 +100,9 @@ export class RecommendationTrainingLaunchV8Service {
     } else if (!sameStrings(datasetDirectShopSourceApprovalKeys, currentDirectShopSourceApprovalKeys)) {
       blockers.push('CURRENT_DIRECT_SHOP_SOURCE_APPROVAL_SET_MISMATCH');
     }
+    if (!isSha256(datasetDirectShopValidationSubjectSha256 ?? '')) {
+      blockers.push('DATASET_DIRECT_SHOP_VALIDATION_SUBJECT_SHA_MISSING_OR_INVALID');
+    }
     if (currentDirectShopSourceApprovalKeys.length !== 1) {
       blockers.push('CURRENT_DIRECT_SHOP_SOURCE_APPROVAL_SET_MUST_CONTAIN_EXACTLY_ONE_KEY');
     }
@@ -106,6 +111,12 @@ export class RecommendationTrainingLaunchV8Service {
       && currentDirectShopSourceApprovalKeys[0] !== directShopBinding.approvalKey
     ) {
       blockers.push('CURRENT_DIRECT_SHOP_SOURCE_APPROVAL_NOT_BOUND_TO_VALIDATION');
+    }
+    if (
+      directShopBinding.valid
+      && datasetDirectShopValidationSubjectSha256 !== directShopBinding.subjectSha256?.toLowerCase()
+    ) {
+      blockers.push('CURRENT_DIRECT_SHOP_VALIDATION_SUBJECT_SHA_MISMATCH');
     }
     if (currentDataset.candidateGeneratorVersion !== candidateGeneratorVersion) {
       blockers.push('CURRENT_DATASET_CANDIDATE_GENERATOR_SCOPE_MISMATCH');
@@ -146,6 +157,9 @@ export class RecommendationTrainingLaunchV8Service {
         to: window.to.toISOString(),
         candidateGeneratorVersion,
         directShopSourceApprovalKeys: currentDirectShopSourceApprovalKeys,
+        directShopSourceValidationSubjectSha256: directShopBinding.valid
+          ? directShopBinding.subjectSha256
+          : undefined,
         directShopSourceValidation: roadmap.evidence.directShopSourceValidation,
         controlledSoulsValidation: currentSouls.verdict,
         observabilityPassed: currentObservability.gate.passed,
@@ -164,6 +178,10 @@ export class RecommendationTrainingLaunchV8Service {
 
 function sameStrings(left: readonly string[], right: readonly string[]): boolean {
   return JSON.stringify([...left]) === JSON.stringify([...right]);
+}
+
+function isSha256(value: string): boolean {
+  return /^[a-f0-9]{64}$/i.test(value);
 }
 
 function developmentWindow(
