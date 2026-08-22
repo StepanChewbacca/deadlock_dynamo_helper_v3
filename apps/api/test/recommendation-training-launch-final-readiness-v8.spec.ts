@@ -1,14 +1,16 @@
-import {
-  RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_EVALUATOR_V1,
-  RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_V1,
-} from '@deadlock-live-probe/shared';
+import { RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_EVALUATOR_V1 } from '@deadlock-live-probe/shared';
 import { RecommendationTrainingLaunchV8Service } from '../src/deadlock-live/recommendation-training-launch-v8.service';
+import {
+  TEST_DIRECT_SHOP_APPROVAL_KEY,
+  TEST_DIRECT_SHOP_SUBJECT_SHA256,
+  createDirectShopValidationSnapshotV8,
+} from './fixtures/recommendation-direct-shop-validation-v8';
 
 const sha = (value: string) => value.repeat(64).slice(0, 64);
 const SHOP_ENV = 'RECOMMENDATION_DIRECT_SHOP_SOURCE_ALLOWLIST';
 const CANDIDATE_GENERATOR_VERSION = 'candidate-v8';
-const DIRECT_SHOP_SOURCE_APPROVAL_KEY = 'OVERWOLF_GEP:onInfoUpdates2|match_info|match_info|shop_state';
-const DIRECT_SHOP_SUBJECT_SHA = sha('8');
+const DIRECT_SHOP_SOURCE_APPROVAL_KEY = TEST_DIRECT_SHOP_APPROVAL_KEY;
+const DIRECT_SHOP_SUBJECT_SHA = TEST_DIRECT_SHOP_SUBJECT_SHA256;
 
 function manifest() {
   return {
@@ -22,6 +24,7 @@ function manifest() {
     actionContractVersion: 'recommendation-actions-v1',
     candidateGeneratorVersion: CANDIDATE_GENERATOR_VERSION,
     directShopSourceApprovalKeys: [DIRECT_SHOP_SOURCE_APPROVAL_KEY],
+    directShopSourceValidationSubjectSha256: DIRECT_SHOP_SUBJECT_SHA,
     pointInTimeCorrect: true,
     observedActionInjected: false,
     futureTestTouched: false,
@@ -130,18 +133,7 @@ function currentObservability() {
 }
 
 function validationSnapshot() {
-  return {
-    subjectSha256: DIRECT_SHOP_SUBJECT_SHA,
-    gateName: 'directShopSourceValidation',
-    evaluator: RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_EVALUATOR_V1,
-    report: {
-      contractVersion: RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_V1,
-      status: 'PASS',
-      approvalKey: DIRECT_SHOP_SOURCE_APPROVAL_KEY,
-      canActivateDirectShopSource: true,
-      blockers: [],
-    },
-  };
+  return createDirectShopValidationSnapshotV8(DIRECT_SHOP_SUBJECT_SHA, DIRECT_SHOP_SOURCE_APPROVAL_KEY);
 }
 
 function createService(datasetOverrides: Record<string, unknown> = {}) {
