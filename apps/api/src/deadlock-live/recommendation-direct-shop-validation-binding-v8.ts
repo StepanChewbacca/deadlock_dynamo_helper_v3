@@ -11,6 +11,7 @@ import { RecommendationRoadmapEvidenceService } from './recommendation-roadmap-e
 export interface RecommendationDirectShopValidationBindingV8 {
   valid: boolean;
   approvalKey?: string;
+  subjectSha256?: string;
   report?: RecommendationDirectShopSourceValidationReportV1;
   blockers: readonly string[];
 }
@@ -48,7 +49,7 @@ export async function loadRecommendationDirectShopValidationBindingV8(
   if (snapshot.evaluator !== evidence.evaluator) blockers.push('DIRECT_SHOP_SOURCE_VALIDATION_SNAPSHOT_IDENTITY_MISMATCH');
 
   const report = parseReport(snapshot.report, blockers);
-  if (!report) return { valid: false, blockers: uniqueSorted(blockers) };
+  if (!report) return { valid: false, subjectSha256: evidence.subjectSha256, blockers: uniqueSorted(blockers) };
 
   if (report.contractVersion !== RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_V1) {
     blockers.push('DIRECT_SHOP_SOURCE_VALIDATION_CONTRACT_MISMATCH');
@@ -87,6 +88,7 @@ export async function loadRecommendationDirectShopValidationBindingV8(
   return {
     valid: finalBlockers.length === 0,
     approvalKey: finalBlockers.length === 0 ? report.approvalKey : undefined,
+    subjectSha256: evidence.subjectSha256,
     report,
     blockers: finalBlockers,
   };
