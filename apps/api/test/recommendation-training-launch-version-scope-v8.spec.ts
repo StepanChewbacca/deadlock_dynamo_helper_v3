@@ -2,15 +2,19 @@ import {
   RECOMMENDATION_BEHAVIORAL_TRAINING_LAUNCH_V1,
   RECOMMENDATION_DATASET_MANIFEST_VERSION,
   RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_EVALUATOR_V1,
-  RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_V1,
   RECOMMENDATION_FEATURE_CONTRACT_VERSION,
 } from '@deadlock-live-probe/shared';
 import { RecommendationTrainingLaunchV8Service } from '../src/deadlock-live/recommendation-training-launch-v8.service';
+import {
+  TEST_DIRECT_SHOP_APPROVAL_KEY,
+  TEST_DIRECT_SHOP_SUBJECT_SHA256,
+  createDirectShopValidationSnapshotV8,
+} from './fixtures/recommendation-direct-shop-validation-v8';
 
 const SHOP_ENV = 'RECOMMENDATION_DIRECT_SHOP_SOURCE_ALLOWLIST';
 const candidateGeneratorVersion = 'candidate-v8.4';
-const directShopSourceApprovalKey = 'OVERWOLF_GEP:onInfoUpdates2|match_info|match_info|shop_state';
-const directShopSubjectSha256 = 'e'.repeat(64);
+const directShopSourceApprovalKey = TEST_DIRECT_SHOP_APPROVAL_KEY;
+const directShopSubjectSha256 = TEST_DIRECT_SHOP_SUBJECT_SHA256;
 
 function manifest() {
   return {
@@ -24,6 +28,7 @@ function manifest() {
     actionContractVersion: 'recommendation-actions-v1',
     candidateGeneratorVersion,
     directShopSourceApprovalKeys: [directShopSourceApprovalKey],
+    directShopSourceValidationSubjectSha256: directShopSubjectSha256,
     pointInTimeCorrect: true,
     observedActionInjected: false,
     futureTestTouched: false,
@@ -134,20 +139,7 @@ function roadmap(directShopSourceValidation: 'PASS' | 'FAIL' | 'INSUFFICIENT_EVI
 }
 
 function directShopSnapshot(approvalKey = directShopSourceApprovalKey) {
-  return {
-    subjectSha256: directShopSubjectSha256,
-    gateName: 'directShopSourceValidation',
-    evaluator: RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_EVALUATOR_V1,
-    report: {
-      contractVersion: RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_V1,
-      generatedAt: '2026-08-22T00:00:00.000Z',
-      status: 'PASS',
-      approvalKey,
-      canActivateDirectShopSource: true,
-      blockers: [],
-      attestation: {},
-    },
-  };
+  return createDirectShopValidationSnapshotV8(directShopSubjectSha256, approvalKey);
 }
 
 function currentDataset(version = candidateGeneratorVersion) {
@@ -292,6 +284,6 @@ describe('RecommendationTrainingLaunchV8Service generator and direct-shop scope'
     const report = await service.preflight('dataset-v8-ready', config() as never);
 
     expect(report.ready).toBe(false);
-    expect(report.blockers).toContain('DIRECT_SHOP_SOURCE_VALIDATION_SNAPSHOT_MISSING');
+    expect(report.blockers).toContain('CURRENT_DIRECT_SHOP_SOURCE_VALIDATION_SNAPSHOT_MISSING');
   });
 });
