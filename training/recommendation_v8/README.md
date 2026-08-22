@@ -7,14 +7,35 @@ This directory is the model-development path for the `BEHAVIORAL_BUILDLM` roadma
 Training is authorized only when all of the following are true:
 
 1. Controlled souls evidence can mark spendable souls as verified.
-2. Direct shop opportunity is observed with `DIRECT_SOURCE_SIGNAL` provenance.
-3. Dataset V8 structural and empirical reports pass on the development window.
+2. Direct shop opportunity is observed with independently approved `DIRECT_SOURCE_SIGNAL` provenance.
+3. Dataset V8 structural and empirical reports pass on the exact development window.
 4. The roadmap evidence ledger unlocks `PROSPECTIVE_DATA`.
 5. The Dataset V8 artifact is registered and independently `VERIFIED` with exact manifest/file hashes.
 6. `futureTestUntouched=true` and `futureTestEvaluation=NOT_EVALUATED`.
-7. `TRAIN`, `VALIDATION`, and `SHADOW_HOLDOUT` each contain complete non-crossing matches, and `SHADOW_HOLDOUT` has at least the configured Behavioral gate decision count (10,000 in the checked-in RNN/Transformer configs).
+7. `TRAIN`, `VALIDATION`, and `SHADOW_HOLDOUT` contain complete non-crossing matches, and `SHADOW_HOLDOUT` contains at least 10,000 decisions.
+8. The current data still satisfy the final pretraining gates at launch time: ruleset evidence coverage >= 99.9%, explicit feasibility evaluation coverage >= 99.5%, observed historical action feasible coverage >= 99% overall, and >= 98% in every major action-type/game-phase cohort with at least 100 labeled decisions.
+9. The secure training runner can recreate the pinned offline environment, import the exact training dependencies, and provide the configured CUDA device.
+10. Both RNN and Transformer API preflights pass against the same verified dataset SHA.
 
-The API endpoint `POST /deadlock-live/recommendation-training/v8/preflight/:datasetId` enforces the registry and roadmap checks. It is disabled unless `RECOMMENDATION_TRAINING_TOKEN` is configured. The verified-dataset registry rechecks the manifest content SHA, manifest SHA, exact file descriptors, and verification timestamp before returning a dataset to training preflight.
+The API endpoint `POST /deadlock-live/recommendation-training/v8/preflight/:datasetId` re-evaluates the current controlled-souls, observability, and Dataset V8 reports over the dataset development window in addition to checking the immutable registry and roadmap state. A stale historical PASS in the roadmap therefore cannot bypass a current failing data gate. The endpoint is disabled unless `RECOMMENDATION_TRAINING_TOKEN` is configured.
+
+## The only accepted ready-to-train signal
+
+Before starting training, run the manual `Recommendation Pretraining Readiness` workflow. It uses the same protected `recommendation-training` environment and the same dedicated self-hosted runner class as the real training workflow, but it does not execute either model trainer.
+
+The readiness workflow fails closed unless it can:
+
+1. confine the dataset path to `RECOMMENDATION_DATASET_STAGING_ROOT`;
+2. recreate a Python 3.12 environment exclusively from `RECOMMENDATION_TRAINING_WHEELHOUSE`;
+3. verify exact pinned training dependency versions and the configured CUDA device;
+4. verify the immutable dataset and manifest SHA values plus every artifact file and development split isolation invariant;
+5. verify the dataset action contract and untouched FUTURE_TEST state;
+6. pass the current roadmap/registry/data API preflight for the RNN config;
+7. pass the same API preflight for the Transformer config.
+
+Only a successful final step with status `READY_TO_START_BEHAVIORAL_TRAINING` means that pre-training preparation is complete. Its `trainingPerformed` field is always `false`. The next action after that exact status is to run `Recommendation Behavioral Training` with the same dataset id, dataset SHA, manifest SHA, dataset directory, and action contract.
+
+`training/recommendation_v8/pretraining_environment_check.py` is shared by the no-training readiness workflow and the real training workflow so the runner/device checks cannot silently drift between readiness and training.
 
 ## Dataset construction
 
@@ -24,9 +45,15 @@ Use the manual `Recommendation Dataset Export` workflow on the dedicated `recomm
 
 A match is eligible for a development split only when its first Decision V8 timestamp is at or after the split start and its last Decision V8 timestamp is strictly before the split end. Matches crossing a split boundary are excluded instead of being partially assigned. This preserves match-level isolation and prevents decisions occurring in a later window from leaking into an earlier split. The export uses the causal Feature Store V8 assembler and the persisted deterministic feasible candidate set. Observed actions are never injected into the candidate set. Development quality gates stop at the end of `SHADOW_HOLDOUT`; FUTURE_TEST diagnostics are not exposed.
 
+The empirical Dataset V8 gate also checks that every candidate has explicit feasibility information whenever that action requires it, that the observed historical action remains feasible at the required overall and major-cohort rates, and that ruleset/inventory/transaction evidence meets the checked thresholds. `WAIT_SAVE` is treated as explicitly evaluated by construction rather than requiring a shop signal that is irrelevant to waiting.
+
 The model-development artifact contains files only for `TRAIN`, `VALIDATION`, and `SHADOW_HOLDOUT`. The FUTURE_TEST split is represented only by its sealed chronological descriptor with hidden counts and is not materialized into a readable model-development file. The Python verifier rejects any `future_test.jsonl.gz` file in this artifact. Manifest validation also requires exact split order and exact equality between each development split's descriptor decision count and its artifact row count.
 
 After export, upload the directory to an approved immutable object store, register the manifest through the protected dataset-registry endpoint, and independently verify the exact manifest SHA and all file SHA/size/row-count values. Training accepts only a registry-verified dataset id.
+
+## GEP canonicalization evidence
+
+The canonical GEP contract includes a versioned `match_info.roster` documented-shape fixture under `packages/shared/test/fixtures/gep`. CI requires 100% mapping coverage for the expected canonical fields and preserves unknown raw fields instead of silently dropping them. This fixture is explicitly documentation-derived; it must not be described as a captured Overwolf Simulator payload unless such a capture is actually added later.
 
 ## Model training
 
@@ -34,13 +61,14 @@ The manual `Recommendation Behavioral Training` workflow runs only on the protec
 
 The workflow:
 
-1. verifies local dataset bytes against the registry SHA values;
-2. asks the API for roadmap/registry preflight for both architectures;
-3. trains the RNN baseline on `TRAIN`, with early stopping on `VALIDATION`;
-4. trains the Transformer candidate on exactly the same observables and split contract;
-5. evaluates both on `SHADOW_HOLDOUT` only;
-6. runs the equal-observables RNN/Transformer ablation gate;
-7. builds an immutable Transformer model bundle only if the Behavioral and ablation gates pass.
+1. recreates the pinned offline Python environment and rechecks Python/Torch/CUDA readiness;
+2. verifies local dataset bytes against the registry SHA values and split-isolation invariants;
+3. asks the API for current roadmap/registry/data preflight for both architectures;
+4. trains the RNN baseline on `TRAIN`, with early stopping on `VALIDATION`;
+5. trains the Transformer candidate on exactly the same observables and split contract;
+6. evaluates both on `SHADOW_HOLDOUT` only;
+7. runs the equal-observables RNN/Transformer ablation gate;
+8. builds an immutable Transformer model bundle only if the Behavioral and ablation gates pass.
 
 `FUTURE_TEST` cannot be decoded by `train_behavioral.py` or `compare_behavioral.py` because it is not present in the model-development artifact and the shared loader explicitly rejects that split. No FUTURE_TEST example can enter training, validation, architecture selection, or model-bundle metrics.
 
@@ -48,7 +76,7 @@ The workflow:
 
 Both architectures optimize grouped listwise cross entropy over the complete deterministic feasible choice set. Probabilities are raw softmax probabilities over that set. Probability floors are forbidden.
 
-The RNN and Transformer use the same state, history, action tokenization, hash dimension, history limit, dataset SHA, feature contract, candidate-generator version, seed, chronological split contract, and release-gate thresholds. Architecture-specific parameters are the sequence encoder only. The security audit rejects equal-observables configuration drift before training, and the ablation report refuses comparison when the runtime equal-observables identity differs.
+The RNN and Transformer use the same state, history, action tokenization, hash dimension, history limit, dataset SHA, feature contract, candidate-generator version, seed, chronological split contract, and release-gate thresholds. Architecture-specific parameters are the sequence encoder only. The pretraining environment checker and security audit reject equal-observables configuration drift before training, and the ablation report refuses comparison when the runtime equal-observables identity differs.
 
 ## Artifacts
 
