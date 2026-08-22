@@ -146,6 +146,6 @@ const directShopNotReady = evaluateRecommendationBehavioralTrainingLaunchV1({
   config,
 });
 assert.equal(directShopNotReady.ready, false);
-assert(directShopNotReady.blockers.some((blocker) => blocker.includes('directShopSourceValidation:INSUFFICIENT_EVIDENCE')));
+assert(directShopNotReady.blockers.includes('PROSPECTIVE_DATA:PREREQUISITE_PHASE_NOT_UNLOCKED'));
 
 console.log('recommendation behavioral training v1 fixtures: PASS');
