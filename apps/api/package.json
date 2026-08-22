@@ -9,6 +9,9 @@
     "test": "jest --runInBand",
     "recommendation:dataset:preflight": "ts-node src/scripts/export-recommendation-training-dataset-v8.ts preflight",
     "recommendation:dataset:export": "ts-node src/scripts/export-recommendation-training-dataset-v8.ts export",
+    "recommendation:value:dataset:preflight": "ts-node src/scripts/export-recommendation-value-training-dataset-v8.ts preflight",
+    "recommendation:value:dataset:export": "ts-node src/scripts/export-recommendation-value-training-dataset-v8.ts export",
+    "recommendation:value:train": "ts-node src/scripts/train-recommendation-value-v8.ts",
     "lint": "echo \"api: no lint\""
   },
   "jest": {

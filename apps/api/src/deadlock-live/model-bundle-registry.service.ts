@@ -132,9 +132,7 @@ export class ModelBundleRegistryService {
       if (target.status !== 'VERIFIED' && target.status !== 'ACTIVE') {
         throw new Error(`Model bundle is not verified: ${target.status}`);
       }
-      if (!target.verification || target.verification.verifiedManifestSha256 !== target.manifestSha256) {
-        throw new Error('Model bundle verification evidence is missing or stale');
-      }
+      assertFreshVerification(target);
       const compatibility = validateModelBundleRuntimeCompatibilityV1(target.manifest, input.runtime);
       if (!compatibility.valid) {
         throw new Error(`Model bundle is not runtime-compatible: ${compatibility.errors.join(',')}`);
@@ -155,12 +153,29 @@ export class ModelBundleRegistryService {
     });
   }
 
+  async getVerified(modelId: string, modelVersion: string): Promise<ModelBundleRegistryV1> {
+    if (!modelId) throw new Error('modelId is required');
+    if (!modelVersion) throw new Error('modelVersion is required');
+    const target = await this.registryRepo.findOne({ where: { modelId, modelVersion } });
+    if (!target) throw new Error(`Model bundle not found: ${modelId}@${modelVersion}`);
+    if (target.status !== 'VERIFIED' && target.status !== 'ACTIVE') {
+      throw new Error(`Model bundle is not verified: ${target.status}`);
+    }
+    assertFreshVerification(target);
+    return target;
+  }
+
   async getActive(
     modelId: string,
     runtime: ModelBundleRuntimeCompatibilityV1,
   ): Promise<ModelBundleRegistryV1 | undefined> {
     const active = await this.registryRepo.findOne({ where: { modelId, status: 'ACTIVE' } });
-    if (!active || !active.verification || active.verification.verifiedManifestSha256 !== active.manifestSha256) return undefined;
+    if (!active) return undefined;
+    try {
+      assertFreshVerification(active);
+    } catch {
+      return undefined;
+    }
     const compatibility = validateModelBundleRuntimeCompatibilityV1(active.manifest, runtime);
     return compatibility.valid ? active : undefined;
   }
@@ -168,6 +183,20 @@ export class ModelBundleRegistryService {
 
 export function modelManifestSha256V1(manifest: ModelBundleManifestV1): string {
   return createHash('sha256').update(JSON.stringify(canonicalizeManifest(manifest))).digest('hex');
+}
+
+function assertFreshVerification(entity: ModelBundleRegistryV1): void {
+  if (!entity.verification || entity.verification.verifiedManifestSha256 !== entity.manifestSha256) {
+    throw new Error('Model bundle verification evidence is missing or stale');
+  }
+  const expectedFiles = normalizedFiles(entity.manifest.files);
+  const verifiedFiles = normalizedFiles(entity.verification.verifiedFiles);
+  if (JSON.stringify(expectedFiles) !== JSON.stringify(verifiedFiles)) {
+    throw new Error('Model bundle verification evidence files are missing or stale');
+  }
+  if (!entity.verifiedAt || !Number.isFinite(entity.verifiedAt.getTime())) {
+    throw new Error('Model bundle verification timestamp is missing or invalid');
+  }
 }
 
 function canonicalizeManifest(manifest: ModelBundleManifestV1): ModelBundleManifestV1 {

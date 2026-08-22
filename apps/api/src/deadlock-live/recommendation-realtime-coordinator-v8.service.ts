@@ -2,11 +2,13 @@ import { Injectable } from '@nestjs/common';
 import {
   RecommendationBehavioralRuntimePredictorV1,
   RecommendationBehavioralV8LinearModel,
+  RecommendationBehavioralV8Prediction,
   RecommendationExperimentAssignmentV1,
   RecommendationPolicyV1Config,
   RecommendationRuntimeModeV8,
   RecommendationValueV8Model,
 } from '@deadlock-live-probe/shared';
+import { RecommendationBehavioralServingV1Service } from './recommendation-behavioral-serving-v1.service';
 import {
   RecommendationActionSelectionModeV8,
   RecommendationDecisionV8Result,
@@ -15,9 +17,15 @@ import {
 import { RecommendationRealtimeStateV8Service } from './recommendation-realtime-state-v8.service';
 import { RecommendationTelemetryIngestV8Service } from './recommendation-telemetry-ingest-v8.service';
 
+export interface RecommendationBehavioralServingModelV1 {
+  modelVersion: string;
+  manifestSha256: string;
+}
+
 export interface RecommendationRealtimeModelsV8 {
   behavioralModel?: RecommendationBehavioralV8LinearModel;
   behavioralPredictor?: RecommendationBehavioralRuntimePredictorV1;
+  behavioralServing?: RecommendationBehavioralServingModelV1;
   valueModel?: RecommendationValueV8Model;
   policyConfig?: RecommendationPolicyV1Config;
 }
@@ -60,6 +68,7 @@ export class RecommendationRealtimeCoordinatorV8Service {
     private readonly realtimeState: RecommendationRealtimeStateV8Service,
     private readonly decisionService: RecommendationDecisionV8Service,
     private readonly telemetryIngest: RecommendationTelemetryIngestV8Service,
+    private readonly behavioralServing: RecommendationBehavioralServingV1Service,
   ) {}
 
   async decide(
@@ -93,6 +102,32 @@ export class RecommendationRealtimeCoordinatorV8Service {
       };
     }
 
+    let behavioralPrediction: RecommendationBehavioralV8Prediction | undefined;
+    let upstreamInferenceLatencyMs = 0;
+    let servingRuntimeCompatible = true;
+    const preInferenceBlockers: string[] = [];
+    if (models.behavioralServing) {
+      try {
+        const prepared = this.decisionService.prepareBehavioralDecision(
+          realtime.state,
+          realtime.itemGraph,
+          realtime.featureState,
+        );
+        const served = await this.behavioralServing.predict({
+          decision: prepared.decision,
+          modelVersion: models.behavioralServing.modelVersion,
+          featureContractVersion: realtime.featureState.contractVersion,
+          candidateGeneratorVersion: request.candidateGeneratorVersion,
+          manifestSha256: models.behavioralServing.manifestSha256,
+        });
+        behavioralPrediction = served.prediction;
+        upstreamInferenceLatencyMs = served.inferenceLatencyMs;
+      } catch {
+        servingRuntimeCompatible = false;
+        preInferenceBlockers.push('BEHAVIORAL_SERVING_FAILED');
+      }
+    }
+
     const decision = this.decisionService.createDecision({
       eventId: request.eventId,
       playerKey: request.playerKey,
@@ -110,15 +145,18 @@ export class RecommendationRealtimeCoordinatorV8Service {
       featureState: realtime.featureState,
       behavioralModel: models.behavioralModel,
       behavioralPredictor: models.behavioralPredictor,
+      behavioralPrediction,
       valueModel: models.valueModel,
       policyConfig: models.policyConfig,
       runtimeMode: request.runtimeMode,
       observabilityGatePassed: request.observabilityGatePassed,
-      modelRuntimeCompatible: request.modelRuntimeCompatible,
+      modelRuntimeCompatible: request.modelRuntimeCompatible && servingRuntimeCompatible,
       shadowGatePassed: request.shadowGatePassed,
       experiment: request.experiment,
       selectionMode: request.selectionMode,
       explorationProbabilityByActionKey: request.explorationProbabilityByActionKey,
+      upstreamInferenceLatencyMs,
+      preInferenceBlockers,
     });
     const persistence = await this.telemetryIngest.appendInternal(decision.event);
     return {
@@ -143,11 +181,21 @@ function validateRequest(
   if (!Number.isFinite(request.decisionAtMs)) errors.push('DECISION_AT_INVALID');
   if (!request.candidateGeneratorVersion) errors.push('CANDIDATE_GENERATOR_VERSION_REQUIRED');
   if (!request.modelVersion) errors.push('MODEL_VERSION_REQUIRED');
-  if (models.behavioralModel && models.behavioralPredictor) errors.push('MULTIPLE_BEHAVIORAL_RUNTIME_SOURCES');
+
+  const behavioralSourceCount = Number(models.behavioralModel !== undefined)
+    + Number(models.behavioralPredictor !== undefined)
+    + Number(models.behavioralServing !== undefined);
+  if (behavioralSourceCount > 1) errors.push('MULTIPLE_BEHAVIORAL_RUNTIME_SOURCES');
   if (models.behavioralModel && models.behavioralModel.modelVersion === '') errors.push('BEHAVIORAL_MODEL_VERSION_REQUIRED');
   if (models.behavioralPredictor && models.behavioralPredictor.modelVersion === '') errors.push('BEHAVIORAL_MODEL_VERSION_REQUIRED');
+  if (models.behavioralServing) {
+    if (!models.behavioralServing.modelVersion) errors.push('BEHAVIORAL_SERVING_MODEL_VERSION_REQUIRED');
+    if (!/^[a-f0-9]{64}$/i.test(models.behavioralServing.manifestSha256)) {
+      errors.push('BEHAVIORAL_SERVING_MANIFEST_SHA256_INVALID');
+    }
+  }
   if (models.valueModel && models.valueModel.modelVersion === '') errors.push('VALUE_MODEL_VERSION_REQUIRED');
-  const hasBehavioral = Boolean(models.behavioralModel || models.behavioralPredictor);
+  const hasBehavioral = behavioralSourceCount === 1;
   if (models.valueModel && !hasBehavioral) errors.push('VALUE_REQUIRES_BEHAVIORAL_MODEL');
   if (models.policyConfig && (!hasBehavioral || !models.valueModel)) errors.push('POLICY_REQUIRES_BEHAVIORAL_AND_VALUE_MODELS');
   if (request.selectionMode === 'SAFE_EXPLORATION' && !request.experiment.randomized) {

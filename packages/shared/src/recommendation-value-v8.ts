@@ -79,11 +79,21 @@ export function predictRecommendationValueV8(
   historyMaximumEvents = 64,
 ): RecommendationValuePredictionV8 {
   validateModel(model);
-  const validation = validateRecommendationFeatureStateV8(state);
-  if (!validation.valid) throw new Error(`Invalid recommendation feature state: ${validation.errors.join(',')}`);
+  validateState(state);
   const indices = featureIndices(model, state, action, historyMaximumEvents);
   const value = indices.reduce((sum, index) => sum + model.weights[index], model.bias);
   return { actionKey: action.actionKey, value };
+}
+
+export function predictRecommendationValueStateOnlyV8(
+  model: RecommendationValueV8Model,
+  state: RecommendationFeatureStateV8,
+  historyMaximumEvents = 64,
+): number {
+  validateModel(model);
+  validateState(state);
+  const indices = stateOnlyFeatureIndices(model, state, historyMaximumEvents);
+  return indices.reduce((sum, index) => sum + model.weights[index], model.bias);
 }
 
 export function trainRecommendationValueV8Example(
@@ -168,10 +178,8 @@ function featureIndices(
   const stateTokens = recommendationStateTokensV8(state);
   const actionTokens = recommendationActionTokensV8(action);
   const historyTokens = recommendationHistoryTokensV8(state, historyMaximumEvents);
-  const indices = new Set<number>();
-  for (const token of stateTokens) indices.add(hashToken(`S:${token}`, model.hashDimension));
+  const indices = new Set<number>(stateOnlyFeatureIndices(model, state, historyMaximumEvents));
   for (const token of actionTokens) indices.add(hashToken(`A:${token}`, model.hashDimension));
-  for (const token of historyTokens) indices.add(hashToken(`H:${token}`, model.hashDimension));
   for (const stateToken of stateTokens) {
     for (const actionToken of actionTokens) {
       indices.add(hashToken(`SA:${stateToken}|${actionToken}`, model.hashDimension));
@@ -185,6 +193,19 @@ function featureIndices(
   return [...indices].sort((a, b) => a - b);
 }
 
+function stateOnlyFeatureIndices(
+  model: RecommendationValueV8Model,
+  state: RecommendationFeatureStateV8,
+  historyMaximumEvents: number,
+): number[] {
+  const indices = new Set<number>();
+  for (const token of recommendationStateTokensV8(state)) indices.add(hashToken(`S:${token}`, model.hashDimension));
+  for (const token of recommendationHistoryTokensV8(state, historyMaximumEvents)) {
+    indices.add(hashToken(`H:${token}`, model.hashDimension));
+  }
+  return [...indices].sort((a, b) => a - b);
+}
+
 function validateModel(model: RecommendationValueV8Model): void {
   if (model.contract !== RECOMMENDATION_VALUE_V8_CONTRACT) throw new Error('Value V8 model contract mismatch');
   if (model.objective !== RECOMMENDATION_VALUE_V8_OBJECTIVE) throw new Error('Value V8 objective mismatch');
@@ -192,6 +213,11 @@ function validateModel(model: RecommendationValueV8Model): void {
   if (!Number.isFinite(model.bias) || model.weights.some((weight) => !Number.isFinite(weight))) {
     throw new Error('Value V8 model contains non-finite parameters');
   }
+}
+
+function validateState(state: RecommendationFeatureStateV8): void {
+  const validation = validateRecommendationFeatureStateV8(state);
+  if (!validation.valid) throw new Error(`Invalid recommendation feature state: ${validation.errors.join(',')}`);
 }
 
 function validateExample(example: RecommendationValueTrainingExampleV8): void {

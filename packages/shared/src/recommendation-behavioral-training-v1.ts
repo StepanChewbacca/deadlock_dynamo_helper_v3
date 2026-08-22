@@ -141,6 +141,18 @@ export function evaluateRecommendationBehavioralTrainingLaunchV1(
   for (const error of manifestValidation.errors) blockers.push(`DATASET_MANIFEST:${error}`);
   blockers.push(...validateTrainingConfig(input.config));
 
+  for (const splitName of ['TRAIN', 'VALIDATION', 'SHADOW_HOLDOUT'] as const) {
+    const split = input.manifest.splits.find((entry) => entry.split === splitName);
+    if (!split || split.decisionCount <= 0 || split.matchCount <= 0) {
+      blockers.push(`TRAINING_SPLIT_EMPTY:${splitName}`);
+    }
+  }
+  const shadow = input.manifest.splits.find((entry) => entry.split === 'SHADOW_HOLDOUT');
+  const minimumShadowDecisions = input.config.gateMinDecisions ?? 10_000;
+  if (shadow && shadow.decisionCount < minimumShadowDecisions) {
+    blockers.push('SHADOW_HOLDOUT_DECISION_COUNT_BELOW_GATE');
+  }
+
   const roadmap = evaluateRecommendationRoadmapStateV1(input.evidence);
   const prospectiveData = roadmap.phases.find((phase) => phase.phase === 'PROSPECTIVE_DATA');
   if (!prospectiveData?.unlocked) {

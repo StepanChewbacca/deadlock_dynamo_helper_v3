@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from common import dataset_identity, verify_dataset_manifest
+from pretraining_audit import verify_development_split_isolation
 
 
 def main() -> int:
@@ -13,11 +14,13 @@ def main() -> int:
     parser.add_argument("--expected-dataset-sha256")
     parser.add_argument("--expected-manifest-sha256")
     args = parser.parse_args()
+    dataset_dir = Path(args.dataset_dir).resolve()
     manifest = verify_dataset_manifest(
-        Path(args.dataset_dir).resolve(),
+        dataset_dir,
         expected_dataset_sha256=args.expected_dataset_sha256 or None,
         expected_manifest_sha256=args.expected_manifest_sha256 or None,
     )
+    verify_development_split_isolation(dataset_dir, manifest)
     identity = dataset_identity(manifest)
     print(json.dumps({
         "status": "PASS",
@@ -26,6 +29,7 @@ def main() -> int:
         "manifestSha256": identity.manifest_sha256,
         "featureContractVersion": identity.feature_contract_version,
         "candidateGeneratorVersion": identity.candidate_generator_version,
+        "developmentSplitIsolationVerified": True,
         "futureTestPayloadDecoded": False,
     }))
     return 0

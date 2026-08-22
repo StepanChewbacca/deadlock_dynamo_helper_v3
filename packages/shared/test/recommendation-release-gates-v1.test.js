@@ -1,8 +1,11 @@
 const assert = require('node:assert/strict');
 const {
+  EXACT_ACTION_PROPENSITY_SOURCE,
   SOULS_AFFORDABILITY_EVIDENCE_V2,
   evaluateBehavioralTrainingReadinessV1,
+  evaluateOffPolicyV1,
   evaluatePolicyAbGateV1,
+  evaluateRecommendationValueTrainingReadinessV1,
   evaluateSoulsAffordabilityEvidenceV2,
   evaluateValuePolicyReleaseGateV1,
 } = require('../dist');
@@ -51,6 +54,83 @@ const valueBlocked = evaluateValuePolicyReleaseGateV1({
 assert.equal(valueBlocked.passed, false);
 assert(valueBlocked.blockers.includes('VALUE_ACTION_SENSITIVITY_NOT_PASS'));
 assert(valueBlocked.blockers.includes('ACTION_RESIDUAL_COLLAPSE'));
+
+const opeRows = Array.from({ length: 200 }, (_, index) => ({
+  decisionId: `ope-${index}`,
+  reward: index % 2,
+  loggingPropensity: 0.5,
+  loggingPropensitySource: EXACT_ACTION_PROPENSITY_SOURCE,
+  targetProbability: 0.5,
+  qLogged: index % 2,
+  qTargetExpected: (index % 2) + 0.1,
+}));
+const ope = evaluateOffPolicyV1(opeRows);
+assert.equal(ope.passedSupportGate, true);
+assert.equal(ope.effectiveSampleSizeRatio, 1);
+assert.equal(ope.clippedDecisionRate, 0);
+assert(Math.abs(ope.doublyRobustUplift - 0.1) < 1e-12);
+assert(ope.doublyRobustUpliftCiLow > 0);
+assert(ope.doublyRobustUpliftCiHigh > 0);
+
+const valueTrainingReady = evaluateRecommendationValueTrainingReadinessV1({
+  safeExplorationPhaseUnlocked: true,
+  exactActionPropensityPassed: true,
+  safeExplorationSafetyPassed: true,
+  opeEvidenceSufficient: true,
+  opeSupportPassed: ope.passedSupportGate,
+  randomizedDecisionCount: 200,
+  evaluableDecisionCount: 200,
+  excludedDecisionCount: 0,
+  effectiveSampleSize: ope.effectiveSampleSize,
+  effectiveSampleSizeRatio: ope.effectiveSampleSizeRatio,
+  clippedDecisionRate: ope.clippedDecisionRate,
+  futureTestUntouched: true,
+  futureTestEvaluated: false,
+});
+assert.equal(valueTrainingReady.ready, true);
+
+const valueTrainingBlocked = evaluateRecommendationValueTrainingReadinessV1({
+  safeExplorationPhaseUnlocked: false,
+  exactActionPropensityPassed: false,
+  safeExplorationSafetyPassed: false,
+  opeEvidenceSufficient: false,
+  opeSupportPassed: false,
+  randomizedDecisionCount: 0,
+  evaluableDecisionCount: 0,
+  excludedDecisionCount: 0,
+  effectiveSampleSize: 0,
+  effectiveSampleSizeRatio: 0,
+  clippedDecisionRate: 0,
+  futureTestUntouched: true,
+  futureTestEvaluated: false,
+});
+assert.equal(valueTrainingBlocked.ready, false);
+assert(valueTrainingBlocked.blockers.includes('SAFE_EXPLORATION_PHASE_NOT_UNLOCKED'));
+assert(valueTrainingBlocked.blockers.includes('NO_RANDOMIZED_DECISIONS'));
+assert(valueTrainingBlocked.blockers.includes('OPE_EVIDENCE_INSUFFICIENT'));
+
+const lowEssRows = Array.from({ length: 200 }, (_, index) => ({
+  decisionId: `low-ess-${index}`,
+  reward: 1,
+  loggingPropensity: index === 0 ? 0.001 : 1,
+  loggingPropensitySource: EXACT_ACTION_PROPENSITY_SOURCE,
+  targetProbability: 1,
+  qLogged: 1,
+  qTargetExpected: 1.1,
+}));
+const lowEss = evaluateOffPolicyV1(lowEssRows, { minEffectiveSampleSize: 1 });
+assert.equal(lowEss.passedSupportGate, false);
+assert(lowEss.effectiveSampleSizeRatio < 0.5);
+
+const clipped = evaluateOffPolicyV1(lowEssRows, {
+  maxImportanceWeight: 2,
+  minEffectiveSampleSize: 1,
+  minEffectiveSampleSizeRatio: 0,
+  maxClippedDecisionRate: 0,
+});
+assert.equal(clipped.clippedDecisionCount, 1);
+assert.equal(clipped.clippedDecisionRate, 1 / 200);
+assert.equal(clipped.passedSupportGate, false);
 
 const controlled = Array.from({ length: 100 }, (_, index) => ({
   evidenceVersion: SOULS_AFFORDABILITY_EVIDENCE_V2,

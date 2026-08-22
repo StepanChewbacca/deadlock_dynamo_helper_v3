@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
+  RECOMMENDATION_FUTURE_TEST_EVALUATOR_V1,
   RecommendationRoadmapEvidenceRecordV1,
   RecommendationRoadmapEvidenceV1,
   RecommendationRoadmapGateStateV1,
@@ -41,6 +42,9 @@ export class RecommendationRoadmapEvidenceService {
     }
 
     if (record.gateName === 'futureTestEvaluation') {
+      if (record.evaluator !== RECOMMENDATION_FUTURE_TEST_EVALUATOR_V1) {
+        throw new Error('FUTURE_TEST_EVALUATION_REQUIRES_FROZEN_ARTIFACT_MATERIALIZER');
+      }
       const current = await this.report();
       const policy = current.state.phases.find((phase) => phase.phase === 'POLICY_V1');
       if (!current.evidence.futureTestUntouched) {

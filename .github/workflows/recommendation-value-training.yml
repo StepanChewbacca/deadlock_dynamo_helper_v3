@@ -1,0 +1,154 @@
+name: Recommendation Causal Value Training
+
+on:
+  workflow_dispatch:
+    inputs:
+      dataset_id:
+        description: Verified causal Value dataset registry id
+        required: true
+        type: string
+      dataset_dir:
+        description: Pre-staged immutable causal Value dataset directory on secure runner
+        required: true
+        type: string
+      expected_dataset_sha256:
+        description: Expected immutable causal Value dataset SHA256
+        required: true
+        type: string
+      expected_manifest_sha256:
+        description: Expected canonical causal Value manifest SHA256 from registry
+        required: true
+        type: string
+      model_version:
+        description: Immutable Value model version; defaults to workflow run identity
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-causal-value-training
+  cancel-in-progress: false
+
+jobs:
+  train-causal-value:
+    environment: recommendation-value-training
+    runs-on: [self-hosted, linux, x64, recommendation-value-training]
+    timeout-minutes: 240
+    env:
+      DATASET_ID: ${{ inputs.dataset_id }}
+      DATASET_DIR: ${{ inputs.dataset_dir }}
+      EXPECTED_DATASET_SHA256: ${{ inputs.expected_dataset_sha256 }}
+      EXPECTED_MANIFEST_SHA256: ${{ inputs.expected_manifest_sha256 }}
+      MODEL_VERSION_INPUT: ${{ inputs.model_version }}
+      VALUE_TRAINING_PREFLIGHT_URL: ${{ vars.RECOMMENDATION_VALUE_MODEL_TRAINING_PREFLIGHT_URL }}
+      TRAINING_TOKEN: ${{ secrets.RECOMMENDATION_TRAINING_TOKEN }}
+    steps:
+      - name: Checkout frozen Value training code
+        uses: actions/checkout@v4
+
+      - name: Validate secure Value runner and inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${RECOMMENDATION_VALUE_TRAINING_OUTPUT_ROOT:-}" || { echo "RECOMMENDATION_VALUE_TRAINING_OUTPUT_ROOT is required" >&2; exit 1; }
+          test -n "${RECOMMENDATION_VALUE_DATASET_STAGING_ROOT:-}" || { echo "RECOMMENDATION_VALUE_DATASET_STAGING_ROOT is required" >&2; exit 1; }
+          test -n "$VALUE_TRAINING_PREFLIGHT_URL" || { echo "RECOMMENDATION_VALUE_MODEL_TRAINING_PREFLIGHT_URL is required" >&2; exit 1; }
+          test -n "$TRAINING_TOKEN" || { echo "RECOMMENDATION_TRAINING_TOKEN is required" >&2; exit 1; }
+          [[ "$DATASET_ID" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || { echo "dataset_id contains unsafe characters" >&2; exit 1; }
+          [[ "$EXPECTED_DATASET_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || { echo "expected_dataset_sha256 is invalid" >&2; exit 1; }
+          [[ "$EXPECTED_MANIFEST_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || { echo "expected_manifest_sha256 is invalid" >&2; exit 1; }
+          case "$RECOMMENDATION_VALUE_TRAINING_OUTPUT_ROOT" in /*) ;; *) echo "Value output root must be absolute" >&2; exit 1;; esac
+          case "$RECOMMENDATION_VALUE_DATASET_STAGING_ROOT" in /*) ;; *) echo "Value dataset staging root must be absolute" >&2; exit 1;; esac
+          OUTPUT_ROOT="$(realpath -e "$RECOMMENDATION_VALUE_TRAINING_OUTPUT_ROOT")"
+          STAGING_ROOT="$(realpath -e "$RECOMMENDATION_VALUE_DATASET_STAGING_ROOT")"
+          DATASET_REAL="$(realpath -e "$DATASET_DIR")"
+          test -d "$OUTPUT_ROOT" && test -d "$STAGING_ROOT" && test -d "$DATASET_REAL"
+          case "$DATASET_REAL" in "$STAGING_ROOT"/*) ;; *) echo "Value dataset must be inside staging root" >&2; exit 1;; esac
+          RUN_ROOT="$OUTPUT_ROOT/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          test ! -e "$RUN_ROOT" || { echo "Value run output already exists: $RUN_ROOT" >&2; exit 1; }
+          MODEL_VERSION="$MODEL_VERSION_INPUT"
+          if [ -z "$MODEL_VERSION" ]; then MODEL_VERSION="value-v8-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"; fi
+          [[ "$MODEL_VERSION" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || { echo "model_version contains unsafe characters" >&2; exit 1; }
+          echo "RUN_ROOT=$RUN_ROOT" >> "$GITHUB_ENV"
+          echo "DATASET_DIR=$DATASET_REAL" >> "$GITHUB_ENV"
+          echo "MODEL_VERSION=$MODEL_VERSION" >> "$GITHUB_ENV"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: yarn
+
+      - name: Install repository dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Build shared and deterministic domain
+        run: |
+          set -euo pipefail
+          yarn workspace @deadlock-live-probe/shared build
+          yarn workspace @deadlock-live-probe/build-domain build
+
+      - name: Require verified dataset and causal roadmap preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            -X POST \
+            -H "x-recommendation-training-token: $TRAINING_TOKEN" \
+            "$VALUE_TRAINING_PREFLIGHT_URL/$DATASET_ID" \
+            > "$RUNNER_TEMP/value-preflight-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          python3 - "$RUNNER_TEMP/value-preflight-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json" "$EXPECTED_DATASET_SHA256" "$EXPECTED_MANIFEST_SHA256" <<'PY'
+          import json, sys
+          data = json.load(open(sys.argv[1]))
+          if data.get("ready") is not True:
+              raise SystemExit("Causal Value training preflight blocked: " + ",".join(data.get("blockers", [])))
+          if data.get("datasetSha256") != sys.argv[2]:
+              raise SystemExit("Causal Value preflight dataset SHA mismatch")
+          if data.get("manifestSha256") != sys.argv[3]:
+              raise SystemExit("Causal Value preflight manifest SHA mismatch")
+          if data.get("futureTestEvaluated") is not False:
+              raise SystemExit("FUTURE_TEST must remain unevaluated")
+          PY
+
+      - name: Train action-aware causal Value model
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          yarn workspace @deadlock-live-probe/api recommendation:value:train \
+            --dataset-dir "$DATASET_DIR" \
+            --expected-dataset-sha256 "$EXPECTED_DATASET_SHA256" \
+            --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256" \
+            --config training/recommendation_v8/config/value-linear.json \
+            --output-dir "$RUN_ROOT" \
+            --model-id deadlock-causal-value-v8 \
+            --model-version "$MODEL_VERSION" \
+            --source-commit-sha "$GITHUB_SHA"
+          STATUS=$?
+          set -e
+          if [ "$STATUS" -ne 0 ]; then
+            if [ "$STATUS" -eq 2 ]; then echo "Causal Value action-sensitivity gate did not pass" >&2; fi
+            exit "$STATUS"
+          fi
+
+      - name: Emit immutable Value staging summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - "$RUN_ROOT" <<'PY'
+          import hashlib, json, pathlib, sys
+          root = pathlib.Path(sys.argv[1])
+          manifest = root / "bundle" / "manifest.json"
+          summary = {
+              "status": "VALUE_TRAINING_COMPLETE_NOT_ACTIVATED",
+              "runRoot": str(root),
+              "bundleManifest": str(manifest),
+              "bundleManifestSha256Bytes": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+              "futureTestEvaluated": False,
+              "nextRequiredStep": "Upload bundle to approved immutable storage, register and independently verify exact hashes, then materialize causal Value evidence with DR/OPE before any Policy release.",
+          }
+          (root / "run-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+          print(json.dumps(summary))
+          PY

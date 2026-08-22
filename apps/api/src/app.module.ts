@@ -22,6 +22,7 @@ import { RecommendationExposureAckV8 } from './deadlock-live/entities/recommenda
 import { RecommendationRoadmapEvidenceEntityV1 } from './deadlock-live/entities/recommendation-roadmap-evidence.entity';
 import { RecommendationTelemetryEvent } from './deadlock-live/entities/recommendation-telemetry-event.entity';
 import { RecommendationTelemetryRejectionV8 } from './deadlock-live/entities/recommendation-telemetry-rejection.entity';
+import { RecommendationValueDatasetRegistryV1 } from './deadlock-live/entities/recommendation-value-dataset-registry.entity';
 import { SoulsAffordabilityEvidenceV2Entity } from './deadlock-live/entities/souls-affordability-evidence-v2.entity';
 import { ShadowModeDecision } from './deadlock-live/entities/shadow-mode-decision.entity';
 
@@ -54,6 +55,7 @@ import { ShadowModeDecision } from './deadlock-live/entities/shadow-mode-decisio
         SoulsAffordabilityEvidenceV2Entity,
         ModelBundleRegistryV1,
         RecommendationDatasetRegistryV1,
+        RecommendationValueDatasetRegistryV1,
         RecommendationRoadmapEvidenceEntityV1,
         CrawlerRun,
         CrawlerState,

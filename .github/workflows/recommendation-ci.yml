@@ -5,6 +5,7 @@ on:
     branches:
       - agent/add-inventory-simulator
       - agent/recommendation-roadmap-v8-runtime-finalization
+      - agent/recommendation-v8-roadmap-closure
   pull_request:
 
 permissions:
@@ -47,9 +48,13 @@ jobs:
       - name: Test API
         run: yarn workspace @deadlock-live-probe/api test
 
-      - name: Compile training Python
-        run: python -m py_compile training/recommendation_v8/common.py training/recommendation_v8/model.py training/recommendation_v8/train_behavioral.py training/recommendation_v8/compare_behavioral.py training/recommendation_v8/build_model_bundle.py training/recommendation_v8/smoke_test.py
+      - name: Compile training and serving Python
+        run: python -m py_compile training/recommendation_v8/common.py training/recommendation_v8/pretraining_audit.py training/recommendation_v8/pretraining_audit_test.py training/recommendation_v8/model.py training/recommendation_v8/train_behavioral.py training/recommendation_v8/compare_behavioral.py training/recommendation_v8/build_model_bundle.py training/recommendation_v8/verify_dataset.py training/recommendation_v8/serve_behavioral.py training/recommendation_v8/smoke_test.py
 
       - name: Test training data contract
         working-directory: training/recommendation_v8
         run: python smoke_test.py
+
+      - name: Test pretraining split isolation
+        working-directory: training/recommendation_v8
+        run: python pretraining_audit_test.py
