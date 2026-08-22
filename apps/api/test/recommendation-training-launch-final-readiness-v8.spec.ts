@@ -1,0 +1,170 @@
+import { RecommendationTrainingLaunchV8Service } from '../src/deadlock-live/recommendation-training-launch-v8.service';
+
+const sha = (value: string) => value.repeat(64).slice(0, 64);
+
+function manifest() {
+  return {
+    contractVersion: 'recommendation-dataset-manifest-v1' as const,
+    datasetId: 'dataset-v8-final',
+    datasetSha256: sha('a'),
+    createdAt: '2026-08-20T00:00:00.000Z',
+    sourceCommitSha: 'b'.repeat(40),
+    datasetContractVersion: 'recommendation-dataset-v8',
+    featureContractVersion: 'recommendation-features-v8',
+    actionContractVersion: 'recommendation-actions-v1',
+    candidateGeneratorVersion: 'candidate-v8',
+    pointInTimeCorrect: true,
+    observedActionInjected: false,
+    futureTestTouched: false,
+    supportedRulesetVersions: ['ruleset-1'],
+    supportedCatalogSha256: [sha('c')],
+    splits: [
+      { split: 'TRAIN' as const, from: '2026-07-01T00:00:00.000Z', to: '2026-07-15T00:00:00.000Z', matchCount: 100, decisionCount: 20_000, matchSetSha256: sha('d'), sealed: false },
+      { split: 'VALIDATION' as const, from: '2026-07-15T00:00:00.000Z', to: '2026-07-22T00:00:00.000Z', matchCount: 50, decisionCount: 10_000, matchSetSha256: sha('e'), sealed: false },
+      { split: 'SHADOW_HOLDOUT' as const, from: '2026-07-22T00:00:00.000Z', to: '2026-08-01T00:00:00.000Z', matchCount: 50, decisionCount: 10_000, matchSetSha256: sha('f'), sealed: false },
+      { split: 'FUTURE_TEST' as const, from: '2026-08-01T00:00:00.000Z', to: '2026-08-15T00:00:00.000Z', matchCount: 0, decisionCount: 0, matchSetSha256: sha('0'), sealed: true },
+    ],
+    files: [
+      { path: 'splits/train.jsonl.gz', sha256: sha('1'), sizeBytes: 100, rowCount: 20_000 },
+      { path: 'splits/validation.jsonl.gz', sha256: sha('2'), sizeBytes: 100, rowCount: 10_000 },
+      { path: 'splits/shadow_holdout.jsonl.gz', sha256: sha('3'), sizeBytes: 100, rowCount: 10_000 },
+    ],
+  };
+}
+
+function config() {
+  return {
+    contractVersion: 'recommendation-behavioral-training-launch-v1' as const,
+    family: 'SEQUENCE_RNN' as const,
+    seed: 17,
+    deterministic: true as const,
+    trainSplit: 'TRAIN' as const,
+    validationSplit: 'VALIDATION' as const,
+    selectionSplit: 'SHADOW_HOLDOUT' as const,
+    futureTestAllowed: false as const,
+    device: 'cuda',
+    maxEpochs: 30,
+    batchSize: 64,
+    evaluationBatchSize: 128,
+    learningRate: 0.0003,
+    minimumLearningRate: 0.000001,
+    weightDecay: 0.0001,
+    gradientClip: 1,
+    maximumHistoryEvents: 64,
+    hashDimension: 65536,
+    embeddingDimension: 128,
+    hiddenDimension: 256,
+    layerCount: 3,
+    dropout: 0.1,
+    earlyStoppingPatience: 4,
+  };
+}
+
+function roadmapEvidence() {
+  return {
+    canonicalGepV2: 'PASS' as const,
+    controlledSoulsValidation: 'PASS' as const,
+    versionedRulesetCatalog: 'PASS' as const,
+    deterministicLegality: 'PASS' as const,
+    recommendationTelemetryV8: 'PASS' as const,
+    observabilityCoverage: 'PASS' as const,
+    datasetV8Structural: 'PASS' as const,
+    datasetV8Empirical: 'PASS' as const,
+    behavioralOffline: 'NOT_EVALUATED' as const,
+    shadowSafety: 'NOT_EVALUATED' as const,
+    matchLevelAbSafety: 'NOT_EVALUATED' as const,
+    exactActionPropensity: 'NOT_EVALUATED' as const,
+    safeExplorationSafety: 'NOT_EVALUATED' as const,
+    valueActionSensitivity: 'NOT_EVALUATED' as const,
+    offPolicySupport: 'NOT_EVALUATED' as const,
+    causalValueRelease: 'NOT_EVALUATED' as const,
+    policyAbRelease: 'NOT_EVALUATED' as const,
+    sequentialRlResearchGate: 'NOT_EVALUATED' as const,
+    futureTestEvaluation: 'NOT_EVALUATED' as const,
+    futureTestUntouched: true,
+  };
+}
+
+function currentDataset(overrides: Record<string, unknown> = {}) {
+  return {
+    passedStructuralGate: true,
+    passedEmpiricalGate: true,
+    blockers: [],
+    explicitFeasibilityCoverage: 0.997,
+    observedActionFeasibleCoverage: 0.995,
+    minimumMajorActionPhaseCohortObservedActionFeasibleCoverage: 0.985,
+    rulesetEvidenceCoverage: 0.9995,
+    ...overrides,
+  };
+}
+
+describe('RecommendationTrainingLaunchV8Service final data readiness', () => {
+  it('rechecks current data over the immutable dataset development window', async () => {
+    const dataset = manifest();
+    const datasetRegistry = {
+      getVerified: jest.fn(async () => ({
+        datasetId: dataset.datasetId,
+        datasetSha256: dataset.datasetSha256,
+        manifestSha256: sha('9'),
+        objectBaseUri: 's3://immutable/dataset-v8-final',
+        manifest: dataset,
+        verification: { verifiedManifestSha256: sha('9') },
+      })),
+    };
+    const roadmap = { report: jest.fn(async () => ({ evidence: roadmapEvidence() })) };
+    const datasetReport = { buildReport: jest.fn(async () => currentDataset()) };
+    const observability = { buildReport: jest.fn(async () => ({ gate: { passed: true, blockers: [] } })) };
+    const souls = { report: jest.fn(async () => ({ verdict: 'PASS' as const, canMarkSpendableSoulsVerified: true })) };
+    const service = new RecommendationTrainingLaunchV8Service(
+      datasetRegistry as never,
+      roadmap as never,
+      datasetReport as never,
+      observability as never,
+      souls as never,
+    );
+
+    const report = await service.preflight(dataset.datasetId, config());
+
+    expect(report.ready).toBe(true);
+    expect(datasetReport.buildReport).toHaveBeenCalledWith({
+      from: new Date('2026-07-01T00:00:00.000Z'),
+      to: new Date('2026-08-01T00:00:00.000Z'),
+    });
+    expect(observability.buildReport).toHaveBeenCalledWith({
+      from: new Date('2026-07-01T00:00:00.000Z'),
+      to: new Date('2026-08-01T00:00:00.000Z'),
+    });
+    expect(report.currentDataGates.explicitFeasibilityCoverage).toBe(0.997);
+  });
+
+  it('blocks a previously green roadmap when current Dataset V8 evidence no longer passes', async () => {
+    const dataset = manifest();
+    const service = new RecommendationTrainingLaunchV8Service(
+      {
+        getVerified: jest.fn(async () => ({
+          datasetId: dataset.datasetId,
+          datasetSha256: dataset.datasetSha256,
+          manifestSha256: sha('9'),
+          objectBaseUri: 's3://immutable/dataset-v8-final',
+          manifest: dataset,
+          verification: { verifiedManifestSha256: sha('9') },
+        })),
+      } as never,
+      { report: jest.fn(async () => ({ evidence: roadmapEvidence() })) } as never,
+      {
+        buildReport: jest.fn(async () => currentDataset({
+          passedEmpiricalGate: false,
+          blockers: ['EXPLICIT_FEASIBILITY_COVERAGE_BELOW_0_995'],
+          explicitFeasibilityCoverage: 0.99,
+        })),
+      } as never,
+      { buildReport: jest.fn(async () => ({ gate: { passed: true, blockers: [] } })) } as never,
+      { report: jest.fn(async () => ({ verdict: 'PASS' as const, canMarkSpendableSoulsVerified: true })) } as never,
+    );
+
+    const report = await service.preflight(dataset.datasetId, config());
+
+    expect(report.ready).toBe(false);
+    expect(report.blockers).toContain('CURRENT_DATASET_EMPIRICAL:EXPLICIT_FEASIBILITY_COVERAGE_BELOW_0_995');
+  });
+});
