@@ -7,22 +7,34 @@ const {
 const sourceField = 'onInfoUpdates2|match_info|match_info|shop_state';
 const approvalKey = `OVERWOLF_GEP:${sourceField}`;
 
+function candidateAnalysis(overrides = {}) {
+  return {
+    version: 'shop-signal-candidate-analysis-v1',
+    candidateOnly: true,
+    canPromoteToDirectSource: false,
+    markerCount: 8,
+    availableMarkerCount: 4,
+    unavailableMarkerCount: 4,
+    blockers: [],
+    candidates: [{
+      provenanceSourceField: sourceField,
+      markerHitCount: 8,
+      availableMarkerHitCount: 4,
+      unavailableMarkerHitCount: 4,
+      lowCardinality: true,
+      observedPayloadsSeparatedByMarkerState: true,
+    }],
+    ...overrides,
+  };
+}
+
 function attestation(overrides = {}) {
   return {
     contractVersion: RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_V1,
     telemetrySource: 'OVERWOLF_GEP',
     provenanceSourceField: sourceField,
     candidateAnalysisSha256: 'a'.repeat(64),
-    candidateAnalysisVersion: 'shop-signal-candidate-analysis-v1',
-    candidateAnalysisBlockers: [],
-    markerCount: 8,
-    availableMarkerCount: 4,
-    unavailableMarkerCount: 4,
-    candidateMarkerHitCount: 8,
-    candidateAvailableMarkerHitCount: 4,
-    candidateUnavailableMarkerHitCount: 4,
-    candidateLowCardinality: true,
-    candidateObservedPayloadsSeparatedByMarkerState: true,
+    candidateAnalysis: candidateAnalysis(),
     independentlyValidatedAvailableTransitions: 2,
     independentlyValidatedUnavailableTransitions: 2,
     independentTransitionMismatchCount: 0,
@@ -59,11 +71,34 @@ assert.equal(mismatch.canActivateDirectShopSource, false);
 assert(mismatch.blockers.includes('INDEPENDENT_TRANSITION_MISMATCH_OBSERVED'));
 
 const candidateOnly = evaluateRecommendationDirectShopSourceValidationV1(attestation({
-  candidateAnalysisBlockers: ['NO_LOW_CARDINALITY_SEPARATING_CANDIDATE'],
-  candidateLowCardinality: false,
-  candidateObservedPayloadsSeparatedByMarkerState: false,
+  candidateAnalysis: candidateAnalysis({
+    blockers: ['NO_LOW_CARDINALITY_SEPARATING_CANDIDATE'],
+    candidates: [{
+      provenanceSourceField: sourceField,
+      markerHitCount: 8,
+      availableMarkerHitCount: 4,
+      unavailableMarkerHitCount: 4,
+      lowCardinality: false,
+      observedPayloadsSeparatedByMarkerState: false,
+    }],
+  }),
 }));
 assert.equal(candidateOnly.status, 'INSUFFICIENT_EVIDENCE');
 assert.equal(candidateOnly.canActivateDirectShopSource, false);
+
+const wrongCandidate = evaluateRecommendationDirectShopSourceValidationV1(attestation({
+  candidateAnalysis: candidateAnalysis({
+    candidates: [{
+      provenanceSourceField: `${sourceField}_other`,
+      markerHitCount: 8,
+      availableMarkerHitCount: 4,
+      unavailableMarkerHitCount: 4,
+      lowCardinality: true,
+      observedPayloadsSeparatedByMarkerState: true,
+    }],
+  }),
+}));
+assert.equal(wrongCandidate.status, 'FAIL');
+assert(wrongCandidate.blockers.includes('DIRECT_SHOP_CANDIDATE_MATCH_COUNT_INVALID:0'));
 
 console.log('recommendation direct shop validation v1 fixtures: PASS');
