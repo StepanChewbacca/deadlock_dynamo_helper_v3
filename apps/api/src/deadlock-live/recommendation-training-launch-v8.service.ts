@@ -2,12 +2,12 @@ import { Injectable } from '@nestjs/common';
 import {
   RecommendationBehavioralTrainingConfigV1,
   RecommendationBehavioralTrainingLaunchReportV1,
-  RecommendationDirectShopSourceValidationReportV1,
   evaluateRecommendationBehavioralTrainingLaunchV1,
 } from '@deadlock-live-probe/shared';
 import { RecommendationDatasetRegistryService } from './recommendation-dataset-registry.service';
 import { RecommendationDatasetV8ReportService } from './recommendation-dataset-v8-report.service';
 import { configuredDirectShopSourceAllowlist } from './recommendation-direct-shop-source-v8';
+import { loadRecommendationDirectShopValidationBindingV8 } from './recommendation-direct-shop-validation-binding-v8';
 import { RecommendationEvidenceMaterializerV8Service } from './recommendation-evidence-materializer-v8.service';
 import { RecommendationObservabilityReportService } from './recommendation-observability-report.service';
 import { RecommendationRoadmapEvidenceService } from './recommendation-roadmap-evidence.service';
@@ -81,7 +81,11 @@ export class RecommendationTrainingLaunchV8Service {
       config,
     });
     const blockers = [...training.blockers];
-    const directShopValidation = await this.loadDirectShopValidation(roadmap, blockers);
+    const directShopBinding = await loadRecommendationDirectShopValidationBindingV8(
+      roadmap,
+      this.evidenceMaterializer,
+    );
+    blockers.push(...directShopBinding.blockers.map((blocker) => `CURRENT_${blocker}`));
 
     if (dataset.manifestSha256 !== dataset.verification?.verifiedManifestSha256) {
       blockers.push('DATASET_REGISTRY_VERIFICATION_MISMATCH');
@@ -98,12 +102,8 @@ export class RecommendationTrainingLaunchV8Service {
       blockers.push('CURRENT_DIRECT_SHOP_SOURCE_APPROVAL_SET_MUST_CONTAIN_EXACTLY_ONE_KEY');
     }
     if (
-      directShopValidation
-      && (
-        !directShopValidation.canActivateDirectShopSource
-        || directShopValidation.status !== 'PASS'
-        || currentDirectShopSourceApprovalKeys[0] !== directShopValidation.approvalKey
-      )
+      directShopBinding.valid
+      && currentDirectShopSourceApprovalKeys[0] !== directShopBinding.approvalKey
     ) {
       blockers.push('CURRENT_DIRECT_SHOP_SOURCE_APPROVAL_NOT_BOUND_TO_VALIDATION');
     }
@@ -160,46 +160,6 @@ export class RecommendationTrainingLaunchV8Service {
       blockers: [...new Set(blockers)].sort(),
     };
   }
-
-  private async loadDirectShopValidation(
-    roadmap: Awaited<ReturnType<RecommendationRoadmapEvidenceService['report']>>,
-    blockers: string[],
-  ): Promise<RecommendationDirectShopSourceValidationReportV1 | undefined> {
-    if (roadmap.evidence.directShopSourceValidation !== 'PASS') {
-      blockers.push(`CURRENT_DIRECT_SHOP_SOURCE_VALIDATION_${roadmap.evidence.directShopSourceValidation}`);
-      return undefined;
-    }
-    const evidence = roadmap.latestEvidenceByGate.directShopSourceValidation;
-    if (!evidence?.subjectSha256) {
-      blockers.push('DIRECT_SHOP_SOURCE_VALIDATION_SNAPSHOT_MISSING');
-      return undefined;
-    }
-    try {
-      const snapshot = await this.evidenceMaterializer.getSnapshot(evidence.subjectSha256);
-      if (snapshot.gateName !== 'directShopSourceValidation' || snapshot.evaluator !== evidence.evaluator) {
-        blockers.push('DIRECT_SHOP_SOURCE_VALIDATION_SNAPSHOT_IDENTITY_MISMATCH');
-        return undefined;
-      }
-      if (!isDirectShopValidationReport(snapshot.report)) {
-        blockers.push('DIRECT_SHOP_SOURCE_VALIDATION_SNAPSHOT_INVALID');
-        return undefined;
-      }
-      return snapshot.report;
-    } catch {
-      blockers.push('DIRECT_SHOP_SOURCE_VALIDATION_SNAPSHOT_MISSING');
-      return undefined;
-    }
-  }
-}
-
-function isDirectShopValidationReport(value: unknown): value is RecommendationDirectShopSourceValidationReportV1 {
-  if (typeof value !== 'object' || value === null) return false;
-  const report = value as Partial<RecommendationDirectShopSourceValidationReportV1>;
-  return typeof report.approvalKey === 'string'
-    && report.approvalKey.length > 0
-    && (report.status === 'PASS' || report.status === 'FAIL' || report.status === 'INSUFFICIENT_EVIDENCE')
-    && typeof report.canActivateDirectShopSource === 'boolean'
-    && Array.isArray(report.blockers);
 }
 
 function sameStrings(left: readonly string[], right: readonly string[]): boolean {
