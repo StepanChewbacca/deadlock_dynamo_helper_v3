@@ -3,10 +3,14 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
+  RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_EVALUATOR_V1,
   RECOMMENDATION_ROADMAP_EVIDENCE_VERSION,
+  RecommendationDirectShopSourceValidationAttestationV1,
+  RecommendationDirectShopSourceValidationReportV1,
   RecommendationRoadmapEvidenceGateNameV1,
   RecommendationRoadmapEvidenceRecordV1,
   RecommendationRoadmapGateStateV1,
+  evaluateRecommendationDirectShopSourceValidationV1,
 } from '@deadlock-live-probe/shared';
 import { RecommendationDatasetV8Report, RecommendationDatasetV8ReportService } from './recommendation-dataset-v8-report.service';
 import { RecommendationObservabilityReport, RecommendationObservabilityReportService } from './recommendation-observability-report.service';
@@ -38,6 +42,12 @@ export interface RecommendationFoundationalEvidenceMaterializationReportV8 {
   to?: string;
   candidateGeneratorVersion?: string;
   gates: readonly RecommendationMaterializedGateEvidenceV8[];
+}
+
+export interface RecommendationDirectShopEvidenceMaterializationReportV8 {
+  generatedAt: string;
+  validation: RecommendationDirectShopSourceValidationReportV1;
+  gate: RecommendationMaterializedGateEvidenceV8;
 }
 
 @Injectable()
@@ -108,6 +118,21 @@ export class RecommendationEvidenceMaterializerV8Service {
     };
   }
 
+  async materializeDirectShopSource(
+    attestation: RecommendationDirectShopSourceValidationAttestationV1,
+  ): Promise<RecommendationDirectShopEvidenceMaterializationReportV8> {
+    const generatedAt = new Date().toISOString();
+    const validation = evaluateRecommendationDirectShopSourceValidationV1(attestation, generatedAt);
+    const gate = await this.persistGate(
+      'directShopSourceValidation',
+      validation.status,
+      validation,
+      validation.blockers,
+      RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_EVALUATOR_V1,
+    );
+    return { generatedAt, validation, gate };
+  }
+
   async getSnapshot(subjectSha256: string): Promise<RecommendationEvidenceSnapshotV8> {
     if (!isSha256(subjectSha256)) throw new Error('subjectSha256 is invalid');
     const snapshot = await this.snapshotRepo.findOne({ where: { subjectSha256 } });
@@ -120,6 +145,7 @@ export class RecommendationEvidenceMaterializerV8Service {
     status: RecommendationRoadmapGateStateV1,
     report: unknown,
     blockers: readonly string[],
+    evaluator = EVALUATOR,
   ): Promise<RecommendationMaterializedGateEvidenceV8> {
     if (status === 'NOT_EVALUATED') throw new Error('Materialized evidence cannot be NOT_EVALUATED');
     const evaluatedAt = reportEvaluatedAt(report);
@@ -128,7 +154,7 @@ export class RecommendationEvidenceMaterializerV8Service {
     const snapshotStatus = await this.persistSnapshot({
       subjectSha256,
       gateName,
-      evaluator: EVALUATOR,
+      evaluator,
       evaluatedAt,
       report,
     });
@@ -138,7 +164,7 @@ export class RecommendationEvidenceMaterializerV8Service {
       gateName,
       status,
       evidenceRef,
-      evaluator: EVALUATOR,
+      evaluator,
       evaluatedAt,
       subjectSha256,
       notes: blockers.length > 0 ? `blockers=${[...new Set(blockers)].sort().join('|')}` : 'blockers=none',
