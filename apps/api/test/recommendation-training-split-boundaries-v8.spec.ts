@@ -19,6 +19,7 @@ describe('Recommendation training split boundaries', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
     const split = {
       split: 'SHADOW_HOLDOUT' as const,
