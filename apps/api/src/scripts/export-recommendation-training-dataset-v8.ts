@@ -3,6 +3,7 @@ import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { DataSource } from 'typeorm';
 import { RecommendationDatasetV8ReportService } from '../deadlock-live/recommendation-dataset-v8-report.service';
+import { RecommendationEvidenceMaterializerV8Service } from '../deadlock-live/recommendation-evidence-materializer-v8.service';
 import { RecommendationFeatureStoreV8Service } from '../deadlock-live/recommendation-feature-store-v8.service';
 import { RecommendationObservabilityReportService } from '../deadlock-live/recommendation-observability-report.service';
 import { RecommendationRoadmapEvidenceService } from '../deadlock-live/recommendation-roadmap-evidence.service';
@@ -11,6 +12,7 @@ import {
   RecommendationTrainingDatasetV8Service,
 } from '../deadlock-live/recommendation-training-dataset-v8.service';
 import { SoulsAffordabilityEvidenceV2Service } from '../deadlock-live/souls-affordability-evidence-v2.service';
+import { RecommendationEvidenceSnapshotV8 } from '../deadlock-live/entities/recommendation-evidence-snapshot-v8.entity';
 import { RecommendationRoadmapEvidenceEntityV1 } from '../deadlock-live/entities/recommendation-roadmap-evidence.entity';
 import { SoulsAffordabilityEvidenceV2Entity } from '../deadlock-live/entities/souls-affordability-evidence-v2.entity';
 
@@ -32,6 +34,13 @@ async function main(): Promise<void> {
     const roadmap = new RecommendationRoadmapEvidenceService(
       dataSource.getRepository(RecommendationRoadmapEvidenceEntityV1),
     );
+    const evidenceMaterializer = new RecommendationEvidenceMaterializerV8Service(
+      dataSource.getRepository(RecommendationEvidenceSnapshotV8),
+      souls,
+      observability,
+      datasetReport,
+      roadmap,
+    );
     const service = new RecommendationTrainingDatasetV8Service(
       dataSource,
       featureStore,
@@ -39,6 +48,7 @@ async function main(): Promise<void> {
       observability,
       souls,
       roadmap,
+      evidenceMaterializer,
     );
     const result = command === 'preflight'
       ? await service.preflight(options)
@@ -74,6 +84,7 @@ function createDataSource(): DataSource {
     entities: [
       SoulsAffordabilityEvidenceV2Entity,
       RecommendationRoadmapEvidenceEntityV1,
+      RecommendationEvidenceSnapshotV8,
     ],
   });
 }
