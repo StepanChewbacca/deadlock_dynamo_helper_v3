@@ -62,7 +62,7 @@ export const DEFAULT_RECOMMENDATION_OBSERVABILITY_GATE_CONFIG_V1: Recommendation
   minExactSpendableSoulsCoverage: 0.99,
   minShopOpportunityCoverage: 0.99,
   minInventorySnapshotCoverage: 0.999,
-  minRulesetCatalogCoverage: 0.99,
+  minRulesetCatalogCoverage: 0.999,
   minTransactionMechanicsCoverage: 0.99,
   minPlayerIdentityCoverage: 0.99,
   minNonFutureStateTimestampRate: 1,
