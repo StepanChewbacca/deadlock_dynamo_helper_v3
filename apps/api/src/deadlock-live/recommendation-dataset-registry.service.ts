@@ -160,6 +160,11 @@ function assertRegistryIdentity(row: RecommendationDatasetRegistryV1): void {
   if (row.manifest.datasetSha256 !== row.datasetSha256) {
     throw new Error('Dataset registry dataset SHA is stale');
   }
+  const manifestWithoutDatasetSha = { ...row.manifest } as Record<string, unknown>;
+  delete manifestWithoutDatasetSha.datasetSha256;
+  if (hashCanonicalJson(manifestWithoutDatasetSha) !== row.datasetSha256) {
+    throw new Error('Dataset registry dataset content SHA is stale');
+  }
   if (hashCanonicalJson(row.manifest) !== row.manifestSha256) {
     throw new Error('Dataset registry manifest SHA is stale');
   }
