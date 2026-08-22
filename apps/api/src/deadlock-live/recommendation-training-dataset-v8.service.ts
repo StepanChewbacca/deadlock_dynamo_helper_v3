@@ -25,6 +25,7 @@ import {
   validateRecommendationBehavioralTrainingExampleV1,
 } from '@deadlock-live-probe/shared';
 import { RecommendationDatasetV8ReportService } from './recommendation-dataset-v8-report.service';
+import { configuredDirectShopSourceAllowlist } from './recommendation-direct-shop-source-v8';
 import { RecommendationFeatureStoreV8Service } from './recommendation-feature-store-v8.service';
 import { RecommendationObservabilityReportService } from './recommendation-observability-report.service';
 import { RecommendationRoadmapEvidenceService } from './recommendation-roadmap-evidence.service';
@@ -219,6 +220,7 @@ export class RecommendationTrainingDatasetV8Service {
     const developmentSkipReasons = new Map<string, number>();
     const supportedRulesets = new Set<string>();
     const supportedCatalogs = new Set<string>();
+    const directShopSourceApprovalKeys = configuredDirectShopSourceAllowlist();
     const minimumDevelopmentExportCoverage = options.minimumDevelopmentExportCoverage ?? 0.99;
     let emittedDevelopmentDecisionCount = 0;
     let skippedDevelopmentDecisionCount = 0;
@@ -291,6 +293,7 @@ export class RecommendationTrainingDatasetV8Service {
       featureContractVersion: RECOMMENDATION_FEATURE_CONTRACT_VERSION,
       actionContractVersion: options.actionContractVersion,
       candidateGeneratorVersion: options.candidateGeneratorVersion,
+      directShopSourceApprovalKeys,
       pointInTimeCorrect: true,
       observedActionInjected: false,
       futureTestTouched: false,
