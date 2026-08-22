@@ -10,11 +10,13 @@ export class RecommendationObservabilityController {
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('maximumAlignmentAgeMs') maximumAlignmentAgeMs?: string,
+    @Query('candidateGeneratorVersion') candidateGeneratorVersion?: string,
   ) {
     return this.reportService.buildReport({
       from: parseOptionalDate(from, 'from'),
       to: parseOptionalDate(to, 'to'),
       maximumAlignmentAgeMs: parseOptionalNonNegativeInteger(maximumAlignmentAgeMs, 'maximumAlignmentAgeMs'),
+      candidateGeneratorVersion,
     });
   }
 }
