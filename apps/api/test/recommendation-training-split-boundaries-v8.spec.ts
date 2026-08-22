@@ -2,7 +2,7 @@ import { RecommendationTrainingDatasetV8Service } from '../src/deadlock-live/rec
 import { RecommendationValueTrainingDatasetV8Service } from '../src/deadlock-live/recommendation-value-training-dataset-v8.service';
 
 describe('Recommendation training split boundaries', () => {
-  it('requires every Behavioral match to end inside the same chronological split', async () => {
+  it('requires every Behavioral match and observed-action label to stay inside the same chronological split', async () => {
     const queries: string[] = [];
     const dataSource = {
       query: jest.fn(async (sql: string) => {
@@ -36,9 +36,12 @@ describe('Recommendation training split boundaries', () => {
       expect(sql).toContain('m.last_decision_at < $3::timestamptz');
       expect(sql).not.toContain('m.first_decision_at < $3::timestamptz');
     }
+    const exportSql = queries.find((sql) => sql.includes('latest_outcome'));
+    expect(exportSql).toContain('e."sourceOccurredAt" < $3::timestamptz');
+    expect(exportSql).toContain('e."receivedAt" < $3::timestamptz');
   });
 
-  it('requires every causal Value match to end inside its TRAIN, VALIDATION, or SHADOW_HOLDOUT window', async () => {
+  it('requires every causal Value match and reward observation to stay inside its split cutoff', async () => {
     const queries: string[] = [];
     const dataSource = {
       query: jest.fn(async (sql: string) => {
@@ -68,6 +71,8 @@ describe('Recommendation training split boundaries', () => {
       expect(sql).toContain('m.first_decision_at >= $2::timestamptz');
       expect(sql).toContain('m.last_decision_at < $3::timestamptz');
       expect(sql).not.toContain('m.first_decision_at < $3::timestamptz');
+      expect(sql).toContain('e."sourceOccurredAt" < $3::timestamptz');
+      expect(sql).toContain('e."receivedAt" < $3::timestamptz');
     }
   });
 });
