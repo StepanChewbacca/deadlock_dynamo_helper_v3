@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import {
   RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_EVALUATOR_V1,
   RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_V1,
@@ -6,6 +7,7 @@ import { RecommendationEvidenceMaterializerV8Service } from '../src/deadlock-liv
 
 describe('RecommendationEvidenceMaterializerV8Service', () => {
   const generatedAt = '2026-08-22T00:00:00.000Z';
+  const directShopSourceField = 'onInfoUpdates2|match_info|match_info|shop_state';
 
   function createHarness(input: {
     souls: unknown;
@@ -87,22 +89,35 @@ describe('RecommendationEvidenceMaterializerV8Service', () => {
     };
   }
 
-  function directShopAttestation(overrides: Record<string, unknown> = {}) {
+  function directShopCandidateAnalysis(overrides: Record<string, unknown> = {}) {
     return {
-      contractVersion: RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_V1,
-      telemetrySource: 'OVERWOLF_GEP',
-      provenanceSourceField: 'onInfoUpdates2|match_info|match_info|shop_state',
-      candidateAnalysisSha256: 'a'.repeat(64),
-      candidateAnalysisVersion: 'shop-signal-candidate-analysis-v1',
-      candidateAnalysisBlockers: [],
+      version: 'shop-signal-candidate-analysis-v1',
+      candidateOnly: true,
+      canPromoteToDirectSource: false,
       markerCount: 8,
       availableMarkerCount: 4,
       unavailableMarkerCount: 4,
-      candidateMarkerHitCount: 8,
-      candidateAvailableMarkerHitCount: 4,
-      candidateUnavailableMarkerHitCount: 4,
-      candidateLowCardinality: true,
-      candidateObservedPayloadsSeparatedByMarkerState: true,
+      blockers: [],
+      candidates: [{
+        provenanceSourceField: directShopSourceField,
+        markerHitCount: 8,
+        availableMarkerHitCount: 4,
+        unavailableMarkerHitCount: 4,
+        lowCardinality: true,
+        observedPayloadsSeparatedByMarkerState: true,
+      }],
+      ...overrides,
+    };
+  }
+
+  function directShopAttestation(overrides: Record<string, unknown> = {}) {
+    const candidateAnalysis = directShopCandidateAnalysis();
+    return {
+      contractVersion: RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_V1,
+      telemetrySource: 'OVERWOLF_GEP',
+      provenanceSourceField: directShopSourceField,
+      candidateAnalysisSha256: sha256Canonical(candidateAnalysis),
+      candidateAnalysis,
       independentlyValidatedAvailableTransitions: 2,
       independentlyValidatedUnavailableTransitions: 2,
       independentTransitionMismatchCount: 0,
@@ -194,7 +209,7 @@ describe('RecommendationEvidenceMaterializerV8Service', () => {
     expect(record.evaluator).toBe(RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_EVALUATOR_V1);
     expect(record.subjectSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(harness.snapshots.get(record.subjectSha256)?.report?.approvalKey)
-      .toBe('OVERWOLF_GEP:onInfoUpdates2|match_info|match_info|shop_state');
+      .toBe(`OVERWOLF_GEP:${directShopSourceField}`);
   });
 
   it('cannot promote candidate-only direct shop evidence without independent state transitions', async () => {
@@ -232,6 +247,20 @@ describe('RecommendationEvidenceMaterializerV8Service', () => {
     expect(report.validation.status).toBe('FAIL');
     expect(report.validation.blockers).toContain('INDEPENDENT_TRANSITION_MISMATCH_OBSERVED');
     expect(report.gate.status).toBe('FAIL');
+  });
+
+  it('rejects a direct shop attestation whose candidate analysis hash does not match the embedded report', async () => {
+    const harness = createHarness({
+      souls: souls('PASS'),
+      observability: observability(true, true),
+      dataset: dataset(10_000, 10_000, true, true),
+    });
+
+    await expect(harness.service.materializeDirectShopSource(directShopAttestation({
+      candidateAnalysisSha256: 'f'.repeat(64),
+    }) as never)).rejects.toThrow('DIRECT_SHOP_CANDIDATE_ANALYSIS_SHA256_MISMATCH');
+    expect(harness.snapshotRepo.save).not.toHaveBeenCalled();
+    expect(harness.roadmapEvidence.append).not.toHaveBeenCalled();
   });
 
   it('treats invalid controlled souls observations as a failed gate', async () => {
@@ -291,3 +320,14 @@ describe('RecommendationEvidenceMaterializerV8Service', () => {
     await expect(harness.service.getSnapshot('not-a-sha')).rejects.toThrow('subjectSha256 is invalid');
   });
 });
+
+function sha256Canonical(value: unknown): string {
+  return createHash('sha256').update(canonicalJson(value)).digest('hex');
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(',')}}`;
+}
