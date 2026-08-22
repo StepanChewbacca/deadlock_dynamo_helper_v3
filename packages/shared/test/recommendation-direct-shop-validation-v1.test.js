@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const {
+  RECOMMENDATION_DIRECT_SHOP_CANDIDATE_ANALYSIS_VERSION_V1,
   RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_V1,
   evaluateRecommendationDirectShopSourceValidationV1,
 } = require('../dist');
@@ -9,7 +10,7 @@ const approvalKey = `OVERWOLF_GEP:${sourceField}`;
 
 function candidateAnalysis(overrides = {}) {
   return {
-    version: 'shop-signal-candidate-analysis-v1',
+    version: RECOMMENDATION_DIRECT_SHOP_CANDIDATE_ANALYSIS_VERSION_V1,
     candidateOnly: true,
     canPromoteToDirectSource: false,
     markerCount: 8,
@@ -38,6 +39,7 @@ function attestation(overrides = {}) {
     independentlyValidatedAvailableTransitions: 2,
     independentlyValidatedUnavailableTransitions: 2,
     independentTransitionMismatchCount: 0,
+    independentValidationEvidenceSha256: 'b'.repeat(64),
     validator: 'independent-live-transition-review-v1',
     validatedAt: '2026-08-22T09:00:00.000Z',
     evidenceRef: 'immutable://deadlock/direct-shop-validation/evidence-1',
@@ -84,6 +86,7 @@ const candidateOnly = evaluateRecommendationDirectShopSourceValidationV1(attesta
   }),
 }));
 assert.equal(candidateOnly.status, 'INSUFFICIENT_EVIDENCE');
+assert.equal(candidateOnly.canActivateDirectSource, undefined);
 assert.equal(candidateOnly.canActivateDirectShopSource, false);
 
 const wrongCandidate = evaluateRecommendationDirectShopSourceValidationV1(attestation({
@@ -100,5 +103,17 @@ const wrongCandidate = evaluateRecommendationDirectShopSourceValidationV1(attest
 }));
 assert.equal(wrongCandidate.status, 'FAIL');
 assert(wrongCandidate.blockers.includes('DIRECT_SHOP_CANDIDATE_MATCH_COUNT_INVALID:0'));
+
+const wrongAnalysisVersion = evaluateRecommendationDirectShopSourceValidationV1(attestation({
+  candidateAnalysis: candidateAnalysis({ version: 'shop-signal-candidate-analysis-v2' }),
+}));
+assert.equal(wrongAnalysisVersion.status, 'FAIL');
+assert(wrongAnalysisVersion.blockers.includes('CANDIDATE_ANALYSIS_VERSION_MISMATCH'));
+
+const missingIndependentEvidenceHash = evaluateRecommendationDirectShopSourceValidationV1(attestation({
+  independentValidationEvidenceSha256: '',
+}));
+assert.equal(missingIndependentEvidenceHash.status, 'FAIL');
+assert(missingIndependentEvidenceHash.blockers.includes('INDEPENDENT_VALIDATION_EVIDENCE_SHA256_INVALID'));
 
 console.log('recommendation direct shop validation v1 fixtures: PASS');
