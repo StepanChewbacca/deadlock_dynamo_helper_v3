@@ -7,6 +7,7 @@ const {
 const readyInput = {
   canonicalGepFixtureCoverage: 1,
   controlledSoulsValidation: 'PASS',
+  directShopSourceValidation: 'PASS',
   rulesetCatalogCoverage: 0.999,
   deterministicIllegalRecommendationCount: 0,
   recommendationTelemetryContractPassed: true,
@@ -37,6 +38,7 @@ assert.deepEqual(ready.blockers, []);
 const blocked = evaluateRecommendationPretrainingFinalReadinessV1({
   ...readyInput,
   controlledSoulsValidation: 'INSUFFICIENT_EVIDENCE',
+  directShopSourceValidation: 'INSUFFICIENT_EVIDENCE',
   rulesetCatalogCoverage: 0.9989,
   explicitFeasibilityCoverage: 0.9949,
   criticalCohortObservedActionFeasibleCoverage: 0.979,
@@ -45,6 +47,7 @@ const blocked = evaluateRecommendationPretrainingFinalReadinessV1({
 });
 assert.equal(blocked.readyToStartBehavioralTraining, false);
 assert(blocked.blockers.includes('CONTROLLED_SOULS_INSUFFICIENT_EVIDENCE'));
+assert(blocked.blockers.includes('DIRECT_SHOP_SOURCE_INSUFFICIENT_EVIDENCE'));
 assert(blocked.blockers.includes('RULESET_CATALOG_COVERAGE_BELOW_0_999'));
 assert(blocked.blockers.includes('EXPLICIT_FEASIBILITY_COVERAGE_BELOW_0_995'));
 assert(blocked.blockers.includes('CRITICAL_COHORT_OBSERVED_ACTION_FEASIBLE_COVERAGE_BELOW_0_98'));
