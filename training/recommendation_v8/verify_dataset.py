@@ -29,6 +29,7 @@ def main() -> int:
         "datasetId": identity.dataset_id,
         "datasetSha256": identity.dataset_sha256,
         "manifestSha256": identity.manifest_sha256,
+        "sourceCommitSha": manifest.get("sourceCommitSha"),
         "featureContractVersion": identity.feature_contract_version,
         "candidateGeneratorVersion": identity.candidate_generator_version,
         "directShopSourceApprovalKeys": manifest["directShopSourceApprovalKeys"],
