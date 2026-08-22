@@ -79,6 +79,7 @@ export class RecommendationFeatureStoreV8Service {
            AND "eventType" = 'PLAYER_STATE'
            AND "sourceOccurredAt" >= $3
            AND "sourceOccurredAt" <= $4
+           AND "receivedAt" <= $4
          ORDER BY "sourceOccurredAt" DESC, "receivedAt" DESC
          LIMIT 1`,
         [decision.matchId, decision.playerKey, lowerBound.toISOString(), decisionAt.toISOString()],
@@ -91,6 +92,7 @@ export class RecommendationFeatureStoreV8Service {
            AND "eventType" = 'INVENTORY_SNAPSHOT'
            AND "sourceOccurredAt" >= $3
            AND "sourceOccurredAt" <= $4
+           AND "receivedAt" <= $4
          ORDER BY "sourceOccurredAt" DESC, "receivedAt" DESC
          LIMIT 1`,
         [decision.matchId, decision.playerKey, lowerBound.toISOString(), decisionAt.toISOString()],
@@ -110,6 +112,7 @@ export class RecommendationFeatureStoreV8Service {
              WHERE "matchId" = $1
                AND "playerKey" = $2
                AND "sourceOccurredAt" < $3
+               AND "receivedAt" <= $3
              ORDER BY "sourceOccurredAt" DESC, "receivedAt" DESC
              LIMIT $4`,
             [decision.matchId, decision.playerKey, decisionAt.toISOString(), maximumHistoryEvents],
