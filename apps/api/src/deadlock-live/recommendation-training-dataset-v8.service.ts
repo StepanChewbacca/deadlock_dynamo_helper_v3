@@ -46,6 +46,7 @@ export interface RecommendationTrainingDatasetExportV1Options {
   maximumAlignmentAgeMs?: number;
   maximumHistoryEvents?: number;
   minimumDevelopmentExportCoverage?: number;
+  minimumShadowHoldoutDecisionCount?: number;
 }
 
 export interface RecommendationTrainingDatasetPreflightV1 {
@@ -104,6 +105,7 @@ const REQUIRED_SPLITS: readonly RecommendationDatasetSplitV1[] = [
   'SHADOW_HOLDOUT',
   'FUTURE_TEST',
 ];
+const DEFAULT_MINIMUM_SHADOW_HOLDOUT_DECISIONS = 10_000;
 
 @Injectable()
 export class RecommendationTrainingDatasetV8Service {
@@ -177,6 +179,12 @@ export class RecommendationTrainingDatasetV8Service {
       splitDecisionCounts[split.split] = counts.decisionCount;
       if (counts.matchCount === 0) blockers.push(`SPLIT_EMPTY_MATCH_SET:${split.split}`);
       if (counts.decisionCount === 0) blockers.push(`SPLIT_EMPTY_DECISION_SET:${split.split}`);
+      if (
+        split.split === 'SHADOW_HOLDOUT'
+        && counts.decisionCount < (options.minimumShadowHoldoutDecisionCount ?? DEFAULT_MINIMUM_SHADOW_HOLDOUT_DECISIONS)
+      ) {
+        blockers.push('SHADOW_HOLDOUT_DECISION_COUNT_BELOW_GATE');
+      }
     }
 
     return {
@@ -362,8 +370,8 @@ export class RecommendationTrainingDatasetV8Service {
   ): Promise<ExportDecisionRow[]> {
     if (split.split === 'FUTURE_TEST') throw new Error('FUTURE_TEST_ACCESS_FORBIDDEN_DURING_MODEL_DEVELOPMENT');
     return this.dataSource.query(
-      `WITH match_first AS (
-         SELECT "matchId", MIN("decidedAt") AS first_decision_at
+      `WITH match_bounds AS (
+         SELECT "matchId", MIN("decidedAt") AS first_decision_at, MAX("decidedAt") AS last_decision_at
          FROM recommendation_decisions_v8
          WHERE "candidateGeneratorVersion" = $1
          GROUP BY "matchId"
@@ -379,11 +387,11 @@ export class RecommendationTrainingDatasetV8Service {
        SELECT d."decisionId", d."matchId", d."candidateGeneratorVersion", d."rulesetVersion", d."catalogSha256",
               d."observedActionInjected", d."actionLoggingPropensity", o.observed_action_key AS "observedActionKey"
        FROM recommendation_decisions_v8 d
-       JOIN match_first m ON m."matchId" = d."matchId"
+       JOIN match_bounds m ON m."matchId" = d."matchId"
        LEFT JOIN latest_outcome o ON o.decision_id = d."decisionId"
        WHERE d."candidateGeneratorVersion" = $1
          AND m.first_decision_at >= $2::timestamptz
-         AND m.first_decision_at < $3::timestamptz
+         AND m.last_decision_at < $3::timestamptz
        ORDER BY m.first_decision_at, d."matchId", d."decidedAt", d."decisionId"`,
       [candidateGeneratorVersion, split.from, split.to],
     ) as Promise<ExportDecisionRow[]>;
@@ -405,18 +413,18 @@ export class RecommendationTrainingDatasetV8Service {
   ): Promise<{ matchCount: number; decisionCount: number }> {
     if (split.split === 'FUTURE_TEST') throw new Error('FUTURE_TEST_ACCESS_FORBIDDEN_DURING_MODEL_DEVELOPMENT');
     const rows = await this.dataSource.query(
-      `WITH match_first AS (
-         SELECT "matchId", MIN("decidedAt") AS first_decision_at
+      `WITH match_bounds AS (
+         SELECT "matchId", MIN("decidedAt") AS first_decision_at, MAX("decidedAt") AS last_decision_at
          FROM recommendation_decisions_v8
          WHERE "candidateGeneratorVersion" = $1
          GROUP BY "matchId"
        )
        SELECT COUNT(DISTINCT d."matchId") AS "matchCount", COUNT(*) AS "decisionCount"
        FROM recommendation_decisions_v8 d
-       JOIN match_first m ON m."matchId" = d."matchId"
+       JOIN match_bounds m ON m."matchId" = d."matchId"
        WHERE d."candidateGeneratorVersion" = $1
          AND m.first_decision_at >= $2::timestamptz
-         AND m.first_decision_at < $3::timestamptz`,
+         AND m.last_decision_at < $3::timestamptz`,
       [candidateGeneratorVersion, split.from, split.to],
     ) as CountRow[];
     return {
@@ -449,6 +457,10 @@ function validateOptions(options: RecommendationTrainingDatasetExportV1Options):
       || options.minimumDevelopmentExportCoverage > 1
     )
   ) errors.push('MINIMUM_DEVELOPMENT_EXPORT_COVERAGE_INVALID');
+  if (
+    options.minimumShadowHoldoutDecisionCount !== undefined
+    && (!Number.isInteger(options.minimumShadowHoldoutDecisionCount) || options.minimumShadowHoldoutDecisionCount <= 0)
+  ) errors.push('MINIMUM_SHADOW_HOLDOUT_DECISION_COUNT_INVALID');
   if (options.splits.length !== REQUIRED_SPLITS.length) errors.push('EXACTLY_FOUR_SPLITS_REQUIRED');
   for (let index = 0; index < REQUIRED_SPLITS.length; index += 1) {
     const split = options.splits[index];
