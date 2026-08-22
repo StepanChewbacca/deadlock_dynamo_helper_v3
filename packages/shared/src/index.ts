@@ -23,6 +23,7 @@ export * from './recommendation-runtime-v8';
 export * from './recommendation-value-v8';
 export * from './recommendation-policy-v1';
 export * from './recommendation-policy-artifact-v1';
+export * from './recommendation-direct-shop-validation-v1';
 export * from './recommendation-roadmap-state-v1';
 export * from './recommendation-roadmap-evidence-v1';
 export * from './recommendation-future-test-evaluation-v1';
