@@ -121,6 +121,13 @@ export class RecommendationEvidenceMaterializerV8Service {
   async materializeDirectShopSource(
     attestation: RecommendationDirectShopSourceValidationAttestationV1,
   ): Promise<RecommendationDirectShopEvidenceMaterializationReportV8> {
+    if (!attestation?.candidateAnalysis || typeof attestation.candidateAnalysis !== 'object') {
+      throw new Error('DIRECT_SHOP_CANDIDATE_ANALYSIS_REQUIRED');
+    }
+    const calculatedCandidateAnalysisSha256 = sha256Canonical(attestation.candidateAnalysis);
+    if (calculatedCandidateAnalysisSha256 !== attestation.candidateAnalysisSha256?.toLowerCase()) {
+      throw new Error('DIRECT_SHOP_CANDIDATE_ANALYSIS_SHA256_MISMATCH');
+    }
     const generatedAt = new Date().toISOString();
     const validation = evaluateRecommendationDirectShopSourceValidationV1(attestation, generatedAt);
     const gate = await this.persistGate(
