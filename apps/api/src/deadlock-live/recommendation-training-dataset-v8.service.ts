@@ -382,6 +382,8 @@ export class RecommendationTrainingDatasetV8Service {
          FROM recommendation_telemetry_events e
          WHERE e."eventType" = 'RECOMMENDATION_OUTCOME'
            AND COALESCE(e."payload"->>'decisionId', '') <> ''
+           AND e."sourceOccurredAt" < $3::timestamptz
+           AND e."receivedAt" < $3::timestamptz
          ORDER BY e."payload"->>'decisionId', e."sourceOccurredAt" DESC, e."receivedAt" DESC
        )
        SELECT d."decisionId", d."matchId", d."candidateGeneratorVersion", d."rulesetVersion", d."catalogSha256",
