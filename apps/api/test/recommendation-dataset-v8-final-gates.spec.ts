@@ -70,7 +70,11 @@ describe('RecommendationDatasetV8ReportService final pretraining gates', () => {
   });
 
   it('scopes the report to one candidate generator and excludes outcomes arriving after the cutoff', async () => {
-    const query = jest.fn(async () => []);
+    const calls: Array<[string, unknown[]]> = [];
+    const query = jest.fn(async (sql: string, params: unknown[] = []) => {
+      calls.push([sql, params]);
+      return [];
+    });
     const service = new RecommendationDatasetV8ReportService({ query } as never);
     const to = new Date('2026-08-20T12:00:00.000Z');
 
@@ -81,7 +85,7 @@ describe('RecommendationDatasetV8ReportService final pretraining gates', () => {
     });
 
     expect(report.candidateGeneratorVersion).toBe('candidate-v8.4');
-    const [sql, params] = query.mock.calls[0]!;
+    const [sql, params] = calls[0]!;
     expect(params[1]).toBe(to.toISOString());
     expect(params[2]).toBe('candidate-v8.4');
     expect(sql).toContain('d.\"candidateGeneratorVersion\" = $3::text');
