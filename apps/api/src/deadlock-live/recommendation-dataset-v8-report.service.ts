@@ -4,12 +4,14 @@ import { DataSource } from 'typeorm';
 export interface RecommendationDatasetV8ReportOptions {
   from?: Date;
   to?: Date;
+  candidateGeneratorVersion?: string;
 }
 
 export interface RecommendationDatasetV8Report {
   generatedAt: string;
   from?: string;
   to?: string;
+  candidateGeneratorVersion?: string;
   decisionCount: number;
   labeledDecisionCount: number;
   observedActionCandidateCoverage: number;
@@ -63,9 +65,14 @@ export class RecommendationDatasetV8ReportService {
     options: RecommendationDatasetV8ReportOptions = {},
   ): Promise<RecommendationDatasetV8Report> {
     validateRange(options.from, options.to);
+    const candidateGeneratorVersion = normalizeCandidateGeneratorVersion(options.candidateGeneratorVersion);
     const rows = await this.dataSource.query(
       datasetReportSql(),
-      [options.from?.toISOString() ?? null, options.to?.toISOString() ?? null],
+      [
+        options.from?.toISOString() ?? null,
+        options.to?.toISOString() ?? null,
+        candidateGeneratorVersion ?? null,
+      ],
     ) as DatasetAggregateRow[];
     const row = rows[0] ?? emptyRow();
     const decisionCount = number(row.decisionCount);
@@ -119,6 +126,7 @@ export class RecommendationDatasetV8ReportService {
       generatedAt: new Date().toISOString(),
       from: options.from?.toISOString(),
       to: options.to?.toISOString(),
+      candidateGeneratorVersion,
       decisionCount,
       labeledDecisionCount,
       observedActionCandidateCoverage,
@@ -146,6 +154,7 @@ WITH decisions AS (
   FROM recommendation_decisions_v8 d
   WHERE ($1::timestamptz IS NULL OR d."decidedAt" >= $1::timestamptz)
     AND ($2::timestamptz IS NULL OR d."decidedAt" < $2::timestamptz)
+    AND ($3::text IS NULL OR d."candidateGeneratorVersion" = $3::text)
 ), outcomes AS (
   SELECT DISTINCT ON (e."payload"->>'decisionId')
     e."payload"->>'decisionId' AS decision_id,
@@ -153,6 +162,10 @@ WITH decisions AS (
   FROM recommendation_telemetry_events e
   WHERE e."eventType" = 'RECOMMENDATION_OUTCOME'
     AND COALESCE(e."payload"->>'decisionId', '') <> ''
+    AND (
+      $2::timestamptz IS NULL
+      OR (e."sourceOccurredAt" < $2::timestamptz AND e."receivedAt" < $2::timestamptz)
+    )
   ORDER BY e."payload"->>'decisionId', e."sourceOccurredAt" DESC, e."receivedAt" DESC
 ), candidate_counts AS (
   SELECT c."decisionId", COUNT(*) AS candidate_count
@@ -257,6 +270,13 @@ function validateRange(from: Date | undefined, to: Date | undefined): void {
   if (from && !Number.isFinite(from.getTime())) throw new Error('from is invalid');
   if (to && !Number.isFinite(to.getTime())) throw new Error('to is invalid');
   if (from && to && from >= to) throw new Error('from must be before to');
+}
+
+function normalizeCandidateGeneratorVersion(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const normalized = value.trim();
+  if (!normalized) throw new Error('candidateGeneratorVersion must be non-empty when provided');
+  return normalized;
 }
 
 function emptyRow(): DatasetAggregateRow {
