@@ -43,18 +43,47 @@ def main() -> int:
         raise ValueError("FUTURE_TEST_MUST_REMAIN_UNTOUCHED_FOR_BEHAVIORAL_BUNDLE")
     if dataset.get("futureTestTouched") is not False:
         raise ValueError("DATASET_FUTURE_TEST_ALREADY_TOUCHED")
+    if args.action_contract_version != dataset.get("actionContractVersion"):
+        raise ValueError("ACTION_CONTRACT_VERSION_MISMATCH")
     if metrics.get("datasetSha256") != dataset.get("datasetSha256"):
         raise ValueError("MODEL_DATASET_SHA_MISMATCH")
+    if metrics.get("featureContractVersion") != dataset.get("featureContractVersion"):
+        raise ValueError("MODEL_FEATURE_CONTRACT_MISMATCH")
+    if metrics.get("candidateGeneratorVersion") != dataset.get("candidateGeneratorVersion"):
+        raise ValueError("MODEL_CANDIDATE_GENERATOR_MISMATCH")
     if ablation.get("datasetSha256") != dataset.get("datasetSha256"):
         raise ValueError("ABLATION_DATASET_SHA_MISMATCH")
+    if ablation.get("featureContractVersion") != dataset.get("featureContractVersion"):
+        raise ValueError("ABLATION_FEATURE_CONTRACT_MISMATCH")
+    if ablation.get("candidateGeneratorVersion") != dataset.get("candidateGeneratorVersion"):
+        raise ValueError("ABLATION_CANDIDATE_GENERATOR_MISMATCH")
     if ablation.get("passed") is not True:
         raise ValueError("RNN_TRANSFORMER_ABLATION_NOT_PASS")
     if metrics.get("family") != "SEQUENCE_TRANSFORMER":
         raise ValueError("BUILDLM_BUNDLE_REQUIRES_TRANSFORMER_WINNER")
-    if metrics.get("behavioralGate", {}).get("passed") is not True:
+    behavioral_gate = metrics.get("behavioralGate", {})
+    if not isinstance(behavioral_gate, dict) or behavioral_gate.get("passed") is not True:
         raise ValueError("BEHAVIORAL_OFFLINE_GATE_NOT_PASS")
+    if model_metadata.get("family") != metrics.get("family"):
+        raise ValueError("MODEL_METADATA_FAMILY_MISMATCH")
+    if model_metadata.get("modelId") != metrics.get("modelId") or model_metadata.get("modelVersion") != metrics.get("modelVersion"):
+        raise ValueError("MODEL_METADATA_IDENTITY_MISMATCH")
+    if model_metadata.get("featureContractVersion") != dataset.get("featureContractVersion"):
+        raise ValueError("MODEL_METADATA_FEATURE_CONTRACT_MISMATCH")
+    if model_metadata.get("candidateGeneratorVersion") != dataset.get("candidateGeneratorVersion"):
+        raise ValueError("MODEL_METADATA_CANDIDATE_GENERATOR_MISMATCH")
+    if config.get("family") != metrics.get("family"):
+        raise ValueError("TRAINING_CONFIG_FAMILY_MISMATCH")
     if not is_git_sha(args.source_commit_sha):
         raise ValueError("sourceCommitSha must be a 40-character Git SHA")
+
+    thresholds = behavioral_gate.get("thresholds")
+    if not isinstance(thresholds, dict):
+        raise ValueError("BEHAVIORAL_GATE_THRESHOLDS_REQUIRED")
+    min_support = required_number(thresholds, "minSupport")
+    min_major_cohort_support = required_number(thresholds, "minMajorCohortSupport")
+    min_candidate_coverage = required_number(thresholds, "minCandidateCoverage")
+    max_floor_sensitivity = required_number(thresholds, "maxFloorSensitivity")
 
     source_files = [
         (training_output / "model.pt", "model.pt"),
@@ -77,13 +106,24 @@ def main() -> int:
 
     shadow = metrics["shadowHoldout"]
     gates = [
-        gate("BEHAVIORAL_OFFLINE", True, shadow["rawLogLoss"], f"<{shadow['baselineRawLogLoss']}"),
-        gate("BEHAVIORAL_SUPPORT", shadow["support"] >= 0.90, shadow["support"], ">=0.9"),
-        gate("BEHAVIORAL_MAJOR_COHORT_SUPPORT", shadow["majorCohortSupportMin"] >= 0.75, shadow["majorCohortSupportMin"], ">=0.75"),
-        gate("BEHAVIORAL_CANDIDATE_COVERAGE", shadow["candidateCoverage"] >= 0.99, shadow["candidateCoverage"], ">=0.99"),
+        gate("BEHAVIORAL_OFFLINE", behavioral_gate.get("passed") is True, shadow["rawLogLoss"], f"<{shadow['baselineRawLogLoss']}"),
+        gate("BEHAVIORAL_SUPPORT", shadow["support"] >= min_support, shadow["support"], f">={min_support}"),
+        gate(
+            "BEHAVIORAL_MAJOR_COHORT_SUPPORT",
+            shadow["majorCohortSupportMin"] >= min_major_cohort_support,
+            shadow["majorCohortSupportMin"],
+            f">={min_major_cohort_support}",
+        ),
+        gate(
+            "BEHAVIORAL_CANDIDATE_COVERAGE",
+            shadow["candidateCoverage"] >= min_candidate_coverage,
+            shadow["candidateCoverage"],
+            f">={min_candidate_coverage}",
+        ),
         gate("BEHAVIORAL_ILLEGAL_CANDIDATE_RATE", shadow["illegalCandidateRate"] == 0, shadow["illegalCandidateRate"], "=0"),
         gate("NO_PROBABILITY_FLOOR", shadow["probabilityFloorApplied"] is False, shadow["probabilityFloorApplied"], False),
-        gate("RNN_TRANSFORMER_ABLATION", ablation["passed"] is True, ablation["transformerLogLossImprovement"], ">=1e-6"),
+        gate("BEHAVIORAL_FLOOR_SENSITIVITY", shadow["floorSensitivity"] <= max_floor_sensitivity, shadow["floorSensitivity"], f"<={max_floor_sensitivity}"),
+        gate("RNN_TRANSFORMER_ABLATION", ablation["passed"] is True, ablation["transformerLogLossImprovement"], ">=configured-ablation-threshold"),
         gate("FUTURE_TEST_UNTOUCHED", True, False, False),
     ]
     if not all(item["status"] == "PASS" for item in gates):
@@ -100,7 +140,7 @@ def main() -> int:
         "datasetId": dataset["datasetId"],
         "datasetSha256": dataset["datasetSha256"],
         "featureContractVersion": dataset["featureContractVersion"],
-        "actionContractVersion": args.action_contract_version,
+        "actionContractVersion": dataset["actionContractVersion"],
         "candidateGeneratorVersion": dataset["candidateGeneratorVersion"],
         "supportedRulesetVersions": sorted(dataset["supportedRulesetVersions"]),
         "supportedCatalogSha256": sorted(dataset["supportedCatalogSha256"]),
@@ -124,6 +164,13 @@ def gate(name: str, passed: bool, value: Any, threshold: Any) -> Dict[str, Any]:
         "value": value,
         "threshold": threshold,
     }
+
+
+def required_number(values: Dict[str, Any], name: str) -> float:
+    value = values.get(name)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"Behavioral gate threshold is invalid: {name}")
+    return float(value)
 
 
 def is_git_sha(value: str) -> bool:
