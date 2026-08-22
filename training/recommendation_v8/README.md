@@ -12,8 +12,9 @@ Training is authorized only when all of the following are true:
 4. The roadmap evidence ledger unlocks `PROSPECTIVE_DATA`.
 5. The Dataset V8 artifact is registered and independently `VERIFIED` with exact manifest/file hashes.
 6. `futureTestUntouched=true` and `futureTestEvaluation=NOT_EVALUATED`.
+7. `TRAIN`, `VALIDATION`, and `SHADOW_HOLDOUT` each contain complete non-crossing matches, and `SHADOW_HOLDOUT` has at least the configured Behavioral gate decision count (10,000 in the checked-in RNN/Transformer configs).
 
-The API endpoint `POST /deadlock-live/recommendation-training/v8/preflight/:datasetId` enforces the registry and roadmap checks. It is disabled unless `RECOMMENDATION_TRAINING_TOKEN` is configured.
+The API endpoint `POST /deadlock-live/recommendation-training/v8/preflight/:datasetId` enforces the registry and roadmap checks. It is disabled unless `RECOMMENDATION_TRAINING_TOKEN` is configured. The verified-dataset registry rechecks the manifest content SHA, manifest SHA, exact file descriptors, and verification timestamp before returning a dataset to training preflight.
 
 ## Dataset construction
 
@@ -21,9 +22,9 @@ Use the manual `Recommendation Dataset Export` workflow on the dedicated `recomm
 
 `TRAIN -> VALIDATION -> SHADOW_HOLDOUT -> FUTURE_TEST`
 
-Match assignment uses the first Decision V8 timestamp for the match, so a match cannot cross splits. The export uses the causal Feature Store V8 assembler and the persisted deterministic feasible candidate set. Observed actions are never injected into the candidate set. Development quality gates stop at the end of `SHADOW_HOLDOUT`; FUTURE_TEST diagnostics are not exposed.
+A match is eligible for a development split only when its first Decision V8 timestamp is at or after the split start and its last Decision V8 timestamp is strictly before the split end. Matches crossing a split boundary are excluded instead of being partially assigned. This preserves match-level isolation and prevents decisions occurring in a later window from leaking into an earlier split. The export uses the causal Feature Store V8 assembler and the persisted deterministic feasible candidate set. Observed actions are never injected into the candidate set. Development quality gates stop at the end of `SHADOW_HOLDOUT`; FUTURE_TEST diagnostics are not exposed.
 
-The model-development artifact contains files only for `TRAIN`, `VALIDATION`, and `SHADOW_HOLDOUT`. The FUTURE_TEST split is represented only by its sealed chronological descriptor with hidden counts and is not materialized into a readable model-development file. The Python verifier rejects any `future_test.jsonl.gz` file in this artifact.
+The model-development artifact contains files only for `TRAIN`, `VALIDATION`, and `SHADOW_HOLDOUT`. The FUTURE_TEST split is represented only by its sealed chronological descriptor with hidden counts and is not materialized into a readable model-development file. The Python verifier rejects any `future_test.jsonl.gz` file in this artifact. Manifest validation also requires exact split order and exact equality between each development split's descriptor decision count and its artifact row count.
 
 After export, upload the directory to an approved immutable object store, register the manifest through the protected dataset-registry endpoint, and independently verify the exact manifest SHA and all file SHA/size/row-count values. Training accepts only a registry-verified dataset id.
 
@@ -47,7 +48,7 @@ The workflow:
 
 Both architectures optimize grouped listwise cross entropy over the complete deterministic feasible choice set. Probabilities are raw softmax probabilities over that set. Probability floors are forbidden.
 
-The RNN and Transformer use the same state, history, action tokenization, hash dimension, history limit, dataset SHA, feature contract, and candidate-generator version. Architecture-specific parameters are the sequence encoder only. The ablation report refuses comparison when the equal-observables identity differs.
+The RNN and Transformer use the same state, history, action tokenization, hash dimension, history limit, dataset SHA, feature contract, candidate-generator version, seed, chronological split contract, and release-gate thresholds. Architecture-specific parameters are the sequence encoder only. The security audit rejects equal-observables configuration drift before training, and the ablation report refuses comparison when the runtime equal-observables identity differs.
 
 ## Artifacts
 
