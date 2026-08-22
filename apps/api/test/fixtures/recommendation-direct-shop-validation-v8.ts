@@ -8,7 +8,6 @@ import {
 
 export const TEST_DIRECT_SHOP_SOURCE_FIELD = 'onInfoUpdates2|match_info|match_info|shop_state';
 export const TEST_DIRECT_SHOP_APPROVAL_KEY = `OVERWOLF_GEP:${TEST_DIRECT_SHOP_SOURCE_FIELD}`;
-export const TEST_DIRECT_SHOP_SUBJECT_SHA256 = '8'.repeat(64);
 
 export function createDirectShopCandidateAnalysisV1(
   sourceField = TEST_DIRECT_SHOP_SOURCE_FIELD,
@@ -58,16 +57,26 @@ export function createDirectShopValidationReportV1(
   return evaluateRecommendationDirectShopSourceValidationV1(attestation as never, generatedAt);
 }
 
+export const TEST_DIRECT_SHOP_SUBJECT_SHA256 = directShopValidationSubjectSha256(
+  createDirectShopValidationReportV1(),
+);
+
 export function createDirectShopValidationSnapshotV8(
   subjectSha256 = TEST_DIRECT_SHOP_SUBJECT_SHA256,
   approvalKey = TEST_DIRECT_SHOP_APPROVAL_KEY,
 ) {
+  const report = createDirectShopValidationReportV1(approvalKey);
   return {
     subjectSha256,
     gateName: 'directShopSourceValidation',
     evaluator: RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_EVALUATOR_V1,
-    report: createDirectShopValidationReportV1(approvalKey),
+    evaluatedAt: new Date(report.generatedAt),
+    report,
   };
+}
+
+export function directShopValidationSubjectSha256(report: unknown): string {
+  return sha256Canonical({ gateName: 'directShopSourceValidation', report });
 }
 
 function sha256Canonical(value: unknown): string {
