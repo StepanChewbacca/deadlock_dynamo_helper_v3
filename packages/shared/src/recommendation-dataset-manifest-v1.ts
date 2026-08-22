@@ -33,6 +33,7 @@ export interface RecommendationDatasetManifestV1 {
   featureContractVersion: string;
   actionContractVersion: string;
   candidateGeneratorVersion: string;
+  directShopSourceApprovalKeys?: readonly string[];
   pointInTimeCorrect: boolean;
   observedActionInjected: boolean;
   futureTestTouched: boolean;
@@ -72,6 +73,7 @@ export function validateRecommendationDatasetManifestV1(
   if (!manifest.featureContractVersion) errors.push('FEATURE_CONTRACT_VERSION_REQUIRED');
   if (!manifest.actionContractVersion) errors.push('ACTION_CONTRACT_VERSION_REQUIRED');
   if (!manifest.candidateGeneratorVersion) errors.push('CANDIDATE_GENERATOR_VERSION_REQUIRED');
+  validateDirectShopSourceApprovalKeys(manifest.directShopSourceApprovalKeys, errors);
   if (!manifest.pointInTimeCorrect) errors.push('POINT_IN_TIME_CORRECTNESS_REQUIRED');
   if (manifest.observedActionInjected) errors.push('OBSERVED_ACTION_INJECTION_FORBIDDEN');
   if (manifest.futureTestTouched) errors.push('FUTURE_TEST_ALREADY_TOUCHED');
@@ -135,6 +137,18 @@ export function validateRecommendationDatasetManifestV1(
 export function assertRecommendationDatasetManifestV1(manifest: RecommendationDatasetManifestV1): void {
   const validation = validateRecommendationDatasetManifestV1(manifest);
   if (!validation.valid) throw new Error(`Dataset manifest is invalid: ${validation.errors.join(',')}`);
+}
+
+function validateDirectShopSourceApprovalKeys(value: readonly string[] | undefined, errors: string[]): void {
+  if (value === undefined) return;
+  const normalized = value.map((entry) => typeof entry === 'string' ? entry.trim() : '');
+  if (normalized.some((entry) => !entry || !entry.includes(':'))) {
+    errors.push('DIRECT_SHOP_SOURCE_APPROVAL_KEY_INVALID');
+  }
+  const canonical = [...new Set(normalized)].sort();
+  if (JSON.stringify(value) !== JSON.stringify(canonical)) {
+    errors.push('DIRECT_SHOP_SOURCE_APPROVAL_KEYS_NOT_CANONICAL');
+  }
 }
 
 function assertChronologicalOrder(
