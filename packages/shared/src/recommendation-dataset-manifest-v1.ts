@@ -34,6 +34,7 @@ export interface RecommendationDatasetManifestV1 {
   actionContractVersion: string;
   candidateGeneratorVersion: string;
   directShopSourceApprovalKeys?: readonly string[];
+  directShopSourceValidationSubjectSha256?: string;
   pointInTimeCorrect: boolean;
   observedActionInjected: boolean;
   futureTestTouched: boolean;
@@ -74,6 +75,10 @@ export function validateRecommendationDatasetManifestV1(
   if (!manifest.actionContractVersion) errors.push('ACTION_CONTRACT_VERSION_REQUIRED');
   if (!manifest.candidateGeneratorVersion) errors.push('CANDIDATE_GENERATOR_VERSION_REQUIRED');
   validateDirectShopSourceApprovalKeys(manifest.directShopSourceApprovalKeys, errors);
+  if (
+    manifest.directShopSourceValidationSubjectSha256 !== undefined
+    && !isSha256(manifest.directShopSourceValidationSubjectSha256)
+  ) errors.push('DIRECT_SHOP_SOURCE_VALIDATION_SUBJECT_SHA256_INVALID');
   if (!manifest.pointInTimeCorrect) errors.push('POINT_IN_TIME_CORRECTNESS_REQUIRED');
   if (manifest.observedActionInjected) errors.push('OBSERVED_ACTION_INJECTION_FORBIDDEN');
   if (manifest.futureTestTouched) errors.push('FUTURE_TEST_ALREADY_TOUCHED');

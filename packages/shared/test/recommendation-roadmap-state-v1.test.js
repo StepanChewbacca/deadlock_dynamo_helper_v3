@@ -4,6 +4,7 @@ const { evaluateRecommendationRoadmapStateV1 } = require('../dist');
 const allPassBeforeFutureTest = {
   canonicalGepV2: 'PASS',
   controlledSoulsValidation: 'PASS',
+  directShopSourceValidation: 'PASS',
   versionedRulesetCatalog: 'PASS',
   deterministicLegality: 'PASS',
   recommendationTelemetryV8: 'PASS',
@@ -55,6 +56,13 @@ const blocked = evaluateRecommendationRoadmapStateV1({
 assert.equal(blocked.highestUnlockedPhase, undefined);
 assert(blocked.phases.find((phase) => phase.phase === 'DATA_CONTRACT').blockers.includes('controlledSoulsValidation:INSUFFICIENT_EVIDENCE'));
 assert(blocked.phases.find((phase) => phase.phase === 'BEHAVIORAL_BUILDLM').blockers.includes('PREREQUISITE_PHASE_NOT_UNLOCKED'));
+
+const directShopBlocked = evaluateRecommendationRoadmapStateV1({
+  ...allPassBeforeFutureTest,
+  directShopSourceValidation: 'INSUFFICIENT_EVIDENCE',
+});
+assert.equal(directShopBlocked.highestUnlockedPhase, undefined);
+assert(directShopBlocked.phases.find((phase) => phase.phase === 'DATA_CONTRACT').blockers.includes('directShopSourceValidation:INSUFFICIENT_EVIDENCE'));
 
 const futureIntegrityViolation = evaluateRecommendationRoadmapStateV1({
   ...allPassBeforeFutureTest,

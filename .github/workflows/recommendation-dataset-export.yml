@@ -57,6 +57,7 @@ jobs:
       DB_NAME: ${{ secrets.DB_NAME }}
       DB_SSL: ${{ vars.DB_SSL }}
       DB_SSL_REJECT_UNAUTHORIZED: ${{ vars.DB_SSL_REJECT_UNAUTHORIZED }}
+      RECOMMENDATION_DIRECT_SHOP_SOURCE_ALLOWLIST: ${{ vars.RECOMMENDATION_DIRECT_SHOP_SOURCE_ALLOWLIST }}
       DATASET_ID: ${{ inputs.dataset_id }}
       CANDIDATE_GENERATOR_VERSION: ${{ inputs.candidate_generator_version }}
       ACTION_CONTRACT_VERSION: ${{ inputs.action_contract_version }}
@@ -74,6 +75,7 @@ jobs:
         run: |
           set -euo pipefail
           test -n "${RECOMMENDATION_DATASET_OUTPUT_ROOT:-}" || { echo "RECOMMENDATION_DATASET_OUTPUT_ROOT is required on the secure runner" >&2; exit 1; }
+          test -n "${RECOMMENDATION_DIRECT_SHOP_SOURCE_ALLOWLIST:-}" || { echo "RECOMMENDATION_DIRECT_SHOP_SOURCE_ALLOWLIST is required" >&2; exit 1; }
           case "$RECOMMENDATION_DATASET_OUTPUT_ROOT" in
             /*) ;;
             *) echo "RECOMMENDATION_DATASET_OUTPUT_ROOT must be absolute" >&2; exit 1 ;;
@@ -166,6 +168,10 @@ jobs:
               "datasetId": manifest["datasetId"],
               "datasetSha256": manifest["datasetSha256"],
               "manifestSha256": hashlib.sha256(canonical(manifest).encode()).hexdigest(),
+              "sourceCommitSha": manifest["sourceCommitSha"],
+              "candidateGeneratorVersion": manifest["candidateGeneratorVersion"],
+              "directShopSourceApprovalKeys": manifest["directShopSourceApprovalKeys"],
+              "directShopSourceValidationSubjectSha256": manifest["directShopSourceValidationSubjectSha256"],
               "outputDir": str(root),
               "futureTestTouched": False,
               "futureTestDiagnosticMetricsExposed": False,

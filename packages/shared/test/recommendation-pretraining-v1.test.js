@@ -8,6 +8,7 @@ const {
 } = require('../dist');
 
 const DIRECT_SHOP_SOURCE_APPROVAL_KEY = 'OVERWOLF_GEP:onInfoUpdates2|match_info|match_info|shop_state';
+const DIRECT_SHOP_VALIDATION_SUBJECT_SHA256 = 'e'.repeat(64);
 
 function manifest(shadowDecisions = 10000) {
   return {
@@ -21,6 +22,7 @@ function manifest(shadowDecisions = 10000) {
     actionContractVersion: 'recommendation-actions-v1',
     candidateGeneratorVersion: 'candidate-v1',
     directShopSourceApprovalKeys: [DIRECT_SHOP_SOURCE_APPROVAL_KEY],
+    directShopSourceValidationSubjectSha256: DIRECT_SHOP_VALIDATION_SUBJECT_SHA256,
     pointInTimeCorrect: true,
     observedActionInjected: false,
     futureTestTouched: false,
@@ -117,6 +119,7 @@ function evidence() {
   return {
     canonicalGepV2: 'PASS',
     controlledSoulsValidation: 'PASS',
+    directShopSourceValidation: 'PASS',
     versionedRulesetCatalog: 'PASS',
     deterministicLegality: 'PASS',
     recommendationTelemetryV8: 'PASS',
@@ -153,6 +156,12 @@ const invalidApprovalKey = {
 };
 assert(validateRecommendationDatasetManifestV1(invalidApprovalKey).errors.includes('DIRECT_SHOP_SOURCE_APPROVAL_KEY_INVALID'));
 
+const invalidValidationSubject = {
+  ...valid,
+  directShopSourceValidationSubjectSha256: 'not-a-sha',
+};
+assert(validateRecommendationDatasetManifestV1(invalidValidationSubject).errors.includes('DIRECT_SHOP_SOURCE_VALIDATION_SUBJECT_SHA256_INVALID'));
+
 const reordered = { ...valid, splits: [valid.splits[1], valid.splits[0], ...valid.splits.slice(2)] };
 assert(validateRecommendationDatasetManifestV1(reordered).errors.includes('DATASET_SPLIT_ORDER_INVALID'));
 
@@ -169,6 +178,14 @@ const insufficientHoldout = evaluateRecommendationBehavioralTrainingLaunchV1({
 });
 assert.equal(insufficientHoldout.ready, false);
 assert(insufficientHoldout.blockers.includes('SHADOW_HOLDOUT_DECISION_COUNT_BELOW_GATE'));
+
+const noDirectShopValidation = evaluateRecommendationBehavioralTrainingLaunchV1({
+  manifest: manifest(10000),
+  evidence: { ...evidence(), directShopSourceValidation: 'INSUFFICIENT_EVIDENCE' },
+  config: config(),
+});
+assert.equal(noDirectShopValidation.ready, false);
+assert(noDirectShopValidation.blockers.includes('PROSPECTIVE_DATA:PREREQUISITE_PHASE_NOT_UNLOCKED'));
 
 const ready = evaluateRecommendationBehavioralTrainingLaunchV1({
   manifest: manifest(10000),

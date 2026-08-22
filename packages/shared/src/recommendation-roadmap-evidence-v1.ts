@@ -1,3 +1,4 @@
+import { RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_EVALUATOR_V1 } from './recommendation-direct-shop-validation-v1';
 import { RECOMMENDATION_FUTURE_TEST_EVALUATOR_V1 } from './recommendation-future-test-evaluation-v1';
 import {
   RecommendationRoadmapEvidenceV1,
@@ -28,6 +29,7 @@ export interface RecommendationRoadmapEvidenceRecordValidationV1 {
 const GATE_NAMES = new Set<RecommendationRoadmapEvidenceGateNameV1>([
   'canonicalGepV2',
   'controlledSoulsValidation',
+  'directShopSourceValidation',
   'versionedRulesetCatalog',
   'deterministicLegality',
   'recommendationTelemetryV8',
@@ -62,6 +64,12 @@ export function validateRecommendationRoadmapEvidenceRecordV1(
   if (record.subjectSha256 !== undefined && !isSha256(record.subjectSha256)) errors.push('SUBJECT_SHA256_INVALID');
   if (record.gateName === 'futureTestUntouched' && record.status === 'INSUFFICIENT_EVIDENCE') {
     errors.push('FUTURE_TEST_UNTOUCHED_REQUIRES_PASS_OR_FAIL');
+  }
+  if (record.gateName === 'directShopSourceValidation') {
+    if (!record.subjectSha256) errors.push('DIRECT_SHOP_VALIDATION_SUBJECT_SHA256_REQUIRED');
+    if (record.evaluator !== RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_EVALUATOR_V1) {
+      errors.push('DIRECT_SHOP_VALIDATION_REQUIRES_STRUCTURED_EVALUATOR');
+    }
   }
   if (record.gateName === 'futureTestEvaluation') {
     if (record.status === 'INSUFFICIENT_EVIDENCE') errors.push('FUTURE_TEST_EVALUATION_REQUIRES_PASS_OR_FAIL');

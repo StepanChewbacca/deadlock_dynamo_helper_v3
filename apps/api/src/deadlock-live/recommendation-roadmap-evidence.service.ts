@@ -91,6 +91,7 @@ export class RecommendationRoadmapEvidenceService {
     const evidence: RecommendationRoadmapEvidenceV1 = {
       canonicalGepV2: gate('canonicalGepV2'),
       controlledSoulsValidation: gate('controlledSoulsValidation'),
+      directShopSourceValidation: gate('directShopSourceValidation'),
       versionedRulesetCatalog: gate('versionedRulesetCatalog'),
       deterministicLegality: gate('deterministicLegality'),
       recommendationTelemetryV8: gate('recommendationTelemetryV8'),

@@ -78,6 +78,7 @@ const manifest = {
 const evidence = {
   canonicalGepV2: 'PASS',
   controlledSoulsValidation: 'PASS',
+  directShopSourceValidation: 'PASS',
   versionedRulesetCatalog: 'PASS',
   deterministicLegality: 'PASS',
   recommendationTelemetryV8: 'PASS',
@@ -138,5 +139,13 @@ const dataNotReady = evaluateRecommendationBehavioralTrainingLaunchV1({
 });
 assert.equal(dataNotReady.ready, false);
 assert(dataNotReady.blockers.some((blocker) => blocker.includes('datasetV8Empirical:INSUFFICIENT_EVIDENCE')));
+
+const directShopNotReady = evaluateRecommendationBehavioralTrainingLaunchV1({
+  manifest,
+  evidence: { ...evidence, directShopSourceValidation: 'INSUFFICIENT_EVIDENCE' },
+  config,
+});
+assert.equal(directShopNotReady.ready, false);
+assert(directShopNotReady.blockers.includes('PROSPECTIVE_DATA:PREREQUISITE_PHASE_NOT_UNLOCKED'));
 
 console.log('recommendation behavioral training v1 fixtures: PASS');

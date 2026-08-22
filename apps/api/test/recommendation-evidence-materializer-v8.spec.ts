@@ -1,7 +1,14 @@
+import { createHash } from 'crypto';
+import {
+  RECOMMENDATION_DIRECT_SHOP_CANDIDATE_ANALYSIS_VERSION_V1,
+  RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_EVALUATOR_V1,
+  RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_V1,
+} from '@deadlock-live-probe/shared';
 import { RecommendationEvidenceMaterializerV8Service } from '../src/deadlock-live/recommendation-evidence-materializer-v8.service';
 
 describe('RecommendationEvidenceMaterializerV8Service', () => {
   const generatedAt = '2026-08-22T00:00:00.000Z';
+  const directShopSourceField = 'onInfoUpdates2|match_info|match_info|shop_state';
 
   function createHarness(input: {
     souls: unknown;
@@ -83,6 +90,46 @@ describe('RecommendationEvidenceMaterializerV8Service', () => {
     };
   }
 
+  function directShopCandidateAnalysis(overrides: Record<string, unknown> = {}) {
+    return {
+      version: RECOMMENDATION_DIRECT_SHOP_CANDIDATE_ANALYSIS_VERSION_V1,
+      candidateOnly: true,
+      canPromoteToDirectSource: false,
+      markerCount: 8,
+      availableMarkerCount: 4,
+      unavailableMarkerCount: 4,
+      blockers: [],
+      candidates: [{
+        provenanceSourceField: directShopSourceField,
+        markerHitCount: 8,
+        availableMarkerHitCount: 4,
+        unavailableMarkerHitCount: 4,
+        lowCardinality: true,
+        observedPayloadsSeparatedByMarkerState: true,
+      }],
+      ...overrides,
+    };
+  }
+
+  function directShopAttestation(overrides: Record<string, unknown> = {}) {
+    const candidateAnalysis = directShopCandidateAnalysis();
+    return {
+      contractVersion: RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_V1,
+      telemetrySource: 'OVERWOLF_GEP',
+      provenanceSourceField: directShopSourceField,
+      candidateAnalysisSha256: sha256Canonical(candidateAnalysis),
+      candidateAnalysis,
+      independentlyValidatedAvailableTransitions: 2,
+      independentlyValidatedUnavailableTransitions: 2,
+      independentTransitionMismatchCount: 0,
+      independentValidationEvidenceSha256: 'b'.repeat(64),
+      validator: 'independent-live-transition-review-v1',
+      validatedAt: '2026-08-21T23:55:00.000Z',
+      evidenceRef: 'immutable://deadlock/direct-shop-validation/evidence-1',
+      ...overrides,
+    };
+  }
+
   afterEach(() => {
     jest.useRealTimers();
   });
@@ -145,6 +192,94 @@ describe('RecommendationEvidenceMaterializerV8Service', () => {
     expect(firstRecord.evaluator).toBe('recommendation-evidence-materializer-v8');
   });
 
+  it('materializes direct shop PASS only from a complete independent-validation attestation', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date(generatedAt));
+    const harness = createHarness({
+      souls: souls('PASS'),
+      observability: observability(true, true),
+      dataset: dataset(10_000, 10_000, true, true),
+    });
+
+    const report = await harness.service.materializeDirectShopSource(directShopAttestation() as never);
+
+    expect(report.validation.status).toBe('PASS');
+    expect(report.validation.canActivateDirectShopSource).toBe(true);
+    expect(report.gate.gateName).toBe('directShopSourceValidation');
+    expect(report.gate.status).toBe('PASS');
+    const record = [...harness.evidenceRecords.values()].find((value) => value.gateName === 'directShopSourceValidation');
+    expect(record.evaluator).toBe(RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_EVALUATOR_V1);
+    expect(record.subjectSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(harness.snapshots.get(record.subjectSha256)?.report?.approvalKey)
+      .toBe(`OVERWOLF_GEP:${directShopSourceField}`);
+  });
+
+  it('cannot promote candidate-only direct shop evidence without independent state transitions', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date(generatedAt));
+    const harness = createHarness({
+      souls: souls('PASS'),
+      observability: observability(true, true),
+      dataset: dataset(10_000, 10_000, true, true),
+    });
+
+    const report = await harness.service.materializeDirectShopSource(directShopAttestation({
+      independentlyValidatedAvailableTransitions: 0,
+      independentlyValidatedUnavailableTransitions: 0,
+    }) as never);
+
+    expect(report.validation.status).toBe('INSUFFICIENT_EVIDENCE');
+    expect(report.validation.canActivateDirectShopSource).toBe(false);
+    expect(report.gate.status).toBe('INSUFFICIENT_EVIDENCE');
+  });
+
+  it('materializes direct shop FAIL when an independent transition mismatch is observed', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date(generatedAt));
+    const harness = createHarness({
+      souls: souls('PASS'),
+      observability: observability(true, true),
+      dataset: dataset(10_000, 10_000, true, true),
+    });
+
+    const report = await harness.service.materializeDirectShopSource(directShopAttestation({
+      independentTransitionMismatchCount: 1,
+    }) as never);
+
+    expect(report.validation.status).toBe('FAIL');
+    expect(report.validation.blockers).toContain('INDEPENDENT_TRANSITION_MISMATCH_OBSERVED');
+    expect(report.gate.status).toBe('FAIL');
+  });
+
+  it('rejects a direct shop attestation whose candidate analysis hash does not match the embedded report', async () => {
+    const harness = createHarness({
+      souls: souls('PASS'),
+      observability: observability(true, true),
+      dataset: dataset(10_000, 10_000, true, true),
+    });
+
+    await expect(harness.service.materializeDirectShopSource(directShopAttestation({
+      candidateAnalysisSha256: 'f'.repeat(64),
+    }) as never)).rejects.toThrow('DIRECT_SHOP_CANDIDATE_ANALYSIS_SHA256_MISMATCH');
+    expect(harness.snapshotRepo.save).not.toHaveBeenCalled();
+    expect(harness.roadmapEvidence.append).not.toHaveBeenCalled();
+  });
+
+  it('materializes direct shop FAIL if the independent validation evidence hash is missing', async () => {
+    const harness = createHarness({
+      souls: souls('PASS'),
+      observability: observability(true, true),
+      dataset: dataset(10_000, 10_000, true, true),
+    });
+
+    const report = await harness.service.materializeDirectShopSource(directShopAttestation({
+      independentValidationEvidenceSha256: '',
+    }) as never);
+
+    expect(report.validation.status).toBe('FAIL');
+    expect(report.validation.blockers).toContain('INDEPENDENT_VALIDATION_EVIDENCE_SHA256_INVALID');
+  });
+
   it('treats invalid controlled souls observations as a failed gate', async () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date(generatedAt));
@@ -202,3 +337,14 @@ describe('RecommendationEvidenceMaterializerV8Service', () => {
     await expect(harness.service.getSnapshot('not-a-sha')).rejects.toThrow('subjectSha256 is invalid');
   });
 });
+
+function sha256Canonical(value: unknown): string {
+  return createHash('sha256').update(canonicalJson(value)).digest('hex');
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(',')}}`;
+}

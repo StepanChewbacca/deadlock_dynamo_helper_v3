@@ -1,13 +1,20 @@
 import {
   RECOMMENDATION_BEHAVIORAL_TRAINING_LAUNCH_V1,
   RECOMMENDATION_DATASET_MANIFEST_VERSION,
+  RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_EVALUATOR_V1,
   RECOMMENDATION_FEATURE_CONTRACT_VERSION,
 } from '@deadlock-live-probe/shared';
 import { RecommendationTrainingLaunchV8Service } from '../src/deadlock-live/recommendation-training-launch-v8.service';
+import {
+  TEST_DIRECT_SHOP_APPROVAL_KEY,
+  TEST_DIRECT_SHOP_SUBJECT_SHA256,
+  createDirectShopValidationSnapshotV8,
+} from './fixtures/recommendation-direct-shop-validation-v8';
 
 const SHOP_ENV = 'RECOMMENDATION_DIRECT_SHOP_SOURCE_ALLOWLIST';
 const candidateGeneratorVersion = 'candidate-v8.4';
-const directShopSourceApprovalKey = 'OVERWOLF_GEP:onInfoUpdates2|match_info|match_info|shop_state';
+const directShopSourceApprovalKey = TEST_DIRECT_SHOP_APPROVAL_KEY;
+const directShopSubjectSha256 = TEST_DIRECT_SHOP_SUBJECT_SHA256;
 
 function manifest() {
   return {
@@ -21,6 +28,7 @@ function manifest() {
     actionContractVersion: 'recommendation-actions-v1',
     candidateGeneratorVersion,
     directShopSourceApprovalKeys: [directShopSourceApprovalKey],
+    directShopSourceValidationSubjectSha256: directShopSubjectSha256,
     pointInTimeCorrect: true,
     observedActionInjected: false,
     futureTestTouched: false,
@@ -93,12 +101,13 @@ function config() {
   };
 }
 
-function roadmap() {
+function roadmap(directShopSourceValidation: 'PASS' | 'FAIL' | 'INSUFFICIENT_EVIDENCE' | 'NOT_EVALUATED' = 'PASS') {
   return {
     generatedAt: '2026-08-22T00:00:00.000Z',
     evidence: {
       canonicalGepV2: 'PASS',
       controlledSoulsValidation: 'PASS',
+      directShopSourceValidation,
       versionedRulesetCatalog: 'PASS',
       deterministicLegality: 'PASS',
       recommendationTelemetryV8: 'PASS',
@@ -118,7 +127,19 @@ function roadmap() {
       futureTestEvaluation: 'NOT_EVALUATED',
       futureTestUntouched: true,
     },
+    latestEvidenceByGate: directShopSourceValidation === 'PASS'
+      ? {
+          directShopSourceValidation: {
+            subjectSha256: directShopSubjectSha256,
+            evaluator: RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_EVALUATOR_V1,
+          },
+        }
+      : {},
   };
+}
+
+function directShopSnapshot(approvalKey = directShopSourceApprovalKey) {
+  return createDirectShopValidationSnapshotV8(directShopSubjectSha256, approvalKey);
 }
 
 function currentDataset(version = candidateGeneratorVersion) {
@@ -145,11 +166,14 @@ function currentObservability(
   };
 }
 
-function harness(
-  datasetVersion = candidateGeneratorVersion,
-  observabilityVersion = candidateGeneratorVersion,
-  observabilityShopKeys: readonly string[] = [directShopSourceApprovalKey],
-) {
+function harness(options: {
+  datasetVersion?: string;
+  observabilityVersion?: string;
+  observabilityShopKeys?: readonly string[];
+  directShopGate?: 'PASS' | 'FAIL' | 'INSUFFICIENT_EVIDENCE' | 'NOT_EVALUATED';
+  snapshotApprovalKey?: string;
+  snapshotMissing?: boolean;
+} = {}) {
   const datasetManifest = manifest();
   const datasetRegistry = {
     getVerified: jest.fn(async () => ({
@@ -162,13 +186,19 @@ function harness(
       verification: { verifiedManifestSha256: 'd'.repeat(64) },
     })),
   };
-  const roadmapEvidence = { report: jest.fn(async () => roadmap()) };
-  const datasetReport = { buildReport: jest.fn(async () => currentDataset(datasetVersion)) };
+  const roadmapEvidence = { report: jest.fn(async () => roadmap(options.directShopGate)) };
+  const datasetReport = { buildReport: jest.fn(async () => currentDataset(options.datasetVersion)) };
   const observabilityReport = {
-    buildReport: jest.fn(async () => currentObservability(observabilityVersion, observabilityShopKeys)),
+    buildReport: jest.fn(async () => currentObservability(options.observabilityVersion, options.observabilityShopKeys)),
   };
   const soulsEvidence = {
     report: jest.fn(async () => ({ verdict: 'PASS', canMarkSpendableSoulsVerified: true })),
+  };
+  const evidenceMaterializer = {
+    getSnapshot: jest.fn(async () => {
+      if (options.snapshotMissing) throw new Error('missing');
+      return directShopSnapshot(options.snapshotApprovalKey);
+    }),
   };
   const service = new RecommendationTrainingLaunchV8Service(
     datasetRegistry as never,
@@ -176,8 +206,9 @@ function harness(
     datasetReport as never,
     observabilityReport as never,
     soulsEvidence as never,
+    evidenceMaterializer as never,
   );
-  return { service, datasetReport, observabilityReport };
+  return { service, datasetReport, observabilityReport, evidenceMaterializer };
 }
 
 describe('RecommendationTrainingLaunchV8Service generator and direct-shop scope', () => {
@@ -192,7 +223,7 @@ describe('RecommendationTrainingLaunchV8Service generator and direct-shop scope'
     else process.env[SHOP_ENV] = originalShopEnv;
   });
 
-  it('recomputes final data gates on the exact generator and shop approval identity embedded in the verified dataset', async () => {
+  it('recomputes final data gates on the exact generator and validated shop approval identity', async () => {
     const { service, datasetReport, observabilityReport } = harness();
 
     const report = await service.preflight('dataset-v8-ready', config() as never);
@@ -200,6 +231,7 @@ describe('RecommendationTrainingLaunchV8Service generator and direct-shop scope'
     expect(report.ready).toBe(true);
     expect(report.currentDataGates.candidateGeneratorVersion).toBe(candidateGeneratorVersion);
     expect(report.currentDataGates.directShopSourceApprovalKeys).toEqual([directShopSourceApprovalKey]);
+    expect(report.currentDataGates.directShopSourceValidation).toBe('PASS');
     expect(datasetReport.buildReport).toHaveBeenCalledWith({
       from: new Date('2026-08-01T00:00:00.000Z'),
       to: new Date('2026-08-16T00:00:00.000Z'),
@@ -212,8 +244,8 @@ describe('RecommendationTrainingLaunchV8Service generator and direct-shop scope'
     });
   });
 
-  it('fails closed if either current gate report is not actually scoped to the dataset generator', async () => {
-    const { service } = harness('other-generator', 'other-generator');
+  it('fails closed if either current gate report is not scoped to the dataset generator', async () => {
+    const { service } = harness({ datasetVersion: 'other-generator', observabilityVersion: 'other-generator' });
 
     const report = await service.preflight('dataset-v8-ready', config() as never);
 
@@ -225,12 +257,33 @@ describe('RecommendationTrainingLaunchV8Service generator and direct-shop scope'
   it('fails closed if the configured direct shop approval set changed after immutable dataset export', async () => {
     const otherApprovalKey = 'OVERWOLF_GEP:onInfoUpdates2|match_info|match_info|other_shop_state';
     process.env[SHOP_ENV] = otherApprovalKey;
-    const { service } = harness(candidateGeneratorVersion, candidateGeneratorVersion, [otherApprovalKey]);
+    const { service } = harness({
+      observabilityShopKeys: [otherApprovalKey],
+      snapshotApprovalKey: otherApprovalKey,
+    });
 
     const report = await service.preflight('dataset-v8-ready', config() as never);
 
     expect(report.ready).toBe(false);
     expect(report.blockers).toContain('CURRENT_DIRECT_SHOP_SOURCE_APPROVAL_SET_MISMATCH');
     expect(report.blockers).not.toContain('CURRENT_OBSERVABILITY_DIRECT_SHOP_APPROVAL_SCOPE_MISMATCH');
+  });
+
+  it('does not trust an allowlisted direct shop key without a PASS structured validation snapshot', async () => {
+    const { service } = harness({ directShopGate: 'INSUFFICIENT_EVIDENCE' });
+
+    const report = await service.preflight('dataset-v8-ready', config() as never);
+
+    expect(report.ready).toBe(false);
+    expect(report.blockers).toContain('CURRENT_DIRECT_SHOP_SOURCE_VALIDATION_INSUFFICIENT_EVIDENCE');
+  });
+
+  it('does not trust a PASS roadmap record if the immutable validation snapshot is missing', async () => {
+    const { service } = harness({ snapshotMissing: true });
+
+    const report = await service.preflight('dataset-v8-ready', config() as never);
+
+    expect(report.ready).toBe(false);
+    expect(report.blockers).toContain('CURRENT_DIRECT_SHOP_SOURCE_VALIDATION_SNAPSHOT_MISSING');
   });
 });

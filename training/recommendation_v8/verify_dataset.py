@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from common import dataset_identity, verify_dataset_manifest
+from dataset_trust_contract import assert_dataset_direct_shop_trust
 from pretraining_audit import verify_development_split_isolation
 
 
@@ -20,6 +21,7 @@ def main() -> int:
         expected_dataset_sha256=args.expected_dataset_sha256 or None,
         expected_manifest_sha256=args.expected_manifest_sha256 or None,
     )
+    assert_dataset_direct_shop_trust(manifest)
     verify_development_split_isolation(dataset_dir, manifest)
     identity = dataset_identity(manifest)
     print(json.dumps({
@@ -27,8 +29,11 @@ def main() -> int:
         "datasetId": identity.dataset_id,
         "datasetSha256": identity.dataset_sha256,
         "manifestSha256": identity.manifest_sha256,
+        "sourceCommitSha": manifest.get("sourceCommitSha"),
         "featureContractVersion": identity.feature_contract_version,
         "candidateGeneratorVersion": identity.candidate_generator_version,
+        "directShopSourceApprovalKeys": manifest["directShopSourceApprovalKeys"],
+        "directShopSourceValidationSubjectSha256": manifest["directShopSourceValidationSubjectSha256"],
         "developmentSplitIsolationVerified": True,
         "futureTestPayloadDecoded": False,
     }))

@@ -9,7 +9,10 @@ import {
   Post,
   UnauthorizedException,
 } from '@nestjs/common';
-import { RecommendationRoadmapEvidenceRecordV1 } from '@deadlock-live-probe/shared';
+import {
+  RecommendationDirectShopSourceValidationAttestationV1,
+  RecommendationRoadmapEvidenceRecordV1,
+} from '@deadlock-live-probe/shared';
 import { RecommendationEvidenceMaterializerV8Service } from './recommendation-evidence-materializer-v8.service';
 import { RecommendationRoadmapEvidenceService } from './recommendation-roadmap-evidence.service';
 
@@ -38,6 +41,11 @@ export class RecommendationRoadmapEvidenceController {
         'FUTURE_TEST evaluation can only be materialized from a verified frozen-policy evaluation artifact',
       );
     }
+    if (record?.gateName === 'directShopSourceValidation') {
+      throw new ForbiddenException(
+        'Direct shop source validation can only be materialized from a structured independent-validation attestation',
+      );
+    }
     return this.evidence.append(record);
   }
 
@@ -53,6 +61,15 @@ export class RecommendationRoadmapEvidenceController {
       maximumAlignmentAgeMs: body.maximumAlignmentAgeMs,
       candidateGeneratorVersion: body.candidateGeneratorVersion,
     });
+  }
+
+  @Post('materialize/direct-shop-source')
+  materializeDirectShopSource(
+    @Headers('x-recommendation-roadmap-token') token: string | undefined,
+    @Body() attestation: RecommendationDirectShopSourceValidationAttestationV1,
+  ) {
+    requireRoadmapToken(token);
+    return this.materializer.materializeDirectShopSource(attestation);
   }
 
   @Get('evidence-snapshots/:subjectSha256')
