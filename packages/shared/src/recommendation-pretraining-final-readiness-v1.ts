@@ -3,6 +3,7 @@ export const RECOMMENDATION_PRETRAINING_FINAL_READINESS_V1 = 'recommendation-pre
 export interface RecommendationPretrainingFinalReadinessInputV1 {
   canonicalGepFixtureCoverage: number;
   controlledSoulsValidation: 'PASS' | 'FAIL' | 'INSUFFICIENT_EVIDENCE' | 'NOT_EVALUATED';
+  directShopSourceValidation: 'PASS' | 'FAIL' | 'INSUFFICIENT_EVIDENCE' | 'NOT_EVALUATED';
   rulesetCatalogCoverage: number;
   deterministicIllegalRecommendationCount: number;
   recommendationTelemetryContractPassed: boolean;
@@ -59,6 +60,7 @@ export function evaluateRecommendationPretrainingFinalReadinessV1(
   const thresholds = RECOMMENDATION_PRETRAINING_FINAL_THRESHOLDS_V1;
   if (input.canonicalGepFixtureCoverage < thresholds.canonicalGepFixtureCoverage) blockers.push('CANONICAL_GEP_FIXTURE_COVERAGE_BELOW_1');
   if (input.controlledSoulsValidation !== 'PASS') blockers.push(`CONTROLLED_SOULS_${input.controlledSoulsValidation}`);
+  if (input.directShopSourceValidation !== 'PASS') blockers.push(`DIRECT_SHOP_SOURCE_${input.directShopSourceValidation}`);
   if (input.rulesetCatalogCoverage < thresholds.rulesetCatalogCoverage) blockers.push('RULESET_CATALOG_COVERAGE_BELOW_0_999');
   if (input.deterministicIllegalRecommendationCount !== 0) blockers.push('DETERMINISTIC_ILLEGAL_RECOMMENDATIONS_PRESENT');
   if (!input.recommendationTelemetryContractPassed) blockers.push('RECOMMENDATION_TELEMETRY_CONTRACT_NOT_PASS');
