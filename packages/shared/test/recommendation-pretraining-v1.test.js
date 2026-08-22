@@ -117,6 +117,7 @@ function evidence() {
   return {
     canonicalGepV2: 'PASS',
     controlledSoulsValidation: 'PASS',
+    directShopSourceValidation: 'PASS',
     versionedRulesetCatalog: 'PASS',
     deterministicLegality: 'PASS',
     recommendationTelemetryV8: 'PASS',
@@ -169,6 +170,14 @@ const insufficientHoldout = evaluateRecommendationBehavioralTrainingLaunchV1({
 });
 assert.equal(insufficientHoldout.ready, false);
 assert(insufficientHoldout.blockers.includes('SHADOW_HOLDOUT_DECISION_COUNT_BELOW_GATE'));
+
+const noDirectShopValidation = evaluateRecommendationBehavioralTrainingLaunchV1({
+  manifest: manifest(10000),
+  evidence: { ...evidence(), directShopSourceValidation: 'INSUFFICIENT_EVIDENCE' },
+  config: config(),
+});
+assert.equal(noDirectShopValidation.ready, false);
+assert(noDirectShopValidation.blockers.includes('PROSPECTIVE_DATA:PREREQUISITE_PHASE_NOT_UNLOCKED'));
 
 const ready = evaluateRecommendationBehavioralTrainingLaunchV1({
   manifest: manifest(10000),
