@@ -11,6 +11,7 @@ export * from './recommendation-policy-gates-v1';
 export * from './off-policy-evaluation-v1';
 export * from './recommendation-observability-gate-v1';
 export * from './recommendation-training-readiness-v1';
+export * from './recommendation-pretraining-final-readiness-v1';
 export * from './recommendation-value-training-readiness-v1';
 export * from './recommendation-value-training-artifact-v1';
 export * from './recommendation-feature-store-v8';
