@@ -81,6 +81,10 @@ export function validateRecommendationDatasetManifestV1(
     if (!isSha256(sha)) errors.push(`SUPPORTED_CATALOG_SHA_INVALID:${sha}`);
   }
 
+  const splitNames = manifest.splits.map((split) => split.split);
+  if (JSON.stringify(splitNames) !== JSON.stringify(REQUIRED_SPLITS)) {
+    errors.push('DATASET_SPLIT_ORDER_INVALID');
+  }
   const splitByName = new Map<RecommendationDatasetSplitV1, RecommendationDatasetSplitDescriptorV1>();
   for (const split of manifest.splits) {
     if (splitByName.has(split.split)) errors.push(`DUPLICATE_SPLIT:${split.split}`);
@@ -117,8 +121,12 @@ export function validateRecommendationDatasetManifestV1(
   if (manifest.files.length === 0) errors.push('DATASET_ARTIFACT_FILES_REQUIRED');
   for (const split of DEVELOPMENT_SPLITS) {
     const suffix = `/${split.toLowerCase()}.jsonl.gz`;
-    const count = manifest.files.filter((file) => `/${file.path.replace(/\\/g, '/')}`.endsWith(suffix)).length;
-    if (count !== 1) errors.push(`DEVELOPMENT_SPLIT_ARTIFACT_COUNT_INVALID:${split}:${count}`);
+    const matches = manifest.files.filter((file) => `/${file.path.replace(/\\/g, '/')}`.endsWith(suffix));
+    if (matches.length !== 1) errors.push(`DEVELOPMENT_SPLIT_ARTIFACT_COUNT_INVALID:${split}:${matches.length}`);
+    const descriptor = splitByName.get(split);
+    if (matches.length === 1 && descriptor && matches[0].rowCount !== descriptor.decisionCount) {
+      errors.push(`SPLIT_FILE_ROW_COUNT_MISMATCH:${split}`);
+    }
   }
 
   return { valid: errors.length === 0, errors: [...new Set(errors)].sort() };
