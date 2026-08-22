@@ -54,9 +54,14 @@ def audit_development_split_isolation(
             if not isinstance(decision_id, str) or not decision_id:
                 errors.append(f"DECISION_ID_REQUIRED:{split}:{match_id}")
             else:
-                previous_decision_split = decision_owner.setdefault(decision_id, split)
-                if previous_decision_split != split:
-                    errors.append(f"DECISION_CROSSES_SPLITS:{decision_id}:{previous_decision_split}->{split}")
+                previous_decision_split = decision_owner.get(decision_id)
+                if previous_decision_split is not None:
+                    if previous_decision_split == split:
+                        errors.append(f"DUPLICATE_DECISION_ID:{split}:{decision_id}")
+                    else:
+                        errors.append(f"DECISION_CROSSES_SPLITS:{decision_id}:{previous_decision_split}->{split}")
+                else:
+                    decision_owner[decision_id] = split
 
             previous_match_split = match_owner.setdefault(match_id, split)
             if previous_match_split != split:
