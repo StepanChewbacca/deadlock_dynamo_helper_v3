@@ -51,6 +51,17 @@ export async function loadRecommendationDirectShopValidationBindingV8(
   const report = parseReport(snapshot.report, blockers);
   if (!report) return { valid: false, subjectSha256: evidence.subjectSha256, blockers: uniqueSorted(blockers) };
 
+  const calculatedSubjectSha256 = sha256Canonical({ gateName: 'directShopSourceValidation', report });
+  if (calculatedSubjectSha256 !== evidence.subjectSha256.toLowerCase()) {
+    blockers.push('DIRECT_SHOP_SOURCE_VALIDATION_SNAPSHOT_CONTENT_SHA_MISMATCH');
+  }
+  const evaluatedAt = snapshot.evaluatedAt instanceof Date
+    ? snapshot.evaluatedAt
+    : new Date(snapshot.evaluatedAt as unknown as string);
+  if (!Number.isFinite(evaluatedAt.getTime()) || evaluatedAt.toISOString() !== new Date(report.generatedAt).toISOString()) {
+    blockers.push('DIRECT_SHOP_SOURCE_VALIDATION_SNAPSHOT_TIMESTAMP_MISMATCH');
+  }
+
   if (report.contractVersion !== RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_V1) {
     blockers.push('DIRECT_SHOP_SOURCE_VALIDATION_CONTRACT_MISMATCH');
   }
