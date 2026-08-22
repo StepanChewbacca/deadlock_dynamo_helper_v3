@@ -1,5 +1,6 @@
 export const RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_V1 = 'recommendation-direct-shop-source-validation-v1' as const;
 export const RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_EVALUATOR_V1 = 'recommendation-direct-shop-source-validation-evaluator-v1' as const;
+export const RECOMMENDATION_DIRECT_SHOP_CANDIDATE_ANALYSIS_VERSION_V1 = 'shop-signal-candidate-analysis-v1' as const;
 
 export interface RecommendationDirectShopCandidateAnalysisCandidateV1 {
   provenanceSourceField: string;
@@ -30,6 +31,7 @@ export interface RecommendationDirectShopSourceValidationAttestationV1 {
   independentlyValidatedAvailableTransitions: number;
   independentlyValidatedUnavailableTransitions: number;
   independentTransitionMismatchCount: number;
+  independentValidationEvidenceSha256: string;
   validator: string;
   validatedAt: string;
   evidenceRef: string;
@@ -66,6 +68,7 @@ export function evaluateRecommendationDirectShopSourceValidationV1(
   nonNegativeInteger('INDEPENDENT_AVAILABLE_TRANSITIONS', attestation.independentlyValidatedAvailableTransitions, invalid);
   nonNegativeInteger('INDEPENDENT_UNAVAILABLE_TRANSITIONS', attestation.independentlyValidatedUnavailableTransitions, invalid);
   nonNegativeInteger('INDEPENDENT_TRANSITION_MISMATCH_COUNT', attestation.independentTransitionMismatchCount, invalid);
+  if (!isSha256(attestation.independentValidationEvidenceSha256)) invalid.push('INDEPENDENT_VALIDATION_EVIDENCE_SHA256_INVALID');
   if (!attestation.validator?.trim()) invalid.push('VALIDATOR_REQUIRED');
   if (!isIsoDate(attestation.validatedAt)) invalid.push('VALIDATED_AT_INVALID');
   if (!attestation.evidenceRef?.trim()) invalid.push('EVIDENCE_REF_REQUIRED');
@@ -74,7 +77,9 @@ export function evaluateRecommendationDirectShopSourceValidationV1(
   if (!analysis || typeof analysis !== 'object') {
     invalid.push('CANDIDATE_ANALYSIS_REQUIRED');
   } else {
-    if (!analysis.version?.trim()) invalid.push('CANDIDATE_ANALYSIS_VERSION_REQUIRED');
+    if (analysis.version !== RECOMMENDATION_DIRECT_SHOP_CANDIDATE_ANALYSIS_VERSION_V1) {
+      invalid.push('CANDIDATE_ANALYSIS_VERSION_MISMATCH');
+    }
     if (analysis.candidateOnly !== true) invalid.push('CANDIDATE_ANALYSIS_MUST_BE_CANDIDATE_ONLY');
     if (analysis.canPromoteToDirectSource !== false) invalid.push('CANDIDATE_ANALYSIS_SELF_PROMOTION_FORBIDDEN');
     nonNegativeInteger('MARKER_COUNT', analysis.markerCount, invalid);
