@@ -117,7 +117,13 @@ jobs:
               raise SystemExit("Dataset action contract mismatch")
           if manifest.get("futureTestTouched") is not False:
               raise SystemExit("FUTURE_TEST is not untouched")
+          keys = manifest.get("directShopSourceApprovalKeys")
+          if not isinstance(keys, list) or len(keys) != 1 or not isinstance(keys[0], str) or not keys[0]:
+              raise SystemExit("Dataset must bind exactly one validated direct shop source approval key")
           PY
+          DIRECT_SHOP_APPROVAL_KEY="$("$READINESS_ROOT/venv/bin/python" -c 'import json, os, pathlib; print(json.loads((pathlib.Path(os.environ["DATASET_DIR"]) / "manifest.json").read_text())["directShopSourceApprovalKeys"][0])')"
+          test -n "$DIRECT_SHOP_APPROVAL_KEY" || { echo "Direct shop approval key is empty" >&2; exit 1; }
+          echo "DIRECT_SHOP_APPROVAL_KEY=$DIRECT_SHOP_APPROVAL_KEY" >> "$GITHUB_ENV"
 
       - name: Require roadmap and verified-registry API preflight for RNN
         shell: bash
@@ -129,13 +135,18 @@ jobs:
             --data-binary @<(python -c 'import json; print(json.dumps({"config": json.load(open("training/recommendation_v8/config/rnn.json"))}))') \
             "$TRAINING_PREFLIGHT_URL/$DATASET_ID" \
             > "$READINESS_ROOT/preflight-rnn.json"
-          python - "$READINESS_ROOT/preflight-rnn.json" "$EXPECTED_DATASET_SHA256" <<'PY'
+          python - "$READINESS_ROOT/preflight-rnn.json" "$EXPECTED_DATASET_SHA256" "$DIRECT_SHOP_APPROVAL_KEY" <<'PY'
           import json, sys
           data = json.load(open(sys.argv[1]))
           if data.get("ready") is not True:
               raise SystemExit("RNN API preflight blocked: " + ",".join(data.get("blockers", [])))
           if data.get("datasetSha256") != sys.argv[2]:
               raise SystemExit("RNN API preflight dataset SHA mismatch")
+          gates = data.get("currentDataGates") or {}
+          if gates.get("directShopSourceValidation") != "PASS":
+              raise SystemExit("RNN API preflight direct shop validation is not PASS")
+          if gates.get("directShopSourceApprovalKeys") != [sys.argv[3]]:
+              raise SystemExit("RNN API preflight direct shop approval identity mismatch")
           PY
 
       - name: Require roadmap and verified-registry API preflight for Transformer
@@ -148,22 +159,33 @@ jobs:
             --data-binary @<(python -c 'import json; print(json.dumps({"config": json.load(open("training/recommendation_v8/config/transformer.json"))}))') \
             "$TRAINING_PREFLIGHT_URL/$DATASET_ID" \
             > "$READINESS_ROOT/preflight-transformer.json"
-          python - "$READINESS_ROOT/preflight-transformer.json" "$EXPECTED_DATASET_SHA256" <<'PY'
+          python - "$READINESS_ROOT/preflight-transformer.json" "$EXPECTED_DATASET_SHA256" "$DIRECT_SHOP_APPROVAL_KEY" <<'PY'
           import json, sys
           data = json.load(open(sys.argv[1]))
           if data.get("ready") is not True:
               raise SystemExit("Transformer API preflight blocked: " + ",".join(data.get("blockers", [])))
           if data.get("datasetSha256") != sys.argv[2]:
               raise SystemExit("Transformer API preflight dataset SHA mismatch")
+          gates = data.get("currentDataGates") or {}
+          if gates.get("directShopSourceValidation") != "PASS":
+              raise SystemExit("Transformer API preflight direct shop validation is not PASS")
+          if gates.get("directShopSourceApprovalKeys") != [sys.argv[3]]:
+              raise SystemExit("Transformer API preflight direct shop approval identity mismatch")
           PY
 
       - name: Emit final no-training readiness attestation
         shell: bash
         run: |
           set -euo pipefail
-          python - "$READINESS_ROOT" "$DATASET_ID" "$EXPECTED_DATASET_SHA256" "$EXPECTED_MANIFEST_SHA256" "$GITHUB_SHA" <<'PY'
+          python - "$READINESS_ROOT" "$DATASET_ID" "$EXPECTED_DATASET_SHA256" "$EXPECTED_MANIFEST_SHA256" "$GITHUB_SHA" "$DIRECT_SHOP_APPROVAL_KEY" <<'PY'
           import json, pathlib, sys
           root = pathlib.Path(sys.argv[1])
+          rnn = json.loads((root / "preflight-rnn.json").read_text())
+          transformer = json.loads((root / "preflight-transformer.json").read_text())
+          rnn_gates = rnn.get("currentDataGates") or {}
+          transformer_gates = transformer.get("currentDataGates") or {}
+          if rnn_gates.get("candidateGeneratorVersion") != transformer_gates.get("candidateGeneratorVersion"):
+              raise SystemExit("RNN and Transformer candidate generator scope mismatch")
           report = {
               "contractVersion": "recommendation-pretraining-runner-attestation-v1",
               "status": "READY_TO_START_BEHAVIORAL_TRAINING",
@@ -171,6 +193,9 @@ jobs:
               "datasetSha256": sys.argv[3].lower(),
               "manifestSha256": sys.argv[4].lower(),
               "sourceCommitSha": sys.argv[5],
+              "directShopSourceValidation": "PASS",
+              "directShopSourceApprovalKey": sys.argv[6],
+              "candidateGeneratorVersion": rnn_gates.get("candidateGeneratorVersion"),
               "environmentReady": True,
               "immutableDatasetBytesVerified": True,
               "splitIsolationPassed": True,
