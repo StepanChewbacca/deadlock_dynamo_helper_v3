@@ -93,6 +93,9 @@ jobs:
 
       - name: Verify training runtime and CUDA device
         shell: bash
+        env:
+          PYTHONHASHSEED: '0'
+          CUBLAS_WORKSPACE_CONFIG: ':4096:8'
         run: |
           set -euo pipefail
           "$READINESS_ROOT/venv/bin/python" training/recommendation_v8/pretraining_environment_check.py \
