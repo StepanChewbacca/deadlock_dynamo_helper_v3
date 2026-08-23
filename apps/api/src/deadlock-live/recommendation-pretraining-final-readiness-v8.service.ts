@@ -45,7 +45,7 @@ export interface RecommendationPretrainingFinalReadinessV8Result {
   rnnPreflight: RecommendationTrainingLaunchPreflightV8;
   transformerPreflight: RecommendationTrainingLaunchPreflightV8;
   trainingPerformed: false;
-  futureTestEvaluated: false;
+  futureTestEvaluated: boolean;
   blockers: readonly string[];
 }
 
@@ -95,6 +95,7 @@ export class RecommendationPretrainingFinalReadinessV8Service {
       (split) => split.split === 'SHADOW_HOLDOUT',
     )?.decisionCount ?? 0;
     const futureTestEvaluation = roadmap.evidence.futureTestEvaluation ?? 'NOT_EVALUATED';
+    const futureTestEvaluated = futureTestEvaluation !== 'NOT_EVALUATED';
     const finalReadiness = evaluateRecommendationPretrainingFinalReadinessV1({
       canonicalGepFixtureCoverage: roadmap.evidence.canonicalGepV2 === 'PASS' ? 1 : 0,
       controlledSoulsValidation: gates.controlledSoulsValidation,
@@ -114,7 +115,7 @@ export class RecommendationPretrainingFinalReadinessV8Service {
       datasetRegistryVerificationFresh: true,
       splitIsolationPassed: input.runner.splitIsolationPassed,
       futureTestUntouched: roadmap.evidence.futureTestUntouched,
-      futureTestEvaluated: futureTestEvaluation !== 'NOT_EVALUATED',
+      futureTestEvaluated,
       rnnApiPreflightReady: rnnPreflight.ready,
       transformerApiPreflightReady: transformerPreflight.ready,
       immutableDatasetBytesVerified: input.runner.immutableDatasetBytesVerified,
@@ -162,7 +163,7 @@ export class RecommendationPretrainingFinalReadinessV8Service {
       rnnPreflight,
       transformerPreflight,
       trainingPerformed: false,
-      futureTestEvaluated: false,
+      futureTestEvaluated,
       blockers: uniqueBlockers,
     };
   }
@@ -195,6 +196,7 @@ function sha256Canonical(value: unknown): string {
 }
 
 function canonicalJson(value: unknown): string {
+  if (value === undefined) return 'undefined';
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
   const record = value as Record<string, unknown>;
