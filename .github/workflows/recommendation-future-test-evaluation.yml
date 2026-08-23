@@ -49,7 +49,7 @@ jobs:
                   raise SystemExit(f"{key} is invalid")
           if data.get("futureTestAccessCount") != 1:
               raise SystemExit("FUTURE_TEST must be accessed exactly once")
-          for key in ["architectureFrozen", "hyperparametersFrozen", "candidateGeneratorFrozen", "targetFrozen"]:
+          for key in ["modelSelectionFrozen", "hyperparametersFrozen", "candidateGeneratorFrozen", "featureContractFrozen"]:
               if data.get(key) is not True:
                   raise SystemExit(f"{key} must be true")
           if data.get("gateStatus") not in ["PASS", "FAIL"]:
@@ -75,14 +75,23 @@ jobs:
             "$ROADMAP_API_BASE_URL/deadlock-live/recommendation-roadmap/v1/materialize/future-test" \
             > "$RESPONSE_FILE"
           python3 - "$RESPONSE_FILE" <<'PY'
-          import json, sys
+          import json, re, sys
           response = json.load(open(sys.argv[1], encoding="utf-8"))
-          status = (response.get("evaluation") or {}).get("gateStatus")
+          status = response.get("status")
           if status not in ["PASS", "FAIL"]:
               raise SystemExit("FUTURE_TEST materializer returned an invalid status")
+          snapshot_sha = response.get("evaluationSnapshotSha256")
+          policy_sha = response.get("policyManifestSha256")
+          if not re.fullmatch(r"[a-fA-F0-9]{64}", str(snapshot_sha or "")):
+              raise SystemExit("FUTURE_TEST materializer returned an invalid evaluationSnapshotSha256")
+          if not re.fullmatch(r"[a-fA-F0-9]{64}", str(policy_sha or "")):
+              raise SystemExit("FUTURE_TEST materializer returned an invalid policyManifestSha256")
           print(json.dumps({
               "status": "FUTURE_TEST_MATERIALIZED",
               "gateStatus": status,
-              "evaluationSnapshotSha256": response.get("evaluationSnapshotSha256"),
+              "policyManifestSha256": policy_sha,
+              "evaluationSnapshotSha256": snapshot_sha,
+              "snapshotStatus": response.get("snapshotStatus"),
+              "evidenceStatus": response.get("evidenceStatus"),
           }, sort_keys=True))
           PY
