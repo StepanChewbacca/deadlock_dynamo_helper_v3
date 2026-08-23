@@ -13,9 +13,6 @@ describe('RecommendationRealtimeCoordinatorV8Service', () => {
       candidateGeneratorVersion: 'feasible-v8',
       modelVersion: 'behavioral-v8',
       runtimeMode: 'SHADOW' as const,
-      observabilityGatePassed: true,
-      modelRuntimeCompatible: true,
-      shadowGatePassed: false,
       experiment: assignRecommendationExperimentByMatchV1('control', 'match-1', [
         { arm: 'CONTROL', probability: 1 },
       ]),
@@ -96,28 +93,79 @@ describe('RecommendationRealtimeCoordinatorV8Service', () => {
             inferenceLatencyMs: 7.25,
           })),
     };
+    const runtimeTrust = {
+      resolve: jest.fn(async () => ({
+        observabilityGatePassed: true,
+        shadowGatePassed: false,
+        safeExplorationAuthorized: true,
+        futureTestUntouched: true,
+        futureTestUnevaluated: true,
+        blockers: [],
+      })),
+    };
     const service = new RecommendationRealtimeCoordinatorV8Service(
       realtimeState as never,
       decisionService as never,
       telemetryIngest as never,
       behavioralServing as never,
+      runtimeTrust as never,
     );
-    return { service, realtimeState, decisionService, telemetryIngest, behavioralServing, decisionResult };
+    return {
+      service,
+      realtimeState,
+      decisionService,
+      telemetryIngest,
+      behavioralServing,
+      runtimeTrust,
+      decisionResult,
+    };
   }
 
-  it('builds causal realtime state, creates the decision, and persists it internally', async () => {
-    const { service, decisionService, telemetryIngest, decisionResult } = harness();
+  it('builds causal realtime state and uses server-owned roadmap trust for the decision', async () => {
+    const { service, decisionService, telemetryIngest, runtimeTrust, decisionResult } = harness();
 
     const result = await service.decide(request());
 
     expect(result.ready).toBe(true);
     expect(result.persistence?.status).toBe('APPENDED');
+    expect(runtimeTrust.resolve).toHaveBeenCalledWith({ runtimeMode: 'SHADOW', selectionMode: 'DETERMINISTIC' });
     expect(decisionService.createDecision).toHaveBeenCalledWith(expect.objectContaining({
       playerKey: 'player-1',
       stateRevision: 'recommendation-state-v8:abc',
       source: 'RECOMMENDATION_REALTIME_V8',
+      observabilityGatePassed: true,
+      shadowGatePassed: false,
+      modelRuntimeCompatible: true,
     }));
     expect(telemetryIngest.appendInternal).toHaveBeenCalledWith(decisionResult.event);
+  });
+
+  it('blocks a runtime action when server-owned trust denies it', async () => {
+    const { service, runtimeTrust, realtimeState, decisionService, telemetryIngest } = harness();
+    runtimeTrust.resolve.mockResolvedValueOnce({
+      observabilityGatePassed: true,
+      shadowGatePassed: true,
+      safeExplorationAuthorized: false,
+      futureTestUntouched: true,
+      futureTestUnevaluated: true,
+      blockers: ['SAFE_EXPLORATION_REQUIRES_MATCH_LEVEL_AB_PASS'],
+    });
+    const randomized = {
+      ...request(),
+      runtimeMode: 'LIVE' as const,
+      selectionMode: 'SAFE_EXPLORATION' as const,
+      experiment: assignRecommendationExperimentByMatchV1('explore', 'match-1', [
+        { arm: 'A', probability: 0.5 },
+        { arm: 'B', probability: 0.5 },
+      ]),
+    };
+
+    const result = await service.decide(randomized);
+
+    expect(result).toEqual({ ready: false, blockers: ['SAFE_EXPLORATION_REQUIRES_MATCH_LEVEL_AB_PASS'] });
+    expect(realtimeState.build).not.toHaveBeenCalled();
+    expect(decisionService.createDecision).not.toHaveBeenCalled();
+    expect(telemetryIngest.appendInternal).not.toHaveBeenCalled();
   });
 
   it('does not create or persist a decision when the realtime state bridge is blocked', async () => {
@@ -179,8 +227,8 @@ describe('RecommendationRealtimeCoordinatorV8Service', () => {
     expect(telemetryIngest.appendInternal).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects ambiguous Behavioral runtime sources before touching realtime state', async () => {
-    const { service, realtimeState, decisionService, behavioralServing } = harness();
+  it('rejects ambiguous Behavioral runtime sources before touching roadmap or realtime state', async () => {
+    const { service, runtimeTrust, realtimeState, decisionService, behavioralServing } = harness();
 
     const result = await service.decide(request(), {
       behavioralModel: { modelVersion: 'linear-1' } as never,
@@ -192,6 +240,7 @@ describe('RecommendationRealtimeCoordinatorV8Service', () => {
 
     expect(result.ready).toBe(false);
     expect(result.blockers).toContain('MULTIPLE_BEHAVIORAL_RUNTIME_SOURCES');
+    expect(runtimeTrust.resolve).not.toHaveBeenCalled();
     expect(realtimeState.build).not.toHaveBeenCalled();
     expect(decisionService.createDecision).not.toHaveBeenCalled();
     expect(behavioralServing.predict).not.toHaveBeenCalled();
