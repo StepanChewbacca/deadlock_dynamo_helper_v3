@@ -74,6 +74,9 @@ for (const name of fs.existsSync(workflowDir) ? fs.readdirSync(workflowDir) : []
     auditManualSelfHostedWorkflow(name, normalized, finalOperation);
     auditNoGitHubExpressionsInsideRunBlocks(name, normalized);
   }
+  if (/^recommendation-future-test-evaluation\.ya?ml$/i.test(name)) {
+    auditFutureTestWorkflowContract(name, normalized);
+  }
 
   function auditManualSelfHostedWorkflow(workflowName, workflowText, contract) {
     if (!hasWorkflowDispatch) errors.push(`${workflowName}: ${contract.purpose} must require workflow_dispatch`);
@@ -243,6 +246,35 @@ function auditNoTrainingReadinessWorkflow(workflowName, workflowText) {
   for (const token of required) {
     if (!workflowText.includes(token)) {
       errors.push(`${workflowName}: final readiness contract is missing ${token}`);
+    }
+  }
+}
+
+function auditFutureTestWorkflowContract(workflowName, workflowText) {
+  const required = [
+    'recommendation-future-test-evaluation-v1',
+    'modelSelectionFrozen',
+    'hyperparametersFrozen',
+    'candidateGeneratorFrozen',
+    'featureContractFrozen',
+    'futureTestAccessCount',
+    'response.get("status")',
+    'response.get("policyManifestSha256")',
+    'response.get("evaluationSnapshotSha256")',
+  ];
+  for (const token of required) {
+    if (!workflowText.includes(token)) {
+      errors.push(`${workflowName}: FUTURE_TEST workflow is missing contract token ${token}`);
+    }
+  }
+  const forbidden = [
+    'architectureFrozen',
+    'targetFrozen',
+    'response.get("evaluation")',
+  ];
+  for (const token of forbidden) {
+    if (workflowText.includes(token)) {
+      errors.push(`${workflowName}: FUTURE_TEST workflow contains stale contract token ${token}`);
     }
   }
 }
