@@ -19,6 +19,7 @@ REQUIRED_EQUAL_OBSERVABLE_KEYS = (
     "validationSplit",
     "selectionSplit",
     "futureTestAllowed",
+    "device",
     "maximumHistoryEvents",
     "hashDimension",
     "embeddingDimension",
