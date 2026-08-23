@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'crypto';
-import { Body, Controller, Get, Headers, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, Post, UnauthorizedException } from '@nestjs/common';
 import { RecommendationDatasetManifestV1 } from '@deadlock-live-probe/shared';
 import {
   RecommendationDatasetRegistryService,
@@ -46,7 +46,7 @@ export class RecommendationDatasetRegistryController {
 function requireArtifactToken(provided: string | undefined): void {
   const expected = process.env.RECOMMENDATION_ARTIFACT_REGISTRY_TOKEN;
   if (!expected || !provided || !safeEqual(expected, provided)) {
-    throw new Error('Recommendation artifact registry endpoint is disabled or unauthorized');
+    throw new UnauthorizedException('Recommendation artifact registry endpoint is disabled or unauthorized');
   }
 }
 
