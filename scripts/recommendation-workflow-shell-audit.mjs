@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const targets = [
+  '.github/workflows/recommendation-dataset-register-verify.yml',
   '.github/workflows/recommendation-pretraining-readiness.yml',
   '.github/workflows/recommendation-behavioral-training.yml',
 ];
