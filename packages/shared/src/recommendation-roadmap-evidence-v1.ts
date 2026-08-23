@@ -1,5 +1,6 @@
 import { RECOMMENDATION_DIRECT_SHOP_SOURCE_VALIDATION_EVALUATOR_V1 } from './recommendation-direct-shop-validation-v1';
 import { RECOMMENDATION_FUTURE_TEST_EVALUATOR_V1 } from './recommendation-future-test-evaluation-v1';
+import { RECOMMENDATION_SEQUENTIAL_RL_EVALUATOR_V1 } from './recommendation-sequential-rl-evidence-v1';
 import {
   RecommendationRoadmapEvidenceV1,
   RecommendationRoadmapGateStateV1,
@@ -76,6 +77,12 @@ export function validateRecommendationRoadmapEvidenceRecordV1(
     if (!record.subjectSha256) errors.push('FUTURE_TEST_EVALUATION_SUBJECT_SHA256_REQUIRED');
     if (record.evaluator !== RECOMMENDATION_FUTURE_TEST_EVALUATOR_V1) {
       errors.push('FUTURE_TEST_EVALUATION_REQUIRES_FROZEN_ARTIFACT_EVALUATOR');
+    }
+  }
+  if (record.gateName === 'sequentialRlResearchGate') {
+    if (!record.subjectSha256) errors.push('SEQUENTIAL_RL_SUBJECT_SHA256_REQUIRED');
+    if (record.evaluator !== RECOMMENDATION_SEQUENTIAL_RL_EVALUATOR_V1) {
+      errors.push('SEQUENTIAL_RL_REQUIRES_CANONICAL_EVALUATOR');
     }
   }
   return { valid: errors.length === 0, errors: [...new Set(errors)].sort() };
