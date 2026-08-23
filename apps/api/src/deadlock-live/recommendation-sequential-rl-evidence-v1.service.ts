@@ -9,6 +9,7 @@ import {
   RecommendationRoadmapEvidenceRecordV1,
   RecommendationSequentialRlEvidenceAttestationV1,
   evaluateRecommendationSequentialRlEvidenceV1,
+  validateRecommendationSequentialRlEvidenceAttestationV1,
 } from '@deadlock-live-probe/shared';
 import { RecommendationEvidenceSnapshotV8 } from './entities/recommendation-evidence-snapshot-v8.entity';
 import { ModelBundleRegistryService } from './model-bundle-registry.service';
@@ -24,8 +25,12 @@ export class RecommendationSequentialRlEvidenceV1Service {
   ) {}
 
   async materialize(attestation: RecommendationSequentialRlEvidenceAttestationV1) {
-    const calculatedReportSha256 = sha256Canonical(attestation?.report);
-    if (calculatedReportSha256 !== attestation?.transitionReportSha256?.toLowerCase()) {
+    const validationErrors = validateRecommendationSequentialRlEvidenceAttestationV1(attestation);
+    if (validationErrors.length > 0) {
+      throw new Error(`Sequential RL evidence attestation is invalid: ${validationErrors.join(',')}`);
+    }
+    const calculatedReportSha256 = sha256Canonical(attestation.report);
+    if (calculatedReportSha256 !== attestation.transitionReportSha256.toLowerCase()) {
       throw new Error('SEQUENTIAL_RL_TRANSITION_REPORT_SHA256_MISMATCH');
     }
 
@@ -53,14 +58,14 @@ export class RecommendationSequentialRlEvidenceV1Service {
       throw new Error('SEQUENTIAL_RL_REQUIRES_POLICY_AB_RELEASE_PASS');
     }
 
-    const generatedAt = new Date().toISOString();
+    const generatedAt = new Date(attestation.evaluatedAt).toISOString();
     const report = evaluateRecommendationSequentialRlEvidenceV1(attestation, generatedAt);
     const snapshotSubjectSha256 = sha256Canonical({
       gateName: 'sequentialRlResearchGate',
       report,
     });
     const evidenceRef = `/deadlock-live/recommendation-roadmap/v1/evidence-snapshots/${snapshotSubjectSha256}`;
-    await this.persistSnapshot(snapshotSubjectSha256, generatedAt, report);
+    const snapshotStatus = await this.persistSnapshot(snapshotSubjectSha256, generatedAt, report);
 
     const record: RecommendationRoadmapEvidenceRecordV1 = {
       contractVersion: RECOMMENDATION_ROADMAP_EVIDENCE_VERSION,
@@ -80,6 +85,7 @@ export class RecommendationSequentialRlEvidenceV1Service {
       generatedAt,
       report,
       snapshotSubjectSha256,
+      snapshotStatus,
       evidenceRef,
       evidenceStatus: evidence.status,
     };
@@ -89,7 +95,7 @@ export class RecommendationSequentialRlEvidenceV1Service {
     subjectSha256: string,
     evaluatedAt: string,
     report: unknown,
-  ): Promise<void> {
+  ): Promise<'APPENDED' | 'DUPLICATE'> {
     const existing = await this.snapshotRepo.findOne({ where: { subjectSha256 } });
     if (existing) {
       if (
@@ -100,7 +106,7 @@ export class RecommendationSequentialRlEvidenceV1Service {
       ) {
         throw new Error(`Immutable recommendation evidence snapshot conflict: ${subjectSha256}`);
       }
-      return;
+      return 'DUPLICATE';
     }
     try {
       await this.snapshotRepo.save(this.snapshotRepo.create({
@@ -110,10 +116,18 @@ export class RecommendationSequentialRlEvidenceV1Service {
         evaluatedAt: new Date(evaluatedAt),
         report,
       }));
+      return 'APPENDED';
     } catch (error) {
       if (!isUniqueViolation(error)) throw error;
       const raced = await this.snapshotRepo.findOne({ where: { subjectSha256 } });
-      if (!raced || canonicalJson(raced.report) !== canonicalJson(report)) throw error;
+      if (
+        !raced
+        || raced.gateName !== 'sequentialRlResearchGate'
+        || raced.evaluator !== RECOMMENDATION_SEQUENTIAL_RL_EVALUATOR_V1
+        || raced.evaluatedAt.toISOString() !== evaluatedAt
+        || canonicalJson(raced.report) !== canonicalJson(report)
+      ) throw error;
+      return 'DUPLICATE';
     }
   }
 }
