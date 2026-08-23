@@ -42,6 +42,7 @@ import { RecommendationDatasetRegistryService } from './recommendation-dataset-r
 import { RecommendationTrainingDatasetV8Service } from './recommendation-training-dataset-v8.service';
 import { RecommendationTrainingLaunchV8Controller } from './recommendation-training-launch-v8.controller';
 import { RecommendationTrainingLaunchV8Service } from './recommendation-training-launch-v8.service';
+import { RecommendationPretrainingFinalReadinessV8Service } from './recommendation-pretraining-final-readiness-v8.service';
 import { RecommendationValueDatasetRegistryController } from './recommendation-value-dataset-registry.controller';
 import { RecommendationValueDatasetRegistryService } from './recommendation-value-dataset-registry.service';
 import { RecommendationValueModelTrainingLaunchV8Controller } from './recommendation-value-model-training-launch-v8.controller';
@@ -176,6 +177,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationValueDatasetRegistryService,
     RecommendationTrainingDatasetV8Service,
     RecommendationTrainingLaunchV8Service,
+    RecommendationPretrainingFinalReadinessV8Service,
     RecommendationValueTrainingDatasetV8Service,
     RecommendationValueTrainingLaunchV8Service,
     RecommendationValueModelTrainingLaunchV8Service,
@@ -220,6 +222,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationValueDatasetRegistryService,
     RecommendationTrainingDatasetV8Service,
     RecommendationTrainingLaunchV8Service,
+    RecommendationPretrainingFinalReadinessV8Service,
     RecommendationValueTrainingDatasetV8Service,
     RecommendationValueTrainingLaunchV8Service,
     RecommendationValueModelTrainingLaunchV8Service,
