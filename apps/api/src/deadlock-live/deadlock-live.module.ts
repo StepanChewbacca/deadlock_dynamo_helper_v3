@@ -23,6 +23,7 @@ import { RecommendationEngineV8Service } from './recommendation-engine-v8.servic
 import { RecommendationDecisionV8Service } from './recommendation-decision-v8.service';
 import { RecommendationRealtimeStateV8Service } from './recommendation-realtime-state-v8.service';
 import { RecommendationRealtimeCoordinatorV8Service } from './recommendation-realtime-coordinator-v8.service';
+import { RecommendationRuntimeTrustV8Service } from './recommendation-runtime-trust-v8.service';
 import { RecommendationRuntimeHealthV8Service } from './recommendation-runtime-health-v8.service';
 import { RecommendationReadinessV8Controller } from './recommendation-readiness-v8.controller';
 import { RecommendationReadinessV8Service } from './recommendation-readiness-v8.service';
@@ -158,6 +159,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationDecisionV8Service,
     RecommendationRealtimeStateV8Service,
     RecommendationRealtimeCoordinatorV8Service,
+    RecommendationRuntimeTrustV8Service,
     RecommendationRuntimeHealthV8Service,
     RecommendationReadinessV8Service,
     RecommendationTelemetryStoreService,
@@ -199,6 +201,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationDecisionV8Service,
     RecommendationRealtimeStateV8Service,
     RecommendationRealtimeCoordinatorV8Service,
+    RecommendationRuntimeTrustV8Service,
     RecommendationRuntimeHealthV8Service,
     RecommendationReadinessV8Service,
     RecommendationTelemetryStoreService,
