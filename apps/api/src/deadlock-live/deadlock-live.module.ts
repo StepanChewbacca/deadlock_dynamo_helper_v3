@@ -16,6 +16,7 @@ import { SituationalRecommendationService } from './situational-recommendation.s
 import { CatalogContentService } from './catalog-content.service';
 import { ModelBundleRegistryController } from './model-bundle-registry.controller';
 import { ModelBundleRegistryService } from './model-bundle-registry.service';
+import { RecommendationModelPromotionV1Service } from './recommendation-model-promotion-v1.service';
 import { RecommendationAdvancedEvidenceV8Controller } from './recommendation-advanced-evidence-v8.controller';
 import { RecommendationAdvancedEvidenceV8Service } from './recommendation-advanced-evidence-v8.service';
 import { RecommendationBehavioralServingV1Service } from './recommendation-behavioral-serving-v1.service';
@@ -55,6 +56,8 @@ import { RecommendationRoadmapEvidenceController } from './recommendation-roadma
 import { RecommendationRoadmapEvidenceService } from './recommendation-roadmap-evidence.service';
 import { RecommendationFutureTestEvaluationV1Controller } from './recommendation-future-test-evaluation-v1.controller';
 import { RecommendationFutureTestEvaluationV1Service } from './recommendation-future-test-evaluation-v1.service';
+import { RecommendationSequentialRlEvidenceV1Controller } from './recommendation-sequential-rl-evidence-v1.controller';
+import { RecommendationSequentialRlEvidenceV1Service } from './recommendation-sequential-rl-evidence-v1.service';
 import { RecommendationShadowController } from './recommendation-shadow.controller';
 import { RecommendationShadowReportService } from './recommendation-shadow-report.service';
 import { RecommendationOpeController } from './recommendation-ope.controller';
@@ -139,6 +142,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationRoadmapEvidenceController,
     RecommendationAdvancedEvidenceV8Controller,
     RecommendationFutureTestEvaluationV1Controller,
+    RecommendationSequentialRlEvidenceV1Controller,
     RecommendationShadowController,
     RecommendationOpeController,
     RecommendationAbController,
@@ -154,6 +158,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     SituationalRecommendationService,
     CatalogContentService,
     ModelBundleRegistryService,
+    RecommendationModelPromotionV1Service,
     RecommendationBehavioralServingV1Service,
     RecommendationEngineV8Service,
     RecommendationDecisionV8Service,
@@ -179,6 +184,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationAdvancedEvidenceV8Service,
     RecommendationRoadmapEvidenceService,
     RecommendationFutureTestEvaluationV1Service,
+    RecommendationSequentialRlEvidenceV1Service,
     RecommendationShadowReportService,
     RecommendationOpeReportService,
     RecommendationAbReportService,
@@ -196,6 +202,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     SituationalRecommendationService,
     CatalogContentService,
     ModelBundleRegistryService,
+    RecommendationModelPromotionV1Service,
     RecommendationBehavioralServingV1Service,
     RecommendationEngineV8Service,
     RecommendationDecisionV8Service,
@@ -221,6 +228,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationAdvancedEvidenceV8Service,
     RecommendationRoadmapEvidenceService,
     RecommendationFutureTestEvaluationV1Service,
+    RecommendationSequentialRlEvidenceV1Service,
     RecommendationShadowReportService,
     RecommendationOpeReportService,
     RecommendationAbReportService,
