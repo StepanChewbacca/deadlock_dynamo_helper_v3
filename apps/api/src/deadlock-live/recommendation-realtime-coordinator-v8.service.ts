@@ -15,6 +15,7 @@ import {
   RecommendationDecisionV8Service,
 } from './recommendation-decision-v8.service';
 import { RecommendationRealtimeStateV8Service } from './recommendation-realtime-state-v8.service';
+import { RecommendationRuntimeTrustV8Service } from './recommendation-runtime-trust-v8.service';
 import { RecommendationTelemetryIngestV8Service } from './recommendation-telemetry-ingest-v8.service';
 
 export interface RecommendationBehavioralServingModelV1 {
@@ -41,9 +42,6 @@ export interface RecommendationRealtimeDecisionV8Request {
   candidateGeneratorVersion: string;
   modelVersion: string;
   runtimeMode: RecommendationRuntimeModeV8;
-  observabilityGatePassed: boolean;
-  modelRuntimeCompatible: boolean;
-  shadowGatePassed: boolean;
   experiment: RecommendationExperimentAssignmentV1;
   selectionMode: RecommendationActionSelectionModeV8;
   explorationProbabilityByActionKey?: Readonly<Record<string, number>>;
@@ -69,6 +67,7 @@ export class RecommendationRealtimeCoordinatorV8Service {
     private readonly decisionService: RecommendationDecisionV8Service,
     private readonly telemetryIngest: RecommendationTelemetryIngestV8Service,
     private readonly behavioralServing: RecommendationBehavioralServingV1Service,
+    private readonly runtimeTrust: RecommendationRuntimeTrustV8Service,
   ) {}
 
   async decide(
@@ -77,6 +76,17 @@ export class RecommendationRealtimeCoordinatorV8Service {
   ): Promise<RecommendationRealtimeDecisionV8Result> {
     const requestErrors = validateRequest(request, models);
     if (requestErrors.length > 0) return { ready: false, blockers: requestErrors };
+
+    const trust = await this.runtimeTrust.resolve({
+      runtimeMode: request.runtimeMode,
+      selectionMode: request.selectionMode,
+    });
+    if (!trust.safeExplorationAuthorized || trust.blockers.length > 0) {
+      return {
+        ready: false,
+        blockers: trust.blockers.length > 0 ? trust.blockers : ['RUNTIME_TRUST_NOT_AUTHORIZED'],
+      };
+    }
 
     const realtime = await this.realtimeState.build({
       decisionId: request.decisionId,
@@ -149,9 +159,9 @@ export class RecommendationRealtimeCoordinatorV8Service {
       valueModel: models.valueModel,
       policyConfig: models.policyConfig,
       runtimeMode: request.runtimeMode,
-      observabilityGatePassed: request.observabilityGatePassed,
-      modelRuntimeCompatible: request.modelRuntimeCompatible && servingRuntimeCompatible,
-      shadowGatePassed: request.shadowGatePassed,
+      observabilityGatePassed: trust.observabilityGatePassed,
+      modelRuntimeCompatible: servingRuntimeCompatible && modelConfigurationCompatible(models),
+      shadowGatePassed: trust.shadowGatePassed,
       experiment: request.experiment,
       selectionMode: request.selectionMode,
       explorationProbabilityByActionKey: request.explorationProbabilityByActionKey,
@@ -202,4 +212,13 @@ function validateRequest(
     errors.push('SAFE_EXPLORATION_REQUIRES_RANDOMIZED_EXPERIMENT');
   }
   return [...new Set(errors)].sort();
+}
+
+function modelConfigurationCompatible(models: RecommendationRealtimeModelsV8): boolean {
+  if (models.behavioralModel && !models.behavioralModel.modelVersion) return false;
+  if (models.behavioralPredictor && !models.behavioralPredictor.modelVersion) return false;
+  if (models.behavioralServing && !models.behavioralServing.modelVersion) return false;
+  if (models.valueModel && !models.valueModel.modelVersion) return false;
+  if (models.policyConfig && !models.valueModel) return false;
+  return true;
 }

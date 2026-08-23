@@ -1,0 +1,91 @@
+name: Recommendation Model Activation
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_id:
+        description: Verified model id
+        required: true
+        type: string
+      model_version:
+        description: Verified model version
+        required: true
+        type: string
+      runtime_json:
+        description: Exact ModelBundleRuntimeCompatibilityV1 JSON for the production runtime
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-model-activation
+  cancel-in-progress: false
+
+jobs:
+  activate:
+    environment: recommendation-model-activation
+    runs-on: [self-hosted, linux, x64, recommendation-model-activation]
+    timeout-minutes: 20
+    env:
+      MODEL_ID: ${{ inputs.model_id }}
+      MODEL_VERSION: ${{ inputs.model_version }}
+      RUNTIME_JSON: ${{ inputs.runtime_json }}
+      REGISTRY_API_BASE_URL: ${{ vars.RECOMMENDATION_ARTIFACT_API_BASE_URL }}
+      ARTIFACT_TOKEN: ${{ secrets.RECOMMENDATION_ARTIFACT_REGISTRY_TOKEN }}
+    steps:
+      - name: Checkout frozen activation guard code
+        uses: actions/checkout@v4
+
+      - name: Validate gated activation request
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$REGISTRY_API_BASE_URL" || { echo "RECOMMENDATION_ARTIFACT_API_BASE_URL is required" >&2; exit 1; }
+          test -n "$ARTIFACT_TOKEN" || { echo "RECOMMENDATION_ARTIFACT_REGISTRY_TOKEN is required" >&2; exit 1; }
+          [[ "$MODEL_ID" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || { echo "model_id is invalid" >&2; exit 1; }
+          [[ "$MODEL_VERSION" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || { echo "model_version is invalid" >&2; exit 1; }
+          REQUEST_FILE="$RUNNER_TEMP/recommendation-model-activation-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          python3 - "$REQUEST_FILE" <<'PY'
+          import json, os, re, sys
+          runtime = json.loads(os.environ["RUNTIME_JSON"])
+          if not isinstance(runtime, dict):
+              raise SystemExit("runtime_json must be a JSON object")
+          required = ["featureContractVersion", "actionContractVersion", "candidateGeneratorVersion", "rulesetVersion", "catalogSha256", "requiredGateNames"]
+          if any(key not in runtime for key in required):
+              raise SystemExit("runtime_json is missing required fields")
+          if not isinstance(runtime["requiredGateNames"], list):
+              raise SystemExit("requiredGateNames must be an array")
+          if not re.fullmatch(r"[a-fA-F0-9]{64}", str(runtime["catalogSha256"])):
+              raise SystemExit("catalogSha256 is invalid")
+          request = {"modelId": os.environ["MODEL_ID"], "modelVersion": os.environ["MODEL_VERSION"], "runtime": runtime}
+          with open(sys.argv[1], "x", encoding="utf-8") as handle:
+              json.dump(request, handle, separators=(",", ":"), sort_keys=True)
+              handle.write("\n")
+          PY
+          echo "REQUEST_FILE=$REQUEST_FILE" >> "$GITHUB_ENV"
+
+      - name: Activate only through server-owned release gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESPONSE_FILE="$RUNNER_TEMP/recommendation-model-activation-response-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          curl --fail-with-body --silent --show-error \
+            -H "content-type: application/json" \
+            -H "x-recommendation-artifact-token: $ARTIFACT_TOKEN" \
+            --data-binary "@$REQUEST_FILE" \
+            "$REGISTRY_API_BASE_URL/deadlock-live/recommendation-models/v1/activate" \
+            > "$RESPONSE_FILE"
+          python3 - "$RESPONSE_FILE" <<'PY'
+          import json, sys
+          response = json.load(open(sys.argv[1], encoding="utf-8"))
+          if response.get("status") != "ACTIVE":
+              raise SystemExit("Model registry did not return ACTIVE")
+          print(json.dumps({
+              "status": "ACTIVE",
+              "modelId": response.get("modelId"),
+              "modelVersion": response.get("modelVersion"),
+              "activatedAt": response.get("activatedAt"),
+          }, sort_keys=True))
+          PY

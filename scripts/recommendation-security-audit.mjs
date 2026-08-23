@@ -69,6 +69,15 @@ for (const name of fs.existsSync(workflowDir) ? fs.readdirSync(workflowDir) : []
     auditNoGitHubExpressionsInsideRunBlocks(name, normalized);
   }
 
+  const finalOperation = finalOperationContract(name);
+  if (finalOperation) {
+    auditManualSelfHostedWorkflow(name, normalized, finalOperation);
+    auditNoGitHubExpressionsInsideRunBlocks(name, normalized);
+  }
+  if (/^recommendation-future-test-evaluation\.ya?ml$/i.test(name)) {
+    auditFutureTestWorkflowContract(name, normalized);
+  }
+
   function auditManualSelfHostedWorkflow(workflowName, workflowText, contract) {
     if (!hasWorkflowDispatch) errors.push(`${workflowName}: ${contract.purpose} must require workflow_dispatch`);
     if (hasPullRequest || hasPush || hasSchedule) errors.push(`${workflowName}: ${contract.purpose} must not have automatic triggers`);
@@ -140,6 +149,42 @@ if (errors.length > 0) {
 }
 console.log('recommendation security audit: PASS');
 
+function finalOperationContract(name) {
+  const contracts = {
+    'recommendation-roadmap-materialization.yml': {
+      label: 'recommendation-roadmap-evidence',
+      environment: 'recommendation-roadmap-evidence',
+      purpose: 'privileged roadmap evidence materialization',
+    },
+    'recommendation-policy-bundle-build.yml': {
+      label: 'recommendation-policy-build',
+      environment: 'recommendation-policy-build',
+      purpose: 'privileged Policy V1 bundle build',
+    },
+    'recommendation-model-register-verify.yml': {
+      label: 'recommendation-artifact-registry',
+      environment: 'recommendation-artifact-registry',
+      purpose: 'privileged model registration and verification',
+    },
+    'recommendation-model-activation.yml': {
+      label: 'recommendation-model-activation',
+      environment: 'recommendation-model-activation',
+      purpose: 'privileged production model activation',
+    },
+    'recommendation-future-test-evaluation.yml': {
+      label: 'recommendation-future-test',
+      environment: 'recommendation-future-test',
+      purpose: 'privileged one-shot FUTURE_TEST materialization',
+    },
+    'recommendation-sequential-rl-readiness.yml': {
+      label: 'recommendation-sequential-rl',
+      environment: 'recommendation-sequential-rl',
+      purpose: 'privileged sequential RL research readiness',
+    },
+  };
+  return contracts[name];
+}
+
 function auditEqualObservablesBehavioralConfigs() {
   const rnn = behavioralConfigs.get('SEQUENCE_RNN');
   const transformer = behavioralConfigs.get('SEQUENCE_TRANSFORMER');
@@ -201,6 +246,35 @@ function auditNoTrainingReadinessWorkflow(workflowName, workflowText) {
   for (const token of required) {
     if (!workflowText.includes(token)) {
       errors.push(`${workflowName}: final readiness contract is missing ${token}`);
+    }
+  }
+}
+
+function auditFutureTestWorkflowContract(workflowName, workflowText) {
+  const required = [
+    'recommendation-future-test-evaluation-v1',
+    'modelSelectionFrozen',
+    'hyperparametersFrozen',
+    'candidateGeneratorFrozen',
+    'featureContractFrozen',
+    'futureTestAccessCount',
+    'response.get("status")',
+    'response.get("policyManifestSha256")',
+    'response.get("evaluationSnapshotSha256")',
+  ];
+  for (const token of required) {
+    if (!workflowText.includes(token)) {
+      errors.push(`${workflowName}: FUTURE_TEST workflow is missing contract token ${token}`);
+    }
+  }
+  const forbidden = [
+    'architectureFrozen',
+    'targetFrozen',
+    'response.get("evaluation")',
+  ];
+  for (const token of forbidden) {
+    if (workflowText.includes(token)) {
+      errors.push(`${workflowName}: FUTURE_TEST workflow contains stale contract token ${token}`);
     }
   }
 }

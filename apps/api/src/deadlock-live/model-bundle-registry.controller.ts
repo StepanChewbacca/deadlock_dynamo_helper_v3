@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'crypto';
-import { Body, Controller, Headers, Post } from '@nestjs/common';
+import { Body, Controller, Headers, Post, UnauthorizedException } from '@nestjs/common';
 import {
   ModelBundleManifestV1,
   ModelBundleRuntimeCompatibilityV1,
@@ -8,6 +8,7 @@ import {
   ModelBundleRegistryService,
   VerifyModelBundleV1Input,
 } from './model-bundle-registry.service';
+import { RecommendationModelPromotionV1Service } from './recommendation-model-promotion-v1.service';
 
 interface RegisterModelBundleBodyV1 {
   manifest: ModelBundleManifestV1;
@@ -22,7 +23,10 @@ interface ActivateModelBundleBodyV1 {
 
 @Controller('deadlock-live/recommendation-models/v1')
 export class ModelBundleRegistryController {
-  constructor(private readonly registry: ModelBundleRegistryService) {}
+  constructor(
+    private readonly registry: ModelBundleRegistryService,
+    private readonly promotion: RecommendationModelPromotionV1Service,
+  ) {}
 
   @Post('register')
   register(
@@ -48,14 +52,14 @@ export class ModelBundleRegistryController {
     @Body() body: ActivateModelBundleBodyV1,
   ) {
     requireArtifactToken(token);
-    return this.registry.activate(body);
+    return this.promotion.promote(body);
   }
 }
 
 function requireArtifactToken(provided: string | undefined): void {
   const expected = process.env.RECOMMENDATION_ARTIFACT_REGISTRY_TOKEN;
   if (!expected || !provided || !safeEqual(expected, provided)) {
-    throw new Error('Recommendation model registry endpoint is disabled or unauthorized');
+    throw new UnauthorizedException('Recommendation model registry endpoint is disabled or unauthorized');
   }
 }
 

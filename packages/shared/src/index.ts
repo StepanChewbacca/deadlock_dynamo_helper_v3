@@ -28,3 +28,4 @@ export * from './recommendation-roadmap-state-v1';
 export * from './recommendation-roadmap-evidence-v1';
 export * from './recommendation-future-test-evaluation-v1';
 export * from './recommendation-sequential-rl-v1';
+export * from './recommendation-sequential-rl-evidence-v1';
