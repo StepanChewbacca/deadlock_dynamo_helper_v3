@@ -100,7 +100,7 @@ describe('RecommendationRealtimeCoordinatorV8Service', () => {
         safeExplorationAuthorized: true,
         futureTestUntouched: true,
         futureTestUnevaluated: true,
-        blockers: [],
+        blockers: [] as string[],
       })),
     };
     const service = new RecommendationRealtimeCoordinatorV8Service(
