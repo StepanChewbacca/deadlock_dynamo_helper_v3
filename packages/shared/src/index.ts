@@ -17,6 +17,7 @@ export * from './recommendation-value-training-artifact-v1';
 export * from './recommendation-feature-store-v8';
 export * from './recommendation-behavioral-v8';
 export * from './recommendation-behavioral-training-v1';
+export * from './recommendation-training-pair-v1';
 export * from './recommendation-behavioral-runtime-v1';
 export * from './recommendation-behavioral-ablation-v1';
 export * from './recommendation-runtime-v8';
