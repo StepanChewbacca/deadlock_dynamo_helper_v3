@@ -42,6 +42,7 @@ jobs:
       DATASET_DIR: ${{ inputs.dataset_dir }}
       EXPECTED_DATASET_SHA256: ${{ inputs.expected_dataset_sha256 }}
       EXPECTED_MANIFEST_SHA256: ${{ inputs.expected_manifest_sha256 }}
+      EXPECTED_WHEELHOUSE_SHA256: ${{ vars.RECOMMENDATION_TRAINING_WHEELHOUSE_SHA256 }}
       ACTION_CONTRACT_VERSION: ${{ inputs.action_contract_version }}
       TRAINING_PREFLIGHT_URL: ${{ vars.RECOMMENDATION_TRAINING_PREFLIGHT_URL }}
       TRAINING_TOKEN: ${{ secrets.RECOMMENDATION_TRAINING_TOKEN }}
@@ -56,6 +57,7 @@ jobs:
           test -n "${RECOMMENDATION_TRAINING_OUTPUT_ROOT:-}" || { echo "RECOMMENDATION_TRAINING_OUTPUT_ROOT is required" >&2; exit 1; }
           test -n "${RECOMMENDATION_DATASET_STAGING_ROOT:-}" || { echo "RECOMMENDATION_DATASET_STAGING_ROOT is required" >&2; exit 1; }
           test -n "${RECOMMENDATION_TRAINING_WHEELHOUSE:-}" || { echo "RECOMMENDATION_TRAINING_WHEELHOUSE is required" >&2; exit 1; }
+          test -n "$EXPECTED_WHEELHOUSE_SHA256" || { echo "RECOMMENDATION_TRAINING_WHEELHOUSE_SHA256 environment variable is required" >&2; exit 1; }
           test -n "$TRAINING_PREFLIGHT_URL" || { echo "RECOMMENDATION_TRAINING_PREFLIGHT_URL is required" >&2; exit 1; }
           test -n "$TRAINING_TOKEN" || { echo "RECOMMENDATION_TRAINING_TOKEN is required" >&2; exit 1; }
           case "$TRAINING_PREFLIGHT_URL" in https://*|http://127.0.0.1:*|http://localhost:*) ;; *) echo "Training preflight API must use HTTPS or loopback HTTP" >&2; exit 1;; esac
@@ -66,6 +68,7 @@ jobs:
           [[ "$DATASET_ID" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || { echo "dataset_id contains unsafe characters" >&2; exit 1; }
           [[ "$EXPECTED_DATASET_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || { echo "expected_dataset_sha256 is invalid" >&2; exit 1; }
           [[ "$EXPECTED_MANIFEST_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || { echo "expected_manifest_sha256 is invalid" >&2; exit 1; }
+          [[ "$EXPECTED_WHEELHOUSE_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || { echo "RECOMMENDATION_TRAINING_WHEELHOUSE_SHA256 is invalid" >&2; exit 1; }
           [[ "$ACTION_CONTRACT_VERSION" =~ ^[A-Za-z0-9._:-]{1,128}$ ]] || { echo "action_contract_version contains unsafe characters" >&2; exit 1; }
           case "$RECOMMENDATION_TRAINING_OUTPUT_ROOT" in /*) ;; *) echo "Training output root must be absolute" >&2; exit 1;; esac
           case "$RECOMMENDATION_DATASET_STAGING_ROOT" in /*) ;; *) echo "Dataset staging root must be absolute" >&2; exit 1;; esac
@@ -89,6 +92,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      - name: Verify approved wheelhouse bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python training/recommendation_v8/wheelhouse_identity.py \
+            --wheelhouse "$TRAINING_WHEELHOUSE" \
+            --expected-sha256 "$EXPECTED_WHEELHOUSE_SHA256" \
+            | tee "$READINESS_ROOT/wheelhouse-identity.json"
 
       - name: Build isolated environment from approved offline wheelhouse
         shell: bash
@@ -155,6 +167,7 @@ jobs:
                   "expectedDatasetSha256": os.environ["EXPECTED_DATASET_SHA256"],
                   "expectedManifestSha256": os.environ["EXPECTED_MANIFEST_SHA256"],
                   "sourceCommitSha": os.environ["GITHUB_SHA"],
+                  "trainingWheelhouseSha256": os.environ["EXPECTED_WHEELHOUSE_SHA256"],
                   "splitIsolationPassed": True,
                   "immutableDatasetBytesVerified": True,
                   "offlineWheelhouseReady": True,
@@ -171,7 +184,7 @@ jobs:
             --data-binary "@$REQUEST_FILE" \
             "$TRAINING_FINAL_READINESS_URL/$DATASET_ID" \
             > "$RESPONSE_FILE"
-          "$READINESS_ROOT/venv/bin/python" - "$RESPONSE_FILE" "$EXPECTED_DATASET_SHA256" "$EXPECTED_MANIFEST_SHA256" "$GITHUB_SHA" "$DIRECT_SHOP_APPROVAL_KEY" "$DIRECT_SHOP_VALIDATION_SUBJECT_SHA256" <<'PY'
+          "$READINESS_ROOT/venv/bin/python" - "$RESPONSE_FILE" "$EXPECTED_DATASET_SHA256" "$EXPECTED_MANIFEST_SHA256" "$GITHUB_SHA" "$DIRECT_SHOP_APPROVAL_KEY" "$DIRECT_SHOP_VALIDATION_SUBJECT_SHA256" "$EXPECTED_WHEELHOUSE_SHA256" <<'PY'
           import json, re, sys
           data = json.load(open(sys.argv[1], encoding="utf-8"))
           if data.get("ready") is not True:
@@ -187,6 +200,8 @@ jobs:
               raise SystemExit("Final readiness manifest SHA mismatch")
           if str(data.get("sourceCommitSha", "")).lower() != sys.argv[4].lower():
               raise SystemExit("Final readiness source commit mismatch")
+          if str(data.get("trainingWheelhouseSha256", "")).lower() != sys.argv[7].lower():
+              raise SystemExit("Final readiness wheelhouse SHA mismatch")
           if data.get("trainingPerformed") is not False or data.get("futureTestEvaluated") is not False:
               raise SystemExit("Final readiness must remain no-training and pre-FUTURE_TEST")
           subject = str(data.get("readinessSubjectSha256", ""))
@@ -209,6 +224,7 @@ jobs:
               "datasetSha256": data.get("datasetSha256"),
               "manifestSha256": data.get("manifestSha256"),
               "sourceCommitSha": data.get("sourceCommitSha"),
+              "trainingWheelhouseSha256": data.get("trainingWheelhouseSha256"),
               "readinessSubjectSha256": subject,
               "trainingPerformed": False,
               "futureTestEvaluated": False,
@@ -223,18 +239,19 @@ jobs:
           import json, sys
           server = json.load(open(sys.argv[1], encoding="utf-8"))
           report = {
-              "contractVersion": "recommendation-pretraining-runner-attestation-v2",
+              "contractVersion": "recommendation-pretraining-runner-attestation-v3",
               "status": "READY_TO_START_BEHAVIORAL_TRAINING",
               "datasetId": server["datasetId"],
               "datasetSha256": server["datasetSha256"],
               "manifestSha256": server["manifestSha256"],
               "sourceCommitSha": server["sourceCommitSha"],
+              "trainingWheelhouseSha256": server["trainingWheelhouseSha256"],
               "readinessSubjectSha256": server["readinessSubjectSha256"],
               "pairValidation": server["pairValidation"],
               "finalReadiness": server["finalReadiness"],
               "trainingPerformed": False,
               "futureTestEvaluated": False,
-              "nextAction": "Run Recommendation Behavioral Training with the exact same dataset id, dataset SHA, manifest SHA, and source commit. The training workflow re-evaluates this gate before the first optimizer step.",
+              "nextAction": "Run Recommendation Behavioral Training with the exact same dataset id, dataset SHA, manifest SHA, source commit, and wheelhouse SHA. The training workflow re-evaluates this gate before the first optimizer step.",
           }
           with open(sys.argv[2], "x", encoding="utf-8") as handle:
               json.dump(report, handle, indent=2, sort_keys=True)
