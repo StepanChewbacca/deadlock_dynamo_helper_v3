@@ -15,6 +15,9 @@ const required = [
   /manifestSha256/,
   /datasetSha256/,
   /rowCount/,
+  /local-identity\.json/,
+  /handle\.read\(1024 \* 1024\)/,
+  /Registry API must use HTTPS or loopback HTTP/,
   /recommendation-datasets\/v1\/register/,
   /recommendation-datasets\/v1\/verify/,
   /VERIFIED_READY_FOR_PRETRAINING_READINESS/,
@@ -27,6 +30,9 @@ if (/^\s*(pull_request|pull_request_target|push|schedule)\s*:/m.test(text)) {
 }
 if (/permissions\s*:\s*write-all/i.test(text)) {
   errors.push(`${path}: write-all permission is forbidden`);
+}
+if (/read_bytes\s*\(/.test(text)) {
+  errors.push(`${path}: whole-file artifact reads are forbidden; verification must stream large dataset files`);
 }
 if (/\$\{\{/.test(extractRunBlocks(text))) {
   errors.push(`${path}: GitHub expressions are forbidden inside privileged run blocks`);
