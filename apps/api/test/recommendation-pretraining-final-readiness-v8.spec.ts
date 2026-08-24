@@ -3,6 +3,7 @@ import { RecommendationPretrainingFinalReadinessV8Service } from '../src/deadloc
 const DATASET_SHA = 'a'.repeat(64);
 const MANIFEST_SHA = 'b'.repeat(64);
 const SOURCE_COMMIT_SHA = 'c'.repeat(40);
+const WHEELHOUSE_SHA = 'f'.repeat(64);
 
 function config(family: 'SEQUENCE_RNN' | 'SEQUENCE_TRANSFORMER') {
   return {
@@ -111,6 +112,7 @@ function runner(overrides: Record<string, unknown> = {}) {
     expectedDatasetSha256: DATASET_SHA,
     expectedManifestSha256: MANIFEST_SHA,
     sourceCommitSha: SOURCE_COMMIT_SHA,
+    trainingWheelhouseSha256: WHEELHOUSE_SHA,
     splitIsolationPassed: true,
     immutableDatasetBytesVerified: true,
     offlineWheelhouseReady: true,
@@ -169,9 +171,37 @@ describe('RecommendationPretrainingFinalReadinessV8Service', () => {
     expect(result.blockers).toEqual([]);
     expect(result.finalReadiness.readyToStartBehavioralTraining).toBe(true);
     expect(result.pairValidation.valid).toBe(true);
+    expect(result.trainingWheelhouseSha256).toBe(WHEELHOUSE_SHA);
     expect(result.readinessSubjectSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(result.trainingPerformed).toBe(false);
     expect(result.futureTestEvaluated).toBe(false);
+  });
+
+  it('binds the readiness subject to exact wheelhouse bytes', async () => {
+    const { service } = harness();
+    const first = await service.evaluate('dataset-v8-final', {
+      rnnConfig: config('SEQUENCE_RNN'),
+      transformerConfig: config('SEQUENCE_TRANSFORMER'),
+      runner: runner(),
+    });
+    const second = await service.evaluate('dataset-v8-final', {
+      rnnConfig: config('SEQUENCE_RNN'),
+      transformerConfig: config('SEQUENCE_TRANSFORMER'),
+      runner: runner({ trainingWheelhouseSha256: '1'.repeat(64) }),
+    });
+
+    expect(second.ready).toBe(true);
+    expect(second.readinessSubjectSha256).not.toBe(first.readinessSubjectSha256);
+  });
+
+  it('rejects a runner without a valid wheelhouse identity', async () => {
+    const { service } = harness();
+
+    await expect(service.evaluate('dataset-v8-final', {
+      rnnConfig: config('SEQUENCE_RNN'),
+      transformerConfig: config('SEQUENCE_TRANSFORMER'),
+      runner: runner({ trainingWheelhouseSha256: 'invalid' }),
+    })).rejects.toThrow('runner trainingWheelhouseSha256 is invalid');
   });
 
   it('blocks a training pair whose observable contract differs between architectures', async () => {

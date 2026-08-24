@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Dict, Mapping
@@ -21,8 +22,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    rnn = load_json(Path(args.rnn_metrics))
-    transformer = load_json(Path(args.transformer_metrics))
+    rnn_path = Path(args.rnn_metrics)
+    transformer_path = Path(args.transformer_metrics)
+    rnn = load_json(rnn_path)
+    transformer = load_json(transformer_path)
     rnn_shadow = require_metrics(rnn, "SEQUENCE_RNN")
     transformer_shadow = require_metrics(transformer, "SEQUENCE_TRANSFORMER")
     blockers: list[str] = []
@@ -53,7 +56,7 @@ def main() -> int:
         blockers.append("TRANSFORMER_COHORT_GAIN_NOT_PROVEN")
 
     report = {
-        "version": "recommendation-behavioral-ablation-v1",
+        "version": "recommendation-behavioral-ablation-v2",
         "passed": not blockers,
         "equalObservables": equal_observables,
         "datasetSha256": transformer.get("datasetSha256"),
@@ -62,6 +65,10 @@ def main() -> int:
         "observableContractSha256": transformer.get("observableContractSha256"),
         "rnnModelVersion": rnn.get("modelVersion"),
         "transformerModelVersion": transformer.get("modelVersion"),
+        "rnnMetricsSha256": sha256_file(rnn_path),
+        "transformerMetricsSha256": sha256_file(transformer_path),
+        "rnnTrainingConfigSha256": require_sha256(rnn, "trainingConfigSha256"),
+        "transformerTrainingConfigSha256": require_sha256(transformer, "trainingConfigSha256"),
         "decisionCount": transformer_shadow["decisionCount"],
         "transformerLogLossImprovement": logloss_improvement,
         "transformerMajorCohortSupportGain": cohort_gain,
@@ -93,6 +100,21 @@ def require_metrics(result: Mapping[str, Any], expected_family: str) -> Mapping[
     if not isinstance(metrics, dict):
         raise ValueError("shadowHoldout metrics are required")
     return metrics
+
+
+def require_sha256(result: Mapping[str, Any], field: str) -> str:
+    value = result.get(field)
+    if not isinstance(value, str) or len(value) != 64 or any(c not in "0123456789abcdefABCDEF" for c in value):
+        raise ValueError(f"{field} must be a SHA256")
+    return value.lower()
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 if __name__ == "__main__":

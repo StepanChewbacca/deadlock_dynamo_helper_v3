@@ -46,6 +46,7 @@ jobs:
       DATASET_DIR: ${{ inputs.dataset_dir }}
       EXPECTED_DATASET_SHA256: ${{ inputs.expected_dataset_sha256 }}
       EXPECTED_MANIFEST_SHA256: ${{ inputs.expected_manifest_sha256 }}
+      EXPECTED_WHEELHOUSE_SHA256: ${{ vars.RECOMMENDATION_TRAINING_WHEELHOUSE_SHA256 }}
       MODEL_VERSION_PREFIX_INPUT: ${{ inputs.model_version_prefix }}
       ACTION_CONTRACT_VERSION: ${{ inputs.action_contract_version }}
       TRAINING_PREFLIGHT_URL: ${{ vars.RECOMMENDATION_TRAINING_PREFLIGHT_URL }}
@@ -61,15 +62,21 @@ jobs:
           test -n "${RECOMMENDATION_TRAINING_OUTPUT_ROOT:-}" || { echo "RECOMMENDATION_TRAINING_OUTPUT_ROOT is required on the secure runner" >&2; exit 1; }
           test -n "${RECOMMENDATION_DATASET_STAGING_ROOT:-}" || { echo "RECOMMENDATION_DATASET_STAGING_ROOT is required on the secure runner" >&2; exit 1; }
           test -n "${RECOMMENDATION_TRAINING_WHEELHOUSE:-}" || { echo "RECOMMENDATION_TRAINING_WHEELHOUSE is required on the secure runner" >&2; exit 1; }
+          test -n "$EXPECTED_WHEELHOUSE_SHA256" || { echo "RECOMMENDATION_TRAINING_WHEELHOUSE_SHA256 environment variable is required" >&2; exit 1; }
           test -n "$TRAINING_PREFLIGHT_URL" || { echo "RECOMMENDATION_TRAINING_PREFLIGHT_URL repository/environment variable is required" >&2; exit 1; }
           test -n "$TRAINING_TOKEN" || { echo "RECOMMENDATION_TRAINING_TOKEN environment secret is required" >&2; exit 1; }
           case "$TRAINING_PREFLIGHT_URL" in
             */preflight) TRAINING_FINAL_READINESS_URL="${TRAINING_PREFLIGHT_URL%/preflight}/final-readiness" ;;
             *) echo "RECOMMENDATION_TRAINING_PREFLIGHT_URL must end with /preflight" >&2; exit 1 ;;
           esac
+          case "$TRAINING_FINAL_READINESS_URL" in
+            https://*|http://127.0.0.1:*|http://localhost:*) ;;
+            *) echo "Training readiness API must use HTTPS or loopback HTTP" >&2; exit 1 ;;
+          esac
           [[ "$DATASET_ID" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || { echo "dataset_id contains unsafe characters" >&2; exit 1; }
           [[ "$EXPECTED_DATASET_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || { echo "expected_dataset_sha256 is invalid" >&2; exit 1; }
           [[ "$EXPECTED_MANIFEST_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || { echo "expected_manifest_sha256 is invalid" >&2; exit 1; }
+          [[ "$EXPECTED_WHEELHOUSE_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || { echo "RECOMMENDATION_TRAINING_WHEELHOUSE_SHA256 is invalid" >&2; exit 1; }
           [[ "$ACTION_CONTRACT_VERSION" =~ ^[A-Za-z0-9._:-]{1,128}$ ]] || { echo "action_contract_version contains unsafe characters" >&2; exit 1; }
           case "$RECOMMENDATION_TRAINING_OUTPUT_ROOT" in /*) ;; *) echo "RECOMMENDATION_TRAINING_OUTPUT_ROOT must be absolute" >&2; exit 1;; esac
           case "$RECOMMENDATION_DATASET_STAGING_ROOT" in /*) ;; *) echo "RECOMMENDATION_DATASET_STAGING_ROOT must be absolute" >&2; exit 1;; esac
@@ -99,6 +106,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      - name: Verify approved wheelhouse bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python training/recommendation_v8/wheelhouse_identity.py \
+            --wheelhouse "$TRAINING_WHEELHOUSE" \
+            --expected-sha256 "$EXPECTED_WHEELHOUSE_SHA256" \
+            | tee "$RUN_ROOT/wheelhouse-identity.json"
 
       - name: Create isolated training environment from approved wheelhouse
         shell: bash
@@ -163,6 +179,7 @@ jobs:
                   "expectedDatasetSha256": os.environ["EXPECTED_DATASET_SHA256"],
                   "expectedManifestSha256": os.environ["EXPECTED_MANIFEST_SHA256"],
                   "sourceCommitSha": os.environ["GITHUB_SHA"],
+                  "trainingWheelhouseSha256": os.environ["EXPECTED_WHEELHOUSE_SHA256"],
                   "splitIsolationPassed": True,
                   "immutableDatasetBytesVerified": True,
                   "offlineWheelhouseReady": True,
@@ -179,7 +196,7 @@ jobs:
             --data-binary "@$REQUEST_FILE" \
             "$TRAINING_FINAL_READINESS_URL/$DATASET_ID" \
             > "$RESPONSE_FILE"
-          TRAINING_READINESS_SUBJECT_SHA256="$("$RUN_ROOT/venv/bin/python" - "$RESPONSE_FILE" "$EXPECTED_DATASET_SHA256" "$EXPECTED_MANIFEST_SHA256" "$GITHUB_SHA" "$DIRECT_SHOP_APPROVAL_KEY" "$DIRECT_SHOP_VALIDATION_SUBJECT_SHA256" <<'PY'
+          TRAINING_READINESS_SUBJECT_SHA256="$("$RUN_ROOT/venv/bin/python" - "$RESPONSE_FILE" "$EXPECTED_DATASET_SHA256" "$EXPECTED_MANIFEST_SHA256" "$GITHUB_SHA" "$DIRECT_SHOP_APPROVAL_KEY" "$DIRECT_SHOP_VALIDATION_SUBJECT_SHA256" "$EXPECTED_WHEELHOUSE_SHA256" <<'PY'
           import json, re, sys
           data = json.load(open(sys.argv[1], encoding="utf-8"))
           if data.get("ready") is not True:
@@ -194,6 +211,8 @@ jobs:
               raise SystemExit("Final readiness manifest SHA mismatch")
           if str(data.get("sourceCommitSha", "")).lower() != sys.argv[4].lower():
               raise SystemExit("Final readiness source commit mismatch")
+          if str(data.get("trainingWheelhouseSha256", "")).lower() != sys.argv[7].lower():
+              raise SystemExit("Final readiness wheelhouse SHA mismatch")
           if data.get("trainingPerformed") is not False or data.get("futureTestEvaluated") is not False:
               raise SystemExit("Final readiness is not pre-training/pre-FUTURE_TEST")
           for name in ["rnnPreflight", "transformerPreflight"]:
@@ -276,6 +295,7 @@ jobs:
           test "$TRANSFORMER_GATE_EXIT" -eq 0 || { echo "Transformer Behavioral gate failed" >&2; exit 1; }
           "$RUN_ROOT/venv/bin/python" training/recommendation_v8/build_model_bundle.py \
             --training-output "$RUN_ROOT/transformer" \
+            --rnn-metrics "$RUN_ROOT/rnn/metrics.json" \
             --dataset-dir "$DATASET_DIR" \
             --ablation-report "$RUN_ROOT/ablation-report.json" \
             --bundle-dir "$RUN_ROOT/bundle" \
@@ -286,20 +306,31 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          "$RUN_ROOT/venv/bin/python" - "$RUN_ROOT" "$TRAINING_READINESS_SUBJECT_SHA256" "$EXPECTED_DATASET_SHA256" "$EXPECTED_MANIFEST_SHA256" "$GITHUB_SHA" <<'PY'
+          "$RUN_ROOT/venv/bin/python" - "$RUN_ROOT" "$TRAINING_READINESS_SUBJECT_SHA256" "$EXPECTED_DATASET_SHA256" "$EXPECTED_MANIFEST_SHA256" "$GITHUB_SHA" "$EXPECTED_WHEELHOUSE_SHA256" <<'PY'
           import hashlib, json, pathlib, sys
           root = pathlib.Path(sys.argv[1])
-          manifest = root / "bundle" / "manifest.json"
-          raw = manifest.read_bytes()
+          manifest_path = root / "bundle" / "manifest.json"
+          raw = manifest_path.read_bytes()
+          manifest = json.loads(raw)
+          canonical_manifest = {
+              **manifest,
+              "supportedRulesetVersions": sorted(manifest["supportedRulesetVersions"]),
+              "supportedCatalogSha256": sorted(manifest["supportedCatalogSha256"]),
+              "files": sorted(manifest["files"], key=lambda item: item["path"]),
+              "gates": sorted(manifest["gates"], key=lambda item: item["name"]),
+          }
+          registry_sha = hashlib.sha256(json.dumps(canonical_manifest, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
           summary = {
               "status": "TRAINING_COMPLETE_NOT_ACTIVATED",
               "runRoot": str(root),
-              "bundleManifest": str(manifest),
+              "bundleManifest": str(manifest_path),
+              "bundleManifestSha256": registry_sha,
               "bundleManifestSha256Bytes": hashlib.sha256(raw).hexdigest(),
               "trainingReadinessSubjectSha256": sys.argv[2].lower(),
               "datasetSha256": sys.argv[3].lower(),
               "datasetManifestSha256": sys.argv[4].lower(),
               "sourceCommitSha": sys.argv[5].lower(),
+              "trainingWheelhouseSha256": sys.argv[6].lower(),
               "nextRequiredStep": "Upload bundle to approved immutable artifact store, register, independently verify hashes, then activate only with required serving gates.",
               "futureTestEvaluated": False,
           }

@@ -46,6 +46,10 @@ jobs:
           test -n "${RECOMMENDATION_MODEL_STAGING_ROOT:-}" || { echo "RECOMMENDATION_MODEL_STAGING_ROOT is required" >&2; exit 1; }
           test -n "$REGISTRY_API_BASE_URL" || { echo "RECOMMENDATION_ARTIFACT_API_BASE_URL is required" >&2; exit 1; }
           test -n "$ARTIFACT_TOKEN" || { echo "RECOMMENDATION_ARTIFACT_REGISTRY_TOKEN is required" >&2; exit 1; }
+          command -v node >/dev/null 2>&1 || { echo "Node.js is required for canonical model manifest identity" >&2; exit 1; }
+          NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
+          [ "$NODE_MAJOR" -ge 20 ] || { echo "Node.js 20+ is required for canonical model manifest identity" >&2; exit 1; }
+          case "$REGISTRY_API_BASE_URL" in https://*|http://127.0.0.1:*|http://localhost:*) ;; *) echo "Registry API must use HTTPS or loopback HTTP" >&2; exit 1;; esac
           case "$ARTIFACT_BASE_URI" in s3://*|gs://*|https://*) ;; *) echo "artifact_base_uri must use s3, gs, or https" >&2; exit 1;; esac
           [[ "$ARTIFACT_BASE_URI" != *".."* ]] || { echo "artifact_base_uri contains parent traversal" >&2; exit 1; }
           [[ "$VERIFIER" =~ ^[A-Za-z0-9._:-]{1,128}$ ]] || { echo "verifier identity is invalid" >&2; exit 1; }
@@ -54,11 +58,22 @@ jobs:
           case "$BUNDLE_DIR" in "$STAGING_ROOT"/*) ;; *) echo "bundle_dir must be inside model staging root" >&2; exit 1;; esac
           test -f "$BUNDLE_DIR/manifest.json" || { echo "manifest.json is missing" >&2; exit 1; }
           REQUEST_DIR="$(mktemp -d "$RUNNER_TEMP/recommendation-model-registry-XXXXXX")"
+          node scripts/recommendation-model-manifest-identity.mjs \
+            "$BUNDLE_DIR/manifest.json" \
+            "$REQUEST_DIR/local-identity.json"
           python3 - "$BUNDLE_DIR" "$REQUEST_DIR" <<'PY'
           import hashlib, json, os, pathlib, sys
           root = pathlib.Path(sys.argv[1])
           request_root = pathlib.Path(sys.argv[2])
           manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+
+          def sha256_file(path):
+              digest = hashlib.sha256()
+              with path.open("rb") as handle:
+                  for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                      digest.update(chunk)
+              return digest.hexdigest()
+
           files = manifest.get("files")
           if not isinstance(files, list) or not files:
               raise SystemExit("Model manifest files are missing")
@@ -68,11 +83,13 @@ jobs:
               if not isinstance(relative, str) or not relative or relative.startswith("/") or ".." in pathlib.PurePosixPath(relative).parts:
                   raise SystemExit("Unsafe model artifact path")
               path = root / relative
-              raw = path.read_bytes()
-              sha = hashlib.sha256(raw).hexdigest()
-              if sha != descriptor.get("sha256") or len(raw) != descriptor.get("sizeBytes"):
+              if not path.is_file():
+                  raise SystemExit(f"Model artifact is missing: {relative}")
+              sha = sha256_file(path)
+              size_bytes = path.stat().st_size
+              if sha != descriptor.get("sha256") or size_bytes != descriptor.get("sizeBytes"):
                   raise SystemExit(f"Local artifact mismatch: {relative}")
-              verified.append({"path": relative, "sha256": sha, "sizeBytes": len(raw)})
+              verified.append({"path": relative, "sha256": sha, "sizeBytes": size_bytes})
           register = {"manifest": manifest, "artifactBaseUri": os.environ["ARTIFACT_BASE_URI"]}
           (request_root / "register.json").write_text(json.dumps(register, separators=(",", ":")) + "\n", encoding="utf-8")
           (request_root / "verified-files.json").write_text(json.dumps(verified, separators=(",", ":")) + "\n", encoding="utf-8")
@@ -93,17 +110,23 @@ jobs:
           python3 - "$REQUEST_DIR" <<'PY'
           import json, os, pathlib, sys
           root = pathlib.Path(sys.argv[1])
-          response = json.loads((root / "register-response.json").read_text())
-          files = json.loads((root / "verified-files.json").read_text())
+          local = json.loads((root / "local-identity.json").read_text(encoding="utf-8"))
+          response = json.loads((root / "register-response.json").read_text(encoding="utf-8"))
+          for key in ["modelId", "modelVersion", "manifestSha256"]:
+              if str(response.get(key, "")) != str(local.get(key, "")):
+                  raise SystemExit(f"Model registry register response identity mismatch: {key}")
+          if response.get("status") not in ["REGISTERED", "VERIFIED"]:
+              raise SystemExit("Model registry returned invalid register status")
+          files = json.loads((root / "verified-files.json").read_text(encoding="utf-8"))
           verify = {
-              "modelId": response["modelId"],
-              "modelVersion": response["modelVersion"],
+              "modelId": local["modelId"],
+              "modelVersion": local["modelVersion"],
               "verifier": os.environ["VERIFIER"],
-              "manifestSha256": response["manifestSha256"],
+              "manifestSha256": local["manifestSha256"],
               "files": files,
               "attestationRef": f"protected-runner://github/{os.environ['GITHUB_RUN_ID']}/{os.environ['GITHUB_RUN_ATTEMPT']}",
           }
-          (root / "verify.json").write_text(json.dumps(verify, separators=(",", ":")) + "\n")
+          (root / "verify.json").write_text(json.dumps(verify, separators=(",", ":")) + "\n", encoding="utf-8")
           PY
 
       - name: Independently verify exact artifact descriptors
@@ -116,11 +139,15 @@ jobs:
             --data-binary "@$REQUEST_DIR/verify.json" \
             "$REGISTRY_API_BASE_URL/deadlock-live/recommendation-models/v1/verify" \
             > "$REQUEST_DIR/verify-response.json"
-          python3 - "$REQUEST_DIR/verify-response.json" <<'PY'
+          python3 - "$REQUEST_DIR/local-identity.json" "$REQUEST_DIR/verify-response.json" <<'PY'
           import json, sys
-          response = json.load(open(sys.argv[1], encoding="utf-8"))
+          local = json.load(open(sys.argv[1], encoding="utf-8"))
+          response = json.load(open(sys.argv[2], encoding="utf-8"))
           if response.get("status") != "VERIFIED":
               raise SystemExit("Model registry did not return VERIFIED")
+          for key in ["modelId", "modelVersion", "manifestSha256"]:
+              if str(response.get(key, "")) != str(local.get(key, "")):
+                  raise SystemExit(f"Model registry verify response identity mismatch: {key}")
           print(json.dumps({
               "status": "VERIFIED_NOT_ACTIVATED",
               "modelId": response.get("modelId"),

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 
-const path = '.github/workflows/recommendation-dataset-register-verify.yml';
+const path = '.github/workflows/recommendation-model-register-verify.yml';
 const text = fs.readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
 const errors = [];
 
@@ -9,41 +9,40 @@ const required = [
   /^\s*environment\s*:\s*recommendation-artifact-registry\s*$/m,
   /runs-on\s*:\s*\[[^\]]*self-hosted[^\]]*recommendation-artifact-registry[^\]]*\]/i,
   /permissions:\s*\n\s*contents:\s*read/m,
-  /RECOMMENDATION_DATASET_STAGING_ROOT/,
+  /RECOMMENDATION_MODEL_STAGING_ROOT/,
   /RECOMMENDATION_ARTIFACT_REGISTRY_TOKEN/,
-  /objectBaseUri/,
-  /manifestSha256/,
-  /datasetSha256/,
-  /rowCount/,
+  /recommendation-model-manifest-identity\.mjs/,
   /local-identity\.json/,
-  /handle\.read\(1024 \* 1024\)/,
+  /manifestSha256/,
+  /verified-files\.json/,
+  /recommendation-models\/v1\/register/,
+  /recommendation-models\/v1\/verify/,
+  /VERIFIED_NOT_ACTIVATED/,
   /Registry API must use HTTPS or loopback HTTP/,
-  /recommendation-datasets\/v1\/register/,
-  /recommendation-datasets\/v1\/verify/,
-  /VERIFIED_READY_FOR_PRETRAINING_READINESS/,
+  /handle\.read\(1024 \* 1024\)/,
 ];
 for (const pattern of required) {
-  if (!pattern.test(text)) errors.push(`${path}: missing required protected-registry contract ${pattern}`);
+  if (!pattern.test(text)) errors.push(`${path}: missing required protected model-registry contract ${pattern}`);
 }
 if (/^\s*(pull_request|pull_request_target|push|schedule)\s*:/m.test(text)) {
-  errors.push(`${path}: dataset registry workflow must be manual-only`);
+  errors.push(`${path}: model registry workflow must be manual-only`);
 }
 if (/permissions\s*:\s*write-all/i.test(text)) {
   errors.push(`${path}: write-all permission is forbidden`);
 }
 if (/read_bytes\s*\(/.test(text)) {
-  errors.push(`${path}: whole-file artifact reads are forbidden; verification must stream large dataset files`);
+  errors.push(`${path}: whole-file artifact reads are forbidden; verification must stream large model files`);
 }
 if (/\$\{\{/.test(extractRunBlocks(text))) {
   errors.push(`${path}: GitHub expressions are forbidden inside privileged run blocks`);
 }
 
 if (errors.length > 0) {
-  console.error('recommendation dataset registry workflow audit: FAIL');
+  console.error('recommendation model registry workflow audit: FAIL');
   for (const error of errors) console.error(`- ${error}`);
   process.exit(1);
 }
-console.log('recommendation dataset registry workflow audit: PASS');
+console.log('recommendation model registry workflow audit: PASS');
 
 function extractRunBlocks(workflowText) {
   const lines = workflowText.split('\n');

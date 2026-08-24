@@ -17,6 +17,7 @@ export interface RecommendationPretrainingRunnerEvidenceV8 {
   expectedDatasetSha256: string;
   expectedManifestSha256: string;
   sourceCommitSha: string;
+  trainingWheelhouseSha256: string;
   splitIsolationPassed: boolean;
   immutableDatasetBytesVerified: boolean;
   offlineWheelhouseReady: boolean;
@@ -36,6 +37,7 @@ export interface RecommendationPretrainingFinalReadinessV8Result {
   datasetSha256: string;
   manifestSha256: string;
   sourceCommitSha: string;
+  trainingWheelhouseSha256: string;
   readinessSubjectSha256: string;
   pairValidation: {
     valid: boolean;
@@ -79,6 +81,7 @@ export class RecommendationPretrainingFinalReadinessV8Service {
     const expectedDatasetSha256 = input.runner.expectedDatasetSha256.toLowerCase();
     const expectedManifestSha256 = input.runner.expectedManifestSha256.toLowerCase();
     const sourceCommitSha = input.runner.sourceCommitSha.toLowerCase();
+    const trainingWheelhouseSha256 = input.runner.trainingWheelhouseSha256.toLowerCase();
     if (dataset.datasetSha256.toLowerCase() !== expectedDatasetSha256) blockers.push('RUNNER_DATASET_SHA_MISMATCH');
     if (dataset.manifestSha256.toLowerCase() !== expectedManifestSha256) blockers.push('RUNNER_MANIFEST_SHA_MISMATCH');
     if (dataset.manifest.sourceCommitSha.toLowerCase() !== sourceCommitSha) blockers.push('RUNNER_SOURCE_COMMIT_MISMATCH');
@@ -140,6 +143,7 @@ export class RecommendationPretrainingFinalReadinessV8Service {
         futureTestEvaluation,
       },
       runner: {
+        trainingWheelhouseSha256,
         splitIsolationPassed: input.runner.splitIsolationPassed,
         immutableDatasetBytesVerified: input.runner.immutableDatasetBytesVerified,
         offlineWheelhouseReady: input.runner.offlineWheelhouseReady,
@@ -154,6 +158,7 @@ export class RecommendationPretrainingFinalReadinessV8Service {
       datasetSha256: dataset.datasetSha256,
       manifestSha256: dataset.manifestSha256,
       sourceCommitSha: dataset.manifest.sourceCommitSha,
+      trainingWheelhouseSha256,
       readinessSubjectSha256,
       pairValidation: {
         valid: pairValidation.valid,
@@ -174,6 +179,7 @@ function validateRunnerEvidence(runner: RecommendationPretrainingRunnerEvidenceV
   if (!isSha256(runner.expectedDatasetSha256)) throw new Error('runner expectedDatasetSha256 is invalid');
   if (!isSha256(runner.expectedManifestSha256)) throw new Error('runner expectedManifestSha256 is invalid');
   if (!isCommitSha(runner.sourceCommitSha)) throw new Error('runner sourceCommitSha is invalid');
+  if (!isSha256(runner.trainingWheelhouseSha256)) throw new Error('runner trainingWheelhouseSha256 is invalid');
   for (const field of [
     'splitIsolationPassed',
     'immutableDatasetBytesVerified',
