@@ -295,6 +295,7 @@ jobs:
           test "$TRANSFORMER_GATE_EXIT" -eq 0 || { echo "Transformer Behavioral gate failed" >&2; exit 1; }
           "$RUN_ROOT/venv/bin/python" training/recommendation_v8/build_model_bundle.py \
             --training-output "$RUN_ROOT/transformer" \
+            --rnn-metrics "$RUN_ROOT/rnn/metrics.json" \
             --dataset-dir "$DATASET_DIR" \
             --ablation-report "$RUN_ROOT/ablation-report.json" \
             --bundle-dir "$RUN_ROOT/bundle" \
