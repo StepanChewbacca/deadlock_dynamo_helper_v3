@@ -58,6 +58,7 @@ jobs:
           test -n "${RECOMMENDATION_TRAINING_WHEELHOUSE:-}" || { echo "RECOMMENDATION_TRAINING_WHEELHOUSE is required" >&2; exit 1; }
           test -n "$TRAINING_PREFLIGHT_URL" || { echo "RECOMMENDATION_TRAINING_PREFLIGHT_URL is required" >&2; exit 1; }
           test -n "$TRAINING_TOKEN" || { echo "RECOMMENDATION_TRAINING_TOKEN is required" >&2; exit 1; }
+          case "$TRAINING_PREFLIGHT_URL" in https://*|http://127.0.0.1:*|http://localhost:*) ;; *) echo "Training preflight API must use HTTPS or loopback HTTP" >&2; exit 1;; esac
           case "$TRAINING_PREFLIGHT_URL" in
             */preflight) TRAINING_FINAL_READINESS_URL="${TRAINING_PREFLIGHT_URL%/preflight}/final-readiness" ;;
             *) echo "RECOMMENDATION_TRAINING_PREFLIGHT_URL must end with /preflight" >&2; exit 1 ;;
