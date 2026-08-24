@@ -47,17 +47,19 @@ Only after those gates pass may the protected `Recommendation Dataset Export` wo
 - split descriptors
 - exact artifact hashes
 
-Upload the exact exported directory to an approved immutable store, register it, and independently verify the registry identity and bytes. FUTURE_TEST stays sealed and unmaterialized for model development.
+Upload the exact exported directory to an approved immutable store. Then run the protected `Recommendation Dataset Register Verify` workflow against the pre-staged exact local bytes and the immutable remote URI. That workflow independently recomputes the dataset content identity, canonical manifest SHA256, every artifact SHA256, size, and row count before calling registry `register` and `verify`. Continue only when it returns `VERIFIED_READY_FOR_PRETRAINING_READINESS` for the exact dataset identity. FUTURE_TEST stays sealed and unmaterialized for model development.
 
 ## 3. Behavioral BuildLM and final training launch readiness
 
 Behavioral training has two separate protected operations. `Recommendation Pretraining Readiness` is no-training validation. `Recommendation Behavioral Training` performs optimizer steps only after independently repeating the same final server-owned gate.
 
-Before either operation, freeze the training code revision. The immutable Dataset V8 `sourceCommitSha` must equal the exact checked-out workflow `GITHUB_SHA`. The dataset ID, dataset SHA256, canonical manifest SHA256, direct-shop approval key, and direct-shop validation subject SHA256 must also match the verified registry and current server-owned evidence. If the integration branch has advanced since the dataset was exported, dispatch from the exact frozen dataset source revision or produce and verify a new dataset from the new revision. Do not override the mismatch.
+Before Dataset V8 export, freeze the exact training revision. Use a dedicated immutable operational ref whose name matches `frozen/recommendation-v8-behavioral-*` and never move that ref after data collection begins. Recommendation CI and Recommendation Security are configured to validate pushes matching this frozen-ref pattern, but a green check does not make the ref mutable: if code changes are required, create a new frozen ref and a new Dataset V8 identity instead of rewriting the old ref.
+
+The immutable Dataset V8 `sourceCommitSha` must equal the exact checked-out workflow `GITHUB_SHA`. The dataset ID, dataset SHA256, canonical manifest SHA256, direct-shop approval key, and direct-shop validation subject SHA256 must also match the verified registry and current server-owned evidence. Dispatch Dataset Export, Dataset Register Verify, Pretraining Readiness, and Behavioral Training from the same frozen code revision. If the integration branch advances after the dataset was exported, continue from the frozen dataset source revision or produce and verify a new dataset from the new revision. Do not override the mismatch.
 
 Run the protected no-training `Recommendation Pretraining Readiness` workflow first. It rebuilds an isolated Python environment only from the approved offline wheelhouse, verifies the training runtime/CUDA device, verifies the immutable dataset bytes, checks split isolation and FUTURE_TEST integrity, and submits both the RNN and Transformer configs together to the protected final-readiness API.
 
-The final-readiness API re-evaluates both architecture preflights against the same current data snapshot and requires:
+The final-readiness API re-evaluates both architecture preflights against the same current data scope and requires:
 
 - `controlledSoulsValidation=PASS`
 - `directShopSourceValidation=PASS`, with exactly one source key bound to the immutable validation snapshot
@@ -181,6 +183,7 @@ Once `futureTestEvaluation=PASS` and `sequentialRlResearchGate=PASS`, the roadma
 The following workflows are manual-only, protected-environment, dedicated self-hosted operations:
 
 - `Recommendation Dataset Export`
+- `Recommendation Dataset Register Verify`
 - `Recommendation Pretraining Readiness`
 - `Recommendation Behavioral Training`
 - `Recommendation Value Dataset Export`
@@ -192,7 +195,7 @@ The following workflows are manual-only, protected-environment, dedicated self-h
 - `Recommendation Model Activation`
 - `Recommendation Sequential RL Readiness`
 
-Recommendation CI and Recommendation Security may run automatically because they do not execute training, artifact export, model activation, production deployment, randomized traffic, or FUTURE_TEST access.
+Recommendation CI and Recommendation Security may run automatically because they do not execute training, artifact export, model activation, production deployment, randomized traffic, or FUTURE_TEST access. Their security path syntax-checks every privileged Recommendation workflow listed above.
 
 ## Stop conditions
 
@@ -205,6 +208,7 @@ Stop immediately instead of advancing the roadmap when any of these occurs:
 - runtime telemetry is stale or direct feasibility evidence is UNKNOWN
 - immutable artifact verification is stale or mismatched
 - the no-training readiness or immediate pre-optimizer readiness subject cannot be reproduced for the exact dataset/code revision
+- the frozen Behavioral training ref moved after prospective collection began
 - FUTURE_TEST access count is not exactly one
 - FUTURE_TEST has already been evaluated for the current roadmap
 - a sequential transition contains future leakage
