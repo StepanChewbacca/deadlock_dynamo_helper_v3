@@ -28,6 +28,7 @@ for (const name of fs.existsSync(workflowDir) ? fs.readdirSync(workflowDir) : []
   }
 
   const causalValueTraining = /^recommendation-value-training\.ya?ml$/i.test(name);
+  const behavioralTraining = /^recommendation-behavioral-training\.ya?ml$/i.test(name);
   const pretrainingReadiness = /^recommendation-pretraining-readiness\.ya?ml$/i.test(name);
   const privilegedTraining = /recommendation-.*training/i.test(name);
   if (privilegedTraining) {
@@ -50,6 +51,9 @@ for (const name of fs.existsSync(workflowDir) ? fs.readdirSync(workflowDir) : []
 
   if (pretrainingReadiness) {
     auditNoTrainingReadinessWorkflow(name, normalized);
+  }
+  if (behavioralTraining) {
+    auditBehavioralTrainingWorkflow(name, normalized);
   }
 
   const causalValueDatasetExport = /^recommendation-value-dataset-export\.ya?ml$/i.test(name);
@@ -240,13 +244,59 @@ function auditNoTrainingReadinessWorkflow(workflowName, workflowText) {
     'verify_dataset.py',
     'config/rnn.json',
     'config/transformer.json',
+    'final-readiness',
+    'readyToStartBehavioralTraining',
+    'readinessSubjectSha256',
+    'sourceCommitSha',
+    'directShopSourceApprovalKeys',
+    'directShopSourceValidationSubjectSha256',
     'READY_TO_START_BEHAVIORAL_TRAINING',
     'trainingPerformed',
+    'futureTestEvaluated',
   ];
   for (const token of required) {
     if (!workflowText.includes(token)) {
       errors.push(`${workflowName}: final readiness contract is missing ${token}`);
     }
+  }
+}
+
+function auditBehavioralTrainingWorkflow(workflowName, workflowText) {
+  const required = [
+    'pretraining_environment_check.py',
+    'verify_dataset.py',
+    'config/rnn.json',
+    'config/transformer.json',
+    'final-readiness',
+    'readyToStartBehavioralTraining',
+    'pairValidation',
+    'readinessSubjectSha256',
+    'TRAINING_READINESS_SUBJECT_SHA256',
+    'sourceCommitSha',
+    'directShopSourceApprovalKeys',
+    'directShopSourceValidationSubjectSha256',
+    'futureTestEvaluated',
+    'train_behavioral.py',
+    'compare_behavioral.py',
+    'build_model_bundle.py',
+  ];
+  for (const token of required) {
+    if (!workflowText.includes(token)) {
+      errors.push(`${workflowName}: Behavioral training launch contract is missing ${token}`);
+    }
+  }
+  const readinessIndex = workflowText.indexOf('final-readiness');
+  const firstOptimizerIndex = workflowText.indexOf('train_behavioral.py');
+  if (readinessIndex < 0 || firstOptimizerIndex < 0 || readinessIndex >= firstOptimizerIndex) {
+    errors.push(`${workflowName}: final server-owned readiness must execute before the first Behavioral optimizer step`);
+  }
+  const sourceBindingIndex = workflowText.indexOf('Training workflow commit does not match immutable dataset sourceCommitSha');
+  if (sourceBindingIndex < 0 || sourceBindingIndex >= firstOptimizerIndex) {
+    errors.push(`${workflowName}: immutable dataset sourceCommitSha must be bound before the first Behavioral optimizer step`);
+  }
+  const futureTestGuardIndex = workflowText.indexOf('FUTURE_TEST is not untouched');
+  if (futureTestGuardIndex < 0 || futureTestGuardIndex >= firstOptimizerIndex) {
+    errors.push(`${workflowName}: FUTURE_TEST integrity must be checked before the first Behavioral optimizer step`);
   }
 }
 

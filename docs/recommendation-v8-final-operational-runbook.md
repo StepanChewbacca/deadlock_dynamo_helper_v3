@@ -49,11 +49,37 @@ Only after those gates pass may the protected `Recommendation Dataset Export` wo
 
 Upload the exact exported directory to an approved immutable store, register it, and independently verify the registry identity and bytes. FUTURE_TEST stays sealed and unmaterialized for model development.
 
-## 3. Behavioral BuildLM
+## 3. Behavioral BuildLM and final training launch readiness
 
-Run the protected no-training `Recommendation Pretraining Readiness` workflow first. It must emit `READY_TO_START_BEHAVIORAL_TRAINING` with `trainingPerformed=false` and `futureTestEvaluated=false` for the exact immutable dataset.
+Behavioral training has two separate protected operations. `Recommendation Pretraining Readiness` is no-training validation. `Recommendation Behavioral Training` performs optimizer steps only after independently repeating the same final server-owned gate.
 
-Only after explicit training authorization run `Recommendation Behavioral Training`. RNN and Transformer receive the same observable contract. Model selection is restricted to TRAIN, VALIDATION, and SHADOW_HOLDOUT. FUTURE_TEST remains inaccessible.
+Before either operation, freeze the training code revision. The immutable Dataset V8 `sourceCommitSha` must equal the exact checked-out workflow `GITHUB_SHA`. The dataset ID, dataset SHA256, canonical manifest SHA256, direct-shop approval key, and direct-shop validation subject SHA256 must also match the verified registry and current server-owned evidence. If the integration branch has advanced since the dataset was exported, dispatch from the exact frozen dataset source revision or produce and verify a new dataset from the new revision. Do not override the mismatch.
+
+Run the protected no-training `Recommendation Pretraining Readiness` workflow first. It rebuilds an isolated Python environment only from the approved offline wheelhouse, verifies the training runtime/CUDA device, verifies the immutable dataset bytes, checks split isolation and FUTURE_TEST integrity, and submits both the RNN and Transformer configs together to the protected final-readiness API.
+
+The final-readiness API re-evaluates both architecture preflights against the same current data snapshot and requires:
+
+- `controlledSoulsValidation=PASS`
+- `directShopSourceValidation=PASS`, with exactly one source key bound to the immutable validation snapshot
+- current observability gate PASS
+- current Dataset V8 structural and empirical gates PASS
+- explicit feasibility coverage at least 0.995
+- observed-action feasible coverage at least 0.99
+- minimum critical action/phase cohort feasible coverage at least 0.98
+- ruleset evidence coverage at least 0.999
+- at least 10,000 SHADOW_HOLDOUT decisions
+- a fresh VERIFIED dataset registry identity
+- exact immutable dataset and manifest hashes
+- exact dataset source commit equal to the checked-out training revision
+- split isolation, offline wheelhouse, immutable-byte verification, and training device readiness
+- equal-observables RNN/Transformer configuration
+- FUTURE_TEST untouched and not evaluated
+
+The server returns a `readinessSubjectSha256` that binds the dataset identity, both training configs, current data gates, relevant roadmap gates, and protected-runner readiness facts. The no-training workflow may emit `READY_TO_START_BEHAVIORAL_TRAINING` only when the shared final-readiness contract is true, `trainingPerformed=false`, and `futureTestEvaluated=false`.
+
+Only after explicit authorization to train may `Recommendation Behavioral Training` be dispatched with the exact same frozen dataset identity and code revision. The training workflow does not trust the earlier attestation by itself: immediately before the first `train_behavioral.py` optimizer step it repeats immutable-byte/source-commit/FUTURE_TEST checks and calls the final server-owned readiness endpoint again for both architectures. Any drift blocks training before optimization starts.
+
+RNN and Transformer receive the same observable contract. Model selection is restricted to TRAIN, VALIDATION, and SHADOW_HOLDOUT. FUTURE_TEST remains inaccessible. The training run summary preserves `trainingReadinessSubjectSha256`, dataset SHA256, manifest SHA256, and source commit SHA so the produced model bundle is auditable to the exact authorization state.
 
 Register and verify the selected immutable Behavioral bundle. Materialize `behavioralOffline` from that exact verified manifest. Never copy evidence from another model version.
 
@@ -114,7 +140,10 @@ The artifact must bind:
 - frozen evaluation-plan SHA256
 - immutable evaluation-artifact SHA256 and reference
 - `futureTestAccessCount=1`
-- architecture/hyperparameters/candidate generator/target frozen flags
+- `modelSelectionFrozen=true`
+- `hyperparametersFrozen=true`
+- `candidateGeneratorFrozen=true`
+- `featureContractFrozen=true`
 - final PASS or FAIL gate status
 
 Run `Recommendation FUTURE_TEST Evaluation` exactly once. The server verifies that Policy V1 was already unlocked, Policy A/B PASS evidence matches the same manifest, and no previous FUTURE_TEST evaluation exists.
@@ -175,6 +204,7 @@ Stop immediately instead of advancing the roadmap when any of these occurs:
 - exact propensity evidence is unavailable or reconstructed
 - runtime telemetry is stale or direct feasibility evidence is UNKNOWN
 - immutable artifact verification is stale or mismatched
+- the no-training readiness or immediate pre-optimizer readiness subject cannot be reproduced for the exact dataset/code revision
 - FUTURE_TEST access count is not exactly one
 - FUTURE_TEST has already been evaluated for the current roadmap
 - a sequential transition contains future leakage

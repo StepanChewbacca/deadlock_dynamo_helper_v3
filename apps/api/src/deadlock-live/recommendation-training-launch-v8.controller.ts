@@ -9,6 +9,10 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { RecommendationBehavioralTrainingConfigV1 } from '@deadlock-live-probe/shared';
+import {
+  RecommendationPretrainingFinalReadinessV8Input,
+  RecommendationPretrainingFinalReadinessV8Service,
+} from './recommendation-pretraining-final-readiness-v8.service';
 import { RecommendationTrainingLaunchV8Service } from './recommendation-training-launch-v8.service';
 
 interface RecommendationTrainingPreflightBodyV8 {
@@ -17,7 +21,10 @@ interface RecommendationTrainingPreflightBodyV8 {
 
 @Controller('deadlock-live/recommendation-training/v8')
 export class RecommendationTrainingLaunchV8Controller {
-  constructor(private readonly trainingLaunch: RecommendationTrainingLaunchV8Service) {}
+  constructor(
+    private readonly trainingLaunch: RecommendationTrainingLaunchV8Service,
+    private readonly finalReadiness: RecommendationPretrainingFinalReadinessV8Service,
+  ) {}
 
   @Post('preflight/:datasetId')
   preflight(
@@ -28,6 +35,19 @@ export class RecommendationTrainingLaunchV8Controller {
     requireTrainingToken(token);
     if (!body?.config) throw new BadRequestException('training config is required');
     return this.trainingLaunch.preflight(datasetId, body.config);
+  }
+
+  @Post('final-readiness/:datasetId')
+  evaluateFinalReadiness(
+    @Headers('x-recommendation-training-token') token: string | undefined,
+    @Param('datasetId') datasetId: string,
+    @Body() body: RecommendationPretrainingFinalReadinessV8Input,
+  ) {
+    requireTrainingToken(token);
+    if (!body?.rnnConfig || !body?.transformerConfig || !body?.runner) {
+      throw new BadRequestException('rnnConfig, transformerConfig, and runner evidence are required');
+    }
+    return this.finalReadiness.evaluate(datasetId, body);
   }
 }
 
