@@ -24,7 +24,11 @@ jobs:
           node-version: '20'
       - name: Audit workflow trust boundaries
         run: node scripts/recommendation-security-audit.mjs
+      - name: Audit full Behavioral training pair contract
+        run: node scripts/recommendation-behavioral-training-pair-audit.mjs
       - name: Audit protected Dataset V8 registry workflow
         run: node scripts/recommendation-dataset-registry-workflow-audit.mjs
+      - name: Audit protected model registry workflow
+        run: node scripts/recommendation-model-registry-workflow-audit.mjs
       - name: Audit privileged handoff and training shell syntax
         run: node scripts/recommendation-workflow-shell-audit.mjs
