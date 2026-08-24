@@ -6,6 +6,7 @@ on:
     branches:
       - agent/add-inventory-simulator
       - agent/recommendation-roadmap-v8-runtime-finalization
+      - agent/recommendation-v8-pretraining-absolute-final
       - 'frozen/recommendation-v8-behavioral-*'
 
 permissions:
@@ -30,5 +31,7 @@ jobs:
         run: node scripts/recommendation-dataset-registry-workflow-audit.mjs
       - name: Audit protected model registry workflow
         run: node scripts/recommendation-model-registry-workflow-audit.mjs
+      - name: Audit pretraining runtime trust contract
+        run: node scripts/recommendation-pretraining-runtime-workflow-audit.mjs
       - name: Audit privileged handoff and training shell syntax
         run: node scripts/recommendation-workflow-shell-audit.mjs
