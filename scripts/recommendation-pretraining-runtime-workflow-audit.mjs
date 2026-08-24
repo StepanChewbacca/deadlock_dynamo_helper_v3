@@ -8,6 +8,7 @@ const errors = [];
 
 for (const path of workflows) {
   const text = fs.readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
+  const runBlocks = extractRunBlocks(text);
   const required = [
     /^\s*workflow_dispatch\s*:/m,
     /^\s*environment\s*:\s*recommendation-training\s*$/m,
@@ -17,7 +18,12 @@ for (const path of workflows) {
     /RECOMMENDATION_TRAINING_WHEELHOUSE_SHA256/,
     /EXPECTED_WHEELHOUSE_SHA256/,
     /wheelhouse_identity\.py/,
+    /wheelhouse_snapshot\.py/,
+    /TRAINING_WHEELHOUSE_SNAPSHOT/,
+    /--source\s+"\$TRAINING_WHEELHOUSE"/,
+    /--destination\s+"\$WHEELHOUSE_SNAPSHOT"/,
     /--expected-sha256\s+"\$EXPECTED_WHEELHOUSE_SHA256"/,
+    /pip"?\s+install\s+--no-index\s+--find-links\s+"\$TRAINING_WHEELHOUSE_SNAPSHOT"/,
     /trainingWheelhouseSha256/,
     /offlineWheelhouseReady["']?\s*:\s*True/,
     /trainingDeviceReady["']?\s*:\s*True/,
@@ -33,8 +39,20 @@ for (const path of workflows) {
   if (/permissions\s*:\s*write-all/i.test(text)) {
     errors.push(`${path}: write-all permission is forbidden`);
   }
-  if (/pip\s+install(?![^\n]*--no-index)/i.test(extractRunBlocks(text))) {
+  if (/pip\s+install(?![^\n]*--no-index)/i.test(runBlocks)) {
     errors.push(`${path}: training dependency installation must be offline (--no-index)`);
+  }
+  if (/pip["']?\s+install[^\n]*--find-links\s+"\$TRAINING_WHEELHOUSE"/i.test(runBlocks)) {
+    errors.push(`${path}: pip must never install directly from the mutable shared wheelhouse`);
+  }
+  const snapshotStep = text.indexOf('wheelhouse_snapshot.py');
+  const pipStep = text.search(/pip"?\s+install/);
+  if (snapshotStep < 0 || pipStep < 0 || snapshotStep >= pipStep) {
+    errors.push(`${path}: immutable wheelhouse snapshot must be created before pip installation`);
+  }
+  const postInstallIdentity = text.indexOf('wheelhouse-post-install-identity.json');
+  if (postInstallIdentity < pipStep) {
+    errors.push(`${path}: immutable wheelhouse snapshot must be re-verified after pip installation`);
   }
 }
 
