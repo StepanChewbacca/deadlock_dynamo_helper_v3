@@ -3,9 +3,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const targets = [
-  '.github/workflows/recommendation-dataset-register-verify.yml',
-  '.github/workflows/recommendation-pretraining-readiness.yml',
   '.github/workflows/recommendation-behavioral-training.yml',
+  '.github/workflows/recommendation-dataset-export.yml',
+  '.github/workflows/recommendation-dataset-register-verify.yml',
+  '.github/workflows/recommendation-future-test-evaluation.yml',
+  '.github/workflows/recommendation-model-activation.yml',
+  '.github/workflows/recommendation-model-register-verify.yml',
+  '.github/workflows/recommendation-policy-bundle-build.yml',
+  '.github/workflows/recommendation-pretraining-readiness.yml',
+  '.github/workflows/recommendation-roadmap-materialization.yml',
+  '.github/workflows/recommendation-sequential-rl-readiness.yml',
+  '.github/workflows/recommendation-value-dataset-export.yml',
+  '.github/workflows/recommendation-value-training.yml',
 ];
 const errors = [];
 
