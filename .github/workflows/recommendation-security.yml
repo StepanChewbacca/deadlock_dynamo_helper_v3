@@ -6,6 +6,7 @@ on:
     branches:
       - agent/add-inventory-simulator
       - agent/recommendation-roadmap-v8-runtime-finalization
+      - 'frozen/recommendation-v8-behavioral-*'
 
 permissions:
   contents: read
