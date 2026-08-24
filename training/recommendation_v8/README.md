@@ -10,14 +10,27 @@ Training is authorized only when all of the following are true:
 2. Direct shop opportunity is observed with independently approved `DIRECT_SOURCE_SIGNAL` provenance.
 3. Dataset V8 structural and empirical reports pass on the exact development window.
 4. The roadmap evidence ledger unlocks `PROSPECTIVE_DATA`.
-5. The Dataset V8 artifact is registered and independently `VERIFIED` with exact manifest/file hashes.
+5. The Dataset V8 artifact is published to an approved immutable store and independently registered/verified through `Recommendation Dataset Register Verify` with exact manifest/file hashes, sizes, and row counts.
 6. `futureTestUntouched=true` and `futureTestEvaluation=NOT_EVALUATED`.
 7. `TRAIN`, `VALIDATION`, and `SHADOW_HOLDOUT` contain complete non-crossing matches, and `SHADOW_HOLDOUT` contains at least 10,000 decisions.
 8. The current data still satisfy the final pretraining gates at launch time: ruleset evidence coverage >= 99.9%, explicit feasibility evaluation coverage >= 99.5%, observed historical action feasible coverage >= 99% overall, and >= 98% in every major action-type/game-phase cohort with at least 100 labeled decisions.
 9. The secure training runner can recreate the pinned offline environment, import the exact training dependencies, and provide the configured CUDA device.
-10. Both RNN and Transformer API preflights pass against the same verified dataset SHA.
+10. The RNN and Transformer configs form one valid equal-observables training pair and both server-side architecture preflights pass against the same verified dataset identity.
+11. Dataset export, registry verification, readiness, and training use the same frozen code revision, and the Dataset V8 `sourceCommitSha` equals that workflow `GITHUB_SHA`.
 
-The API endpoint `POST /deadlock-live/recommendation-training/v8/preflight/:datasetId` re-evaluates the current controlled-souls, observability, and Dataset V8 reports over the dataset development window in addition to checking the immutable registry and roadmap state. A stale historical PASS in the roadmap therefore cannot bypass a current failing data gate. The endpoint is disabled unless `RECOMMENDATION_TRAINING_TOKEN` is configured.
+The API endpoint `POST /deadlock-live/recommendation-training/v8/preflight/:datasetId` re-evaluates the current controlled-souls, observability, and Dataset V8 reports over the dataset development window in addition to checking the immutable registry and roadmap state. A stale historical PASS in the roadmap therefore cannot bypass a current failing data gate.
+
+The API endpoint `POST /deadlock-live/recommendation-training/v8/final-readiness/:datasetId` is the final launch boundary. It accepts both frozen architecture configs together plus protected-runner evidence, validates the equal-observables pair, executes both current preflights, checks exact dataset/manifest/source-commit identity, checks the shared final-readiness contract, and returns a deterministic `readinessSubjectSha256`. Both endpoints are disabled unless `RECOMMENDATION_TRAINING_TOKEN` is configured.
+
+## Frozen training revision
+
+Before prospective Dataset V8 export, create a dedicated immutable operational ref from an exact green integration commit. The supported frozen-ref convention is:
+
+`frozen/recommendation-v8-behavioral-*`
+
+Recommendation CI and Recommendation Security run on pushes matching that pattern. Do not move a frozen ref after data collection begins. If code must change, create a new frozen ref and a new Dataset V8 artifact rather than rewriting the existing lineage.
+
+Run `Recommendation Dataset Export`, `Recommendation Dataset Register Verify`, `Recommendation Pretraining Readiness`, and `Recommendation Behavioral Training` from the same frozen revision. The workflows fail closed if the immutable dataset `sourceCommitSha` differs from `GITHUB_SHA`.
 
 ## The only accepted ready-to-train signal
 
@@ -29,11 +42,13 @@ The readiness workflow fails closed unless it can:
 2. recreate a Python 3.12 environment exclusively from `RECOMMENDATION_TRAINING_WHEELHOUSE`;
 3. verify exact pinned training dependency versions and the configured CUDA device;
 4. verify the immutable dataset and manifest SHA values plus every artifact file and development split isolation invariant;
-5. verify the dataset action contract and untouched FUTURE_TEST state;
-6. pass the current roadmap/registry/data API preflight for the RNN config;
-7. pass the same API preflight for the Transformer config.
+5. verify the dataset action contract, exact frozen `sourceCommitSha`, direct-shop binding, and untouched FUTURE_TEST state;
+6. submit the RNN and Transformer configs together to the protected final-readiness endpoint;
+7. require both server-side model preflights, the pair validator, and the shared final-readiness contract to pass for the exact same dataset/current-gate scope.
 
-Only a successful final step with status `READY_TO_START_BEHAVIORAL_TRAINING` means that pre-training preparation is complete. Its `trainingPerformed` field is always `false`. The next action after that exact status is to run `Recommendation Behavioral Training` with the same dataset id, dataset SHA, manifest SHA, dataset directory, and action contract.
+Only a successful final step with status `READY_TO_START_BEHAVIORAL_TRAINING` means that pre-training preparation is complete. Its `trainingPerformed` field is always `false`, its `futureTestEvaluated` field is always `false`, and its `readinessSubjectSha256` must be a valid immutable subject hash. The next action after that exact status is to run `Recommendation Behavioral Training` with the same frozen ref, dataset id, dataset SHA, manifest SHA, dataset directory, and action contract.
+
+The training workflow does not trust a stale readiness attestation. Immediately before the first optimizer step it repeats runtime, immutable-byte, source-commit, direct-shop, FUTURE_TEST, and final server-owned readiness checks and captures the new `trainingReadinessSubjectSha256` in the run summary.
 
 `training/recommendation_v8/pretraining_environment_check.py` is shared by the no-training readiness workflow and the real training workflow so the runner/device checks cannot silently drift between readiness and training.
 
@@ -49,7 +64,7 @@ The empirical Dataset V8 gate also checks that every candidate has explicit feas
 
 The model-development artifact contains files only for `TRAIN`, `VALIDATION`, and `SHADOW_HOLDOUT`. The FUTURE_TEST split is represented only by its sealed chronological descriptor with hidden counts and is not materialized into a readable model-development file. The Python verifier rejects any `future_test.jsonl.gz` file in this artifact. Manifest validation also requires exact split order and exact equality between each development split's descriptor decision count and its artifact row count.
 
-After export, upload the directory to an approved immutable object store, register the manifest through the protected dataset-registry endpoint, and independently verify the exact manifest SHA and all file SHA/size/row-count values. Training accepts only a registry-verified dataset id.
+After export, upload the exact directory to an approved immutable object store and pre-stage the exact same directory under `RECOMMENDATION_DATASET_STAGING_ROOT` on the protected artifact-registry runner. Then run `Recommendation Dataset Register Verify`. The workflow independently recalculates the dataset content identity, canonical manifest SHA256, every artifact SHA256, size, and row count before calling the protected registry endpoints. Continue only when it emits `VERIFIED_READY_FOR_PRETRAINING_READINESS` for the exact dataset id/SHA/manifest SHA.
 
 ## GEP canonicalization evidence
 
@@ -62,8 +77,8 @@ The manual `Recommendation Behavioral Training` workflow runs only on the protec
 The workflow:
 
 1. recreates the pinned offline Python environment and rechecks Python/Torch/CUDA readiness;
-2. verifies local dataset bytes against the registry SHA values and split-isolation invariants;
-3. asks the API for current roadmap/registry/data preflight for both architectures;
+2. verifies local dataset bytes, split-isolation invariants, exact source commit, direct-shop validation binding, and FUTURE_TEST integrity;
+3. submits both architecture configs to the final server-owned readiness endpoint and requires both underlying current model preflights to pass;
 4. trains the RNN baseline on `TRAIN`, with early stopping on `VALIDATION`;
 5. trains the Transformer candidate on exactly the same observables and split contract;
 6. evaluates both on `SHADOW_HOLDOUT` only;
@@ -76,11 +91,13 @@ The workflow:
 
 Both architectures optimize grouped listwise cross entropy over the complete deterministic feasible choice set. Probabilities are raw softmax probabilities over that set. Probability floors are forbidden.
 
-The RNN and Transformer use the same state, history, action tokenization, hash dimension, history limit, dataset SHA, feature contract, candidate-generator version, seed, chronological split contract, and release-gate thresholds. Architecture-specific parameters are the sequence encoder only. The pretraining environment checker and security audit reject equal-observables configuration drift before training, and the ablation report refuses comparison when the runtime equal-observables identity differs.
+The RNN and Transformer use the same state, history, action tokenization, hash dimension, history limit, dataset SHA, feature contract, candidate-generator version, seed, chronological split contract, training device, and release-gate thresholds. Architecture-specific parameters are the sequence encoder only. The pretraining environment checker, shared pair validator, and security audit reject equal-observables configuration drift before training, and the ablation report refuses comparison when the runtime equal-observables identity differs.
 
 ## Artifacts
 
 A successful run leaves a staging directory on the secure runner containing RNN metrics/checkpoint, Transformer metrics/checkpoint, the ablation report, and a model bundle. The bundle is not active merely because training succeeded.
+
+The run summary binds the model output to the exact `trainingReadinessSubjectSha256`, dataset SHA256, manifest SHA256, and source commit SHA used at the immediate pre-optimizer launch boundary.
 
 The next control-plane sequence is:
 
