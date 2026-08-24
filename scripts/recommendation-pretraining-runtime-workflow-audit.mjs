@@ -50,6 +50,23 @@ if (!/bundleManifestSha256["']?\s*:\s*registry_sha/.test(training)) {
 if (!/trainingWheelhouseSha256["']?\s*:\s*sys\.argv\[6\]\.lower\(\)/.test(training)) {
   errors.push('Behavioral training summary must retain the exact wheelhouse identity');
 }
+if (!/build_model_bundle\.py[\s\S]*--rnn-metrics\s+"\$RUN_ROOT\/rnn\/metrics\.json"/.test(training)) {
+  errors.push('Behavioral bundle build must include exact RNN metrics lineage');
+}
+if (!/compare_behavioral\.py[\s\S]*--rnn-metrics[\s\S]*--transformer-metrics/.test(training)) {
+  errors.push('Behavioral architecture comparison must consume both exact metric artifacts');
+}
+
+const bundleBuilder = fs.readFileSync('training/recommendation_v8/build_model_bundle.py', 'utf8');
+for (const required of [
+  'recommendation-behavioral-ablation-v2',
+  'ABLATION_RNN_METRICS_SHA_MISMATCH',
+  'ABLATION_TRANSFORMER_METRICS_SHA_MISMATCH',
+  'ablation/rnn-metrics.json',
+  'ablation/rnn-training-config.json',
+]) {
+  if (!bundleBuilder.includes(required)) errors.push(`Behavioral bundle builder is missing immutable ablation lineage check: ${required}`);
+}
 
 if (errors.length > 0) {
   console.error('recommendation pretraining runtime workflow audit: FAIL');
