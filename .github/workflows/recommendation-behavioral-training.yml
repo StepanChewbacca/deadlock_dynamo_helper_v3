@@ -116,12 +116,28 @@ jobs:
             --expected-sha256 "$EXPECTED_WHEELHOUSE_SHA256" \
             | tee "$RUN_ROOT/wheelhouse-identity.json"
 
-      - name: Create isolated training environment from approved wheelhouse
+      - name: Snapshot approved wheelhouse into this immutable run
+        shell: bash
+        run: |
+          set -euo pipefail
+          WHEELHOUSE_SNAPSHOT="$RUN_ROOT/wheelhouse-snapshot"
+          python training/recommendation_v8/wheelhouse_snapshot.py \
+            --source "$TRAINING_WHEELHOUSE" \
+            --destination "$WHEELHOUSE_SNAPSHOT" \
+            --expected-sha256 "$EXPECTED_WHEELHOUSE_SHA256" \
+            | tee "$RUN_ROOT/wheelhouse-snapshot.json"
+          echo "TRAINING_WHEELHOUSE_SNAPSHOT=$WHEELHOUSE_SNAPSHOT" >> "$GITHUB_ENV"
+
+      - name: Create isolated training environment from immutable wheelhouse snapshot
         shell: bash
         run: |
           set -euo pipefail
           python -m venv "$RUN_ROOT/venv"
-          "$RUN_ROOT/venv/bin/pip" install --no-index --find-links "$TRAINING_WHEELHOUSE" -r training/recommendation_v8/requirements-training.txt
+          "$RUN_ROOT/venv/bin/pip" install --no-index --find-links "$TRAINING_WHEELHOUSE_SNAPSHOT" -r training/recommendation_v8/requirements-training.txt
+          python training/recommendation_v8/wheelhouse_identity.py \
+            --wheelhouse "$TRAINING_WHEELHOUSE_SNAPSHOT" \
+            --expected-sha256 "$EXPECTED_WHEELHOUSE_SHA256" \
+            > "$RUN_ROOT/wheelhouse-post-install-identity.json"
 
       - name: Recheck training runtime and CUDA device
         shell: bash
