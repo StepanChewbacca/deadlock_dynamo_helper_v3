@@ -7,14 +7,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
 
-from common import load_json, sha256_file, verify_dataset_manifest
+from common import canonical_json, load_json, sha256_bytes, sha256_file, verify_dataset_manifest
 
 MODEL_BUNDLE_CONTRACT = "model-bundle-v1"
+ABLATION_CONTRACT = "recommendation-behavioral-ablation-v2"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build immutable Behavioral model bundle manifest")
     parser.add_argument("--training-output", required=True)
+    parser.add_argument("--rnn-metrics", required=True)
     parser.add_argument("--dataset-dir", required=True)
     parser.add_argument("--ablation-report", required=True)
     parser.add_argument("--bundle-dir", required=True)
@@ -26,6 +28,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     training_output = Path(args.training_output).resolve()
+    rnn_metrics_path = Path(args.rnn_metrics).resolve()
+    rnn_config_path = rnn_metrics_path.parent / "training-config.json"
     dataset_dir = Path(args.dataset_dir).resolve()
     ablation_path = Path(args.ablation_report).resolve()
     bundle_dir = Path(args.bundle_dir).resolve()
@@ -33,9 +37,13 @@ def main() -> int:
         raise ValueError("Model bundle directory must be empty")
     bundle_dir.mkdir(parents=True, exist_ok=True)
 
-    metrics = load_json(training_output / "metrics.json")
+    metrics_path = training_output / "metrics.json"
+    config_path = training_output / "training-config.json"
+    metrics = load_json(metrics_path)
+    rnn_metrics = load_json(rnn_metrics_path)
     model_metadata = load_json(training_output / "model-metadata.json")
-    config = load_json(training_output / "training-config.json")
+    config = load_json(config_path)
+    rnn_config = load_json(rnn_config_path)
     ablation = load_json(ablation_path)
     dataset = verify_dataset_manifest(dataset_dir)
 
@@ -43,7 +51,7 @@ def main() -> int:
         raise ValueError("sourceCommitSha must be a 40-character Git SHA")
     if str(dataset.get("sourceCommitSha", "")).lower() != args.source_commit_sha.lower():
         raise ValueError("MODEL_BUNDLE_SOURCE_COMMIT_DATASET_MISMATCH")
-    if metrics.get("futureTestEvaluated") is not False:
+    if metrics.get("futureTestEvaluated") is not False or rnn_metrics.get("futureTestEvaluated") is not False:
         raise ValueError("FUTURE_TEST_MUST_REMAIN_UNTOUCHED_FOR_BEHAVIORAL_BUNDLE")
     if dataset.get("futureTestTouched") is not False:
         raise ValueError("DATASET_FUTURE_TEST_ALREADY_TOUCHED")
@@ -55,16 +63,34 @@ def main() -> int:
         raise ValueError("MODEL_FEATURE_CONTRACT_MISMATCH")
     if metrics.get("candidateGeneratorVersion") != dataset.get("candidateGeneratorVersion"):
         raise ValueError("MODEL_CANDIDATE_GENERATOR_MISMATCH")
+    if ablation.get("version") != ABLATION_CONTRACT:
+        raise ValueError("ABLATION_CONTRACT_MISMATCH")
     if ablation.get("datasetSha256") != dataset.get("datasetSha256"):
         raise ValueError("ABLATION_DATASET_SHA_MISMATCH")
     if ablation.get("featureContractVersion") != dataset.get("featureContractVersion"):
         raise ValueError("ABLATION_FEATURE_CONTRACT_MISMATCH")
     if ablation.get("candidateGeneratorVersion") != dataset.get("candidateGeneratorVersion"):
         raise ValueError("ABLATION_CANDIDATE_GENERATOR_MISMATCH")
+    if ablation.get("rnnMetricsSha256") != sha256_file(rnn_metrics_path):
+        raise ValueError("ABLATION_RNN_METRICS_SHA_MISMATCH")
+    if ablation.get("transformerMetricsSha256") != sha256_file(metrics_path):
+        raise ValueError("ABLATION_TRANSFORMER_METRICS_SHA_MISMATCH")
+    rnn_config_sha = sha256_bytes(canonical_json(rnn_config).encode("utf-8"))
+    transformer_config_sha = sha256_bytes(canonical_json(config).encode("utf-8"))
+    if rnn_metrics.get("trainingConfigSha256") != rnn_config_sha:
+        raise ValueError("RNN_TRAINING_CONFIG_SHA_MISMATCH")
+    if metrics.get("trainingConfigSha256") != transformer_config_sha:
+        raise ValueError("TRANSFORMER_TRAINING_CONFIG_SHA_MISMATCH")
+    if ablation.get("rnnTrainingConfigSha256") != rnn_config_sha:
+        raise ValueError("ABLATION_RNN_CONFIG_SHA_MISMATCH")
+    if ablation.get("transformerTrainingConfigSha256") != transformer_config_sha:
+        raise ValueError("ABLATION_TRANSFORMER_CONFIG_SHA_MISMATCH")
     if ablation.get("passed") is not True:
         raise ValueError("RNN_TRANSFORMER_ABLATION_NOT_PASS")
     if metrics.get("family") != "SEQUENCE_TRANSFORMER":
         raise ValueError("BUILDLM_BUNDLE_REQUIRES_TRANSFORMER_WINNER")
+    if rnn_metrics.get("family") != "SEQUENCE_RNN":
+        raise ValueError("ABLATION_RNN_FAMILY_REQUIRED")
     behavioral_gate = metrics.get("behavioralGate", {})
     if not isinstance(behavioral_gate, dict) or behavioral_gate.get("passed") is not True:
         raise ValueError("BEHAVIORAL_OFFLINE_GATE_NOT_PASS")
@@ -78,6 +104,8 @@ def main() -> int:
         raise ValueError("MODEL_METADATA_CANDIDATE_GENERATOR_MISMATCH")
     if config.get("family") != metrics.get("family"):
         raise ValueError("TRAINING_CONFIG_FAMILY_MISMATCH")
+    if rnn_config.get("family") != rnn_metrics.get("family"):
+        raise ValueError("RNN_TRAINING_CONFIG_FAMILY_MISMATCH")
 
     thresholds = behavioral_gate.get("thresholds")
     if not isinstance(thresholds, dict):
@@ -89,9 +117,11 @@ def main() -> int:
 
     source_files = [
         (training_output / "model.pt", "model.pt"),
-        (training_output / "metrics.json", "metrics.json"),
-        (training_output / "training-config.json", "training-config.json"),
+        (metrics_path, "metrics.json"),
+        (config_path, "training-config.json"),
         (training_output / "model-metadata.json", "model-metadata.json"),
+        (rnn_metrics_path, "ablation/rnn-metrics.json"),
+        (rnn_config_path, "ablation/rnn-training-config.json"),
         (ablation_path, "ablation-report.json"),
     ]
     files = []
@@ -99,6 +129,7 @@ def main() -> int:
         if not source.is_file():
             raise ValueError(f"Required model artifact is missing: {source}")
         target = bundle_dir / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
         files.append({
             "path": relative,
@@ -150,7 +181,7 @@ def main() -> int:
         "files": sorted(files, key=lambda item: item["path"]),
         "gates": sorted(gates, key=lambda item: item["name"]),
         "futureTestEvaluated": False,
-        "notes": "Behavioral BuildLM candidate produced from TRAIN/VALIDATION/SHADOW_HOLDOUT only. FUTURE_TEST was not decoded or evaluated by the trainer.",
+        "notes": "Behavioral BuildLM candidate produced from TRAIN/VALIDATION/SHADOW_HOLDOUT only. Exact RNN ablation metrics/config lineage is bundled. FUTURE_TEST was not decoded or evaluated by the trainer.",
     }
     with (bundle_dir / "manifest.json").open("x", encoding="utf-8") as handle:
         json.dump(manifest, handle, indent=2, sort_keys=True)
