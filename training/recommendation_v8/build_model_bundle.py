@@ -5,7 +5,7 @@ import json
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable
+from typing import Any, Dict
 
 from common import load_json, sha256_file, verify_dataset_manifest
 
@@ -39,6 +39,10 @@ def main() -> int:
     ablation = load_json(ablation_path)
     dataset = verify_dataset_manifest(dataset_dir)
 
+    if not is_git_sha(args.source_commit_sha):
+        raise ValueError("sourceCommitSha must be a 40-character Git SHA")
+    if str(dataset.get("sourceCommitSha", "")).lower() != args.source_commit_sha.lower():
+        raise ValueError("MODEL_BUNDLE_SOURCE_COMMIT_DATASET_MISMATCH")
     if metrics.get("futureTestEvaluated") is not False:
         raise ValueError("FUTURE_TEST_MUST_REMAIN_UNTOUCHED_FOR_BEHAVIORAL_BUNDLE")
     if dataset.get("futureTestTouched") is not False:
@@ -74,8 +78,6 @@ def main() -> int:
         raise ValueError("MODEL_METADATA_CANDIDATE_GENERATOR_MISMATCH")
     if config.get("family") != metrics.get("family"):
         raise ValueError("TRAINING_CONFIG_FAMILY_MISMATCH")
-    if not is_git_sha(args.source_commit_sha):
-        raise ValueError("sourceCommitSha must be a 40-character Git SHA")
 
     thresholds = behavioral_gate.get("thresholds")
     if not isinstance(thresholds, dict):
@@ -136,7 +138,7 @@ def main() -> int:
         "modelVersion": metrics["modelVersion"],
         "modelKind": "BEHAVIORAL",
         "createdAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "sourceCommitSha": args.source_commit_sha,
+        "sourceCommitSha": args.source_commit_sha.lower(),
         "datasetId": dataset["datasetId"],
         "datasetSha256": dataset["datasetSha256"],
         "featureContractVersion": dataset["featureContractVersion"],
