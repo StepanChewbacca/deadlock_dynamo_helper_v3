@@ -30,6 +30,10 @@ function config(family) {
     attentionHeads: family === 'SEQUENCE_TRANSFORMER' ? 8 : undefined,
     dropout: 0.1,
     earlyStoppingPatience: 4,
+    earlyStoppingMinDelta: 0.000001,
+    lrPlateauPatience: 1,
+    lrPlateauFactor: 0.5,
+    shuffleBufferDecisions: 8192,
     supportProbabilityThreshold: 0.001,
     majorCohortMinDecisions: 100,
     majorCohortMinFraction: 0.01,
@@ -53,6 +57,22 @@ const mismatchedHistory = {
 const historyValidation = validateRecommendationBehavioralTrainingPairV1(rnn, mismatchedHistory);
 assert.equal(historyValidation.valid, false);
 assert(historyValidation.errors.includes('EQUAL_OBSERVABLES_CONFIG_MISMATCH:maximumHistoryEvents'));
+
+const mismatchedOptimizer = {
+  ...transformer,
+  learningRate: 0.0004,
+};
+const optimizerValidation = validateRecommendationBehavioralTrainingPairV1(rnn, mismatchedOptimizer);
+assert.equal(optimizerValidation.valid, false);
+assert(optimizerValidation.errors.includes('EQUAL_OBSERVABLES_CONFIG_MISMATCH:learningRate'));
+
+const mismatchedBudget = {
+  ...transformer,
+  maxEpochs: 31,
+};
+const budgetValidation = validateRecommendationBehavioralTrainingPairV1(rnn, mismatchedBudget);
+assert.equal(budgetValidation.valid, false);
+assert(budgetValidation.errors.includes('EQUAL_OBSERVABLES_CONFIG_MISMATCH:maxEpochs'));
 
 const swappedFamily = validateRecommendationBehavioralTrainingPairV1(transformer, rnn);
 assert(swappedFamily.errors.includes('RNN_CONFIG_FAMILY_REQUIRED'));
