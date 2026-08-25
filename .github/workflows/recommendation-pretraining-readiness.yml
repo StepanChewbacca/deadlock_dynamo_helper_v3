@@ -84,7 +84,7 @@ jobs:
           case "$DATASET_REAL" in "$STAGING_ROOT"/*) ;; *) echo "Dataset directory must be inside staging root" >&2; exit 1;; esac
           READINESS_ROOT="$(mktemp -d "$OUTPUT_ROOT/pretraining-readiness-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-XXXXXX")"
           echo "READINESS_ROOT=$READINESS_ROOT" >> "$GITHUB_ENV"
-          echo "DATASET_DIR=$DATASET_REAL" >> "$GITHUB_ENV"
+          echo "DATASET_SOURCE=$DATASET_REAL" >> "$GITHUB_ENV"
           echo "TRAINING_WHEELHOUSE=$WHEELHOUSE" >> "$GITHUB_ENV"
           echo "TRAINING_FINAL_READINESS_URL=$TRAINING_FINAL_READINESS_URL" >> "$GITHUB_ENV"
 
@@ -114,6 +114,20 @@ jobs:
             | tee "$READINESS_ROOT/wheelhouse-snapshot.json"
           echo "TRAINING_WHEELHOUSE_SNAPSHOT=$WHEELHOUSE_SNAPSHOT" >> "$GITHUB_ENV"
 
+      - name: Snapshot verified dataset into this readiness run
+        shell: bash
+        run: |
+          set -euo pipefail
+          DATASET_SNAPSHOT="$READINESS_ROOT/dataset-snapshot"
+          python training/recommendation_v8/dataset_snapshot.py \
+            --source "$DATASET_SOURCE" \
+            --destination "$DATASET_SNAPSHOT" \
+            --expected-dataset-sha256 "$EXPECTED_DATASET_SHA256" \
+            --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256" \
+            | tee "$READINESS_ROOT/dataset-snapshot.json"
+          echo "DATASET_DIR=$DATASET_SNAPSHOT" >> "$GITHUB_ENV"
+          echo "DATASET_SOURCE=" >> "$GITHUB_ENV"
+
       - name: Build isolated environment from immutable offline wheelhouse snapshot
         shell: bash
         run: |
@@ -135,7 +149,7 @@ jobs:
           "$READINESS_ROOT/venv/bin/python" training/recommendation_v8/pretraining_environment_check.py \
             | tee "$READINESS_ROOT/environment-readiness.json"
 
-      - name: Verify immutable dataset bytes and split isolation
+      - name: Verify immutable dataset snapshot bytes and split isolation
         shell: bash
         run: |
           set -euo pipefail
