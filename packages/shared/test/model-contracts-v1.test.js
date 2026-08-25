@@ -18,6 +18,9 @@ const manifest = {
   sourceCommitSha: 'a'.repeat(40),
   datasetId: 'dataset-v8-001',
   datasetSha256: 'b'.repeat(64),
+  datasetManifestSha256: '1'.repeat(64),
+  trainingWheelhouseSha256: '2'.repeat(64),
+  trainingReadinessSubjectSha256: '3'.repeat(64),
   featureContractVersion: 'features-v8',
   actionContractVersion: 'actions-v1',
   candidateGeneratorVersion: 'candidate-v1',
@@ -32,17 +35,26 @@ const manifest = {
   futureTestEvaluated: false,
 };
 
+const compatibleRuntime = {
+  featureContractVersion: 'features-v8',
+  actionContractVersion: 'actions-v1',
+  candidateGeneratorVersion: 'candidate-v1',
+  rulesetVersion: 'ruleset-1',
+  catalogSha256: 'c'.repeat(64),
+  requiredGateNames: ['CANDIDATE_COVERAGE', 'SUPPORT'],
+};
+
 assert.deepEqual(
-  validateModelBundleRuntimeCompatibilityV1(manifest, {
-    featureContractVersion: 'features-v8',
-    actionContractVersion: 'actions-v1',
-    candidateGeneratorVersion: 'candidate-v1',
-    rulesetVersion: 'ruleset-1',
-    catalogSha256: 'c'.repeat(64),
-    requiredGateNames: ['CANDIDATE_COVERAGE', 'SUPPORT'],
-  }),
+  validateModelBundleRuntimeCompatibilityV1(manifest, compatibleRuntime),
   { valid: true, errors: [] },
 );
+
+const invalidLineage = validateModelBundleRuntimeCompatibilityV1(
+  { ...manifest, trainingWheelhouseSha256: 'not-a-sha' },
+  compatibleRuntime,
+);
+assert.equal(invalidLineage.valid, false);
+assert(invalidLineage.errors.includes('TRAINING_WHEELHOUSE_SHA256_INVALID'));
 
 const incompatible = validateModelBundleRuntimeCompatibilityV1(manifest, {
   featureContractVersion: 'features-v7',
