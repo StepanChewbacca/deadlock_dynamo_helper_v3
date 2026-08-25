@@ -140,6 +140,21 @@ for (const required of [
   }
 }
 
+const environmentCheck = fs.readFileSync('training/recommendation_v8/pretraining_environment_check.py', 'utf8');
+for (const required of [
+  'TRAINING_WHEELHOUSE_SNAPSHOT_REQUIRED',
+  'TRAINING_WHEELHOUSE_SOURCE_ARCHIVE_FORBIDDEN',
+  'APPROVED_WHEELHOUSE_VERSION_AMBIGUOUS',
+  'INSTALLED_DEPENDENCY_NOT_IN_APPROVED_WHEELHOUSE',
+  'INSTALLED_DEPENDENCY_WHEELHOUSE_VERSION_MISMATCH',
+  'installedEnvironmentSha256',
+  'wheelhousePackageVersions',
+]) {
+  if (!environmentCheck.includes(required)) {
+    errors.push(`Pretraining environment check is missing dependency provenance guard: ${required}`);
+  }
+}
+
 const datasetSnapshot = fs.readFileSync('training/recommendation_v8/dataset_snapshot.py', 'utf8');
 for (const required of [
   'verify_dataset_manifest',
