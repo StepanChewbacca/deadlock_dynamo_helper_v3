@@ -63,14 +63,13 @@ export function validateModelBundleManifestV1(manifest: ModelBundleManifestV1): 
   if (!isCommitSha(manifest.sourceCommitSha)) errors.push('SOURCE_COMMIT_SHA_INVALID');
   if (!manifest.datasetId) errors.push('DATASET_ID_REQUIRED');
   if (!isSha256(manifest.datasetSha256)) errors.push('DATASET_SHA256_INVALID');
-  if (manifest.datasetManifestSha256 !== undefined && !isSha256(manifest.datasetManifestSha256)) {
-    errors.push('DATASET_MANIFEST_SHA256_INVALID');
-  }
-  if (manifest.trainingWheelhouseSha256 !== undefined && !isSha256(manifest.trainingWheelhouseSha256)) {
-    errors.push('TRAINING_WHEELHOUSE_SHA256_INVALID');
-  }
-  if (manifest.trainingReadinessSubjectSha256 !== undefined && !isSha256(manifest.trainingReadinessSubjectSha256)) {
-    errors.push('TRAINING_READINESS_SUBJECT_SHA256_INVALID');
+  validateOptionalSha(manifest.datasetManifestSha256, 'DATASET_MANIFEST_SHA256_INVALID', errors);
+  validateOptionalSha(manifest.trainingWheelhouseSha256, 'TRAINING_WHEELHOUSE_SHA256_INVALID', errors);
+  validateOptionalSha(manifest.trainingReadinessSubjectSha256, 'TRAINING_READINESS_SUBJECT_SHA256_INVALID', errors);
+  if (manifest.modelKind === 'BEHAVIORAL') {
+    if (!isSha256(manifest.datasetManifestSha256)) errors.push('BEHAVIORAL_DATASET_MANIFEST_SHA256_REQUIRED');
+    if (!isSha256(manifest.trainingWheelhouseSha256)) errors.push('BEHAVIORAL_TRAINING_WHEELHOUSE_SHA256_REQUIRED');
+    if (!isSha256(manifest.trainingReadinessSubjectSha256)) errors.push('BEHAVIORAL_TRAINING_READINESS_SUBJECT_SHA256_REQUIRED');
   }
   if (!isSha256(manifest.trainingConfigSha256)) errors.push('TRAINING_CONFIG_SHA256_INVALID');
   if (!manifest.featureContractVersion) errors.push('FEATURE_CONTRACT_VERSION_REQUIRED');
@@ -130,6 +129,10 @@ export function assertModelBundleRuntimeCompatibleV1(
   if (!validation.valid) throw new Error(`Model bundle is not loadable: ${validation.errors.join(',')}`);
 }
 
+function validateOptionalSha(value: string | undefined, error: string, errors: string[]): void {
+  if (value !== undefined && !isSha256(value)) errors.push(error);
+}
+
 function isSafeRelativeArtifactPath(path: string): boolean {
   if (!path || path.startsWith('/') || path.startsWith('\\')) return false;
   const normalized = path.replace(/\\/g, '/');
@@ -138,8 +141,8 @@ function isSafeRelativeArtifactPath(path: string): boolean {
   return !parts.some((part) => part === '..' || part === '');
 }
 
-function isSha256(value: string): boolean {
-  return /^[a-f0-9]{64}$/i.test(value);
+function isSha256(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value);
 }
 
 function isCommitSha(value: string): boolean {
