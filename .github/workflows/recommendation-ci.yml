@@ -59,7 +59,7 @@ jobs:
         run: node scripts/recommendation-model-manifest-identity-test.mjs
 
       - name: Compile training and serving Python
-        run: python -m py_compile training/recommendation_v8/common.py training/recommendation_v8/dataset_trust_contract.py training/recommendation_v8/dataset_trust_contract_test.py training/recommendation_v8/pretraining_audit.py training/recommendation_v8/pretraining_audit_test.py training/recommendation_v8/pretraining_environment_check.py training/recommendation_v8/wheelhouse_identity.py training/recommendation_v8/wheelhouse_identity_test.py training/recommendation_v8/wheelhouse_snapshot.py training/recommendation_v8/wheelhouse_snapshot_test.py training/recommendation_v8/model.py training/recommendation_v8/train_behavioral.py training/recommendation_v8/compare_behavioral.py training/recommendation_v8/build_model_bundle.py training/recommendation_v8/verify_dataset.py training/recommendation_v8/serve_behavioral.py training/recommendation_v8/smoke_test.py
+        run: python -m py_compile training/recommendation_v8/common.py training/recommendation_v8/dataset_trust_contract.py training/recommendation_v8/dataset_trust_contract_test.py training/recommendation_v8/pretraining_audit.py training/recommendation_v8/pretraining_audit_test.py training/recommendation_v8/pretraining_environment_check.py training/recommendation_v8/wheelhouse_identity.py training/recommendation_v8/wheelhouse_identity_test.py training/recommendation_v8/wheelhouse_snapshot.py training/recommendation_v8/wheelhouse_snapshot_test.py training/recommendation_v8/dataset_snapshot.py training/recommendation_v8/dataset_snapshot_test.py training/recommendation_v8/model.py training/recommendation_v8/train_behavioral.py training/recommendation_v8/compare_behavioral.py training/recommendation_v8/build_model_bundle.py training/recommendation_v8/verify_dataset.py training/recommendation_v8/serve_behavioral.py training/recommendation_v8/smoke_test.py
 
       - name: Test static pretraining environment contract
         run: python training/recommendation_v8/pretraining_environment_check.py --static-only
@@ -71,6 +71,10 @@ jobs:
       - name: Test immutable wheelhouse snapshot contract
         working-directory: training/recommendation_v8
         run: python wheelhouse_snapshot_test.py
+
+      - name: Test immutable dataset snapshot contract
+        working-directory: training/recommendation_v8
+        run: python dataset_snapshot_test.py
 
       - name: Test immutable dataset trust contract
         working-directory: training/recommendation_v8
