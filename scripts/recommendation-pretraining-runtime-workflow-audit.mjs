@@ -116,10 +116,28 @@ for (const required of [
   'recommendation-behavioral-ablation-v2',
   'ABLATION_RNN_METRICS_SHA_MISMATCH',
   'ABLATION_TRANSFORMER_METRICS_SHA_MISMATCH',
+  'MODEL_DATASET_MANIFEST_SHA_MISMATCH',
+  'TRAINING_ENVIRONMENT_FINGERPRINT_REQUIRED',
+  'EXPECTED_WHEELHOUSE_SHA256',
+  'TRAINING_READINESS_SUBJECT_SHA256',
+  'datasetManifestSha256',
+  'trainingWheelhouseSha256',
+  'trainingReadinessSubjectSha256',
   'ablation/rnn-metrics.json',
   'ablation/rnn-training-config.json',
 ]) {
-  if (!bundleBuilder.includes(required)) errors.push(`Behavioral bundle builder is missing immutable ablation lineage check: ${required}`);
+  if (!bundleBuilder.includes(required)) errors.push(`Behavioral bundle builder is missing immutable lineage check: ${required}`);
+}
+
+const modelBundleContract = fs.readFileSync('packages/shared/src/model-bundle-contract-v1.ts', 'utf8');
+for (const required of [
+  'BEHAVIORAL_DATASET_MANIFEST_SHA256_REQUIRED',
+  'BEHAVIORAL_TRAINING_WHEELHOUSE_SHA256_REQUIRED',
+  'BEHAVIORAL_TRAINING_READINESS_SUBJECT_SHA256_REQUIRED',
+]) {
+  if (!modelBundleContract.includes(required)) {
+    errors.push(`Behavioral model bundle contract is missing required pretraining lineage guard: ${required}`);
+  }
 }
 
 const datasetSnapshot = fs.readFileSync('training/recommendation_v8/dataset_snapshot.py', 'utf8');
