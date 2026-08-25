@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,8 +23,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bundle-dir", required=True)
     parser.add_argument("--action-contract-version", required=True)
     parser.add_argument("--source-commit-sha", required=True)
-    parser.add_argument("--training-wheelhouse-sha256", required=True)
-    parser.add_argument("--training-readiness-subject-sha256", required=True)
+    parser.add_argument("--training-wheelhouse-sha256")
+    parser.add_argument("--training-readiness-subject-sha256")
     return parser.parse_args()
 
 
@@ -52,11 +53,11 @@ def main() -> int:
     if not is_git_sha(args.source_commit_sha):
         raise ValueError("sourceCommitSha must be a 40-character Git SHA")
     training_wheelhouse_sha256 = require_sha256_argument(
-        args.training_wheelhouse_sha256,
+        args.training_wheelhouse_sha256 or os.environ.get("EXPECTED_WHEELHOUSE_SHA256", ""),
         "trainingWheelhouseSha256",
     )
     training_readiness_subject_sha256 = require_sha256_argument(
-        args.training_readiness_subject_sha256,
+        args.training_readiness_subject_sha256 or os.environ.get("TRAINING_READINESS_SUBJECT_SHA256", ""),
         "trainingReadinessSubjectSha256",
     )
     dataset_manifest_sha256 = require_sha256_argument(
@@ -169,7 +170,8 @@ def main() -> int:
             "BEHAVIORAL_CANDIDATE_COVERAGE",
             shadow["candidateCoverage"] >= min_candidate_coverage,
             shadow["candidateCoverage"],
-            f">={min_candidate_coverage}"),
+            f">={min_candidate_coverage}",
+        ),
         gate("BEHAVIORAL_ILLEGAL_CANDIDATE_RATE", shadow["illegalCandidateRate"] == 0, shadow["illegalCandidateRate"], "=0"),
         gate("NO_PROBABILITY_FLOOR", shadow["probabilityFloorApplied"] is False, shadow["probabilityFloorApplied"], False),
         gate("BEHAVIORAL_FLOOR_SENSITIVITY", shadow["floorSensitivity"] <= max_floor_sensitivity, shadow["floorSensitivity"], f"<={max_floor_sensitivity}"),
