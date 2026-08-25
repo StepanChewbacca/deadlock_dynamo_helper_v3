@@ -24,6 +24,16 @@ for (const path of workflows) {
     /--destination\s+"\$WHEELHOUSE_SNAPSHOT"/,
     /--expected-sha256\s+"\$EXPECTED_WHEELHOUSE_SHA256"/,
     /pip"?\s+install\s+--no-index\s+--find-links\s+"\$TRAINING_WHEELHOUSE_SNAPSHOT"/,
+    /dataset_snapshot\.py/,
+    /DATASET_SOURCE/,
+    /DATASET_SNAPSHOT/,
+    /--source\s+"\$DATASET_SOURCE"/,
+    /--destination\s+"\$DATASET_SNAPSHOT"/,
+    /--expected-dataset-sha256\s+"\$EXPECTED_DATASET_SHA256"/,
+    /--expected-manifest-sha256\s+"\$EXPECTED_MANIFEST_SHA256"/,
+    /echo\s+"DATASET_DIR=\$DATASET_SNAPSHOT"\s*>>\s*"\$GITHUB_ENV"/,
+    /echo\s+"DATASET_SOURCE="\s*>>\s*"\$GITHUB_ENV"/,
+    /verify_dataset\.py[\s\S]*--dataset-dir\s+"\$DATASET_DIR"/,
     /trainingWheelhouseSha256/,
     /offlineWheelhouseReady["']?\s*:\s*True/,
     /trainingDeviceReady["']?\s*:\s*True/,
@@ -45,22 +55,48 @@ for (const path of workflows) {
   if (/pip["']?\s+install[^\n]*--find-links\s+"\$TRAINING_WHEELHOUSE"/i.test(runBlocks)) {
     errors.push(`${path}: pip must never install directly from the mutable shared wheelhouse`);
   }
-  const snapshotStep = text.indexOf('wheelhouse_snapshot.py');
+
+  const wheelhouseSnapshotStep = text.indexOf('wheelhouse_snapshot.py');
   const pipStep = text.search(/pip"?\s+install/);
-  if (snapshotStep < 0 || pipStep < 0 || snapshotStep >= pipStep) {
+  if (wheelhouseSnapshotStep < 0 || pipStep < 0 || wheelhouseSnapshotStep >= pipStep) {
     errors.push(`${path}: immutable wheelhouse snapshot must be created before pip installation`);
   }
   const postInstallIdentity = text.indexOf('wheelhouse-post-install-identity.json');
   if (postInstallIdentity < pipStep) {
     errors.push(`${path}: immutable wheelhouse snapshot must be re-verified after pip installation`);
   }
+
+  const datasetSnapshotStep = text.indexOf('dataset_snapshot.py');
+  const datasetVerifyStep = text.indexOf('verify_dataset.py');
+  if (datasetSnapshotStep < 0 || datasetVerifyStep < 0 || datasetSnapshotStep >= datasetVerifyStep) {
+    errors.push(`${path}: immutable dataset snapshot must be created before dataset verification/training reads`);
+  }
+  const datasetRebind = text.indexOf('echo "DATASET_DIR=$DATASET_SNAPSHOT"', datasetSnapshotStep);
+  const datasetSourceClear = text.indexOf('echo "DATASET_SOURCE="', datasetSnapshotStep);
+  if (
+    datasetRebind < datasetSnapshotStep
+    || datasetSourceClear < datasetRebind
+    || datasetSourceClear >= datasetVerifyStep
+  ) {
+    errors.push(`${path}: workflow must rebind DATASET_DIR to the snapshot and clear the mutable staging source before verification`);
+  }
+  if (datasetSourceClear >= 0 && /\$DATASET_SOURCE\b/.test(text.slice(datasetSourceClear + 1))) {
+    errors.push(`${path}: mutable staging DATASET_SOURCE must not be read after the snapshot step`);
+  }
+  if (/--dataset-dir\s+"\$DATASET_SOURCE"/.test(runBlocks)) {
+    errors.push(`${path}: training/readiness commands must never consume the mutable staging dataset directly`);
+  }
 }
 
 const training = fs.readFileSync('.github/workflows/recommendation-behavioral-training.yml', 'utf8');
 const readinessStep = training.indexOf('Require final server-owned readiness before optimizer steps');
 const firstOptimizerStep = training.indexOf('Train RNN baseline');
+const datasetSnapshotStep = training.indexOf('dataset_snapshot.py');
 if (readinessStep < 0 || firstOptimizerStep < 0 || readinessStep >= firstOptimizerStep) {
   errors.push('Behavioral training must re-evaluate final readiness before the first optimizer step');
+}
+if (datasetSnapshotStep < 0 || datasetSnapshotStep >= firstOptimizerStep) {
+  errors.push('Behavioral training must create the immutable dataset snapshot before the first optimizer step');
 }
 if (!/bundleManifestSha256["']?\s*:\s*registry_sha/.test(training)) {
   errors.push('Behavioral training summary must emit the registry-compatible model manifest SHA');
@@ -84,6 +120,21 @@ for (const required of [
   'ablation/rnn-training-config.json',
 ]) {
   if (!bundleBuilder.includes(required)) errors.push(`Behavioral bundle builder is missing immutable ablation lineage check: ${required}`);
+}
+
+const datasetSnapshot = fs.readFileSync('training/recommendation_v8/dataset_snapshot.py', 'utf8');
+for (const required of [
+  'verify_dataset_manifest',
+  'assert_dataset_direct_shop_trust',
+  'verify_development_split_isolation',
+  'expected_dataset_sha256',
+  'expected_manifest_sha256',
+  'make_read_only(destination)',
+  '"futureTestPayloadDecoded": False',
+]) {
+  if (!datasetSnapshot.includes(required)) {
+    errors.push(`Dataset snapshot implementation is missing immutable verification guard: ${required}`);
+  }
 }
 
 if (errors.length > 0) {
