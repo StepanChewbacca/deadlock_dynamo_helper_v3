@@ -94,7 +94,7 @@ jobs:
           test ! -e "$RUN_ROOT" || { echo "Training run output already exists: $RUN_ROOT" >&2; exit 1; }
           mkdir "$RUN_ROOT"
           echo "RUN_ROOT=$RUN_ROOT" >> "$GITHUB_ENV"
-          echo "DATASET_DIR=$DATASET_REAL" >> "$GITHUB_ENV"
+          echo "DATASET_SOURCE=$DATASET_REAL" >> "$GITHUB_ENV"
           echo "TRAINING_WHEELHOUSE=$WHEELHOUSE" >> "$GITHUB_ENV"
           echo "TRAINING_FINAL_READINESS_URL=$TRAINING_FINAL_READINESS_URL" >> "$GITHUB_ENV"
           PREFIX="$MODEL_VERSION_PREFIX_INPUT"
@@ -128,6 +128,20 @@ jobs:
             | tee "$RUN_ROOT/wheelhouse-snapshot.json"
           echo "TRAINING_WHEELHOUSE_SNAPSHOT=$WHEELHOUSE_SNAPSHOT" >> "$GITHUB_ENV"
 
+      - name: Snapshot verified dataset into this immutable run
+        shell: bash
+        run: |
+          set -euo pipefail
+          DATASET_SNAPSHOT="$RUN_ROOT/dataset-snapshot"
+          python training/recommendation_v8/dataset_snapshot.py \
+            --source "$DATASET_SOURCE" \
+            --destination "$DATASET_SNAPSHOT" \
+            --expected-dataset-sha256 "$EXPECTED_DATASET_SHA256" \
+            --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256" \
+            | tee "$RUN_ROOT/dataset-snapshot.json"
+          echo "DATASET_DIR=$DATASET_SNAPSHOT" >> "$GITHUB_ENV"
+          echo "DATASET_SOURCE=" >> "$GITHUB_ENV"
+
       - name: Create isolated training environment from immutable wheelhouse snapshot
         shell: bash
         run: |
@@ -149,7 +163,7 @@ jobs:
           "$RUN_ROOT/venv/bin/python" training/recommendation_v8/pretraining_environment_check.py \
             | tee "$RUN_ROOT/environment-readiness.json"
 
-      - name: Verify immutable dataset bytes and frozen identity
+      - name: Verify immutable dataset snapshot bytes and frozen identity
         shell: bash
         run: |
           set -euo pipefail
