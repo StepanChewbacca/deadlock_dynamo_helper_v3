@@ -26,6 +26,9 @@ export interface ModelBundleManifestV1 {
   sourceCommitSha: string;
   datasetId: string;
   datasetSha256: string;
+  datasetManifestSha256?: string;
+  trainingWheelhouseSha256?: string;
+  trainingReadinessSubjectSha256?: string;
   featureContractVersion: string;
   actionContractVersion: string;
   candidateGeneratorVersion: string;
@@ -60,6 +63,15 @@ export function validateModelBundleManifestV1(manifest: ModelBundleManifestV1): 
   if (!isCommitSha(manifest.sourceCommitSha)) errors.push('SOURCE_COMMIT_SHA_INVALID');
   if (!manifest.datasetId) errors.push('DATASET_ID_REQUIRED');
   if (!isSha256(manifest.datasetSha256)) errors.push('DATASET_SHA256_INVALID');
+  if (manifest.datasetManifestSha256 !== undefined && !isSha256(manifest.datasetManifestSha256)) {
+    errors.push('DATASET_MANIFEST_SHA256_INVALID');
+  }
+  if (manifest.trainingWheelhouseSha256 !== undefined && !isSha256(manifest.trainingWheelhouseSha256)) {
+    errors.push('TRAINING_WHEELHOUSE_SHA256_INVALID');
+  }
+  if (manifest.trainingReadinessSubjectSha256 !== undefined && !isSha256(manifest.trainingReadinessSubjectSha256)) {
+    errors.push('TRAINING_READINESS_SUBJECT_SHA256_INVALID');
+  }
   if (!isSha256(manifest.trainingConfigSha256)) errors.push('TRAINING_CONFIG_SHA256_INVALID');
   if (!manifest.featureContractVersion) errors.push('FEATURE_CONTRACT_VERSION_REQUIRED');
   if (!manifest.actionContractVersion) errors.push('ACTION_CONTRACT_VERSION_REQUIRED');
