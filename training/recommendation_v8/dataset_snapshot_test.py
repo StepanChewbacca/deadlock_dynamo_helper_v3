@@ -109,7 +109,7 @@ def write_dataset(root: Path) -> tuple[str, str]:
         }
         relative = f"splits/{split.lower()}.jsonl.gz"
         path = root / relative
-        with gzip.open(path, "wt", encoding="utf-8", mtime=0) as handle:
+        with gzip.open(path, "wt", encoding="utf-8") as handle:
             handle.write(json.dumps(example, separators=(",", ":")) + "\n")
         files.append(
             {
