@@ -1,17 +1,23 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.metadata
 import json
 import math
 import os
 import platform
+import re
 import sys
+import zipfile
+from email.parser import BytesParser
 from pathlib import Path
 from typing import Any, Dict, Mapping
 
 EXPECTED_PYTHON = (3, 12)
 ALLOWED_CUBLAS_WORKSPACE_CONFIGS = (":4096:8", ":16:8")
+BOOTSTRAP_DISTRIBUTIONS = frozenset({"pip", "setuptools", "wheel"})
+SOURCE_ARCHIVE_SUFFIXES = (".tar.gz", ".tar.bz2", ".tar.xz", ".tgz")
 REQUIRED_EQUAL_OBSERVABLE_KEYS = (
     "seed",
     "deterministic",
@@ -54,6 +60,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rnn-config", default="training/recommendation_v8/config/rnn.json")
     parser.add_argument("--transformer-config", default="training/recommendation_v8/config/transformer.json")
     parser.add_argument("--requirements", default="training/recommendation_v8/requirements-training.txt")
+    parser.add_argument("--wheelhouse")
     parser.add_argument("--static-only", action="store_true")
     return parser.parse_args()
 
@@ -74,10 +81,12 @@ def main() -> int:
 
     if not args.static_only:
         blockers.extend(validate_installed_requirements(expected_requirements, runtime))
+        wheelhouse = args.wheelhouse or os.environ.get("TRAINING_WHEELHOUSE_SNAPSHOT", "")
+        blockers.extend(validate_installed_wheelhouse_provenance(wheelhouse, runtime))
         blockers.extend(validate_training_device(rnn, transformer, runtime))
 
     report = {
-        "contractVersion": "recommendation-pretraining-environment-v1",
+        "contractVersion": "recommendation-pretraining-environment-v2",
         "ready": not blockers,
         "blockers": sorted(set(blockers)),
         "runtime": runtime,
@@ -136,10 +145,14 @@ def pinned_requirements(path: Path, blockers: list[str]) -> Dict[str, str]:
             blockers.append(f"TRAINING_REQUIREMENT_NOT_EXACTLY_PINNED:{line}")
             continue
         name, version = line.split("==", 1)
-        if not name or not version:
+        normalized = normalize_distribution_name(name)
+        if not normalized or not version:
             blockers.append(f"TRAINING_REQUIREMENT_INVALID:{line}")
             continue
-        result[name.lower()] = version
+        if normalized in result and result[normalized] != version:
+            blockers.append(f"TRAINING_REQUIREMENT_DUPLICATE_VERSION:{normalized}")
+            continue
+        result[normalized] = version
     if not result:
         blockers.append("TRAINING_REQUIREMENTS_EMPTY")
     return result
@@ -159,6 +172,107 @@ def validate_installed_requirements(expected: Mapping[str, str], runtime: Dict[s
             blockers.append(f"TRAINING_DEPENDENCY_VERSION_MISMATCH:{name}:{actual}!={version}")
     runtime["installedTrainingDependencies"] = dict(sorted(installed.items()))
     return blockers
+
+
+def validate_installed_wheelhouse_provenance(wheelhouse_value: str, runtime: Dict[str, Any]) -> list[str]:
+    blockers: list[str] = []
+    if not wheelhouse_value:
+        return ["TRAINING_WHEELHOUSE_SNAPSHOT_REQUIRED"]
+    try:
+        wheelhouse = Path(wheelhouse_value).resolve(strict=True)
+    except OSError:
+        return ["TRAINING_WHEELHOUSE_SNAPSHOT_MISSING"]
+    if not wheelhouse.is_dir():
+        return ["TRAINING_WHEELHOUSE_SNAPSHOT_NOT_DIRECTORY"]
+
+    versions, inspection_errors = inspect_wheelhouse_packages(wheelhouse)
+    blockers.extend(inspection_errors)
+    runtime["wheelhousePackageVersions"] = {
+        name: sorted(values)
+        for name, values in sorted(versions.items())
+    }
+
+    installed = installed_distribution_versions()
+    runtime["installedEnvironment"] = dict(sorted(installed.items()))
+    runtime["installedEnvironmentSha256"] = hashlib.sha256(
+        json.dumps(runtime["installedEnvironment"], separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    for name, version in installed.items():
+        if name in BOOTSTRAP_DISTRIBUTIONS:
+            continue
+        approved_versions = versions.get(name)
+        if not approved_versions:
+            blockers.append(f"INSTALLED_DEPENDENCY_NOT_IN_APPROVED_WHEELHOUSE:{name}:{version}")
+            continue
+        if len(approved_versions) != 1:
+            blockers.append(f"APPROVED_WHEELHOUSE_VERSION_AMBIGUOUS:{name}")
+            continue
+        approved = next(iter(approved_versions))
+        if version != approved:
+            blockers.append(f"INSTALLED_DEPENDENCY_WHEELHOUSE_VERSION_MISMATCH:{name}:{version}!={approved}")
+    return blockers
+
+
+def inspect_wheelhouse_packages(root: Path) -> tuple[Dict[str, set[str]], list[str]]:
+    versions: Dict[str, set[str]] = {}
+    blockers: list[str] = []
+    for path in sorted(root.rglob("*"), key=lambda value: value.relative_to(root).as_posix()):
+        if path.is_symlink():
+            blockers.append(f"TRAINING_WHEELHOUSE_SYMLINK_FORBIDDEN:{path.relative_to(root).as_posix()}")
+            continue
+        if path.is_dir():
+            continue
+        relative = path.relative_to(root).as_posix()
+        lower = relative.lower()
+        if lower.endswith(SOURCE_ARCHIVE_SUFFIXES):
+            blockers.append(f"TRAINING_WHEELHOUSE_SOURCE_ARCHIVE_FORBIDDEN:{relative}")
+            continue
+        if not lower.endswith(".whl"):
+            continue
+        try:
+            name, version = wheel_distribution_identity(path)
+        except (OSError, ValueError, zipfile.BadZipFile) as error:
+            blockers.append(f"TRAINING_WHEEL_INVALID:{relative}:{type(error).__name__}")
+            continue
+        versions.setdefault(name, set()).add(version)
+    if not versions:
+        blockers.append("TRAINING_WHEELHOUSE_CONTAINS_NO_VALID_WHEELS")
+    for name, values in versions.items():
+        if len(values) != 1:
+            blockers.append(f"APPROVED_WHEELHOUSE_VERSION_AMBIGUOUS:{name}:{'|'.join(sorted(values))}")
+    return versions, blockers
+
+
+def wheel_distribution_identity(path: Path) -> tuple[str, str]:
+    with zipfile.ZipFile(path, "r") as archive:
+        metadata_entries = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
+        if len(metadata_entries) != 1:
+            raise ValueError("wheel must contain exactly one dist-info/METADATA")
+        message = BytesParser().parsebytes(archive.read(metadata_entries[0]))
+    name = normalize_distribution_name(message.get("Name", ""))
+    version = message.get("Version", "").strip()
+    if not name or not version:
+        raise ValueError("wheel metadata Name/Version required")
+    return name, version
+
+
+def installed_distribution_versions() -> Dict[str, str]:
+    result: Dict[str, str] = {}
+    for distribution in importlib.metadata.distributions():
+        raw_name = distribution.metadata.get("Name")
+        if not raw_name:
+            continue
+        name = normalize_distribution_name(raw_name)
+        version = str(distribution.version)
+        previous = result.get(name)
+        if previous is not None and previous != version:
+            raise ValueError(f"Installed distribution version ambiguity: {name}:{previous}|{version}")
+        result[name] = version
+    return result
+
+
+def normalize_distribution_name(value: str) -> str:
+    return re.sub(r"[-_.]+", "-", value.strip()).lower()
 
 
 def validate_training_device(

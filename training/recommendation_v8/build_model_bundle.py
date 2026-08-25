@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +23,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bundle-dir", required=True)
     parser.add_argument("--action-contract-version", required=True)
     parser.add_argument("--source-commit-sha", required=True)
+    parser.add_argument("--training-wheelhouse-sha256")
+    parser.add_argument("--training-readiness-subject-sha256")
     return parser.parse_args()
 
 
@@ -49,6 +52,18 @@ def main() -> int:
 
     if not is_git_sha(args.source_commit_sha):
         raise ValueError("sourceCommitSha must be a 40-character Git SHA")
+    training_wheelhouse_sha256 = require_sha256_argument(
+        args.training_wheelhouse_sha256 or os.environ.get("EXPECTED_WHEELHOUSE_SHA256", ""),
+        "trainingWheelhouseSha256",
+    )
+    training_readiness_subject_sha256 = require_sha256_argument(
+        args.training_readiness_subject_sha256 or os.environ.get("TRAINING_READINESS_SUBJECT_SHA256", ""),
+        "trainingReadinessSubjectSha256",
+    )
+    dataset_manifest_sha256 = require_sha256_argument(
+        str(dataset.get("_verifiedManifestSha256", "")),
+        "datasetManifestSha256",
+    )
     if str(dataset.get("sourceCommitSha", "")).lower() != args.source_commit_sha.lower():
         raise ValueError("MODEL_BUNDLE_SOURCE_COMMIT_DATASET_MISMATCH")
     if metrics.get("futureTestEvaluated") is not False or rnn_metrics.get("futureTestEvaluated") is not False:
@@ -59,10 +74,14 @@ def main() -> int:
         raise ValueError("ACTION_CONTRACT_VERSION_MISMATCH")
     if metrics.get("datasetSha256") != dataset.get("datasetSha256"):
         raise ValueError("MODEL_DATASET_SHA_MISMATCH")
+    if metrics.get("manifestSha256") != dataset_manifest_sha256:
+        raise ValueError("MODEL_DATASET_MANIFEST_SHA_MISMATCH")
     if metrics.get("featureContractVersion") != dataset.get("featureContractVersion"):
         raise ValueError("MODEL_FEATURE_CONTRACT_MISMATCH")
     if metrics.get("candidateGeneratorVersion") != dataset.get("candidateGeneratorVersion"):
         raise ValueError("MODEL_CANDIDATE_GENERATOR_MISMATCH")
+    if not isinstance(metrics.get("environment"), dict) or not metrics["environment"]:
+        raise ValueError("TRAINING_ENVIRONMENT_FINGERPRINT_REQUIRED")
     if ablation.get("version") != ABLATION_CONTRACT:
         raise ValueError("ABLATION_CONTRACT_MISMATCH")
     if ablation.get("datasetSha256") != dataset.get("datasetSha256"):
@@ -172,6 +191,9 @@ def main() -> int:
         "sourceCommitSha": args.source_commit_sha.lower(),
         "datasetId": dataset["datasetId"],
         "datasetSha256": dataset["datasetSha256"],
+        "datasetManifestSha256": dataset_manifest_sha256,
+        "trainingWheelhouseSha256": training_wheelhouse_sha256,
+        "trainingReadinessSubjectSha256": training_readiness_subject_sha256,
         "featureContractVersion": dataset["featureContractVersion"],
         "actionContractVersion": dataset["actionContractVersion"],
         "candidateGeneratorVersion": dataset["candidateGeneratorVersion"],
@@ -181,7 +203,7 @@ def main() -> int:
         "files": sorted(files, key=lambda item: item["path"]),
         "gates": sorted(gates, key=lambda item: item["name"]),
         "futureTestEvaluated": False,
-        "notes": "Behavioral BuildLM candidate produced from TRAIN/VALIDATION/SHADOW_HOLDOUT only. Exact RNN ablation metrics/config lineage is bundled. FUTURE_TEST was not decoded or evaluated by the trainer.",
+        "notes": "Behavioral BuildLM candidate produced from TRAIN/VALIDATION/SHADOW_HOLDOUT only. Exact dataset manifest, pretraining readiness subject, wheelhouse, RNN ablation metrics/config, and runtime fingerprint lineage are immutable. FUTURE_TEST was not decoded or evaluated by the trainer.",
     }
     with (bundle_dir / "manifest.json").open("x", encoding="utf-8") as handle:
         json.dump(manifest, handle, indent=2, sort_keys=True)
@@ -204,6 +226,12 @@ def required_number(values: Dict[str, Any], name: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"Behavioral gate threshold is invalid: {name}")
     return float(value)
+
+
+def require_sha256_argument(value: str, name: str) -> str:
+    if len(value) != 64 or any(character not in "0123456789abcdefABCDEF" for character in value):
+        raise ValueError(f"{name} must be a SHA256")
+    return value.lower()
 
 
 def is_git_sha(value: str) -> bool:
