@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   browser-recon:
@@ -17,16 +17,11 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: Inspect current Statlocker Item Meta frontend code
+      - name: Capture Statlocker frontend model requests in Chromium
         shell: bash
         run: |
           set -euo pipefail
           work="$RUNNER_TEMP/statlocker-browser-recon"
-          rm -rf "$work"
           mkdir -p "$work"
 
           cat > "$work/Dockerfile" <<'DOCKERFILE'
@@ -42,88 +37,69 @@ jobs:
           cat > "$work/recon.mjs" <<'NODE'
           import puppeteer from 'puppeteer-core';
 
-          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
           const browser = await puppeteer.launch({
             executablePath: '/usr/bin/chromium-browser',
             headless: true,
             args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
           });
+
           const page = await browser.newPage();
           await page.setViewport({ width: 1440, height: 1100 });
-          await page.setUserAgent(
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ' +
-            '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          );
 
-          await page.goto('https://statlocker.gg/items/meta-model', {
-            waitUntil: 'domcontentloaded',
-            timeout: 60000,
-          });
-          await sleep(12000);
+          const seen = new Map();
+          page.on('response', async (response) => {
+            const url = response.url();
+            if (!url.startsWith('https://statlocker.gg/api/')) return;
+            if (seen.has(url)) return;
 
-          const result = await page.evaluate(async () => {
-            const scriptUrls = Array.from(new Set([
-              ...Array.from(document.scripts).map((s) => s.src).filter(Boolean),
-              ...performance.getEntriesByType('resource')
-                .map((entry) => entry.name)
-                .filter((name) => /\.js(?:\?|$)/.test(name)),
-            ])).filter((url) => url.startsWith(location.origin));
-
-            const needles = [
-              'vs-hero-wpa-data',
-              'wpa-filtered-items',
-              'heroData',
-              'Items to Heroes',
-              'items-heroes',
-              'teamComp',
-            ];
-
-            const matches = [];
-            for (const url of scriptUrls) {
-              try {
-                const text = await fetch(url).then((r) => r.text());
-                const found = [];
-                for (const needle of needles) {
-                  const index = text.indexOf(needle);
-                  if (index === -1) continue;
-                  found.push({
-                    needle,
-                    snippet: text.slice(Math.max(0, index - 500), Math.min(text.length, index + 900)),
-                  });
-                }
-                if (found.length) {
-                  matches.push({ url, found });
-                }
-              } catch (error) {
-                matches.push({ url, error: error instanceof Error ? error.message : String(error) });
-              }
-            }
-
-            return {
-              currentUrl: location.href,
-              scriptCount: scriptUrls.length,
-              matchingScriptCount: matches.filter((m) => m.found?.length).length,
-              matches,
+            const entry = {
+              url,
+              status: response.status(),
+              method: response.request().method(),
+              resourceType: response.request().resourceType(),
             };
+
+            try {
+              const contentType = response.headers()['content-type'] || '';
+              if (contentType.includes('application/json')) {
+                const data = await response.json();
+                entry.topLevelKeys = data && typeof data === 'object' && !Array.isArray(data)
+                  ? Object.keys(data).slice(0, 30)
+                  : [];
+                entry.arrayLength = Array.isArray(data) ? data.length : undefined;
+              }
+            } catch {}
+
+            seen.set(url, entry);
+            console.log('STATLOCKER_API=' + JSON.stringify(entry));
           });
 
-          console.log('FRONTEND_CODE_RESULT=' + JSON.stringify(result, null, 2));
+          page.on('console', (msg) => {
+            const text = msg.text();
+            if (/wpa|api|error/i.test(text)) console.log('PAGE_CONSOLE=' + text.slice(0, 800));
+          });
+
+          const pages = [
+            'https://statlocker.gg/items/meta-model/wpa-analysis/',
+            'https://statlocker.gg/vision/wpa',
+            'https://statlocker.gg/vision/win-chance',
+            'https://statlocker.gg/builds/eternus-builds/abrams',
+          ];
+
+          for (const url of pages) {
+            console.log('OPEN=' + url);
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+            await new Promise((resolve) => setTimeout(resolve, 10000));
+          }
+
+          const endpoints = [...seen.values()];
+          console.log('SUMMARY=' + JSON.stringify({
+            count: endpoints.length,
+            endpoints,
+          }, null, 2));
+
           await browser.close();
           NODE
 
           sudo docker build -t statlocker-browser-recon "$work"
-          sudo docker run --rm --shm-size=1g statlocker-browser-recon | tee "$work/output.log"
-          cp "$work/output.log" "$GITHUB_WORKSPACE/statlocker-browser-recon-result.log"
-
-      - name: Persist recon result on the spike branch
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add statlocker-browser-recon-result.log
-          if git diff --cached --quiet; then
-            exit 0
-          fi
-          git commit -m 'test(statlocker): save browser recon result'
-          git push origin HEAD:agent/statlocker-model-probe-poc
+          sudo docker run --rm --shm-size=1g statlocker-browser-recon
