@@ -19,6 +19,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo 'Validation revision: post-integration-test-fixes'
           sudo docker run --rm \
             -v "$PWD:/src:ro" \
             node:20-alpine \
