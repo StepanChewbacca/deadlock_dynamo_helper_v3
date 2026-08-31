@@ -34,14 +34,19 @@ export interface StatlockerBrowserProbeResult {
 interface BrowserTarget {
   sourcePage: (input: StatlockerBrowserProbeRequest) => string;
   matches: (path: string) => boolean;
-  primary: (responses: StatlockerBrowserCapturedResponse[]) => StatlockerBrowserCapturedResponse | undefined;
+  primary: (
+    responses: StatlockerBrowserCapturedResponse[],
+  ) => StatlockerBrowserCapturedResponse | undefined;
 }
 
 @Injectable()
 export class StatlockerBrowserService {
   private readonly baseUrl = 'https://statlocker.gg';
+  private readonly responseBodyTimeoutMs = 10_000;
 
-  async probe(input: StatlockerBrowserProbeRequest): Promise<StatlockerBrowserProbeResult> {
+  async probe(
+    input: StatlockerBrowserProbeRequest,
+  ): Promise<StatlockerBrowserProbeResult> {
     const target = this.getTarget(input?.model);
     const sourcePage = target.sourcePage(input);
     const startedAt = Date.now();
@@ -54,7 +59,8 @@ export class StatlockerBrowserService {
     };
 
     const browser = await puppeteer.launch({
-      executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium-browser',
+      executablePath:
+        process.env.CHROMIUM_PATH || '/usr/bin/chromium-browser',
       headless: true,
       args: [
         '--no-sandbox',
@@ -73,13 +79,9 @@ export class StatlockerBrowserService {
       );
 
       const captured: StatlockerBrowserCapturedResponse[] = [];
-      const pending = new Set<Promise<void>>();
 
       page.on('response', (response: any) => {
-        const task = this.captureResponse(response, target, captured).finally(() => {
-          pending.delete(task);
-        });
-        pending.add(task);
+        void this.captureResponse(response, target, captured);
       });
 
       await page.goto(sourcePage, {
@@ -88,7 +90,10 @@ export class StatlockerBrowserService {
       });
 
       if (input.model === 'WIN_CHANCE') {
-        await this.triggerWinChance(page, this.normalizeMatchId(input.matchId));
+        await this.triggerWinChance(
+          page,
+          this.normalizeMatchId(input.matchId),
+        );
       }
 
       if (input.model === 'T4_BUILD_CHAINS') {
@@ -96,29 +101,22 @@ export class StatlockerBrowserService {
         // Trigger the same public fetch from inside the Statlocker page so the probe stays browser-driven.
         await this.sleep(1_500);
         if (!target.primary(captured)) {
-          await page.evaluate(async () => {
-            await fetch('/api/info/t4-chains-data');
-          });
+          await this.withTimeout(
+            page.evaluate(async () => {
+              await fetch('/api/info/t4-chains-data');
+            }),
+            15_000,
+            'Timed out waiting for the Statlocker T4 dataset request',
+          );
         }
       }
 
-      // The WPA page performs a default request first and then a patch-specific request.
-      // Eternus also loads leaderboard data before its derived build analysis.
-      const settleMs =
-        input.model === 'ETERNUS_BUILD_ANALYSIS'
-          ? 9_000
-          : input.model === 'WIN_CHANCE'
-            ? 12_000
-            : 7_000;
-      await this.sleep(settleMs);
-      await Promise.allSettled(Array.from(pending));
-
-      const primary = target.primary(captured);
-      if (!primary) {
-        throw new BadRequestException(
-          `Statlocker page loaded but no ${input.model} model response was captured`,
-        );
-      }
+      const primary = await this.waitForPrimary(
+        target,
+        captured,
+        this.primaryWaitTimeoutMs(input.model),
+        input.model,
+      );
 
       return {
         model: input.model,
@@ -130,7 +128,7 @@ export class StatlockerBrowserService {
         primary,
       };
     } finally {
-      await browser.close();
+      await this.closeBrowser(browser);
     }
   }
 
@@ -139,7 +137,10 @@ export class StatlockerBrowserService {
       return {
         sourcePage: (input) => {
           const hero = this.normalizeHeroName(input.hero, 'all');
-          const min = this.normalizeMinSampleSize(input.minSampleSize, 500);
+          const min = this.normalizeMinSampleSize(
+            input.minSampleSize,
+            500,
+          );
           const query = new URLSearchParams({
             hero,
             min: String(min),
@@ -150,7 +151,11 @@ export class StatlockerBrowserService {
         primary: (responses) =>
           [...responses]
             .reverse()
-            .find((entry) => entry.path === '/api/info/wpa-filtered-items' && entry.status === 200),
+            .find(
+              (entry) =>
+                entry.path === '/api/info/wpa-filtered-items' &&
+                entry.status === 200,
+            ),
       };
     }
 
@@ -168,11 +173,16 @@ export class StatlockerBrowserService {
             .reverse()
             .find(
               (entry) =>
-                entry.path.startsWith('/api/info/player-build-analysis/') && entry.status === 200,
+                entry.path.startsWith('/api/info/player-build-analysis/') &&
+                entry.status === 200,
             ) ??
           [...responses]
             .reverse()
-            .find((entry) => entry.path === '/api/info/wpa-filtered-items' && entry.status === 200),
+            .find(
+              (entry) =>
+                entry.path === '/api/info/wpa-filtered-items' &&
+                entry.status === 200,
+            ),
       };
     }
 
@@ -180,7 +190,10 @@ export class StatlockerBrowserService {
       return {
         sourcePage: (input) => {
           const hero = this.normalizeHeroName(input.hero, 'Abrams');
-          const min = this.normalizeMinSampleSize(input.minSampleSize, 500);
+          const min = this.normalizeMinSampleSize(
+            input.minSampleSize,
+            500,
+          );
           const query = new URLSearchParams({
             graph: 't4-chains',
             hero,
@@ -193,30 +206,46 @@ export class StatlockerBrowserService {
         primary: (responses) =>
           [...responses]
             .reverse()
-            .find((entry) => entry.path === '/api/info/t4-chains-data' && entry.status === 200),
+            .find(
+              (entry) =>
+                entry.path === '/api/info/t4-chains-data' &&
+                entry.status === 200,
+            ),
       };
     }
 
     if (model === 'WIN_CHANCE') {
       return {
         sourcePage: () => `${this.baseUrl}/vision/win-chance`,
-        matches: (path) => /^\/api\/match\/[^/]+\/win-rate$/.test(path),
+        matches: (path) =>
+          /^\/api\/match\/[^/]+\/win-rate$/.test(path),
         primary: (responses) =>
           [...responses]
             .reverse()
-            .find((entry) => /^\/api\/match\/[^/]+\/win-rate$/.test(entry.path) && entry.status === 200),
+            .find(
+              (entry) =>
+                /^\/api\/match\/[^/]+\/win-rate$/.test(entry.path) &&
+                entry.status === 200,
+            ),
       };
     }
 
     throw new BadRequestException('Unsupported browser model');
   }
 
-  private async triggerWinChance(page: any, matchId: string): Promise<void> {
+  private async triggerWinChance(
+    page: any,
+    matchId: string,
+  ): Promise<void> {
     const triggered = await page.evaluate((value: string) => {
-      const inputs = Array.from(document.querySelectorAll('input')) as HTMLInputElement[];
+      const inputs = Array.from(
+        document.querySelectorAll('input'),
+      ) as HTMLInputElement[];
       const input =
         inputs.find((element) =>
-          /match/i.test(`${element.placeholder} ${element.name} ${element.id}`),
+          /match/i.test(
+            `${element.placeholder} ${element.name} ${element.id}`,
+          ),
         ) ?? inputs[0];
 
       if (!input) {
@@ -231,10 +260,13 @@ export class StatlockerBrowserService {
       input.dispatchEvent(new Event('input', { bubbles: true }));
       input.dispatchEvent(new Event('change', { bubbles: true }));
 
-      const buttons = Array.from(document.querySelectorAll('button')) as HTMLButtonElement[];
+      const buttons = Array.from(
+        document.querySelectorAll('button'),
+      ) as HTMLButtonElement[];
       const button =
-        buttons.find((element) => /analy|load|submit/i.test(element.textContent ?? '')) ??
-        buttons.find((element) => element.type === 'submit');
+        buttons.find((element) =>
+          /analy|load|submit/i.test(element.textContent ?? ''),
+        ) ?? buttons.find((element) => element.type === 'submit');
 
       if (!button) {
         return false;
@@ -245,7 +277,9 @@ export class StatlockerBrowserService {
     }, matchId);
 
     if (!triggered) {
-      throw new BadRequestException('Could not find Win Chance input/button on Statlocker page');
+      throw new BadRequestException(
+        'Could not find Win Chance input/button on Statlocker page',
+      );
     }
   }
 
@@ -261,7 +295,10 @@ export class StatlockerBrowserService {
       return;
     }
 
-    if (parsedUrl.hostname !== 'statlocker.gg' && parsedUrl.hostname !== 'www.statlocker.gg') {
+    if (
+      parsedUrl.hostname !== 'statlocker.gg' &&
+      parsedUrl.hostname !== 'www.statlocker.gg'
+    ) {
       return;
     }
 
@@ -271,12 +308,23 @@ export class StatlockerBrowserService {
 
     let data: unknown;
     try {
-      const contentType = String(response.headers()?.['content-type'] ?? '');
-      data = contentType.includes('application/json')
-        ? await response.json()
-        : await response.text();
-    } catch {
-      data = { error: 'Response body was not readable by the browser probe' };
+      const contentType = String(
+        response.headers()?.['content-type'] ?? '',
+      );
+      data = await this.withTimeout(
+        contentType.includes('application/json')
+          ? response.json()
+          : response.text(),
+        this.responseBodyTimeoutMs,
+        `Timed out reading Statlocker response body for ${parsedUrl.pathname}`,
+      );
+    } catch (error) {
+      data = {
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Response body was not readable by the browser probe',
+      };
     }
 
     captured.push({
@@ -288,7 +336,84 @@ export class StatlockerBrowserService {
     });
   }
 
-  private normalizeHeroName(value: string | undefined, fallback: string): string {
+  private async waitForPrimary(
+    target: BrowserTarget,
+    captured: StatlockerBrowserCapturedResponse[],
+    timeoutMs: number,
+    model: StatlockerBrowserModel,
+  ): Promise<StatlockerBrowserCapturedResponse> {
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+      const primary = target.primary(captured);
+      if (primary) {
+        return primary;
+      }
+      await this.sleep(100);
+    }
+
+    throw new BadRequestException(
+      `Statlocker page loaded but no ${model} model response was captured within ${timeoutMs} ms`,
+    );
+  }
+
+  private primaryWaitTimeoutMs(model: StatlockerBrowserModel): number {
+    if (model === 'ETERNUS_BUILD_ANALYSIS') {
+      return 35_000;
+    }
+    if (model === 'WIN_CHANCE') {
+      return 40_000;
+    }
+    return 25_000;
+  }
+
+  private async closeBrowser(browser: any): Promise<void> {
+    const closed = await Promise.race([
+      Promise.resolve(browser.close())
+        .then(() => true)
+        .catch(() => true),
+      this.sleep(5_000).then(() => false),
+    ]);
+
+    if (closed) {
+      return;
+    }
+
+    try {
+      browser.process()?.kill('SIGKILL');
+    } catch {
+      // Best-effort cleanup only.
+    }
+  }
+
+  private async withTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+    message: string,
+  ): Promise<T> {
+    let timer: NodeJS.Timeout | undefined;
+
+    try {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new BadRequestException(message)),
+            timeoutMs,
+          );
+        }),
+      ]);
+    } finally {
+      if (timer) {
+        clearTimeout(timer);
+      }
+    }
+  }
+
+  private normalizeHeroName(
+    value: string | undefined,
+    fallback: string,
+  ): string {
     const normalized = value?.trim();
     if (!normalized) {
       return fallback;
@@ -299,12 +424,17 @@ export class StatlockerBrowserService {
     return normalized;
   }
 
-  private normalizeMinSampleSize(value: number | undefined, fallback: number): number {
+  private normalizeMinSampleSize(
+    value: number | undefined,
+    fallback: number,
+  ): number {
     if (value === undefined) {
       return fallback;
     }
     if (!Number.isFinite(value) || value < 1 || value > 100_000) {
-      throw new BadRequestException('minSampleSize must be between 1 and 100000');
+      throw new BadRequestException(
+        'minSampleSize must be between 1 and 100000',
+      );
     }
     return Math.floor(value);
   }
@@ -312,7 +442,9 @@ export class StatlockerBrowserService {
   private normalizeMatchId(value: string | undefined): string {
     const normalized = value?.trim();
     if (!normalized || !/^\d{6,30}$/.test(normalized)) {
-      throw new BadRequestException('matchId must be a numeric Deadlock match ID');
+      throw new BadRequestException(
+        'matchId must be a numeric Deadlock match ID',
+      );
     }
     return normalized;
   }
