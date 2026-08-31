@@ -4,6 +4,7 @@ import {
   StatlockerBrowserProbeResult,
   StatlockerBrowserService,
 } from './statlocker-browser.service';
+import { STATLOCKER_SITE_LIKE_PROBE_CLIENT_JS } from './statlocker-site-like.client';
 import {
   StatlockerDiscoveryResult,
   StatlockerProbeRequest,
@@ -22,8 +23,16 @@ export class StatlockerProbeController {
 
   @Get()
   @Header('Content-Type', 'text/html; charset=utf-8')
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
   getUi(): string {
     return STATLOCKER_SITE_LIKE_PROBE_HTML;
+  }
+
+  @Get('client.js')
+  @Header('Content-Type', 'application/javascript; charset=utf-8')
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+  getClient(): string {
+    return STATLOCKER_SITE_LIKE_PROBE_CLIENT_JS;
   }
 
   @Get('presets')
