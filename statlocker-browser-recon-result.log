@@ -1,0 +1,1068 @@
+OPEN=https://statlocker.gg/builds/eternus-builds/abrams
+STATLOCKER_API={"phase":"PRO_BUILDS_LOAD","url":"https://statlocker.gg/api/auth/status","path":"/api/auth/status","search":"","status":200,"method":"GET","resourceType":"fetch","body":{"type":"object","keys":["isAuthenticated"],"sample":{"isAuthenticated":false}}}
+STATLOCKER_API={"phase":"PRO_BUILDS_LOAD","url":"https://statlocker.gg/api/info/patches-with-ids","path":"/api/info/patches-with-ids","search":"","status":200,"method":"GET","resourceType":"fetch","body":{"type":"object","keys":["1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24","25","26","27"],"sample":{"1":{"type":"object","keys":["source","title","pubDate","link","guid","contentEncoded","forumThreadId","pubDateFormatted","boundaryTime","versionDate","cleanContent"],"sample":{"source":"steam","title":" Minor Update - 08-22-2026","pubDate":"2026-08-22T21:40:46Z","link":"https://store.steampowered.com/news/app/1422450/view/676255623445218601","guid":{"type":"object","keys":["text","permaLink"]},"contentEncoded":"<p class=\"bb_paragraph\">- Radiant Regeneration: Heal on cast reduced from 70 to 65</p><p class=\"bb_paragraph\">- Restorative Locket: Spirit Resistance reduced from 10% to 8%</p><p c","forumThreadId":null,"pubDateFormatted":"2026-08-22T21:40:46.000+00:00","boundaryTime":1787434846000,"versionDate":"08-22-2026","cleanContent":"- Radiant Regeneration: Heal on cast reduced from 70 to 65- Restorative Locket: Spirit Resistance reduced from 10% to 8%- Celeste: Dazzling Trick cooldown increased from 32s to 34s"}},"2":{"type":"object","keys":["source","title","pubDate","link","guid","contentEncoded","forumThreadId","pubDateFormatted","boundaryTime","versionDate","cleanContent"],"sample":{"source":"steam","title":" Minor Update - 08-12-2026","pubDate":"2026-08-12T22:57:44Z","link":"https://store.steampowered.com/news/app/1422450/view/708906085669405228","guid":{"type":"object","keys":["text","permaLink"]},"contentEncoded":"<p class=\"bb_paragraph\">- Apollo: Riposte melee resist reduction increased from -22% to -25%<br>- Apollo: Riposte T2 changed from \"-30% Melee Resist\" to \"-25% Melee Resist and +0.4","forumThreadId":null,"pubDateFormatted":"2026-08-12T22:57:44.000+00:00","boundaryTime":1786575464000,"versionDate":"08-12-2026","cleanContent":"- Apollo: Riposte melee resist reduction increased from -22% to -25%- Apollo: Riposte T2 changed from \"-30% Melee Resist\" to \"-25% Melee Resist and +0.4s Stun Duration\"- Apollo: Ri"}},"3":{"type":"object","keys":["source","title","pubDate","link","guid","contentEncoded","forumThreadId","pubDateFormatted","boundaryTime","versionDate","cleanContent"],"sample":{"source":"steam","title":" Minor Update - 07-28-2026","pubDate":"2026-07-28T20:24:35Z","link":"https://store.steampowered.com/news/app/1422450/view/680756685198855508","guid":{"type":"object","keys":["text","permaLink"]},"contentEncoded":"<p class=\"bb_paragraph\"><b>\\[ General ]</b></p><p class=\"bb_paragraph\">- Stamina bucket 3 heroes (slowest) have their ground dash time increased from 0.7s to 0.72s and air dash tim","forumThreadId":null,"pubDateFormatted":"2026-07-28T20:24:35.000+00:00","boundaryTime":1785270275000,"versionDate":"07-28-2026","cleanContent":"\\[ General ]- Stamina bucket 3 heroes (slowest) have their ground dash time increased from 0.7s to 0.72s and air dash time from 0.49s to 0.51s- The Orb Spawners in base that give 1"}},"4":{"type":"object","keys":["source","title","pubDate","link","guid","contentEncoded","forumThreadId","pubDateFormatted","boundaryTime","versionDate","cleanContent"],"sample":{"source":"steam","title":" Minor Update - 07-09-2026","pubDate":"2026-07-09T19:26:55Z","link":"https://store.steampowered.com/news/app/1422450/view/688635449342696590","guid":{"type":"object","keys":["text","permaLink"]},"contentEncoded":"<p class=\"bb_paragraph\"></p><p class=\"bb_paragraph\">- Urn Runner sprint bonus reduced from +2m to 0 (trailing bonus reduced from +7m to +5m)</p><p class=\"bb_paragraph\">- Urn Runner","forumThreadId":null,"pubDateFormatted":"2026-07-09T19:26:55.000+00:00","boundaryTime":1783625215000,"versionDate":"07-09-2026","cleanContent":"- Urn Runner sprint bonus reduced from +2m to 0 (trailing bonus reduced from +7m to +5m)- Urn Runner move speed bonus reduced from +3.5m to +2m- Urn Runner Stamina Recovery increas"}},"5":{"type":"object","keys":["source","title","pubDate","link","guid","contentEncoded","forumThreadId","pubDateFormatted","boundaryTime","versionDate","cleanContent"],"sample":{"source":"steam","title":" Minor Update - 07-01-2026","pubDate":"2026-07-01T22:54:59Z","link":"https://store.steampowered.com/news/app/1422450/view/688635449342693095","guid":{"type":"object","keys":["text","permaLink"]},"contentEncoded":"<p class=\"bb_paragraph\">- Shiv: Alt Fire ammo cost reduced from 5 to 4</p><p class=\"bb_paragraph\">- Shiv: Weapon now has fixed pellet spread</p><p class=\"bb_paragraph\">- Shiv: Slic","forumThreadId":null,"pubDateFormatted":"2026-07-01T22:54:59.000+00:00","boundaryTime":1782946499000,"versionDate":"07-01-2026","cleanContent":"- Shiv: Alt Fire ammo cost reduced from 5 to 4- Shiv: Weapon now has fixed pellet spread- Shiv: Slice and Dice is now back to doing spirit damage and reducing Spirit Resistance fro"}},"6":{"type":"object","keys":["source","title","pubDate","link","guid","contentEncoded","forumThreadId","pubDateFormatted","boundaryTime","versionDate","cleanContent"],"sample":{"source":"steam","title":" Minor Update - 06-30-2026","pubDate":"2026-06-30T17:22:14Z","link":"https://store.steampowered.com/news/app/1422450/view/688635449342692003","guid":{"type":"object","keys":["text","permaLink"]},"contentEncoded":"<p class=\"bb_paragraph\"><b>\\[ Urn / King of the Hill ]</b></p><p class=\"bb_paragraph\"></p><p class=\"bb_paragraph\">- King of the Hill objective has been rethemed and renamed to \"Uns","forumThreadId":"146261","pubDateFormatted":"2026-06-30T17:22:14.000+00:00","boundaryTime":1782840134000,"versionDate":"06-30-2026","cleanContent":"\\[ Urn / King of the Hill ]- King of the Hill objective has been rethemed and renamed to \"Unstable Rift\"- Unstable Rift no longer requires an Urn delivery to trigger the start of t"}},"7":{"type":"object","keys":["source","title","pubDate","link","guid","contentEncoded","forumThreadId","pubDateFormatted","boundaryTime","versionDate","cleanContent"],"sample":{"source":"steam","title":" Minor Update - 06-11-2026","pubDate":"2026-06-12T00:59:18Z","link":"https://store.steampowered.com/news/app/1422450/view/667242081733838158","guid":{"type":"object","keys":["text","permaLink"]},"contentEncoded":"<p class=\"bb_paragraph\">- Urn give up time reduced from 75s to 60s</p><p class=\"bb_paragraph\">- Urn bounty reduced by 10% (unreduced for trailing team)</p><p class=\"bb_paragraph\"><","forumThreadId":null,"pubDateFormatted":"2026-06-12T00:59:18.000+00:00","boundaryTime":1781225958000,"versionDate":"06-11-2026","cleanContent":"- Urn give up time reduced from 75s to 60s- Urn bounty reduced by 10% (unreduced for trailing team)- Breakables health permanent bonus reduced from 15/25/35 to 15/20/30 for level 1"}},"8":{"type":"object","keys":["source","title","pubDate","link","guid","contentEncoded","forumThreadId","pubDateFormatted","boundaryTime","versionDate","cleanContent"],"sample":{"source":"steam","title":" Minor Update - 05-31-2026","pubDate":"2026-05-31T19:45:54Z","link":"https://store.steampowered.com/news/app/1422450/view/668366713382766678","guid":{"type":"object","keys":["text","permaLink"]},"contentEncoded":"<p class=\"bb_paragraph\">- Apollo: Disengaging Sigil T2 increased from +20% Fire Rate to +30%</p><p class=\"bb_paragraph\">- Apollo: Flawless Advance T1 heal from 30+0.75 to 35+1.0</p","forumThreadId":null,"pubDateFormatted":"2026-05-31T19:45:54.000+00:00","boundaryTime":1780256754000,"versionDate":"05-31-2026","cleanContent":"- Apollo: Disengaging Sigil T2 increased from +20% Fire Rate to +30%- Apollo: Flawless Advance T1 heal from 30+0.75 to 35+1.0- Apollo: Flawless Advance T2 increased from -10s Coold"}},"9":{"type":"object","keys":["source","title","pubDate","link","guid","contentEncoded","forumThreadId","pubDateFormatted","boundaryTime","versionDate","cleanContent"],"sample":{"source":"forum","title":"05-22-2026 Update","pubDate":"2026-06-12T00:59:45Z","link":"https://forums.playdeadlock.com/threads/05-22-2026-update.135477/","guid":{"type":"object","keys":["text","permaLink"]},"contentEncoded":"<div class=\"bbWrapper\"><div class=\"bbCodeBlock bbCodeBlock--unfurl    js-unfurl fauxBlockLink\"\n\t\tdata-unfurl=\"true\" data-result-id=\"9973\" data-result-token=\"1788177746:c11029205dfd","forumThreadId":null,"pubDateFormatted":"2026-06-12T00:59:45.000+00:00","boundaryTime":1779408000000,"versionDate":"05-22-2026","cleanContent":"<div class=\"bbCodeBlock bbCodeBlock--unfurl    js-unfurl fauxBlockLink\"\n\t\tdata-unfurl=\"true\" data-result-id=\"9973\" data-result-token=\"1788177746:c11029205dfd5b5702deabfccfefb0c8a80"}},"10":{"type":"object","keys":["source","title","pubDate","link","guid","contentEncoded","forumThreadId","pubDateFormatted","boundaryTime","versionDate","cleanContent"],"sample":{"source":"forum","title":"04-30-2026 Update","pubDate":"2026-05-01T23:49:47Z","link":"https://forums.playdeadlock.com/threads/04-30-2026-update.129989/","guid":{"type":"object","keys":["text","permaLink"]},"contentEncoded":"<div class=\"bbWrapper\"><div class=\"bbCodeBlock bbCodeBlock--unfurl    js-unfurl fauxBlockLink\"\n\t\tdata-unfurl=\"true\" data-result-id=\"8806\" data-result-token=\"1788177746:e79159ad8db2","forumThreadId":null,"pubDateFormatted":"2026-05-01T23:49:47.000+00:00","boundaryTime":1777507200000,"versionDate":"04-30-2026","cleanContent":"<div class=\"bbCodeBlock bbCodeBlock--unfurl    js-unfurl fauxBlockLink\"\n\t\tdata-unfurl=\"true\" data-result-id=\"8806\" data-result-token=\"1788177746:e79159ad8db24c0036d8047e07f969893a3"}},"11":{"type":"object","keys":["source","title","pubDate","link","guid","contentEncoded","forumThreadId","pubDateFormatted","boundaryTime","versionDate","cleanContent"],"sample":{"source":"forum","title":"04-10-2026 Update","pubDate":"2026-04-11T04:03:53Z","link":"https://forums.playdeadlock.com/threads/04-10-2026-update.125825/","guid":{"type":"object","keys":["text","permaLink"]},"contentEncoded":"<div class=\"bbWrapper\"><b>[ General ]</b><br />\n<br />\n- Parrying is now allowed while ground dashing in order to bring it in-line with air dashing<br />\n<br />\n- Parry anti mash p","forumThreadId":null,"pubDateFormatted":"2026-04-11T04:03:53.000+00:00","boundaryTime":1775779200000,"versionDate":"04-10-2026","cleanContent":"[ General ]\n\n- Parrying is now allowed while ground dashing in order to bring it in-line with air dashing\n\n- Parry anti mash protection previously would last for 0.25s after the pa"}},"12":{"type":"object","keys":["source","title","pubDate","link","guid","contentEncoded","forumThreadId","pubDateFormatted","boundaryTime","versionDate","cleanContent"],"sample":{"source":"forum","title":"03-25-2026 Update","pubDate":"2026-03-31T01:35:20Z","link":"https://forums.playdeadlock.com/threads/03-25-2026-update.121766/","guid":{"type":"object","keys":["text","permaLink"]},"contentEncoded":"<div class=\"bbWrapper\">- Bebop: Base health regen increased from 1.5 to 2.5<br />\n<br />\n- Calico: Leaping Slash base damage increased from 50 to 60<br />\n<br />\n- Celeste: Base re","forumThreadId":null,"pubDateFormatted":"2026-03-31T01:35:20.000+00:00","boundaryTime":1774396800000,"versionDate":"03-25-2026","cleanContent":"- Bebop: Base health regen increased from 1.5 to 2.5\n\n- Calico: Leaping Slash base damage increased from 50 to 60\n\n- Celeste: Base regen reduced from 2 to 1\n- Celeste: Dazzling Tri"}}}}}
+STATLOCKER_API={"phase":"PRO_BUILDS_LOAD","url":"https://statlocker.gg/api/info/heroes-full?v=08-22-2026","path":"/api/info/heroes-full","search":"?v=08-22-2026","status":200,"method":"GET","resourceType":"fetch","body":{"type":"array","length":57,"sample":{"type":"object","keys":["id","class_name","name","description","player_selectable","disabled","in_development","needs_testing","assigned_players_only","tags","gun_tag","hideout_rich_presence","hero_type","prerelease_only","limited_testing","complexity","skin","images","items","starting_stats","item_slot_info","physics","colors","shop_stat_display","cost_bonuses","stats_display","hero_stats_ui","level_info","scaling_stats","purchase_bonuses","standard_level_up_upgrades","item_draft_bucketing"],"sample":{"id":1,"class_name":"hero_inferno","name":"Infernus","description":{"type":"object","keys":["lore","role","playstyle"]},"player_selectable":true,"disabled":false,"in_development":false,"needs_testing":false,"assigned_players_only":false,"tags":{"type":"array","length":3},"gun_tag":"Rapid Fire","hideout_rich_presence":"Mixing Drinks in the Hideout"}}}}
+STATLOCKER_API={"phase":"PRO_BUILDS_LOAD","url":"https://statlocker.gg/api/info/items-full?v=08-22-2026","path":"/api/info/items-full","search":"?v=08-22-2026","status":200,"method":"GET","resourceType":"fetch","body":{"type":"array","length":726,"sample":{"type":"object","keys":["id","class_name","name","start_trained","image","image_webp","heroes","properties","weapon_info","type"],"sample":{"id":2976789773,"class_name":"citadel_weapon_bosstier2_set","name":"citadel_weapon_bosstier2_set","start_trained":true,"image":"https://assets-bucket.deadlock-api.com/assets-api-res/images/abilities/weapon_damage.png","image_webp":"https://assets-bucket.deadlock-api.com/assets-api-res/images/abilities/weapon_damage.webp","heroes":{"type":"array","length":0},"properties":{"type":"object","keys":["AbilityCooldown","AbilityDuration","AbilityCastRange","AbilityUnitTargetLimit","AbilityCastDelay","AbilityChannelTime","AbilityPostCastDuration","AbilityCharges","AbilityCooldownBetweenCharge","ChannelMoveSpeed","AbilityResourceCost","TechPower","WeaponPower"]},"weapon_info":{"type":"object","keys":["can_zoom","bullet_damage","bullet_gravity_scale","bullet_inherit_shooter_velocity_scale","bullet_lifetime","bullet_radius","bullet_reflect_amount","bullet_reflect_scale","bullet_whiz_distance","burst_shot_cooldown","crit_bonus_end","crit_bonus_end_range","crit_bonus_start","crit_bonus_start_range","cycle_time","damage_falloff_bias","damage_falloff_end_range","damage_falloff_end_scale","damage_falloff_start_range","damage_falloff_start_scale","horizontal_punch","range","bullet_speed","recoil_recovery_speed","recoil_shot_index_recovery_time_factor","recoil_speed","reload_move_speed","scatter_yaw_scale","shoot_move_speed_percent","shoot_spread_penalty_decay","shoot_spread_penalty_decay_delay","shoot_spread_penalty_per_shot","shooting_up_spread_penalty","vertical_punch","zoom_move_speed_percent","bullets","burst_shot_count","clip_size","reload_duration","horizontal_recoil"]},"type":"weapon"}}}}
+STATLOCKER_API={"phase":"PRO_BUILDS_LOAD","url":"https://statlocker.gg/api/info/health","path":"/api/info/health","search":"","status":200,"method":"GET","resourceType":"fetch","body":{"type":"object","keys":["deadlockApi","statlockerCapacity","customMessage","dotColor"],"sample":{"deadlockApi":{"type":"object","keys":["status","count"],"sample":{"status":"optimal","count":68382}},"statlockerCapacity":"plenty","customMessage":"","dotColor":"green"}}}
+STATLOCKER_API={"phase":"PRO_BUILDS_LOAD","url":"https://statlocker.gg/api/info/discord-widget","path":"/api/info/discord-widget","search":"","status":200,"method":"GET","resourceType":"fetch","body":{"type":"object","keys":["serverName","onlineCount","inviteUrl"],"sample":{"serverName":"Statlocker.gg","onlineCount":4062,"inviteUrl":"https://discord.com/invite/wTP4wYpu"}}}
+STATLOCKER_API={"phase":"PRO_BUILDS_LOAD","url":"https://statlocker.gg/api/leaderboard/get-valve-leaderboard?region=Europe&heroId=6&page=1&pageSize=10&version=2","path":"/api/leaderboard/get-valve-leaderboard","search":"?region=Europe&heroId=6&page=1&pageSize=10&version=2","status":200,"method":"GET","resourceType":"fetch","body":{"type":"object","keys":["data","totalCount","page","pageSize","totalPages","rankThresholds"],"sample":{"data":{"type":"array","length":10,"sample":{"type":"object","keys":["account_name","badge_level","rank","ranked_rank","ranked_subrank","top_hero_ids","steamProfile","heroPerformanceRank","derivedBadgeLevel"]}},"totalCount":77,"page":1,"pageSize":10,"totalPages":8,"rankThresholds":{"type":"array","length":0}}}}
+STATLOCKER_API={"phase":"PRO_BUILDS_LOAD","url":"https://statlocker.gg/api/info/wpa-filtered-items?hero=Abrams&rank=rank_11&minSampleSize=50","path":"/api/info/wpa-filtered-items","search":"?hero=Abrams&rank=rank_11&minSampleSize=50","status":200,"method":"GET","resourceType":"fetch","body":{"type":"object","keys":["items","tiers","availableHeroes","availableItems","availablePatches","availableRanks"],"sample":{"items":{"type":"array","length":101,"sample":{"type":"object","keys":["item","heroName","category","cost","wpaValue","sampleSize","costRelativeWpa","mean_purchase_time_min","mean_prob_before","aheadWpa","behindWpa","aheadBehindDiff","best_purchase_time","mean_net_worth_before"]}},"tiers":{"type":"object","keys":["S","A","B","C","D","F","_thresholds"],"sample":{"S":{"type":"array","length":27},"A":{"type":"array","length":12},"B":{"type":"array","length":20},"C":{"type":"array","length":28},"D":{"type":"array","length":12},"F":{"type":"array","length":2},"_thresholds":{"type":"object","keys":["S","A","B","C","D","F"]}}},"availableHeroes":{"type":"array","length":38,"sample":"Abrams"},"availableItems":{"type":"array","length":154,"sample":"Active Reload"},"availablePatches":{"type":"array","length":4,"sample":"patch_676255623445218601"},"availableRanks":{"type":"array","length":6,"sample":"rank_7"}}}}
+STATLOCKER_API={"phase":"PRO_BUILDS_LOAD","url":"https://statlocker.gg/api/build/tags","path":"/api/build/tags","search":"","status":200,"method":"GET","resourceType":"fetch","body":{"type":"array","length":14,"sample":{"type":"object","keys":["id","label","icon"],"sample":{"id":1052421347,"label":"For New Players","icon":"https://assets-bucket.deadlock-api.com/assets-api-res/icons/citadel_build_tag_complexity_1.svg"}}}}
+STATLOCKER_API={"phase":"PRO_BUILDS_LOAD","url":"https://statlocker.gg/api/info/get-hero-stats/101/116/1","path":"/api/info/get-hero-stats/101/116/1","search":"","status":200,"method":"GET","resourceType":"fetch","body":{"type":"array","length":38,"sample":{"type":"object","keys":["hero_id","losses","matches","total_assists","total_boss_damage","total_creep_damage","total_deaths","total_denies","total_kills","total_last_hits","total_max_health","total_net_worth","total_neutral_damage","total_player_damage","total_player_damage_taken","total_shots_hit","total_shots_missed","wins","tier"],"sample":{"hero_id":1,"losses":268,"matches":516,"total_assists":6447,"total_boss_damage":4498850,"total_creep_damage":18003544,"total_deaths":3526,"total_denies":1546,"total_kills":3232,"total_last_hits":92107,"total_max_health":1715177,"total_net_worth":19083402}}}}
+STATLOCKER_API={"phase":"PRO_BUILDS_LOAD","url":"https://statlocker.gg/api/info/get-hero-stats/11/116/1","path":"/api/info/get-hero-stats/11/116/1","search":"","status":200,"method":"GET","resourceType":"fetch","body":{"type":"array","length":38,"sample":{"type":"object","keys":["hero_id","losses","matches","total_assists","total_boss_damage","total_creep_damage","total_deaths","total_denies","total_kills","total_last_hits","total_max_health","total_net_worth","total_neutral_damage","total_player_damage","total_player_damage_taken","total_shots_hit","total_shots_missed","wins","tier"],"sample":{"hero_id":1,"losses":87579,"matches":172255,"total_assists":2038495,"total_boss_damage":1385796704,"total_creep_damage":7627294106,"total_deaths":1221350,"total_denies":674576,"total_kills":1264837,"total_last_hits":35565759,"total_max_health":583179194,"total_net_worth":7838807452}}}}
+STATLOCKER_API={"phase":"PRO_BUILDS_LOAD","url":"https://statlocker.gg/api/leaderboard/get-valve-leaderboard?region=Europe&heroId=6&page=1&pageSize=10&version=2","path":"/api/leaderboard/get-valve-leaderboard","search":"?region=Europe&heroId=6&page=1&pageSize=10&version=2","status":200,"method":"GET","resourceType":"fetch","body":{"type":"object","keys":["data","totalCount","page","pageSize","totalPages","rankThresholds"],"sample":{"data":{"type":"array","length":10,"sample":{"type":"object","keys":["account_name","badge_level","rank","ranked_rank","ranked_subrank","top_hero_ids","steamProfile","heroPerformanceRank","derivedBadgeLevel"]}},"totalCount":77,"page":1,"pageSize":10,"totalPages":8,"rankThresholds":{"type":"array","length":0}}}}
+STATLOCKER_API={"phase":"PRO_BUILDS_LOAD","url":"https://statlocker.gg/api/leaderboard/get-valve-leaderboard?region=NAmerica&heroId=6&page=1&pageSize=10&version=2","path":"/api/leaderboard/get-valve-leaderboard","search":"?region=NAmerica&heroId=6&page=1&pageSize=10&version=2","status":200,"method":"GET","resourceType":"fetch","body":{"type":"object","keys":["data","totalCount","page","pageSize","totalPages","rankThresholds"],"sample":{"data":{"type":"array","length":10,"sample":{"type":"object","keys":["account_name","badge_level","rank","ranked_rank","ranked_subrank","top_hero_ids","steamProfile","heroPerformanceRank","derivedBadgeLevel"]}},"totalCount":116,"page":1,"pageSize":10,"totalPages":12,"rankThresholds":{"type":"array","length":0}}}}
+STATLOCKER_API={"phase":"PRO_BUILDS_LOAD","url":"https://statlocker.gg/api/leaderboard/get-valve-leaderboard?region=Asia&heroId=6&page=1&pageSize=10&version=2","path":"/api/leaderboard/get-valve-leaderboard","search":"?region=Asia&heroId=6&page=1&pageSize=10&version=2","status":200,"method":"GET","resourceType":"fetch","body":{"type":"object","keys":["data","totalCount","page","pageSize","totalPages","rankThresholds"],"sample":{"data":{"type":"array","length":10,"sample":{"type":"object","keys":["account_name","badge_level","rank","ranked_rank","ranked_subrank","top_hero_ids","steamProfile","heroPerformanceRank","derivedBadgeLevel"]}},"totalCount":20,"page":1,"pageSize":10,"totalPages":2,"rankThresholds":{"type":"array","length":0}}}}
+STATLOCKER_API={"phase":"PRO_BUILDS_LOAD","url":"https://statlocker.gg/api/leaderboard/get-valve-leaderboard?region=SAmerica&heroId=6&page=1&pageSize=10&version=2","path":"/api/leaderboard/get-valve-leaderboard","search":"?region=SAmerica&heroId=6&page=1&pageSize=10&version=2","status":200,"method":"GET","resourceType":"fetch","body":{"type":"object","keys":["data","totalCount","page","pageSize","totalPages","rankThresholds"],"sample":{"data":{"type":"array","length":2,"sample":{"type":"object","keys":["account_name","badge_level","rank","ranked_rank","ranked_subrank","top_hero_ids","steamProfile","heroPerformanceRank","derivedBadgeLevel"]}},"totalCount":2,"page":1,"pageSize":10,"totalPages":1,"rankThresholds":{"type":"array","length":0}}}}
+STATLOCKER_API={"phase":"PRO_BUILDS_LOAD","url":"https://statlocker.gg/api/leaderboard/get-valve-leaderboard?region=Oceania&heroId=6&page=1&pageSize=10&version=2","path":"/api/leaderboard/get-valve-leaderboard","search":"?region=Oceania&heroId=6&page=1&pageSize=10&version=2","status":200,"method":"GET","resourceType":"fetch","body":{"type":"object","keys":["data","totalCount","page","pageSize","totalPages","rankThresholds"],"sample":{"data":{"type":"array","length":6,"sample":{"type":"object","keys":["account_name","badge_level","rank","ranked_rank","ranked_subrank","top_hero_ids","steamProfile","heroPerformanceRank","derivedBadgeLevel"]}},"totalCount":6,"page":1,"pageSize":10,"totalPages":1,"rankThresholds":{"type":"array","length":0}}}}
+STATLOCKER_API={"phase":"PRO_BUILDS_LOAD","url":"https://statlocker.gg/api/info/player-build-analysis/793347106/6","path":"/api/info/player-build-analysis/793347106/6","search":"","status":200,"method":"GET","resourceType":"fetch","body":{"type":"object","keys":["accountId","heroId","totalMatches","winRate","avgKills","avgDeaths","avgAssists","avgMvpScore","avgMvpPlacement","avgRankBadge","items","mostCommonAbilityOrder","itemRelationships"],"sample":{"accountId":793347106,"heroId":6,"totalMatches":203,"winRate":0.625615763546798,"avgKills":7.266009852216749,"avgDeaths":6.054187192118227,"avgAssists":17.064039408866996,"avgMvpScore":61.84677418736159,"avgMvpPlacement":2.70935960591133,"avgRankBadge":109.97206703910615,"items":{"type":"array","length":39,"sample":{"type":"object","keys":["itemId","name","className","slotType","tier","purchaseRate","winRate","avgBuyTimeS","medianBuyTimeS","purchaseCount","totalMatches","frequencyTier","phase"]}},"mostCommonAbilityOrder":{"type":"array","length":16,"sample":3}}}}
+STATLOCKER_API={"phase":"PRO_BUILDS_LOAD","url":"https://statlocker.gg/api/profile/account-ids-with-hero-matches?heroId=6&accountIds=97533101,281768392,793347106,384529372,1236970643,969113214,1112131714,878674161,924812291,25821887,284870226,1236320644,122392446,225014009,1140556154,24362522,44697803,993965189,847973813,249469072,1844870683,104628240,1532558207,346288841,168768502,1861579145,248368313,123252162,322041378","path":"/api/profile/account-ids-with-hero-matches","search":"?heroId=6&accountIds=97533101,281768392,793347106,384529372,1236970643,969113214,1112131714,878674161,924812291,25821887,284870226,1236320644,122392446,225014009,1140556154,24362522,44697803,993965189,847973813,249469072,1844870683,104628240,1532558207,346288841,168768502,1861579145,248368313,123252162,322041378","status":304,"method":"GET","resourceType":"fetch"}
+STATLOCKER_API={"phase":"PRO_BUILDS_LOAD","url":"https://statlocker.gg/api/profile/account-ids-with-hero-matches?heroId=6&accountIds=97533101,281768392,793347106,384529372,1236970643,969113214,1112131714,878674161,924812291,25821887,284870226,1236320644,122392446,225014009,1140556154,24362522,44697803,993965189,847973813,249469072,1844870683,104628240,1532558207,346288841,168768502,1861579145,248368313,123252162,322041378","path":"/api/profile/account-ids-with-hero-matches","search":"?heroId=6&accountIds=97533101,281768392,793347106,384529372,1236970643,969113214,1112131714,878674161,924812291,25821887,284870226,1236320644,122392446,225014009,1140556154,24362522,44697803,993965189,847973813,249469072,1844870683,104628240,1532558207,346288841,168768502,1861579145,248368313,123252162,322041378","status":200,"method":"GET","resourceType":"fetch","bodyError":"Protocol error (Network.getResponseBody): No data found for resource with given identifier"}
+STATLOCKER_API={"phase":"PRO_BUILDS_LOAD","url":"https://statlocker.gg/api/info/ranks-full","path":"/api/info/ranks-full","search":"","status":200,"method":"GET","resourceType":"fetch","body":{"type":"array","length":12,"sample":{"type":"object","keys":["tier","name","images","color"],"sample":{"tier":0,"name":"Obscurus","images":{"type":"object","keys":["large","large_webp","small","small_webp"]},"color":"#333333"}}}}
+STATLOCKER_API={"phase":"PRO_BUILDS_LOAD","url":"https://statlocker.gg/api/profile/get-performance-analysis/793347106/6","path":"/api/profile/get-performance-analysis/793347106/6","search":"","status":200,"method":"GET","resourceType":"fetch","body":{"type":"object","keys":["profileAggregateStats","matchHistory","playerPerformance","playerPerformanceLast100","heroPerformances","recent200newPerformanceRank","newHeroPerformances","allMatchPerformanceNew","calibrationMatches","storedPPScore","totalMatches","rollupStats","v3PpScore","v3CalibrationMatches","v3RankNumber","standardPpScore","standardCalibrationMatches"],"sample":{"profileAggregateStats":null,"matchHistory":{"type":"array","length":464,"sample":{"type":"object","keys":["match_id","account_id","abandoned_time_s","denies","game_mode","hero_id","hero_level","last_hits","match_duration_s","match_mode","match_result","net_worth","objectives_mask_team0","objectives_mask_team1","player_assists","player_deaths","player_kills","player_team","start_time","team_abandoned","average_rank","expectedPlacement","actualPlacement","globalRankDelta","subrankImpact","ppImpactMultiplier","ppImpact","calibrationMultiplier","expectedMvpScore","performedAsPPScore","performedAsRankNumber","hiddenKingScore","archmotherScore","hiddenKingAvgPpScore","archmotherAvgPpScore","streetBrawlPpImpact","lobbyAveragePp","heroPpImpact","lowPriPool","rankedDisplayRank"]}},"playerPerformance":{"type":"object","keys":["totalMatches","filteredMatches","rankGroups","performanceRank","heroPerformanceMap","earliestMatchTimestamp","latestMatchTimestamp"],"sample":{"totalMatches":464,"filteredMatches":458,"rankGroups":{"type":"array","length":11},"performanceRank":{"type":"object","keys":["hasEnoughData","highEternusTier","bestGroup","singleRank","lowerBound","upperBound","message","tier","rankNumber","worstGroup","midTier","aboveAllTiers","belowAllTiers"]},"heroPerformanceMap":{"type":"object","keys":[]},"earliestMatchTimestamp":"2026-01-03T15:07:41.000+00:00","latestMatchTimestamp":"2026-08-30T17:26:31.000+00:00"}},"playerPerformanceLast100":{"type":"object","keys":["totalMatches","filteredMatches","rankGroups","performanceRank","heroPerformanceMap","earliestMatchTimestamp","latestMatchTimestamp"],"sample":{"totalMatches":200,"filteredMatches":200,"rankGroups":{"type":"array","length":6},"performanceRank":{"type":"object","keys":["hasEnoughData","highEternusTier","bestGroup","singleRank","lowerBound","upperBound","message","tier","rankNumber","worstGroup","midTier","aboveAllTiers","belowAllTiers"]},"heroPerformanceMap":{"type":"object","keys":[]},"earliestMatchTimestamp":"2026-05-22T08:54:24.000+00:00","latestMatchTimestamp":"2026-08-30T17:26:31.000+00:00"}},"heroPerformances":null,"recent200newPerformanceRank":{"type":"object","keys":["estimatedRank","estimatedRankName","subRankProgress","confidenceScore","matchPerformanceDetails","totalPPScore","calibrationMatches","calibrationBaseline","cumulativePPChange","calibrationMatchId","calibrating"],"sample":{"estimatedRank":116,"estimatedRankName":"Eternus 6","subRankProgress":0.71,"confidenceScore":2080.740403968333,"matchPerformanceDetails":{"type":"array","length":117},"totalPPScore":6971,"calibrationMatches":145,"calibrationBaseline":6973,"cumulativePPChange":-2,"calibrationMatchId":86749314,"calibrating":false}},"newHeroPerformances":null,"allMatchPerformanceNew":{"type":"object","keys":["estimatedRank","estimatedRankName","subRankProgress","confidenceScore","matchPerformanceDetails","totalPPScore","calibrationMatches","calibrationBaseline","cumulativePPChange","calibrationMatchId","calibrating"],"sample":{"estimatedRank":116,"estimatedRankName":"Eternus 6","subRankProgress":0.72,"confidenceScore":4272.85266753255,"matchPerformanceDetails":{"type":"array","length":223},"totalPPScore":6970,"calibrationMatches":266,"calibrationBaseline":6931,"cumulativePPChange":16,"calibrationMatchId":63235487,"calibrating":false}},"calibrationMatches":266,"storedPPScore":null,"totalMatches":null,"rollupStats":{"type":"object","keys":["kda","kdRatio","avgKills","avgDeaths","avgAssists","damagePerMin","soulsPerMin","avgMvp","avgMvpScore","avgKP","avgAccuracy","avgHeadshot","avgTowerDmg","avgAbsorbed","avgSelfHeal","avgHeal","avgMatchRank","bulletKills","meleeKills","abilityKills","playstyleScores","matches","wins","winRate"],"sample":{"kda":"4.43","kdRatio":"1.66","avgKills":"9.9","avgDeaths":"5.9","avgAssists":"16.4","damagePerMin":1115,"soulsPerMin":1208,"avgMvp":3.6,"avgMvpScore":70.65705435180426,"avgKP":57,"avgAccuracy":53.8,"avgHeadshot":23.8}}}}}
+PRO_INITIAL_UI={"buttons":["Player","Sign In","Player","Sign In","AnnouncementStatlocker×DotabuffWe are partnering with the team behind the biggest and longest-running stats site in Valve’s original MOBA.Read more","×","Hero: Abrams▼","Player: one▼","Learn more","Consent","Do not consent","Manage options","Vendor preferences","Accept all","Confirm choices","Accept all","Confirm choices","Close"],"selects":[],"links":[{"text":"3.0.2","href":"https://statlocker.gg/changelog"},{"text":"HEROES HUB","href":"https://statlocker.gg/heroes/hero-library/"},{"text":"HERO STATS","href":"https://statlocker.gg/heroes/tier-list"},{"text":"HERO ANALYSIS","href":"https://statlocker.gg/heroes/mastery"},{"text":"COMMUNITY DIFFICULTY LIST","href":"https://statlocker.gg/heroes/community-difficulty"},{"text":"ITEMS HUB","href":"https://statlocker.gg/items"},{"text":"ITEM META MODEL","href":"https://statlocker.gg/items/meta-model"},{"text":"ITEM STATS","href":"https://statlocker.gg/items/item-stats"},{"text":"ITEM LIBRARY","href":"https://statlocker.gg/items/items-library"},{"text":"BRAWL ITEMS GUIDE","href":"https://statlocker.gg/items/brawl"},{"text":"SHOP SPEEDRUN","href":"https://statlocker.gg/items/shop-speedrun"},{"text":"BUILDS HUB","href":"https://statlocker.gg/builds"},{"text":"BUILD LIBRARY","href":"https://statlocker.gg/builds/build-library"},{"text":"BUILD LAB","href":"https://statlocker.gg/builds/build-lab"},{"text":"BUILD EXPORTER","href":"https://statlocker.gg/builds/build-exporter"},{"text":"ETERNUS BUILDS","href":"https://statlocker.gg/builds/eternus-builds"},{"text":"GUIDES","href":"https://statlocker.gg/guides"},{"text":"WIN % OVER TIME MODEL","href":"https://statlocker.gg/vision/win-chance"},{"text":"PLAYSTYLE RETROSPECTIVE MODEL","href":"https://statlocker.gg/vision/playstyle-retrospective"},{"text":"PUZZLES","href":"https://statlocker.gg/vision/puzzles"},{"text":"RANK DISTRIBUTION","href":"https://statlocker.gg/rank-distribution"},{"text":"STATLOCKER RANK DISTRIBUTION","href":"https://statlocker.gg/statlocker-rank-distribution"},{"text":"PLAYTIME BY RANK","href":"https://statlocker.gg/playtime-by-rank"},{"text":"RANK MIGRATION","href":"https://statlocker.gg/rank-migration"},{"text":"ACTIVE MATCHES","href":"https://statlocker.gg/active-matches"},{"text":"TOP MATCHES","href":"https://statlocker.gg/recent-matches"},{"text":"RANKED LEADERBOARD","href":"https://statlocker.gg/ranked-leaderboard"},{"text":"STATLOCKER LEADERBOARD","href":"https://statlocker.gg/statlocker-leaderboard"},{"text":"MATCHES LEADERBOARD","href":"https://statlocker.gg/matches-leaderboard"},{"text":"BRAWL LEADERBOARD","href":"https://statlocker.gg/brawl-leaderboard"},{"text":"ONE-TRICKS","href":"https://statlocker.gg/one-trick-leaderboard"},{"text":"DRAFT TOOL","href":"https://statlocker.gg/draft"},{"text":"TEAMS","href":"https://statlocker.gg/teams"},{"text":"TOURNAMENT HUB","href":"https://statlocker.gg/tournaments"},{"text":"TOURNAMENT CREATOR","href":"https://statlocker.gg/tournament-creator/welcome"},{"text":"INTERACTIVE MAP","href":"https://statlocker.gg/interactive-map"},{"text":"RANDOM HERO WHEEL","href":"https://statlocker.gg/random-heroes"},{"text":"RANDOM BUILD","href":"https://statlocker.gg/random-build"},{"text":"SMART STREAMS","href":"https://statlocker.gg/streams"},{"text":"HIDDEN KING VS ARCHMOTHER","href":"https://statlocker.gg/heroes/team-win-rates"},{"text":"NEW PLAYERS","href":"https://statlocker.gg/new-players"},{"text":"COMMUNITY TOOLS","href":"https://statlocker.gg/community-tools"},{"text":"COMING FROM...","href":"https://statlocker.gg/coming-from/dota"},{"text":"Home","href":"https://statlocker.gg/"},{"text":"Builds","href":"https://statlocker.gg/builds"},{"text":"one","href":"https://statlocker.gg/profile/793347106"},{"text":"#3 · EU","href":"https://statlocker.gg/valve-leaderboard?region=Europe&heroId=6"},{"text":"Blog","href":"https://statlocker.gg/blog"},{"text":"FAQ","href":"https://statlocker.gg/faq"},{"text":"API","href":"https://statlocker.gg/api"},{"text":"Privacy Policy","href":"https://statlocker.gg/privacy-policy"},{"text":"Discord","href":"https://discord.com/invite/p2smRXcgPq"},{"text":"Deadfrag","href":"https://deadfrag.com/"},{"text":"Dotabuff","href":"https://www.dotabuff.com/"},{"text":"Speedrun.com","href":"https://www.speedrun.com/"},{"text":"Business enquiries","href":"https://statlocker.gg/contact"},{"text":"How can I change my choice?","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"What if I don't consent?","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"How does legitimate interest work?","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"Do I have to consent to everything?","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"List of partners.","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"more","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"Storage details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"Privacy policy","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"more","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"Storage details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"Privacy policy","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"more","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"Storage details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"}]}
+PRO_BUILDS_CLICK=null
+STATLOCKER_API={"phase":"PRO_BUILDS_LOAD","url":"https://statlocker.gg/api/monitoring/ping","path":"/api/monitoring/ping","search":"","status":200,"method":"GET","resourceType":"fetch","bodyError":"body timeout"}
+PRO_AFTER_TAB_UI={"buttons":["Player","Sign In","Player","Sign In","AnnouncementStatlocker×DotabuffWe are partnering with the team behind the biggest and longest-running stats site in Valve’s original MOBA.Read more","×","Hero: Abrams▼","Player: one▼","Learn more","Consent","Do not consent","Manage options","Vendor preferences","Accept all","Confirm choices","Accept all","Confirm choices","Close"],"selects":[],"links":[{"text":"3.0.2","href":"https://statlocker.gg/changelog"},{"text":"HEROES HUB","href":"https://statlocker.gg/heroes/hero-library/"},{"text":"HERO STATS","href":"https://statlocker.gg/heroes/tier-list"},{"text":"HERO ANALYSIS","href":"https://statlocker.gg/heroes/mastery"},{"text":"COMMUNITY DIFFICULTY LIST","href":"https://statlocker.gg/heroes/community-difficulty"},{"text":"ITEMS HUB","href":"https://statlocker.gg/items"},{"text":"ITEM META MODEL","href":"https://statlocker.gg/items/meta-model"},{"text":"ITEM STATS","href":"https://statlocker.gg/items/item-stats"},{"text":"ITEM LIBRARY","href":"https://statlocker.gg/items/items-library"},{"text":"BRAWL ITEMS GUIDE","href":"https://statlocker.gg/items/brawl"},{"text":"SHOP SPEEDRUN","href":"https://statlocker.gg/items/shop-speedrun"},{"text":"BUILDS HUB","href":"https://statlocker.gg/builds"},{"text":"BUILD LIBRARY","href":"https://statlocker.gg/builds/build-library"},{"text":"BUILD LAB","href":"https://statlocker.gg/builds/build-lab"},{"text":"BUILD EXPORTER","href":"https://statlocker.gg/builds/build-exporter"},{"text":"ETERNUS BUILDS","href":"https://statlocker.gg/builds/eternus-builds"},{"text":"GUIDES","href":"https://statlocker.gg/guides"},{"text":"WIN % OVER TIME MODEL","href":"https://statlocker.gg/vision/win-chance"},{"text":"PLAYSTYLE RETROSPECTIVE MODEL","href":"https://statlocker.gg/vision/playstyle-retrospective"},{"text":"PUZZLES","href":"https://statlocker.gg/vision/puzzles"},{"text":"RANK DISTRIBUTION","href":"https://statlocker.gg/rank-distribution"},{"text":"STATLOCKER RANK DISTRIBUTION","href":"https://statlocker.gg/statlocker-rank-distribution"},{"text":"PLAYTIME BY RANK","href":"https://statlocker.gg/playtime-by-rank"},{"text":"RANK MIGRATION","href":"https://statlocker.gg/rank-migration"},{"text":"ACTIVE MATCHES","href":"https://statlocker.gg/active-matches"},{"text":"TOP MATCHES","href":"https://statlocker.gg/recent-matches"},{"text":"RANKED LEADERBOARD","href":"https://statlocker.gg/ranked-leaderboard"},{"text":"STATLOCKER LEADERBOARD","href":"https://statlocker.gg/statlocker-leaderboard"},{"text":"MATCHES LEADERBOARD","href":"https://statlocker.gg/matches-leaderboard"},{"text":"BRAWL LEADERBOARD","href":"https://statlocker.gg/brawl-leaderboard"},{"text":"ONE-TRICKS","href":"https://statlocker.gg/one-trick-leaderboard"},{"text":"DRAFT TOOL","href":"https://statlocker.gg/draft"},{"text":"TEAMS","href":"https://statlocker.gg/teams"},{"text":"TOURNAMENT HUB","href":"https://statlocker.gg/tournaments"},{"text":"TOURNAMENT CREATOR","href":"https://statlocker.gg/tournament-creator/welcome"},{"text":"INTERACTIVE MAP","href":"https://statlocker.gg/interactive-map"},{"text":"RANDOM HERO WHEEL","href":"https://statlocker.gg/random-heroes"},{"text":"RANDOM BUILD","href":"https://statlocker.gg/random-build"},{"text":"SMART STREAMS","href":"https://statlocker.gg/streams"},{"text":"HIDDEN KING VS ARCHMOTHER","href":"https://statlocker.gg/heroes/team-win-rates"},{"text":"NEW PLAYERS","href":"https://statlocker.gg/new-players"},{"text":"COMMUNITY TOOLS","href":"https://statlocker.gg/community-tools"},{"text":"COMING FROM...","href":"https://statlocker.gg/coming-from/dota"},{"text":"Home","href":"https://statlocker.gg/"},{"text":"Builds","href":"https://statlocker.gg/builds"},{"text":"one","href":"https://statlocker.gg/profile/793347106"},{"text":"#3 · EU","href":"https://statlocker.gg/valve-leaderboard?region=Europe&heroId=6"},{"text":"Blog","href":"https://statlocker.gg/blog"},{"text":"FAQ","href":"https://statlocker.gg/faq"},{"text":"API","href":"https://statlocker.gg/api"},{"text":"Privacy Policy","href":"https://statlocker.gg/privacy-policy"},{"text":"Discord","href":"https://discord.com/invite/p2smRXcgPq"},{"text":"Deadfrag","href":"https://deadfrag.com/"},{"text":"Dotabuff","href":"https://www.dotabuff.com/"},{"text":"Speedrun.com","href":"https://www.speedrun.com/"},{"text":"Business enquiries","href":"https://statlocker.gg/contact"},{"text":"How can I change my choice?","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"What if I don't consent?","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"How does legitimate interest work?","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"Do I have to consent to everything?","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"List of partners.","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"more","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"Storage details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"Privacy policy","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"more","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"Storage details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"Privacy policy","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"more","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"View details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"},{"text":"Storage details","href":"https://statlocker.gg/builds/eternus-builds/abrams#"}]}
+PRO_PLAYER_TRIGGER={"mode":"custom-trigger","text":"Player"}
+PRO_PLAYER_OPTION="Home/"
+OPEN=https://statlocker.gg/vision/wpa?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes
+STATLOCKER_API={"phase":"VS_HERO_LOAD","url":"https://statlocker.gg/api/auth/status","path":"/api/auth/status","search":"","status":200,"method":"GET","resourceType":"fetch","body":{"type":"object","keys":["isAuthenticated"],"sample":{"isAuthenticated":false}}}
+STATLOCKER_API={"phase":"VS_HERO_LOAD","url":"https://statlocker.gg/api/info/health","path":"/api/info/health","search":"","status":200,"method":"GET","resourceType":"fetch","body":{"type":"object","keys":["deadlockApi","statlockerCapacity","customMessage","dotColor"],"sample":{"deadlockApi":{"type":"object","keys":["status","count"],"sample":{"status":"optimal","count":68382}},"statlockerCapacity":"plenty","customMessage":"","dotColor":"green"}}}
+STATLOCKER_API={"phase":"VS_HERO_LOAD","url":"https://statlocker.gg/api/info/discord-widget","path":"/api/info/discord-widget","search":"","status":200,"method":"GET","resourceType":"fetch","body":{"type":"object","keys":["serverName","onlineCount","inviteUrl"],"sample":{"serverName":"Statlocker.gg","onlineCount":4062,"inviteUrl":"https://discord.com/invite/wTP4wYpu"}}}
+STATLOCKER_API={"phase":"VS_HERO_LOAD","url":"https://statlocker.gg/api/info/health","path":"/api/info/health","search":"","status":200,"method":"GET","resourceType":"fetch","body":{"type":"object","keys":["deadlockApi","statlockerCapacity","customMessage","dotColor"],"sample":{"deadlockApi":{"type":"object","keys":["status","count"],"sample":{"status":"optimal","count":68382}},"statlockerCapacity":"plenty","customMessage":"","dotColor":"green"}}}
+STATLOCKER_API={"phase":"VS_HERO_LOAD","url":"https://statlocker.gg/api/info/wpa-filtered-items?hero=all&tier=all&rank=ranked&category=all&gameState=all&purchaseTime=all&teamComp=Average+Comp&buildType=all&patch=all&minSampleSize=500&searchTerm=&sortBy=wpa","path":"/api/info/wpa-filtered-items","search":"?hero=all&tier=all&rank=ranked&category=all&gameState=all&purchaseTime=all&teamComp=Average+Comp&buildType=all&patch=all&minSampleSize=500&searchTerm=&sortBy=wpa","status":200,"method":"GET","resourceType":"fetch","body":{"type":"object","keys":["items","tiers","availableHeroes","availableItems","availablePatches","availableRanks"],"sample":{"items":{"type":"array","length":156,"sample":{"type":"object","keys":["item","heroName","category","cost","wpaValue","sampleSize","costRelativeWpa","mean_purchase_time_min","mean_prob_before","aheadWpa","behindWpa","aheadBehindDiff","best_purchase_time","mean_net_worth_before","heroData"]}},"tiers":{"type":"object","keys":["S","A","B","C","D","F","_thresholds"],"sample":{"S":{"type":"array","length":19},"A":{"type":"array","length":24},"B":{"type":"array","length":58},"C":{"type":"array","length":47},"D":{"type":"array","length":7},"F":{"type":"array","length":1},"_thresholds":{"type":"object","keys":["S","A","B","C","D","F"]}}},"availableHeroes":{"type":"array","length":38,"sample":"Abrams"},"availableItems":{"type":"array","length":156,"sample":"Active Reload"},"availablePatches":{"type":"array","length":4,"sample":"patch_676255623445218601"},"availableRanks":{"type":"array","length":6,"sample":"rank_7"}}}}
+STATLOCKER_API={"phase":"VS_HERO_LOAD","url":"https://statlocker.gg/api/info/health","path":"/api/info/health","search":"","status":200,"method":"GET","resourceType":"fetch","body":{"type":"object","keys":["deadlockApi","statlockerCapacity","customMessage","dotColor"],"sample":{"deadlockApi":{"type":"object","keys":["status","count"],"sample":{"status":"optimal","count":68382}},"statlockerCapacity":"plenty","customMessage":"","dotColor":"green"}}}
+STATLOCKER_API={"phase":"VS_HERO_LOAD","url":"https://statlocker.gg/api/info/t4-chains-data","path":"/api/info/t4-chains-data","search":"","status":200,"method":"GET","resourceType":"fetch","body":{"type":"object","keys":["metadata","by_hero"],"sample":{"metadata":{"type":"object","keys":["total_chains_analyzed","min_chain_samples","top_n_chains_per_hero","unique_heroes_with_chains","wpa_coverage_pct","timestamp"],"sample":{"total_chains_analyzed":25578111,"min_chain_samples":3,"top_n_chains_per_hero":20,"unique_heroes_with_chains":38,"wpa_coverage_pct":99.9,"timestamp":"2026-08-30T04:14:55.119999"}},"by_hero":{"type":"object","keys":["Billy","Calico","Lash","Holliday","Warden","Paradox","Rem","Haze","Ivy","Shiv","Mina","Viscous","Bebop","Paige","Pocket","Seven","Wraith","Abrams","Mo_and_Krill","Infernus","Drifter","Vindicta","Kelvin","Sinclair","Victor","Lady_Geist","Grey_Talon","Dynamo","The_Doorman","Yamato","Vyper","Mirage","McGinnis","Graves","Silver","Venator","Celeste","Apollo"],"sample":{"Billy":{"type":"object","keys":["total_t4_chains","two_item_chains","three_item_chains"]},"Calico":{"type":"object","keys":["total_t4_chains","two_item_chains","three_item_chains"]},"Lash":{"type":"object","keys":["total_t4_chains","two_item_chains","three_item_chains"]},"Holliday":{"type":"object","keys":["total_t4_chains","two_item_chains","three_item_chains"]},"Warden":{"type":"object","keys":["total_t4_chains","two_item_chains","three_item_chains"]},"Paradox":{"type":"object","keys":["total_t4_chains","two_item_chains","three_item_chains"]},"Rem":{"type":"object","keys":["total_t4_chains","two_item_chains","three_item_chains"]},"Haze":{"type":"object","keys":["total_t4_chains","two_item_chains","three_item_chains"]},"Ivy":{"type":"object","keys":["total_t4_chains","two_item_chains","three_item_chains"]},"Shiv":{"type":"object","keys":["total_t4_chains","two_item_chains","three_item_chains"]},"Mina":{"type":"object","keys":["total_t4_chains","two_item_chains","three_item_chains"]},"Viscous":{"type":"object","keys":["total_t4_chains","two_item_chains","three_item_chains"]}}}}}}
+STATLOCKER_API={"phase":"VS_HERO_LOAD","url":"https://statlocker.gg/api/info/wpa-filtered-items?hero=Abrams&tier=all&rank=ranked&category=all&gameState=all&purchaseTime=all&teamComp=Average+Comp&buildType=all&patch=patch_676255623445218601&minSampleSize=500&searchTerm=&sortBy=wpa","path":"/api/info/wpa-filtered-items","search":"?hero=Abrams&tier=all&rank=ranked&category=all&gameState=all&purchaseTime=all&teamComp=Average+Comp&buildType=all&patch=patch_676255623445218601&minSampleSize=500&searchTerm=&sortBy=wpa","status":200,"method":"GET","resourceType":"fetch","body":{"type":"object","keys":["items","tiers","availableHeroes","availableItems","availablePatches","availableRanks"],"sample":{"items":{"type":"array","length":57,"sample":{"type":"object","keys":["item","heroName","category","cost","wpaValue","sampleSize","costRelativeWpa","mean_purchase_time_min","mean_prob_before","aheadWpa","behindWpa","aheadBehindDiff","best_purchase_time","mean_net_worth_before"]}},"tiers":{"type":"object","keys":["S","A","B","C","D","F","_thresholds"],"sample":{"S":{"type":"array","length":13},"A":{"type":"array","length":5},"B":{"type":"array","length":18},"C":{"type":"array","length":15},"D":{"type":"array","length":6},"F":{"type":"array","length":0},"_thresholds":{"type":"object","keys":["S","A","B","C","D","F"]}}},"availableHeroes":{"type":"array","length":38,"sample":"Abrams"},"availableItems":{"type":"array","length":155,"sample":"Active Reload"},"availablePatches":{"type":"array","length":4,"sample":"patch_676255623445218601"},"availableRanks":{"type":"array","length":3,"sample":"rank_8"}}}}
+STATLOCKER_API={"phase":"VS_HERO_LOAD","url":"https://statlocker.gg/api/monitoring/ping","path":"/api/monitoring/ping","search":"","status":200,"method":"GET","resourceType":"fetch","bodyError":"body timeout"}
+VS_HERO_UI={"buttons":["Player","Sign In","Player","Sign In","AnnouncementStatlocker×DotabuffWe are partnering with the team behind the biggest and longest-running stats site in Valve’s original MOBA.Read more","×","How Does the Item Meta Model Work?","Hero: Abrams▼","First Item: All Items▼","×","GOT IT","Learn more","Consent","Do not consent","Manage options","Vendor preferences","Accept all","Confirm choices","Accept all","Confirm choices","Close"],"selects":[],"links":[{"text":"3.0.2","href":"https://statlocker.gg/changelog"},{"text":"HEROES HUB","href":"https://statlocker.gg/heroes/hero-library/"},{"text":"HERO STATS","href":"https://statlocker.gg/heroes/tier-list"},{"text":"HERO ANALYSIS","href":"https://statlocker.gg/heroes/mastery"},{"text":"COMMUNITY DIFFICULTY LIST","href":"https://statlocker.gg/heroes/community-difficulty"},{"text":"ITEMS HUB","href":"https://statlocker.gg/items"},{"text":"ITEM META MODEL","href":"https://statlocker.gg/items/meta-model"},{"text":"ITEM STATS","href":"https://statlocker.gg/items/item-stats"},{"text":"ITEM LIBRARY","href":"https://statlocker.gg/items/items-library"},{"text":"BRAWL ITEMS GUIDE","href":"https://statlocker.gg/items/brawl"},{"text":"SHOP SPEEDRUN","href":"https://statlocker.gg/items/shop-speedrun"},{"text":"BUILDS HUB","href":"https://statlocker.gg/builds"},{"text":"BUILD LIBRARY","href":"https://statlocker.gg/builds/build-library"},{"text":"BUILD LAB","href":"https://statlocker.gg/builds/build-lab"},{"text":"BUILD EXPORTER","href":"https://statlocker.gg/builds/build-exporter"},{"text":"ETERNUS BUILDS","href":"https://statlocker.gg/builds/eternus-builds"},{"text":"GUIDES","href":"https://statlocker.gg/guides"},{"text":"WIN % OVER TIME MODEL","href":"https://statlocker.gg/vision/win-chance"},{"text":"PLAYSTYLE RETROSPECTIVE MODEL","href":"https://statlocker.gg/vision/playstyle-retrospective"},{"text":"PUZZLES","href":"https://statlocker.gg/vision/puzzles"},{"text":"RANK DISTRIBUTION","href":"https://statlocker.gg/rank-distribution"},{"text":"STATLOCKER RANK DISTRIBUTION","href":"https://statlocker.gg/statlocker-rank-distribution"},{"text":"PLAYTIME BY RANK","href":"https://statlocker.gg/playtime-by-rank"},{"text":"RANK MIGRATION","href":"https://statlocker.gg/rank-migration"},{"text":"ACTIVE MATCHES","href":"https://statlocker.gg/active-matches"},{"text":"TOP MATCHES","href":"https://statlocker.gg/recent-matches"},{"text":"RANKED LEADERBOARD","href":"https://statlocker.gg/ranked-leaderboard"},{"text":"STATLOCKER LEADERBOARD","href":"https://statlocker.gg/statlocker-leaderboard"},{"text":"MATCHES LEADERBOARD","href":"https://statlocker.gg/matches-leaderboard"},{"text":"BRAWL LEADERBOARD","href":"https://statlocker.gg/brawl-leaderboard"},{"text":"ONE-TRICKS","href":"https://statlocker.gg/one-trick-leaderboard"},{"text":"DRAFT TOOL","href":"https://statlocker.gg/draft"},{"text":"TEAMS","href":"https://statlocker.gg/teams"},{"text":"TOURNAMENT HUB","href":"https://statlocker.gg/tournaments"},{"text":"TOURNAMENT CREATOR","href":"https://statlocker.gg/tournament-creator/welcome"},{"text":"INTERACTIVE MAP","href":"https://statlocker.gg/interactive-map"},{"text":"RANDOM HERO WHEEL","href":"https://statlocker.gg/random-heroes"},{"text":"RANDOM BUILD","href":"https://statlocker.gg/random-build"},{"text":"SMART STREAMS","href":"https://statlocker.gg/streams"},{"text":"HIDDEN KING VS ARCHMOTHER","href":"https://statlocker.gg/heroes/team-win-rates"},{"text":"NEW PLAYERS","href":"https://statlocker.gg/new-players"},{"text":"COMMUNITY TOOLS","href":"https://statlocker.gg/community-tools"},{"text":"COMING FROM...","href":"https://statlocker.gg/coming-from/dota"},{"text":"Home","href":"https://statlocker.gg/"},{"text":"View WPA Methodology Paper","href":"https://statlocker.gg/docs/WPA_METHODOLOGY_PAPER_PUBLIC.pdf"},{"text":"Blog","href":"https://statlocker.gg/blog"},{"text":"FAQ","href":"https://statlocker.gg/faq"},{"text":"API","href":"https://statlocker.gg/api"},{"text":"Privacy Policy","href":"https://statlocker.gg/privacy-policy"},{"text":"Discord","href":"https://discord.com/invite/p2smRXcgPq"},{"text":"Deadfrag","href":"https://deadfrag.com/"},{"text":"Dotabuff","href":"https://www.dotabuff.com/"},{"text":"Speedrun.com","href":"https://www.speedrun.com/"},{"text":"Business enquiries","href":"https://statlocker.gg/contact"},{"text":"Read the WPA Methodology Paper →","href":"https://statlocker.gg/docs/WPA_METHODOLOGY_PAPER_PUBLIC.pdf"},{"text":"How can I change my choice?","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"What if I don't consent?","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"How does legitimate interest work?","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"Do I have to consent to everything?","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"List of partners.","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"more","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"Storage details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"Privacy policy","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"more","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"Storage details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"Privacy policy","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"more","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"View details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"Storage details","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"},{"text":"Privacy policy","href":"https://statlocker.gg/items/meta-model?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes&patch=patch_676255623445218601#"}]}
+ITEMS_TO_HEROES_CLICK=null
+FINAL_SUMMARY={
+  "totalRequests": 31,
+  "relevantCount": 17,
+  "relevant": [
+    {
+      "phase": "PRO_BUILDS_LOAD",
+      "url": "https://statlocker.gg/api/info/heroes-full?v=08-22-2026",
+      "path": "/api/info/heroes-full",
+      "search": "?v=08-22-2026",
+      "status": 200,
+      "method": "GET",
+      "resourceType": "fetch",
+      "body": {
+        "type": "array",
+        "length": 57,
+        "sample": {
+          "type": "object",
+          "keys": [
+            "id",
+            "class_name",
+            "name",
+            "description",
+            "player_selectable",
+            "disabled",
+            "in_development",
+            "needs_testing",
+            "assigned_players_only",
+            "tags",
+            "gun_tag",
+            "hideout_rich_presence",
+            "hero_type",
+            "prerelease_only",
+            "limited_testing",
+            "complexity",
+            "skin",
+            "images",
+            "items",
+            "starting_stats",
+            "item_slot_info",
+            "physics",
+            "colors",
+            "shop_stat_display",
+            "cost_bonuses",
+            "stats_display",
+            "hero_stats_ui",
+            "level_info",
+            "scaling_stats",
+            "purchase_bonuses",
+            "standard_level_up_upgrades",
+            "item_draft_bucketing"
+          ],
+          "sample": {
+            "id": 1,
+            "class_name": "hero_inferno",
+            "name": "Infernus",
+            "description": {
+              "type": "object",
+              "keys": [
+                "lore",
+                "role",
+                "playstyle"
+              ]
+            },
+            "player_selectable": true,
+            "disabled": false,
+            "in_development": false,
+            "needs_testing": false,
+            "assigned_players_only": false,
+            "tags": {
+              "type": "array",
+              "length": 3
+            },
+            "gun_tag": "Rapid Fire",
+            "hideout_rich_presence": "Mixing Drinks in the Hideout"
+          }
+        }
+      }
+    },
+    {
+      "phase": "PRO_BUILDS_LOAD",
+      "url": "https://statlocker.gg/api/info/items-full?v=08-22-2026",
+      "path": "/api/info/items-full",
+      "search": "?v=08-22-2026",
+      "status": 200,
+      "method": "GET",
+      "resourceType": "fetch",
+      "body": {
+        "type": "array",
+        "length": 726,
+        "sample": {
+          "type": "object",
+          "keys": [
+            "id",
+            "class_name",
+            "name",
+            "start_trained",
+            "image",
+            "image_webp",
+            "heroes",
+            "properties",
+            "weapon_info",
+            "type"
+          ],
+          "sample": {
+            "id": 2976789773,
+            "class_name": "citadel_weapon_bosstier2_set",
+            "name": "citadel_weapon_bosstier2_set",
+            "start_trained": true,
+            "image": "https://assets-bucket.deadlock-api.com/assets-api-res/images/abilities/weapon_damage.png",
+            "image_webp": "https://assets-bucket.deadlock-api.com/assets-api-res/images/abilities/weapon_damage.webp",
+            "heroes": {
+              "type": "array",
+              "length": 0
+            },
+            "properties": {
+              "type": "object",
+              "keys": [
+                "AbilityCooldown",
+                "AbilityDuration",
+                "AbilityCastRange",
+                "AbilityUnitTargetLimit",
+                "AbilityCastDelay",
+                "AbilityChannelTime",
+                "AbilityPostCastDuration",
+                "AbilityCharges",
+                "AbilityCooldownBetweenCharge",
+                "ChannelMoveSpeed",
+                "AbilityResourceCost",
+                "TechPower",
+                "WeaponPower"
+              ]
+            },
+            "weapon_info": {
+              "type": "object",
+              "keys": [
+                "can_zoom",
+                "bullet_damage",
+                "bullet_gravity_scale",
+                "bullet_inherit_shooter_velocity_scale",
+                "bullet_lifetime",
+                "bullet_radius",
+                "bullet_reflect_amount",
+                "bullet_reflect_scale",
+                "bullet_whiz_distance",
+                "burst_shot_cooldown",
+                "crit_bonus_end",
+                "crit_bonus_end_range",
+                "crit_bonus_start",
+                "crit_bonus_start_range",
+                "cycle_time",
+                "damage_falloff_bias",
+                "damage_falloff_end_range",
+                "damage_falloff_end_scale",
+                "damage_falloff_start_range",
+                "damage_falloff_start_scale",
+                "horizontal_punch",
+                "range",
+                "bullet_speed",
+                "recoil_recovery_speed",
+                "recoil_shot_index_recovery_time_factor",
+                "recoil_speed",
+                "reload_move_speed",
+                "scatter_yaw_scale",
+                "shoot_move_speed_percent",
+                "shoot_spread_penalty_decay",
+                "shoot_spread_penalty_decay_delay",
+                "shoot_spread_penalty_per_shot",
+                "shooting_up_spread_penalty",
+                "vertical_punch",
+                "zoom_move_speed_percent",
+                "bullets",
+                "burst_shot_count",
+                "clip_size",
+                "reload_duration",
+                "horizontal_recoil"
+              ]
+            },
+            "type": "weapon"
+          }
+        }
+      }
+    },
+    {
+      "phase": "PRO_BUILDS_LOAD",
+      "url": "https://statlocker.gg/api/leaderboard/get-valve-leaderboard?region=Europe&heroId=6&page=1&pageSize=10&version=2",
+      "path": "/api/leaderboard/get-valve-leaderboard",
+      "search": "?region=Europe&heroId=6&page=1&pageSize=10&version=2",
+      "status": 200,
+      "method": "GET",
+      "resourceType": "fetch",
+      "body": {
+        "type": "object",
+        "keys": [
+          "data",
+          "totalCount",
+          "page",
+          "pageSize",
+          "totalPages",
+          "rankThresholds"
+        ],
+        "sample": {
+          "data": {
+            "type": "array",
+            "length": 10,
+            "sample": {
+              "type": "object",
+              "keys": [
+                "account_name",
+                "badge_level",
+                "rank",
+                "ranked_rank",
+                "ranked_subrank",
+                "top_hero_ids",
+                "steamProfile",
+                "heroPerformanceRank",
+                "derivedBadgeLevel"
+              ]
+            }
+          },
+          "totalCount": 77,
+          "page": 1,
+          "pageSize": 10,
+          "totalPages": 8,
+          "rankThresholds": {
+            "type": "array",
+            "length": 0
+          }
+        }
+      }
+    },
+    {
+      "phase": "PRO_BUILDS_LOAD",
+      "url": "https://statlocker.gg/api/info/wpa-filtered-items?hero=Abrams&rank=rank_11&minSampleSize=50",
+      "path": "/api/info/wpa-filtered-items",
+      "search": "?hero=Abrams&rank=rank_11&minSampleSize=50",
+      "status": 200,
+      "method": "GET",
+      "resourceType": "fetch",
+      "body": {
+        "type": "object",
+        "keys": [
+          "items",
+          "tiers",
+          "availableHeroes",
+          "availableItems",
+          "availablePatches",
+          "availableRanks"
+        ],
+        "sample": {
+          "items": {
+            "type": "array",
+            "length": 101,
+            "sample": {
+              "type": "object",
+              "keys": [
+                "item",
+                "heroName",
+                "category",
+                "cost",
+                "wpaValue",
+                "sampleSize",
+                "costRelativeWpa",
+                "mean_purchase_time_min",
+                "mean_prob_before",
+                "aheadWpa",
+                "behindWpa",
+                "aheadBehindDiff",
+                "best_purchase_time",
+                "mean_net_worth_before"
+              ]
+            }
+          },
+          "tiers": {
+            "type": "object",
+            "keys": [
+              "S",
+              "A",
+              "B",
+              "C",
+              "D",
+              "F",
+              "_thresholds"
+            ],
+            "sample": {
+              "S": {
+                "type": "array",
+                "length": 27
+              },
+              "A": {
+                "type": "array",
+                "length": 12
+              },
+              "B": {
+                "type": "array",
+                "length": 20
+              },
+              "C": {
+                "type": "array",
+                "length": 28
+              },
+              "D": {
+                "type": "array",
+                "length": 12
+              },
+              "F": {
+                "type": "array",
+                "length": 2
+              },
+              "_thresholds": {
+                "type": "object",
+                "keys": [
+                  "S",
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "F"
+                ]
+              }
+            }
+          },
+          "availableHeroes": {
+            "type": "array",
+            "length": 38,
+            "sample": "Abrams"
+          },
+          "availableItems": {
+            "type": "array",
+            "length": 154,
+            "sample": "Active Reload"
+          },
+          "availablePatches": {
+            "type": "array",
+            "length": 4,
+            "sample": "patch_676255623445218601"
+          },
+          "availableRanks": {
+            "type": "array",
+            "length": 6,
+            "sample": "rank_7"
+          }
+        }
+      }
+    },
+    {
+      "phase": "PRO_BUILDS_LOAD",
+      "url": "https://statlocker.gg/api/build/tags",
+      "path": "/api/build/tags",
+      "search": "",
+      "status": 200,
+      "method": "GET",
+      "resourceType": "fetch",
+      "body": {
+        "type": "array",
+        "length": 14,
+        "sample": {
+          "type": "object",
+          "keys": [
+            "id",
+            "label",
+            "icon"
+          ],
+          "sample": {
+            "id": 1052421347,
+            "label": "For New Players",
+            "icon": "https://assets-bucket.deadlock-api.com/assets-api-res/icons/citadel_build_tag_complexity_1.svg"
+          }
+        }
+      }
+    },
+    {
+      "phase": "PRO_BUILDS_LOAD",
+      "url": "https://statlocker.gg/api/info/get-hero-stats/101/116/1",
+      "path": "/api/info/get-hero-stats/101/116/1",
+      "search": "",
+      "status": 200,
+      "method": "GET",
+      "resourceType": "fetch",
+      "body": {
+        "type": "array",
+        "length": 38,
+        "sample": {
+          "type": "object",
+          "keys": [
+            "hero_id",
+            "losses",
+            "matches",
+            "total_assists",
+            "total_boss_damage",
+            "total_creep_damage",
+            "total_deaths",
+            "total_denies",
+            "total_kills",
+            "total_last_hits",
+            "total_max_health",
+            "total_net_worth",
+            "total_neutral_damage",
+            "total_player_damage",
+            "total_player_damage_taken",
+            "total_shots_hit",
+            "total_shots_missed",
+            "wins",
+            "tier"
+          ],
+          "sample": {
+            "hero_id": 1,
+            "losses": 268,
+            "matches": 516,
+            "total_assists": 6447,
+            "total_boss_damage": 4498850,
+            "total_creep_damage": 18003544,
+            "total_deaths": 3526,
+            "total_denies": 1546,
+            "total_kills": 3232,
+            "total_last_hits": 92107,
+            "total_max_health": 1715177,
+            "total_net_worth": 19083402
+          }
+        }
+      }
+    },
+    {
+      "phase": "PRO_BUILDS_LOAD",
+      "url": "https://statlocker.gg/api/info/get-hero-stats/11/116/1",
+      "path": "/api/info/get-hero-stats/11/116/1",
+      "search": "",
+      "status": 200,
+      "method": "GET",
+      "resourceType": "fetch",
+      "body": {
+        "type": "array",
+        "length": 38,
+        "sample": {
+          "type": "object",
+          "keys": [
+            "hero_id",
+            "losses",
+            "matches",
+            "total_assists",
+            "total_boss_damage",
+            "total_creep_damage",
+            "total_deaths",
+            "total_denies",
+            "total_kills",
+            "total_last_hits",
+            "total_max_health",
+            "total_net_worth",
+            "total_neutral_damage",
+            "total_player_damage",
+            "total_player_damage_taken",
+            "total_shots_hit",
+            "total_shots_missed",
+            "wins",
+            "tier"
+          ],
+          "sample": {
+            "hero_id": 1,
+            "losses": 87579,
+            "matches": 172255,
+            "total_assists": 2038495,
+            "total_boss_damage": 1385796704,
+            "total_creep_damage": 7627294106,
+            "total_deaths": 1221350,
+            "total_denies": 674576,
+            "total_kills": 1264837,
+            "total_last_hits": 35565759,
+            "total_max_health": 583179194,
+            "total_net_worth": 7838807452
+          }
+        }
+      }
+    },
+    {
+      "phase": "PRO_BUILDS_LOAD",
+      "url": "https://statlocker.gg/api/leaderboard/get-valve-leaderboard?region=Europe&heroId=6&page=1&pageSize=10&version=2",
+      "path": "/api/leaderboard/get-valve-leaderboard",
+      "search": "?region=Europe&heroId=6&page=1&pageSize=10&version=2",
+      "status": 200,
+      "method": "GET",
+      "resourceType": "fetch",
+      "body": {
+        "type": "object",
+        "keys": [
+          "data",
+          "totalCount",
+          "page",
+          "pageSize",
+          "totalPages",
+          "rankThresholds"
+        ],
+        "sample": {
+          "data": {
+            "type": "array",
+            "length": 10,
+            "sample": {
+              "type": "object",
+              "keys": [
+                "account_name",
+                "badge_level",
+                "rank",
+                "ranked_rank",
+                "ranked_subrank",
+                "top_hero_ids",
+                "steamProfile",
+                "heroPerformanceRank",
+                "derivedBadgeLevel"
+              ]
+            }
+          },
+          "totalCount": 77,
+          "page": 1,
+          "pageSize": 10,
+          "totalPages": 8,
+          "rankThresholds": {
+            "type": "array",
+            "length": 0
+          }
+        }
+      }
+    },
+    {
+      "phase": "PRO_BUILDS_LOAD",
+      "url": "https://statlocker.gg/api/leaderboard/get-valve-leaderboard?region=NAmerica&heroId=6&page=1&pageSize=10&version=2",
+      "path": "/api/leaderboard/get-valve-leaderboard",
+      "search": "?region=NAmerica&heroId=6&page=1&pageSize=10&version=2",
+      "status": 200,
+      "method": "GET",
+      "resourceType": "fetch",
+      "body": {
+        "type": "object",
+        "keys": [
+          "data",
+          "totalCount",
+          "page",
+          "pageSize",
+          "totalPages",
+          "rankThresholds"
+        ],
+        "sample": {
+          "data": {
+            "type": "array",
+            "length": 10,
+            "sample": {
+              "type": "object",
+              "keys": [
+                "account_name",
+                "badge_level",
+                "rank",
+                "ranked_rank",
+                "ranked_subrank",
+                "top_hero_ids",
+                "steamProfile",
+                "heroPerformanceRank",
+                "derivedBadgeLevel"
+              ]
+            }
+          },
+          "totalCount": 116,
+          "page": 1,
+          "pageSize": 10,
+          "totalPages": 12,
+          "rankThresholds": {
+            "type": "array",
+            "length": 0
+          }
+        }
+      }
+    },
+    {
+      "phase": "PRO_BUILDS_LOAD",
+      "url": "https://statlocker.gg/api/leaderboard/get-valve-leaderboard?region=Asia&heroId=6&page=1&pageSize=10&version=2",
+      "path": "/api/leaderboard/get-valve-leaderboard",
+      "search": "?region=Asia&heroId=6&page=1&pageSize=10&version=2",
+      "status": 200,
+      "method": "GET",
+      "resourceType": "fetch",
+      "body": {
+        "type": "object",
+        "keys": [
+          "data",
+          "totalCount",
+          "page",
+          "pageSize",
+          "totalPages",
+          "rankThresholds"
+        ],
+        "sample": {
+          "data": {
+            "type": "array",
+            "length": 10,
+            "sample": {
+              "type": "object",
+              "keys": [
+                "account_name",
+                "badge_level",
+                "rank",
+                "ranked_rank",
+                "ranked_subrank",
+                "top_hero_ids",
+                "steamProfile",
+                "heroPerformanceRank",
+                "derivedBadgeLevel"
+              ]
+            }
+          },
+          "totalCount": 20,
+          "page": 1,
+          "pageSize": 10,
+          "totalPages": 2,
+          "rankThresholds": {
+            "type": "array",
+            "length": 0
+          }
+        }
+      }
+    },
+    {
+      "phase": "PRO_BUILDS_LOAD",
+      "url": "https://statlocker.gg/api/leaderboard/get-valve-leaderboard?region=SAmerica&heroId=6&page=1&pageSize=10&version=2",
+      "path": "/api/leaderboard/get-valve-leaderboard",
+      "search": "?region=SAmerica&heroId=6&page=1&pageSize=10&version=2",
+      "status": 200,
+      "method": "GET",
+      "resourceType": "fetch",
+      "body": {
+        "type": "object",
+        "keys": [
+          "data",
+          "totalCount",
+          "page",
+          "pageSize",
+          "totalPages",
+          "rankThresholds"
+        ],
+        "sample": {
+          "data": {
+            "type": "array",
+            "length": 2,
+            "sample": {
+              "type": "object",
+              "keys": [
+                "account_name",
+                "badge_level",
+                "rank",
+                "ranked_rank",
+                "ranked_subrank",
+                "top_hero_ids",
+                "steamProfile",
+                "heroPerformanceRank",
+                "derivedBadgeLevel"
+              ]
+            }
+          },
+          "totalCount": 2,
+          "page": 1,
+          "pageSize": 10,
+          "totalPages": 1,
+          "rankThresholds": {
+            "type": "array",
+            "length": 0
+          }
+        }
+      }
+    },
+    {
+      "phase": "PRO_BUILDS_LOAD",
+      "url": "https://statlocker.gg/api/leaderboard/get-valve-leaderboard?region=Oceania&heroId=6&page=1&pageSize=10&version=2",
+      "path": "/api/leaderboard/get-valve-leaderboard",
+      "search": "?region=Oceania&heroId=6&page=1&pageSize=10&version=2",
+      "status": 200,
+      "method": "GET",
+      "resourceType": "fetch",
+      "body": {
+        "type": "object",
+        "keys": [
+          "data",
+          "totalCount",
+          "page",
+          "pageSize",
+          "totalPages",
+          "rankThresholds"
+        ],
+        "sample": {
+          "data": {
+            "type": "array",
+            "length": 6,
+            "sample": {
+              "type": "object",
+              "keys": [
+                "account_name",
+                "badge_level",
+                "rank",
+                "ranked_rank",
+                "ranked_subrank",
+                "top_hero_ids",
+                "steamProfile",
+                "heroPerformanceRank",
+                "derivedBadgeLevel"
+              ]
+            }
+          },
+          "totalCount": 6,
+          "page": 1,
+          "pageSize": 10,
+          "totalPages": 1,
+          "rankThresholds": {
+            "type": "array",
+            "length": 0
+          }
+        }
+      }
+    },
+    {
+      "phase": "PRO_BUILDS_LOAD",
+      "url": "https://statlocker.gg/api/info/player-build-analysis/793347106/6",
+      "path": "/api/info/player-build-analysis/793347106/6",
+      "search": "",
+      "status": 200,
+      "method": "GET",
+      "resourceType": "fetch",
+      "body": {
+        "type": "object",
+        "keys": [
+          "accountId",
+          "heroId",
+          "totalMatches",
+          "winRate",
+          "avgKills",
+          "avgDeaths",
+          "avgAssists",
+          "avgMvpScore",
+          "avgMvpPlacement",
+          "avgRankBadge",
+          "items",
+          "mostCommonAbilityOrder",
+          "itemRelationships"
+        ],
+        "sample": {
+          "accountId": 793347106,
+          "heroId": 6,
+          "totalMatches": 203,
+          "winRate": 0.625615763546798,
+          "avgKills": 7.266009852216749,
+          "avgDeaths": 6.054187192118227,
+          "avgAssists": 17.064039408866996,
+          "avgMvpScore": 61.84677418736159,
+          "avgMvpPlacement": 2.70935960591133,
+          "avgRankBadge": 109.97206703910615,
+          "items": {
+            "type": "array",
+            "length": 39,
+            "sample": {
+              "type": "object",
+              "keys": [
+                "itemId",
+                "name",
+                "className",
+                "slotType",
+                "tier",
+                "purchaseRate",
+                "winRate",
+                "avgBuyTimeS",
+                "medianBuyTimeS",
+                "purchaseCount",
+                "totalMatches",
+                "frequencyTier",
+                "phase"
+              ]
+            }
+          },
+          "mostCommonAbilityOrder": {
+            "type": "array",
+            "length": 16,
+            "sample": 3
+          }
+        }
+      }
+    },
+    {
+      "phase": "PRO_BUILDS_LOAD",
+      "url": "https://statlocker.gg/api/profile/account-ids-with-hero-matches?heroId=6&accountIds=97533101,281768392,793347106,384529372,1236970643,969113214,1112131714,878674161,924812291,25821887,284870226,1236320644,122392446,225014009,1140556154,24362522,44697803,993965189,847973813,249469072,1844870683,104628240,1532558207,346288841,168768502,1861579145,248368313,123252162,322041378",
+      "path": "/api/profile/account-ids-with-hero-matches",
+      "search": "?heroId=6&accountIds=97533101,281768392,793347106,384529372,1236970643,969113214,1112131714,878674161,924812291,25821887,284870226,1236320644,122392446,225014009,1140556154,24362522,44697803,993965189,847973813,249469072,1844870683,104628240,1532558207,346288841,168768502,1861579145,248368313,123252162,322041378",
+      "status": 304,
+      "method": "GET",
+      "resourceType": "fetch"
+    },
+    {
+      "phase": "PRO_BUILDS_LOAD",
+      "url": "https://statlocker.gg/api/profile/account-ids-with-hero-matches?heroId=6&accountIds=97533101,281768392,793347106,384529372,1236970643,969113214,1112131714,878674161,924812291,25821887,284870226,1236320644,122392446,225014009,1140556154,24362522,44697803,993965189,847973813,249469072,1844870683,104628240,1532558207,346288841,168768502,1861579145,248368313,123252162,322041378",
+      "path": "/api/profile/account-ids-with-hero-matches",
+      "search": "?heroId=6&accountIds=97533101,281768392,793347106,384529372,1236970643,969113214,1112131714,878674161,924812291,25821887,284870226,1236320644,122392446,225014009,1140556154,24362522,44697803,993965189,847973813,249469072,1844870683,104628240,1532558207,346288841,168768502,1861579145,248368313,123252162,322041378",
+      "status": 200,
+      "method": "GET",
+      "resourceType": "fetch",
+      "bodyError": "Protocol error (Network.getResponseBody): No data found for resource with given identifier"
+    },
+    {
+      "phase": "VS_HERO_LOAD",
+      "url": "https://statlocker.gg/api/info/wpa-filtered-items?hero=all&tier=all&rank=ranked&category=all&gameState=all&purchaseTime=all&teamComp=Average+Comp&buildType=all&patch=all&minSampleSize=500&searchTerm=&sortBy=wpa",
+      "path": "/api/info/wpa-filtered-items",
+      "search": "?hero=all&tier=all&rank=ranked&category=all&gameState=all&purchaseTime=all&teamComp=Average+Comp&buildType=all&patch=all&minSampleSize=500&searchTerm=&sortBy=wpa",
+      "status": 200,
+      "method": "GET",
+      "resourceType": "fetch",
+      "body": {
+        "type": "object",
+        "keys": [
+          "items",
+          "tiers",
+          "availableHeroes",
+          "availableItems",
+          "availablePatches",
+          "availableRanks"
+        ],
+        "sample": {
+          "items": {
+            "type": "array",
+            "length": 156,
+            "sample": {
+              "type": "object",
+              "keys": [
+                "item",
+                "heroName",
+                "category",
+                "cost",
+                "wpaValue",
+                "sampleSize",
+                "costRelativeWpa",
+                "mean_purchase_time_min",
+                "mean_prob_before",
+                "aheadWpa",
+                "behindWpa",
+                "aheadBehindDiff",
+                "best_purchase_time",
+                "mean_net_worth_before",
+                "heroData"
+              ]
+            }
+          },
+          "tiers": {
+            "type": "object",
+            "keys": [
+              "S",
+              "A",
+              "B",
+              "C",
+              "D",
+              "F",
+              "_thresholds"
+            ],
+            "sample": {
+              "S": {
+                "type": "array",
+                "length": 19
+              },
+              "A": {
+                "type": "array",
+                "length": 24
+              },
+              "B": {
+                "type": "array",
+                "length": 58
+              },
+              "C": {
+                "type": "array",
+                "length": 47
+              },
+              "D": {
+                "type": "array",
+                "length": 7
+              },
+              "F": {
+                "type": "array",
+                "length": 1
+              },
+              "_thresholds": {
+                "type": "object",
+                "keys": [
+                  "S",
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "F"
+                ]
+              }
+            }
+          },
+          "availableHeroes": {
+            "type": "array",
+            "length": 38,
+            "sample": "Abrams"
+          },
+          "availableItems": {
+            "type": "array",
+            "length": 156,
+            "sample": "Active Reload"
+          },
+          "availablePatches": {
+            "type": "array",
+            "length": 4,
+            "sample": "patch_676255623445218601"
+          },
+          "availableRanks": {
+            "type": "array",
+            "length": 6,
+            "sample": "rank_7"
+          }
+        }
+      }
+    },
+    {
+      "phase": "VS_HERO_LOAD",
+      "url": "https://statlocker.gg/api/info/wpa-filtered-items?hero=Abrams&tier=all&rank=ranked&category=all&gameState=all&purchaseTime=all&teamComp=Average+Comp&buildType=all&patch=patch_676255623445218601&minSampleSize=500&searchTerm=&sortBy=wpa",
+      "path": "/api/info/wpa-filtered-items",
+      "search": "?hero=Abrams&tier=all&rank=ranked&category=all&gameState=all&purchaseTime=all&teamComp=Average+Comp&buildType=all&patch=patch_676255623445218601&minSampleSize=500&searchTerm=&sortBy=wpa",
+      "status": 200,
+      "method": "GET",
+      "resourceType": "fetch",
+      "body": {
+        "type": "object",
+        "keys": [
+          "items",
+          "tiers",
+          "availableHeroes",
+          "availableItems",
+          "availablePatches",
+          "availableRanks"
+        ],
+        "sample": {
+          "items": {
+            "type": "array",
+            "length": 57,
+            "sample": {
+              "type": "object",
+              "keys": [
+                "item",
+                "heroName",
+                "category",
+                "cost",
+                "wpaValue",
+                "sampleSize",
+                "costRelativeWpa",
+                "mean_purchase_time_min",
+                "mean_prob_before",
+                "aheadWpa",
+                "behindWpa",
+                "aheadBehindDiff",
+                "best_purchase_time",
+                "mean_net_worth_before"
+              ]
+            }
+          },
+          "tiers": {
+            "type": "object",
+            "keys": [
+              "S",
+              "A",
+              "B",
+              "C",
+              "D",
+              "F",
+              "_thresholds"
+            ],
+            "sample": {
+              "S": {
+                "type": "array",
+                "length": 13
+              },
+              "A": {
+                "type": "array",
+                "length": 5
+              },
+              "B": {
+                "type": "array",
+                "length": 18
+              },
+              "C": {
+                "type": "array",
+                "length": 15
+              },
+              "D": {
+                "type": "array",
+                "length": 6
+              },
+              "F": {
+                "type": "array",
+                "length": 0
+              },
+              "_thresholds": {
+                "type": "object",
+                "keys": [
+                  "S",
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "F"
+                ]
+              }
+            }
+          },
+          "availableHeroes": {
+            "type": "array",
+            "length": 38,
+            "sample": "Abrams"
+          },
+          "availableItems": {
+            "type": "array",
+            "length": 155,
+            "sample": "Active Reload"
+          },
+          "availablePatches": {
+            "type": "array",
+            "length": 4,
+            "sample": "patch_676255623445218601"
+          },
+          "availableRanks": {
+            "type": "array",
+            "length": 3,
+            "sample": "rank_8"
+          }
+        }
+      }
+    }
+  ]
+}
