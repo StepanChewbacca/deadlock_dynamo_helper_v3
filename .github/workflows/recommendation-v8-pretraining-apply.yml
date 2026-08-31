@@ -122,11 +122,11 @@ jobs:
           ingest.write_text(text)
           PY
       - name: Install dependencies
-        run: yarn install --frozen-lockfile --ignore-engines
+        run: npx -y yarn@1.22.22 install --frozen-lockfile --ignore-engines
       - name: Build
-        run: yarn build
+        run: npx -y yarn@1.22.22 build
       - name: Test
-        run: yarn test
+        run: npx -y yarn@1.22.22 test
       - name: Commit integration
         shell: bash
         run: |
