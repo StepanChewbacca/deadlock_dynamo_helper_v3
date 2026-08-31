@@ -1,0 +1,35 @@
+name: Recommendation V8 Live Integration Audit
+
+on:
+  push:
+    branches:
+      - agent/recommendation-v8-pretraining-execution
+    paths:
+      - .github/workflows/recommendation-v8-integration-audit.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect V8 producers and training labels
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '--- coordinator references ---'
+          grep -RIn --exclude='*.spec.ts' 'RecommendationRealtimeCoordinatorV8Service\|\.decide(' apps packages | head -n 200 || true
+          echo '--- decision/outcome event producers ---'
+          grep -RIn --exclude='*.spec.ts' "RECOMMENDATION_DECISION\|RECOMMENDATION_OUTCOME\|observedActionKey\|actualNextAction" apps packages | head -n 300 || true
+          echo '--- telemetry v8 client usage ---'
+          grep -RIn --exclude='*.spec.ts' 'recommendation-telemetry/v8\|PLAYER_STATE\|INVENTORY_SNAPSHOT\|EXPOSURE_ACK' apps/overwolf-client apps/api/src | head -n 300 || true
+          echo '--- situational service/controller entrypoints ---'
+          grep -RIn --exclude='*.spec.ts' 'class SituationalRecommendation\|situational/recommend\|RecommendationRealtime' apps/api/src | head -n 300 || true
+          echo '--- dataset observed action SQL ---'
+          grep -RIn 'observedActionKey\|RECOMMENDATION_OUTCOME' apps/api/src/deadlock-live/recommendation-training-dataset-v8.service.ts apps/api/src/deadlock-live/recommendation-dataset-v8-report.service.ts | head -n 200 || true
+          echo '--- package build domain dependency usage ---'
+          grep -RIn '@deadlock-live-probe/build-domain' apps/api/src packages/shared/src | head -n 120 || true
