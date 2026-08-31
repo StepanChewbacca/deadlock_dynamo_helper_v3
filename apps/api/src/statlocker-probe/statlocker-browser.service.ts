@@ -175,13 +175,6 @@ export class StatlockerBrowserService {
               (entry) =>
                 entry.path.startsWith('/api/info/player-build-analysis/') &&
                 entry.status === 200,
-            ) ??
-          [...responses]
-            .reverse()
-            .find(
-              (entry) =>
-                entry.path === '/api/info/wpa-filtered-items' &&
-                entry.status === 200,
             ),
       };
     }
