@@ -214,28 +214,28 @@ jobs:
           fi
           echo "STATLOCKER_PROBE_HOST=$server_name" >> "$GITHUB_ENV"
 
-          public_url=''
-          if [ "$server_name" != '127.0.0.1' ] && curl -k --fail --silent --show-error \
-            --resolve "$server_name:443:127.0.0.1" \
-            "https://$server_name/deadlock/tools/statlocker" \
-            -o "$RUNNER_TEMP/statlocker-nginx-ui.html"; then
-            public_url="https://$server_name/deadlock/tools/statlocker"
-          elif curl --fail --silent --show-error \
-            -H "Host: $server_name" \
-            http://127.0.0.1/deadlock/tools/statlocker \
-            -o "$RUNNER_TEMP/statlocker-nginx-ui.html"; then
-            public_url="http://$server_name/deadlock/tools/statlocker"
+          if [ "$server_name" = '127.0.0.1' ]; then
+            public_url="http://127.0.0.1/deadlock/tools/statlocker"
+            curl --retry 8 --retry-delay 1 --retry-all-errors \
+              --fail --silent --show-error \
+              "$public_url" \
+              -o "$RUNNER_TEMP/statlocker-nginx-ui.html"
           else
-            echo 'Nginx route did not return the probe UI' >&2
-            exit 1
+            public_url="https://$server_name/deadlock/tools/statlocker"
+            curl -k --resolve "$server_name:443:127.0.0.1" \
+              --retry 8 --retry-delay 1 --retry-all-errors \
+              --fail --silent --show-error \
+              "$public_url" \
+              -o "$RUNNER_TEMP/statlocker-nginx-ui.html"
           fi
 
           test -s "$RUNNER_TEMP/statlocker-nginx-ui.html"
+          grep -q 'Statlocker Vision Model Probe' "$RUNNER_TEMP/statlocker-nginx-ui.html"
           echo "STATLOCKER_PROBE_PUBLIC_URL=$public_url" >> "$GITHUB_ENV"
           trap - EXIT
           echo "Probe UI: $public_url"
 
-      - name: Exercise Statlocker discovery through Nginx
+      - name: Exercise model endpoints through live probe
         shell: bash
         run: |
           set -euo pipefail
@@ -244,12 +244,8 @@ jobs:
           if [[ "$base_url" == https://* ]]; then
             curl_args=(-k --resolve "$STATLOCKER_PROBE_HOST:443:127.0.0.1")
           else
-            curl_args=(-H "Host: $STATLOCKER_PROBE_HOST")
+            curl_args=()
           fi
-
-          # Nginx graceful reload can briefly leave a worker with the previous loopback port.
-          # Wait a moment and retry so the deploy validation tests the final active route.
-          sleep 3
 
           curl "${curl_args[@]}" \
             --retry 8 --retry-delay 1 --retry-all-errors \
@@ -260,46 +256,50 @@ jobs:
           curl "${curl_args[@]}" \
             --retry 8 --retry-delay 1 --retry-all-errors \
             --fail --silent --show-error \
-            "$base_url/discover" \
-            -o "$RUNNER_TEMP/statlocker-discovery.json"
+            -H 'Content-Type: application/json' \
+            -X POST "$base_url/request" \
+            --data '{"method":"GET","path":"/api/info/t4-chains-data","query":{},"body":{}}' \
+            -o "$RUNNER_TEMP/statlocker-t4.json"
 
-          python3 - "$RUNNER_TEMP/statlocker-discovery.json" <<'PY'
+          curl "${curl_args[@]}" \
+            --retry 8 --retry-delay 1 --retry-all-errors \
+            --fail --silent --show-error \
+            -H 'Content-Type: application/json' \
+            -X POST "$base_url/request" \
+            --data '{"method":"GET","path":"/api/info/wpa-filtered-items","query":{"hero":"Abrams","tier":"all","queue":"ranked","rank":"all","category":"all","gameState":"all","purchaseTime":"all","teamComp":"all","buildType":"all","patch":"all","minSampleSize":500,"searchTerm":"","sortBy":"wpa","timeSyncEnabled":false,"currentGameTime":0,"timeWindow":5},"body":{}}' \
+            -o "$RUNNER_TEMP/statlocker-wpa.json"
+
+          python3 - "$RUNNER_TEMP/statlocker-presets-via-nginx.json" "$RUNNER_TEMP/statlocker-t4.json" "$RUNNER_TEMP/statlocker-wpa.json" <<'PY'
           import json
           import sys
           from pathlib import Path
 
-          data = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
-          endpoints = data.get('endpoints') if isinstance(data.get('endpoints'), list) else []
-          useful = [
-              entry for entry in endpoints
-              if isinstance(entry, dict)
-              and entry.get('likelyUseful')
-              and not entry.get('rawDeadlockDuplicate')
-          ]
-          confirmed = [
-              entry for entry in endpoints
-              if isinstance(entry, dict) and entry.get('confidence') == 'FRONTEND_CONFIRMED'
-          ]
-          public = [
-              entry for entry in endpoints
-              if isinstance(entry, dict) and entry.get('access') == 'PUBLIC_200'
-          ]
+          presets = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+          t4 = json.loads(Path(sys.argv[2]).read_text(encoding='utf-8'))
+          wpa = json.loads(Path(sys.argv[3]).read_text(encoding='utf-8'))
+
+          if not isinstance(presets, list) or len(presets) < 6:
+              raise SystemExit('Model preset catalog is missing expected targets')
+          if t4.get('status') != 200:
+              raise SystemExit(f"Expected Statlocker T4 model endpoint HTTP 200, got {t4.get('status')}")
+          if wpa.get('status') != 401:
+              raise SystemExit(f"Expected unauthenticated Item Meta/WPA HTTP 401, got {wpa.get('status')}")
+
+          t4_data = t4.get('data') if isinstance(t4.get('data'), dict) else {}
+          if 'metadata' not in t4_data or 'by_hero' not in t4_data:
+              raise SystemExit('T4 response is missing metadata/by_hero')
+
           print(json.dumps({
-              'pagesChecked': len(data.get('pagesChecked') or []),
-              'scriptsChecked': len(data.get('scriptsChecked') or []),
-              'endpointsFound': len(endpoints),
-              'usefulEndpointsFound': len(useful),
-              'frontendConfirmed': len(confirmed),
-              'anonymousPublic200': len(public),
-              'errors': len(data.get('errors') or []),
-              'modelEndpoints': [
-                  {
-                      'path': entry.get('path'),
-                      'modelFamily': entry.get('modelFamily'),
-                      'access': entry.get('access'),
-                  }
-                  for entry in confirmed[:30]
-              ],
+              'ui': 'ok',
+              'presetCount': len(presets),
+              't4BuildChains': {
+                  'statlockerStatus': t4.get('status'),
+                  'topLevelKeys': list(t4_data.keys())[:20],
+              },
+              'itemMetaWpa': {
+                  'anonymousStatlockerStatus': wpa.get('status'),
+                  'meaning': 'frontend-confirmed endpoint requires Statlocker authorization/session',
+              },
           }, indent=2, ensure_ascii=False))
           PY
 
