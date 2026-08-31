@@ -1,0 +1,324 @@
+name: Recommendation V8 Pretraining Execution Audit
+
+on:
+  push:
+    branches:
+      - agent/recommendation-v8-pretraining-execution
+    paths:
+      - .github/workflows/recommendation-pretraining-execution-audit.yml
+      - .github/pretraining-audit-trigger
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-v8-pretraining-execution-audit
+  cancel-in-progress: false
+
+jobs:
+  data-readiness:
+    environment: recommendation-dataset-export
+    runs-on: [self-hosted, linux, x64, recommendation-dataset-export]
+    timeout-minutes: 45
+    env:
+      DB_HOST: ${{ secrets.DB_HOST }}
+      DB_PORT: ${{ secrets.DB_PORT }}
+      DB_USER: ${{ secrets.DB_USER }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      DB_NAME: ${{ secrets.DB_NAME }}
+      DB_SSL: ${{ vars.DB_SSL }}
+      DB_SSL_REJECT_UNAUTHORIZED: ${{ vars.DB_SSL_REJECT_UNAUTHORIZED }}
+      RECOMMENDATION_DIRECT_SHOP_SOURCE_ALLOWLIST: ${{ vars.RECOMMENDATION_DIRECT_SHOP_SOURCE_ALLOWLIST }}
+      FROZEN_REF: frozen/recommendation-v8-behavioral-bfec0512
+      FROZEN_SHA: bfec0512e44bd157d330897bdad0fdd2816d3a83
+    steps:
+      - name: Checkout exact frozen training source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.FROZEN_REF }}
+
+      - name: Verify frozen source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$FROZEN_SHA"
+          echo "frozenSourceSha=$FROZEN_SHA"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: yarn
+
+      - name: Install exact repository dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Build report dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          yarn workspace @deadlock-live-probe/shared build
+          yarn workspace @deadlock-live-probe/build-domain build
+
+      - name: Audit real pretraining data gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          AUDIT_TS="$GITHUB_WORKSPACE/.pretraining-data-audit.ts"
+          AUDIT_JSON="$RUNNER_TEMP/recommendation-v8-pretraining-data-audit.json"
+          cat > "$AUDIT_TS" <<'TS'
+          import { DataSource } from 'typeorm';
+          import { evaluateSoulsAffordabilityEvidenceV2 } from '@deadlock-live-probe/shared';
+          import { RecommendationObservabilityReportService } from './apps/api/src/deadlock-live/recommendation-observability-report.service';
+          import { RecommendationDatasetV8ReportService } from './apps/api/src/deadlock-live/recommendation-dataset-v8-report.service';
+          import * as fs from 'fs';
+
+          function required(name: string): string {
+            const value = process.env[name];
+            if (!value) throw new Error(`${name} is required`);
+            return value;
+          }
+
+          async function tableExists(ds: DataSource, table: string): Promise<boolean> {
+            const rows = await ds.query(
+              `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = $1) AS "exists"`,
+              [table],
+            );
+            return rows[0]?.exists === true;
+          }
+
+          async function main(): Promise<void> {
+            const sslEnabled = String(process.env.DB_SSL ?? '').toLowerCase() === 'true';
+            const rejectUnauthorized = String(process.env.DB_SSL_REJECT_UNAUTHORIZED ?? 'true').toLowerCase() !== 'false';
+            const ds = new DataSource({
+              type: 'postgres',
+              host: required('DB_HOST'),
+              port: Number(required('DB_PORT')),
+              username: required('DB_USER'),
+              password: required('DB_PASSWORD'),
+              database: required('DB_NAME'),
+              ssl: sslEnabled ? { rejectUnauthorized } : false,
+              entities: [],
+            });
+            await ds.initialize();
+            try {
+              const requiredTables = [
+                'recommendation_decisions_v8',
+                'recommendation_decision_candidates_v8',
+                'recommendation_telemetry_events',
+                'souls_affordability_evidence_v2',
+                'recommendation_roadmap_evidence_v1',
+                'recommendation_evidence_snapshots_v8',
+                'recommendation_dataset_registry_v1',
+                'item_catalog_versions',
+              ];
+              const tablePresence: Record<string, boolean> = {};
+              for (const table of requiredTables) tablePresence[table] = await tableExists(ds, table);
+
+              const versionRows = tablePresence.recommendation_decisions_v8
+                ? await ds.query(`
+                    SELECT
+                      "candidateGeneratorVersion" AS "version",
+                      COUNT(*)::bigint AS "decisionCount",
+                      MIN("decidedAt") AS "firstDecisionAt",
+                      MAX("decidedAt") AS "lastDecisionAt"
+                    FROM recommendation_decisions_v8
+                    GROUP BY "candidateGeneratorVersion"
+                    ORDER BY COUNT(*) DESC, "candidateGeneratorVersion" ASC
+                  `)
+                : [];
+
+              const soulsRows = tablePresence.souls_affordability_evidence_v2
+                ? await ds.query(`SELECT observation FROM souls_affordability_evidence_v2 ORDER BY "createdAt" ASC, "observationId" ASC`)
+                : [];
+              const soulsReport = evaluateSoulsAffordabilityEvidenceV2(soulsRows.map((row: any) => row.observation));
+
+              const observability = new RecommendationObservabilityReportService(ds);
+              const dataset = new RecommendationDatasetV8ReportService(ds);
+              const versions = versionRows
+                .map((row: any) => String(row.version ?? '').trim())
+                .filter((value: string) => value.length > 0);
+              const scopedReports = [] as any[];
+              for (const version of versions) {
+                const [observabilityReport, datasetReport] = await Promise.all([
+                  observability.buildReport({ candidateGeneratorVersion: version }),
+                  dataset.buildReport({ candidateGeneratorVersion: version }),
+                ]);
+                scopedReports.push({ version, observability: observabilityReport, dataset: datasetReport });
+              }
+
+              const roadmapEvidence = tablePresence.recommendation_roadmap_evidence_v1
+                ? await ds.query(`
+                    SELECT DISTINCT ON ("gateName")
+                      "gateName", status, evaluator, "evaluatedAt", "subjectSha256", notes
+                    FROM recommendation_roadmap_evidence_v1
+                    ORDER BY "gateName", "evaluatedAt" DESC, "recordedAt" DESC
+                  `)
+                : [];
+              const registryRows = tablePresence.recommendation_dataset_registry_v1
+                ? await ds.query(`
+                    SELECT "datasetId", status, "datasetSha256", "manifestSha256", "sourceCommitSha", "verifiedAt", "updatedAt"
+                    FROM recommendation_dataset_registry_v1
+                    ORDER BY "updatedAt" DESC
+                    LIMIT 20
+                  `)
+                : [];
+
+              const result = {
+                generatedAt: new Date().toISOString(),
+                frozenSourceSha: process.env.FROZEN_SHA,
+                directShopAllowlistConfigured: Boolean(String(process.env.RECOMMENDATION_DIRECT_SHOP_SOURCE_ALLOWLIST ?? '').trim()),
+                tablePresence,
+                candidateGeneratorVersions: versionRows,
+                controlledSouls: soulsReport,
+                scopedReports,
+                latestRoadmapEvidence: roadmapEvidence,
+                datasetRegistry: registryRows,
+              };
+              fs.writeFileSync(process.argv[2], JSON.stringify(result, null, 2) + '\n', { flag: 'wx' });
+              console.log(JSON.stringify({
+                generatedAt: result.generatedAt,
+                frozenSourceSha: result.frozenSourceSha,
+                directShopAllowlistConfigured: result.directShopAllowlistConfigured,
+                candidateGeneratorVersions: versionRows.map((row: any) => ({
+                  version: row.version,
+                  decisionCount: Number(row.decisionCount),
+                  firstDecisionAt: row.firstDecisionAt,
+                  lastDecisionAt: row.lastDecisionAt,
+                })),
+                controlledSoulsGate: (soulsReport as any).affordability?.gateStatus ?? (soulsReport as any).status,
+                scopedGateSummary: scopedReports.map((row: any) => ({
+                  version: row.version,
+                  observabilityGate: row.observability.gate,
+                  dataset: {
+                    decisionCount: row.dataset.decisionCount,
+                    labeledDecisionCount: row.dataset.labeledDecisionCount,
+                    passedStructuralGate: row.dataset.passedStructuralGate,
+                    passedEmpiricalGate: row.dataset.passedEmpiricalGate,
+                    blockers: row.dataset.blockers,
+                  },
+                })),
+                latestRoadmapEvidence: roadmapEvidence,
+                datasetRegistry: registryRows.map((row: any) => ({
+                  datasetId: row.datasetId,
+                  status: row.status,
+                  sourceCommitSha: row.sourceCommitSha,
+                  verifiedAt: row.verifiedAt,
+                  updatedAt: row.updatedAt,
+                })),
+              }, null, 2));
+            } finally {
+              await ds.destroy();
+            }
+          }
+
+          void main().catch((error) => {
+            console.error(error instanceof Error ? error.stack : error);
+            process.exitCode = 1;
+          });
+          TS
+          npx ts-node --project apps/api/tsconfig.json "$AUDIT_TS" "$AUDIT_JSON"
+          rm -f "$AUDIT_TS"
+          echo "AUDIT_JSON=$AUDIT_JSON" >> "$GITHUB_ENV"
+
+      - name: Upload aggregate data-readiness evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-v8-pretraining-data-audit-${{ github.run_id }}
+          path: ${{ env.AUDIT_JSON }}
+          if-no-files-found: error
+          retention-days: 14
+
+  training-runner-readiness:
+    environment: recommendation-training
+    runs-on: [self-hosted, linux, x64, recommendation-training]
+    timeout-minutes: 30
+    env:
+      FROZEN_REF: frozen/recommendation-v8-behavioral-bfec0512
+      FROZEN_SHA: bfec0512e44bd157d330897bdad0fdd2816d3a83
+      EXPECTED_WHEELHOUSE_SHA256: ${{ vars.RECOMMENDATION_TRAINING_WHEELHOUSE_SHA256 }}
+    steps:
+      - name: Checkout exact frozen training source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.FROZEN_REF }}
+
+      - name: Verify frozen source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$FROZEN_SHA"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Audit secure training runner without training
+        shell: bash
+        run: |
+          set -euo pipefail
+          REPORT="$RUNNER_TEMP/recommendation-v8-training-runner-audit.json"
+          test -n "${RECOMMENDATION_TRAINING_OUTPUT_ROOT:-}" || { echo "RECOMMENDATION_TRAINING_OUTPUT_ROOT is missing" >&2; exit 1; }
+          test -n "${RECOMMENDATION_DATASET_STAGING_ROOT:-}" || { echo "RECOMMENDATION_DATASET_STAGING_ROOT is missing" >&2; exit 1; }
+          test -n "${RECOMMENDATION_TRAINING_WHEELHOUSE:-}" || { echo "RECOMMENDATION_TRAINING_WHEELHOUSE is missing" >&2; exit 1; }
+          test -n "$EXPECTED_WHEELHOUSE_SHA256" || { echo "RECOMMENDATION_TRAINING_WHEELHOUSE_SHA256 is missing" >&2; exit 1; }
+          OUTPUT_ROOT="$(realpath -e "$RECOMMENDATION_TRAINING_OUTPUT_ROOT")"
+          STAGING_ROOT="$(realpath -e "$RECOMMENDATION_DATASET_STAGING_ROOT")"
+          WHEELHOUSE="$(realpath -e "$RECOMMENDATION_TRAINING_WHEELHOUSE")"
+          test -d "$OUTPUT_ROOT" && test -w "$OUTPUT_ROOT"
+          test -d "$STAGING_ROOT"
+          test -d "$WHEELHOUSE"
+          WHEEL_JSON="$RUNNER_TEMP/recommendation-v8-wheelhouse-audit.json"
+          python training/recommendation_v8/wheelhouse_identity.py \
+            --wheelhouse "$WHEELHOUSE" \
+            --expected-sha256 "$EXPECTED_WHEELHOUSE_SHA256" \
+            > "$WHEEL_JSON"
+          python - "$REPORT" "$OUTPUT_ROOT" "$STAGING_ROOT" "$WHEEL_JSON" <<'PY'
+          import json, os, pathlib, sys
+          report_path = pathlib.Path(sys.argv[1])
+          staging = pathlib.Path(sys.argv[3])
+          wheel = json.load(open(sys.argv[4], encoding='utf-8'))
+          datasets = []
+          for manifest in sorted(staging.glob('*/manifest.json')):
+              try:
+                  data = json.loads(manifest.read_text(encoding='utf-8'))
+              except Exception as exc:
+                  datasets.append({'directory': str(manifest.parent), 'manifestError': type(exc).__name__})
+                  continue
+              datasets.append({
+                  'directory': str(manifest.parent),
+                  'datasetId': data.get('datasetId'),
+                  'datasetSha256': data.get('datasetSha256'),
+                  'sourceCommitSha': data.get('sourceCommitSha'),
+                  'futureTestTouched': data.get('futureTestTouched'),
+                  'candidateGeneratorVersion': data.get('candidateGeneratorVersion'),
+              })
+          payload = {
+              'generatedAt': __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(),
+              'frozenSourceSha': os.environ['FROZEN_SHA'],
+              'outputRootReady': pathlib.Path(sys.argv[2]).is_dir(),
+              'stagingRootReady': staging.is_dir(),
+              'wheelhouseIdentity': wheel,
+              'stagedDatasets': datasets,
+          }
+          report_path.write_text(json.dumps(payload, indent=2) + '\n', encoding='utf-8')
+          print(json.dumps({
+              'frozenSourceSha': payload['frozenSourceSha'],
+              'outputRootReady': payload['outputRootReady'],
+              'stagingRootReady': payload['stagingRootReady'],
+              'wheelhouseIdentityVerified': True,
+              'stagedDatasetCount': len(datasets),
+              'stagedDatasets': datasets,
+          }, indent=2))
+          PY
+          echo "TRAINING_AUDIT_JSON=$REPORT" >> "$GITHUB_ENV"
+
+      - name: Upload training-runner readiness evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: recommendation-v8-training-runner-audit-${{ github.run_id }}
+          path: ${{ env.TRAINING_AUDIT_JSON }}
+          if-no-files-found: error
+          retention-days: 14
