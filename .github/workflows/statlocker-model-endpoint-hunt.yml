@@ -11,122 +11,113 @@ permissions:
   contents: read
 
 jobs:
-  inspect-public-assets:
+  verify-model-endpoints:
     if: github.repository == 'StepanChewbacca/deadlock_dynamo_helper_v2' && github.actor == 'StepanChewbacca'
     runs-on: self-hosted
     timeout-minutes: 10
     steps:
-      - name: Find exact model endpoint candidates
+      - name: Verify public Statlocker model endpoints
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import html
-          import re
+          import json
+          import urllib.error
+          import urllib.parse
           import urllib.request
 
           BASE = 'https://statlocker.gg'
-          MAIN = BASE + '/static/js/main.e4ee8cb5.js'
           HEADERS = {
               'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140 Safari/537.36',
-              'Accept': '*/*',
+              'Accept': 'application/json,text/plain,*/*',
           }
 
-          def fetch(url, max_bytes=20_000_000):
+          def call(path, query=None):
+              url = BASE + path
+              if query:
+                  url += ('&' if '?' in url else '?') + urllib.parse.urlencode(query, doseq=True)
               req = urllib.request.Request(url, headers=HEADERS)
-              with urllib.request.urlopen(req, timeout=25) as res:
-                  return res.read(max_bytes).decode(
-                      res.headers.get_content_charset() or 'utf-8', errors='replace'
-                  )
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as res:
+                      raw = res.read(4_000_000)
+                      return url, res.status, raw.decode(res.headers.get_content_charset() or 'utf-8', errors='replace')
+              except urllib.error.HTTPError as exc:
+                  raw = exc.read(1_000_000)
+                  return url, exc.code, raw.decode('utf-8', errors='replace')
 
-          def normalize(text):
-              return html.unescape(text.replace('\\/', '/').replace('\\u0026', '&'))
+          def shape(text):
+              try:
+                  data = json.loads(text)
+              except Exception:
+                  return {'type': 'text', 'preview': text[:180]}
+              if isinstance(data, dict):
+                  result = {'type': 'object', 'keys': list(data.keys())[:30]}
+                  for key in ['items', 'data', 'patches', 'availablePatches', 'chains', 'heroes', 'winRateIntervals']:
+                      value = data.get(key)
+                      if isinstance(value, list):
+                          result[key + 'Count'] = len(value)
+                          if value and isinstance(value[0], dict):
+                              result[key + 'ItemKeys'] = list(value[0].keys())[:25]
+                  return result
+              if isinstance(data, list):
+                  result = {'type': 'array', 'count': len(data)}
+                  if data and isinstance(data[0], dict):
+                      result['itemKeys'] = list(data[0].keys())[:30]
+                  return result
+              return {'type': type(data).__name__, 'value': data}
 
-          source = normalize(fetch(MAIN))
-          runtime = re.search(
-              r'''n\.u=e=>"static/js/"\+e\+"\."\+\{([^}]+)\}\[e\]\+"\.chunk\.js"''',
-              source,
-          )
-          if not runtime:
-              raise SystemExit('ERROR webpack chunk map not found')
-
-          hashes = {
-              int(chunk_id): digest
-              for chunk_id, digest in re.findall(r'''(\d+):"([0-9a-f]+)"''', runtime.group(1))
-          }
-
-          target_tokens = {
-              'ITEM_META_MODEL': 'Xn=',
-              'WIN_CHANCE_MODEL': 'Jn=',
-          }
-
-          target_chunks = {}
-          all_chunks = set()
-          for target, token in target_tokens.items():
-              idx = source.find(token)
-              if idx < 0:
-                  print(f'TARGET {target} NOT_FOUND')
-                  continue
-              segment = source[idx:idx + 1800]
-              ids = []
-              for value in re.findall(r'''n\.e\((\d+)\)''', segment):
-                  chunk_id = int(value)
-                  if chunk_id not in ids:
-                      ids.append(chunk_id)
-              target_chunks[target] = ids
-              all_chunks.update(ids)
-              print(f'TARGET {target} CHUNKS={",".join(map(str, ids)) or "NONE"}')
-
-          endpoint_re = re.compile(r'''/api/[A-Za-z0-9_./?=&:$%+\-{}\[\]]{1,420}''')
-          signal_words = [
-              'wpa', 'win chance', 'win-chance', 'win probability', 'win_probability',
-              'prediction', 'predict', 'model', 'purchase', 'timing', 'comeback',
-              'win-more', 'chain', 'synergy', 'meta', 'graph', 'recommend',
+          tests = [
+              ('WPA_PATCHES', '/api/info/wpa-patches', None),
+              ('T4_CHAINS', '/api/info/t4-chains-data', None),
+              ('VS_HERO_WPA', '/api/info/vs-hero-wpa-data', None),
+              ('WPA_FILTERED_DEFAULT', '/api/info/wpa-filtered-items', None),
+              ('WPA_FILTERED_ABRAMS', '/api/info/wpa-filtered-items', {
+                  'hero': 'Abrams',
+                  'tier': 'all',
+                  'queue': 'ranked',
+                  'rank': 'all',
+                  'category': 'all',
+                  'gameState': 'all',
+                  'purchaseTime': 'all',
+                  'teamComp': 'all',
+                  'buildType': 'all',
+                  'patch': 'all',
+                  'minSampleSize': 500,
+                  'searchTerm': '',
+                  'sortBy': 'wpa',
+                  'timeSyncEnabled': 'false',
+                  'currentGameTime': 0,
+                  'timeWindow': 5,
+              }),
+              ('PUBLIC_MATCHES', '/api/public/matches', {'limit': 1}),
           ]
 
-          for chunk_id in sorted(all_chunks):
-              digest = hashes.get(chunk_id)
-              if not digest:
-                  print(f'CHUNK {chunk_id} HASH_MISSING')
-                  continue
-              url = f'{BASE}/static/js/{chunk_id}.{digest}.chunk.js'
-              try:
-                  text = normalize(fetch(url))
-              except Exception as exc:
-                  print(f'CHUNK {chunk_id} FETCH_ERROR={type(exc).__name__}')
-                  continue
+          results = {}
+          for label, path, query in tests:
+              url, status, text = call(path, query)
+              info = shape(text)
+              results[label] = {'url': url, 'status': status, 'shape': info}
+              print(label + ' ' + json.dumps(results[label], ensure_ascii=False, separators=(',', ':')))
 
-              owners = [target for target, ids in target_chunks.items() if chunk_id in ids]
-              print(f'CHUNK {chunk_id} OWNERS={",".join(owners)} BYTES={len(text)} URL={url}')
+          # Try to obtain one real match id from any public-match response, then hit the model timeline.
+          match_id = None
+          url, status, text = call('/api/public/matches', {'limit': 5})
+          try:
+              data = json.loads(text)
+              candidates = data if isinstance(data, list) else (data.get('matches') if isinstance(data, dict) else None)
+              if isinstance(candidates, list):
+                  for entry in candidates:
+                      if isinstance(entry, dict):
+                          value = entry.get('match_id') or entry.get('matchId') or entry.get('id')
+                          if value:
+                              match_id = str(value)
+                              break
+          except Exception:
+              pass
 
-              seen = set()
-              for match in endpoint_re.finditer(text):
-                  path = match.group(0).rstrip('),;\"\'`')
-                  if path in seen:
-                      continue
-                  seen.add(path)
-                  start = max(0, match.start() - 220)
-                  end = min(len(text), match.end() + 320)
-                  context = re.sub(r'\s+', ' ', text[start:end])
-                  signals = sorted({word for word in signal_words if word in context.lower() or word in path.lower()})
-                  method = 'POST' if re.search(r'''(?:method\s*:\s*["']POST["']|\.post\s*\()''', context, re.I) else ('GET' if re.search(r'''(?:method\s*:\s*["']GET["']|\.get\s*\()''', context, re.I) else '?')
-                  print(f'ENDPOINT chunk={chunk_id} method={method} path={path} signals={"|".join(signals) or "-"}')
-                  print('CTX ' + context[:520])
-
-              # Network contexts can reveal dynamically concatenated API paths not caught above.
-              compact = text.lower()
-              emitted = 0
-              for needle in ['fetch(', 'axios', '.post(', '.get(']:
-                  pos = 0
-                  while emitted < 20:
-                      idx = compact.find(needle, pos)
-                      if idx < 0:
-                          break
-                      context = re.sub(r'\s+', ' ', text[max(0, idx-220):min(len(text), idx+520)])
-                      if any(word in context.lower() for word in signal_words):
-                          print(f'NETWORK chunk={chunk_id} needle={needle} ctx={context[:650]}')
-                          emitted += 1
-                      pos = idx + len(needle)
-
-          print(f'SUMMARY targets={len(target_chunks)} selected_chunks={len(all_chunks)}')
+          if match_id:
+              url, status, text = call('/api/match/' + urllib.parse.quote(match_id, safe='') + '/win-rate')
+              print('WIN_RATE ' + json.dumps({'matchId': match_id, 'url': url, 'status': status, 'shape': shape(text)}, ensure_ascii=False, separators=(',', ':')))
+          else:
+              print('WIN_RATE ' + json.dumps({'status': 'SKIPPED', 'reason': 'No public match id found'}, separators=(',', ':')))
           PY
