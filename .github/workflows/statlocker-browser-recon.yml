@@ -1,0 +1,104 @@
+name: Statlocker Browser Network Recon
+
+on:
+  push:
+    branches:
+      - agent/statlocker-model-probe-poc
+    paths:
+      - '.github/workflows/statlocker-browser-recon.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser-recon:
+    if: github.repository == 'StepanChewbacca/deadlock_dynamo_helper_v2' && github.actor == 'StepanChewbacca'
+    runs-on: self-hosted
+    timeout-minutes: 15
+    steps:
+      - name: Capture Statlocker frontend model requests in Chromium
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/statlocker-browser-recon"
+          mkdir -p "$work"
+
+          cat > "$work/Dockerfile" <<'DOCKERFILE'
+          FROM node:20-alpine
+          RUN apk add --no-cache chromium nss freetype harfbuzz ca-certificates ttf-freefont \
+            && npm install puppeteer-core@24.16.0
+          WORKDIR /app
+          COPY recon.mjs ./recon.mjs
+          CMD ["node", "recon.mjs"]
+          DOCKERFILE
+
+          cat > "$work/recon.mjs" <<'NODE'
+          import puppeteer from 'puppeteer-core';
+
+          const browser = await puppeteer.launch({
+            executablePath: '/usr/bin/chromium-browser',
+            headless: true,
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+          });
+
+          const page = await browser.newPage();
+          await page.setViewport({ width: 1440, height: 1100 });
+
+          const seen = new Map();
+          page.on('response', async (response) => {
+            const url = response.url();
+            if (!url.startsWith('https://statlocker.gg/api/')) return;
+            if (seen.has(url)) return;
+
+            const entry = {
+              url,
+              status: response.status(),
+              method: response.request().method(),
+              resourceType: response.request().resourceType(),
+            };
+
+            try {
+              const contentType = response.headers()['content-type'] || '';
+              if (contentType.includes('application/json')) {
+                const data = await response.json();
+                entry.topLevelKeys = data && typeof data === 'object' && !Array.isArray(data)
+                  ? Object.keys(data).slice(0, 30)
+                  : [];
+                entry.arrayLength = Array.isArray(data) ? data.length : undefined;
+              }
+            } catch {}
+
+            seen.set(url, entry);
+            console.log('STATLOCKER_API=' + JSON.stringify(entry));
+          });
+
+          page.on('console', (msg) => {
+            const text = msg.text();
+            if (/wpa|api|error/i.test(text)) console.log('PAGE_CONSOLE=' + text.slice(0, 800));
+          });
+
+          const pages = [
+            'https://statlocker.gg/items/meta-model/wpa-analysis/',
+            'https://statlocker.gg/vision/wpa',
+            'https://statlocker.gg/vision/win-chance',
+            'https://statlocker.gg/builds/eternus-builds/abrams',
+          ];
+
+          for (const url of pages) {
+            console.log('OPEN=' + url);
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+            await new Promise((resolve) => setTimeout(resolve, 10000));
+          }
+
+          const endpoints = [...seen.values()];
+          console.log('SUMMARY=' + JSON.stringify({
+            count: endpoints.length,
+            endpoints,
+          }, null, 2));
+
+          await browser.close();
+          NODE
+
+          sudo docker build -t statlocker-browser-recon "$work"
+          sudo docker run --rm --shm-size=1g statlocker-browser-recon
