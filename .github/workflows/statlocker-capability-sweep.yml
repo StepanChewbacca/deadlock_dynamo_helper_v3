@@ -1,0 +1,310 @@
+name: Statlocker Chromium Capability Sweep
+
+on:
+  push:
+    branches:
+      - agent/statlocker-model-probe-poc
+    paths:
+      - '.github/workflows/statlocker-capability-sweep.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  capability-sweep:
+    if: github.repository == 'StepanChewbacca/deadlock_dynamo_helper_v2'
+    runs-on: self-hosted
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact sweep commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Probe Statlocker model endpoints from anonymous Chromium
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/statlocker-capability-sweep"
+          rm -rf "$work"
+          mkdir -p "$work"
+
+          cat > "$work/Dockerfile" <<'DOCKERFILE'
+          FROM node:20-alpine
+          WORKDIR /app
+          RUN apk add --no-cache chromium nss freetype harfbuzz ca-certificates ttf-freefont \
+            && npm init -y >/dev/null 2>&1 \
+            && npm install puppeteer-core@24.16.0
+          COPY sweep.mjs ./sweep.mjs
+          CMD ["node", "sweep.mjs"]
+          DOCKERFILE
+
+          cat > "$work/sweep.mjs" <<'NODE'
+          import fs from 'node:fs';
+          import puppeteer from 'puppeteer-core';
+
+          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+          function summarize(value, depth = 0) {
+            if (value === null) return null;
+            if (Array.isArray(value)) {
+              return {
+                type: 'array',
+                length: value.length,
+                sample: value.length && depth < 3 ? summarize(value[0], depth + 1) : undefined,
+              };
+            }
+            if (typeof value === 'object') {
+              const keys = Object.keys(value);
+              const result = { type: 'object', keys: keys.slice(0, 80) };
+              if (depth < 3) {
+                const sample = {};
+                for (const key of keys.slice(0, 18)) {
+                  sample[key] = summarize(value[key], depth + 1);
+                }
+                result.sample = sample;
+              }
+              return result;
+            }
+            if (typeof value === 'string') return value.slice(0, 240);
+            return value;
+          }
+
+          function findDeep(value, predicate, path = '$', seen = new Set(), depth = 0) {
+            if (depth > 7 || value === null || typeof value !== 'object') return [];
+            if (seen.has(value)) return [];
+            seen.add(value);
+            const found = [];
+            if (predicate(value)) found.push({ path, value: summarize(value) });
+            if (Array.isArray(value)) {
+              for (let i = 0; i < Math.min(value.length, 200); i += 1) {
+                found.push(...findDeep(value[i], predicate, `${path}[${i}]`, seen, depth + 1));
+                if (found.length >= 8) break;
+              }
+            } else {
+              for (const [key, child] of Object.entries(value)) {
+                found.push(...findDeep(child, predicate, `${path}.${key}`, seen, depth + 1));
+                if (found.length >= 8) break;
+              }
+            }
+            return found.slice(0, 8);
+          }
+
+          const browser = await puppeteer.launch({
+            executablePath: '/usr/bin/chromium-browser',
+            headless: true,
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+          });
+
+          const page = await browser.newPage();
+          await page.setViewport({ width: 1440, height: 1100 });
+          await page.setUserAgent(
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ' +
+            '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          );
+
+          const report = {
+            generatedAt: new Date().toISOString(),
+            browserMode: true,
+            apiKeyProvidedBySweep: false,
+            sourcePage: 'https://statlocker.gg/items/meta-model',
+            frontendEndpointStrings: [],
+            context: {},
+            probes: [],
+          };
+
+          try {
+            await page.goto(report.sourcePage, { waitUntil: 'domcontentloaded', timeout: 60000 });
+            await sleep(8000);
+
+            const scriptUrls = await page.evaluate(() =>
+              Array.from(document.scripts).map((script) => script.src).filter(Boolean),
+            );
+
+            const frontendMatches = await page.evaluate(async (urls) => {
+              const found = new Set();
+              for (const url of urls) {
+                try {
+                  const text = await fetch(url).then((response) => response.text());
+                  const regexes = [
+                    /\/api\/(?:info|match|profile|leaderboard)\/[A-Za-z0-9_?&=./{}:-]+/g,
+                    /\/api\/[A-Za-z0-9_-]*wpa[A-Za-z0-9_?&=./{}:-]*/gi,
+                  ];
+                  for (const regex of regexes) {
+                    for (const match of text.matchAll(regex)) {
+                      const value = match[0]
+                        .replace(/[)}\],;]+$/g, '')
+                        .slice(0, 240);
+                      if (/wpa|build|win-rate|leaderboard|performance|hero|patch|chain/i.test(value)) {
+                        found.add(value);
+                      }
+                    }
+                  }
+                } catch {}
+              }
+              return [...found].sort();
+            }, scriptUrls);
+            report.frontendEndpointStrings = frontendMatches;
+
+            async function browserFetch(label, path) {
+              const result = await page.evaluate(async ({ path }) => {
+                const started = Date.now();
+                try {
+                  const response = await fetch(path, {
+                    method: 'GET',
+                    credentials: 'include',
+                    cache: 'no-store',
+                  });
+                  const contentType = response.headers.get('content-type') || '';
+                  let body;
+                  if (contentType.includes('application/json')) {
+                    body = await response.json().catch(async () => ({ raw: await response.text() }));
+                  } else {
+                    body = await response.text();
+                  }
+                  return {
+                    ok: response.ok,
+                    status: response.status,
+                    elapsedMs: Date.now() - started,
+                    body,
+                  };
+                } catch (error) {
+                  return {
+                    ok: false,
+                    status: 0,
+                    elapsedMs: Date.now() - started,
+                    error: error instanceof Error ? error.message : String(error),
+                  };
+                }
+              }, { path });
+
+              const entry = {
+                label,
+                path,
+                ok: result.ok,
+                status: result.status,
+                elapsedMs: result.elapsedMs,
+                error: result.error,
+                body: summarize(result.body),
+              };
+
+              if (label === 'VS_HERO_WPA' && result.body && typeof result.body === 'object') {
+                entry.interesting = findDeep(
+                  result.body,
+                  (value) => {
+                    const keys = Object.keys(value);
+                    return keys.some((key) => /hero/i.test(key)) && keys.some((key) => /wpa|item|counter|sample/i.test(key));
+                  },
+                );
+              }
+
+              report.probes.push(entry);
+              return result;
+            }
+
+            const wpa = await browserFetch(
+              'ITEM_META_WPA',
+              '/api/info/wpa-filtered-items?hero=Abrams&tier=all&rank=ranked&category=all&gameState=all&purchaseTime=all&teamComp=Average%20Comp&buildType=all&patch=all&minSampleSize=500&searchTerm=&sortBy=wpa',
+            );
+            await browserFetch('T4_BUILD_CHAINS', '/api/info/t4-chains-data');
+            await browserFetch('VS_HERO_WPA', '/api/info/vs-hero-wpa-data');
+            const patches = await browserFetch('WPA_PATCHES', '/api/info/wpa-patches');
+            await browserFetch('PRO_BUILD_ANALYSIS', '/api/info/player-build-analysis/281768392/6');
+            await browserFetch(
+              'HERO_LEADERBOARD',
+              '/api/leaderboard/get-valve-leaderboard?region=Europe&heroId=6&page=1&pageSize=10&version=2',
+            );
+            await browserFetch(
+              'ACCOUNT_IDS_WITH_HERO_MATCHES',
+              '/api/profile/account-ids-with-hero-matches?heroId=6&accountIds=281768392',
+            );
+            const performance = await browserFetch(
+              'PLAYER_PERFORMANCE',
+              '/api/profile/get-performance-analysis/281768392/6',
+            );
+
+            let patchId = null;
+            const patchCandidates = [];
+            if (patches.body && typeof patches.body === 'object') {
+              if (Array.isArray(patches.body)) patchCandidates.push(...patches.body);
+              else patchCandidates.push(...Object.keys(patches.body));
+            }
+            if (wpa.body && typeof wpa.body === 'object' && Array.isArray(wpa.body.availablePatches)) {
+              patchCandidates.push(...wpa.body.availablePatches);
+            }
+            patchId = patchCandidates.find((value) => typeof value === 'string' && value.length > 0) || null;
+            report.context.patchId = patchId;
+            if (patchId) {
+              await browserFetch('WPA_PATCH_DATA', `/api/info/wpa-patch-data/${encodeURIComponent(patchId)}`);
+            }
+
+            let matchId = null;
+            const body = performance.body;
+            if (body && typeof body === 'object') {
+              const histories = [
+                body.matchHistory,
+                body.profileAggregateStats?.matchHistory,
+                body.playerPerformance?.matchHistory,
+              ].filter(Array.isArray);
+              for (const history of histories) {
+                const match = history.find((entry) => entry && (entry.match_id || entry.matchId));
+                if (match) {
+                  matchId = String(match.match_id || match.matchId);
+                  break;
+                }
+              }
+            }
+            report.context.matchId = matchId;
+            report.context.accountId = '281768392';
+            report.context.heroId = '6';
+
+            if (matchId) {
+              await browserFetch('WIN_CHANCE', `/api/match/${encodeURIComponent(matchId)}/win-rate`);
+              await browserFetch('PLAYER_WPA', `/api/match/${encodeURIComponent(matchId)}/wpa/281768392`);
+              await browserFetch('BUILD_CONTEXT', `/api/match/build-context/${encodeURIComponent(matchId)}/281768392`);
+            }
+
+            // Probe alternate current routes that the frontend bundle names for draft/counter functionality.
+            const routeCandidates = [
+              '/items/meta-model/draft',
+              '/items/meta-model/items-heroes',
+              '/items/meta-model/heroes-items',
+              '/items/meta-model/lane-matchup',
+            ];
+            report.context.namedFrontendRoutes = routeCandidates;
+          } finally {
+            await browser.close();
+          }
+
+          fs.writeFileSync('/out/statlocker-capability-sweep-result.json', JSON.stringify(report, null, 2));
+          console.log(JSON.stringify({
+            generatedAt: report.generatedAt,
+            frontendEndpointStrings: report.frontendEndpointStrings,
+            context: report.context,
+            probes: report.probes.map((entry) => ({
+              label: entry.label,
+              path: entry.path,
+              status: entry.status,
+              ok: entry.ok,
+              elapsedMs: entry.elapsedMs,
+              body: entry.body,
+              interesting: entry.interesting,
+            })),
+          }, null, 2));
+          NODE
+
+          sudo docker build -t statlocker-capability-sweep "$work"
+          sudo docker run --rm --shm-size=1g \
+            -v "$GITHUB_WORKSPACE:/out" \
+            statlocker-capability-sweep
+
+      - name: Persist sweep result temporarily
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add statlocker-capability-sweep-result.json
+          git commit -m 'test(statlocker): save Chromium capability sweep result'
+          git push origin HEAD:agent/statlocker-model-probe-poc
