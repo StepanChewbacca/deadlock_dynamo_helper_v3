@@ -70,7 +70,7 @@ function family(dataset: string, payload: any) {
   return { dataset, scopeKey: 'global', freshness: 'FRESH', confidence: 1, payload } as any;
 }
 
-function evidence(options: { skeletonTarget?: boolean; exactCount?: number } = {}) {
+function evidence(options: { skeletonTarget?: boolean; exactCount?: number; baseWpa?: boolean } = {}) {
   const skeletonItems = options.skeletonTarget === false ? [] : [{
     itemId: 9,
     medianBuyTimeS: 900,
@@ -78,6 +78,7 @@ function evidence(options: { skeletonTarget?: boolean; exactCount?: number } = {
     tier: 'CORE',
     components: { coverage: 1, purchaseRate: 1, frequencyTier: 1, orderConsistency: 1, relationship: 0.8 },
   }];
+  const baseWpaEnabled = options.baseWpa !== false;
   return {
     heroId: 10,
     rulesetVersion: 'ruleset-a',
@@ -93,11 +94,11 @@ function evidence(options: { skeletonTarget?: boolean; exactCount?: number } = {
         items: [{
           heroId: 10,
           itemId: 9,
-          meanWpa: 0.2,
-          sampleSize: 1000,
-          wpaConfidence: 1,
-          gameState: { even: 0.2 },
-          purchaseTiming: { medianPurchaseSec: 900 },
+          meanWpa: baseWpaEnabled ? 0.2 : 0,
+          sampleSize: baseWpaEnabled ? 1000 : 0,
+          wpaConfidence: baseWpaEnabled ? 1 : 0,
+          gameState: { even: baseWpaEnabled ? 0.2 : 0 },
+          purchaseTiming: baseWpaEnabled ? { medianPurchaseSec: 900 } : {},
         }],
       }),
       VS_HERO_WPA: family('VS_HERO_WPA', {
@@ -132,10 +133,10 @@ describe('AdaptiveBuildPlannerV1Service', () => {
     expect(result.nextAction.buyItemId).toBe(9);
   });
 
-  it('does not replace from tiny exact-enemy evidence without core support', () => {
+  it('does not replace from tiny exact-enemy evidence without core or base support', () => {
     const result = planner.plan({
       decision: decision([1, 2, 3, 4, 5, 6, 7, 8], 5000),
-      evidence: evidence({ skeletonTarget: false, exactCount: 11 }),
+      evidence: evidence({ skeletonTarget: false, exactCount: 11, baseWpa: false }),
     });
     expect(result.nextAction.type).not.toBe('REPLACE');
   });
