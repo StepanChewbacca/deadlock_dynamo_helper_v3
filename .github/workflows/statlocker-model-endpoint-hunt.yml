@@ -16,7 +16,7 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 10
     steps:
-      - name: Inspect model page lazy chunks for API calls
+      - name: Find exact model endpoint candidates
         shell: bash
         run: |
           set -euo pipefail
@@ -35,97 +35,98 @@ jobs:
           def fetch(url, max_bytes=20_000_000):
               req = urllib.request.Request(url, headers=HEADERS)
               with urllib.request.urlopen(req, timeout=25) as res:
-                  data = res.read(max_bytes)
-                  return data.decode(res.headers.get_content_charset() or 'utf-8', errors='replace')
+                  return res.read(max_bytes).decode(
+                      res.headers.get_content_charset() or 'utf-8', errors='replace'
+                  )
 
-          source = html.unescape(fetch(MAIN).replace('\\/', '/').replace('\\u0026', '&'))
+          def normalize(text):
+              return html.unescape(text.replace('\\/', '/').replace('\\u0026', '&'))
 
-          chunk_hashes = {}
-          runtime = re.search(r'''n\.u=e=>"static/js/"\+e\+"\."\+\{([^}]+)\}\[e\]\+"\.chunk\.js"''', source)
+          source = normalize(fetch(MAIN))
+          runtime = re.search(
+              r'''n\.u=e=>"static/js/"\+e\+"\."\+\{([^}]+)\}\[e\]\+"\.chunk\.js"''',
+              source,
+          )
           if not runtime:
-              raise SystemExit('Could not parse webpack JS chunk map')
-          for chunk_id, digest in re.findall(r'''(\d+):"([0-9a-f]+)"''', runtime.group(1)):
-              chunk_hashes[int(chunk_id)] = digest
-          print('JS_CHUNK_MAP_SIZE=', len(chunk_hashes))
+              raise SystemExit('ERROR webpack chunk map not found')
 
-          targets = {
-              'ITEM_META_MODEL': 'Xn=',
-              'WIN_CHANCE_MODEL': 'Jn=',
-              'BUILDS_ROUTE': 'wn=',
+          hashes = {
+              int(chunk_id): digest
+              for chunk_id, digest in re.findall(r'''(\d+):"([0-9a-f]+)"''', runtime.group(1))
           }
 
-          selected_ids = set()
-          for label, token in targets.items():
-              idx = source.find(token)
-              print(f'=== {label} ASSIGNMENT ===')
-              if idx < 0:
-                  print('NOT_FOUND', token)
-                  continue
-              segment = source[idx:idx + 5000]
-              stop = segment.find('))),')
-              if stop > 0:
-                  segment = segment[:stop + 4]
-              print(segment[:5000])
-              ids = [int(value) for value in re.findall(r'''n\.e\((\d+)\)''', segment)]
-              module_ids = re.findall(r'''n\.bind\(n,(\d+)\)''', segment)
-              print('CHUNK_IDS=', ids)
-              print('MODULE_IDS=', module_ids)
-              selected_ids.update(ids)
+          target_tokens = {
+              'ITEM_META_MODEL': 'Xn=',
+              'WIN_CHANCE_MODEL': 'Jn=',
+          }
 
-          print('=== FETCH SELECTED CHUNKS ===')
-          sources = {}
-          for chunk_id in sorted(selected_ids):
-              digest = chunk_hashes.get(chunk_id)
+          target_chunks = {}
+          all_chunks = set()
+          for target, token in target_tokens.items():
+              idx = source.find(token)
+              if idx < 0:
+                  print(f'TARGET {target} NOT_FOUND')
+                  continue
+              segment = source[idx:idx + 1800]
+              ids = []
+              for value in re.findall(r'''n\.e\((\d+)\)''', segment):
+                  chunk_id = int(value)
+                  if chunk_id not in ids:
+                      ids.append(chunk_id)
+              target_chunks[target] = ids
+              all_chunks.update(ids)
+              print(f'TARGET {target} CHUNKS={",".join(map(str, ids)) or "NONE"}')
+
+          endpoint_re = re.compile(r'''/api/[A-Za-z0-9_./?=&:$%+\-{}\[\]]{1,420}''')
+          signal_words = [
+              'wpa', 'win chance', 'win-chance', 'win probability', 'win_probability',
+              'prediction', 'predict', 'model', 'purchase', 'timing', 'comeback',
+              'win-more', 'chain', 'synergy', 'meta', 'graph', 'recommend',
+          ]
+
+          for chunk_id in sorted(all_chunks):
+              digest = hashes.get(chunk_id)
               if not digest:
-                  print('MISSING_HASH', chunk_id)
+                  print(f'CHUNK {chunk_id} HASH_MISSING')
                   continue
               url = f'{BASE}/static/js/{chunk_id}.{digest}.chunk.js'
               try:
-                  text = html.unescape(fetch(url).replace('\\/', '/').replace('\\u0026', '&'))
-                  sources[url] = text
-                  print('FETCHED', url, 'bytes=', len(text))
+                  text = normalize(fetch(url))
               except Exception as exc:
-                  print('ERROR', url, exc)
+                  print(f'CHUNK {chunk_id} FETCH_ERROR={type(exc).__name__}')
+                  continue
 
-          endpoint_re = re.compile(r'''/api/[A-Za-z0-9_./?=&:$%+\-{}\[\]]{1,500}''')
-          keywords = ['wpa','win chance','win-chance','win probability','win_probability','win-probability','prediction','predict','model','purchase','timing','comeback','win-more','chain','synergy','eternus','recommend','meta','graph']
-          endpoints = {}
+              owners = [target for target, ids in target_chunks.items() if chunk_id in ids]
+              print(f'CHUNK {chunk_id} OWNERS={",".join(owners)} BYTES={len(text)} URL={url}')
 
-          print('=== API AND NETWORK CONTEXTS ===')
-          for url, text in sources.items():
-              lower = text.lower()
+              seen = set()
               for match in endpoint_re.finditer(text):
                   path = match.group(0).rstrip('),;\"\'`')
-                  context = re.sub(r'\s+', ' ', text[max(0, match.start()-700):min(len(text), match.end()+1200)])
-                  signals = sorted({k for k in keywords if k in context.lower() or k in path.lower()})
-                  endpoints.setdefault(path, {'sources': set(), 'signals': set(), 'contexts': []})
-                  endpoints[path]['sources'].add(url)
-                  endpoints[path]['signals'].update(signals)
-                  if len(endpoints[path]['contexts']) < 2:
-                      endpoints[path]['contexts'].append(context[:1900])
+                  if path in seen:
+                      continue
+                  seen.add(path)
+                  start = max(0, match.start() - 220)
+                  end = min(len(text), match.end() + 320)
+                  context = re.sub(r'\s+', ' ', text[start:end])
+                  signals = sorted({word for word in signal_words if word in context.lower() or word in path.lower()})
+                  method = 'POST' if re.search(r'''(?:method\s*:\s*["']POST["']|\.post\s*\()''', context, re.I) else ('GET' if re.search(r'''(?:method\s*:\s*["']GET["']|\.get\s*\()''', context, re.I) else '?')
+                  print(f'ENDPOINT chunk={chunk_id} method={method} path={path} signals={"|".join(signals) or "-"}')
+                  print('CTX ' + context[:520])
 
-              for keyword in keywords:
+              # Network contexts can reveal dynamically concatenated API paths not caught above.
+              compact = text.lower()
+              emitted = 0
+              for needle in ['fetch(', 'axios', '.post(', '.get(']:
                   pos = 0
-                  shown = 0
-                  while shown < 12:
-                      idx = lower.find(keyword, pos)
+                  while emitted < 20:
+                      idx = compact.find(needle, pos)
                       if idx < 0:
                           break
-                      context = re.sub(r'\s+', ' ', text[max(0, idx-900):min(len(text), idx+1900)])
-                      if any(token in context for token in ['/api/', 'fetch(', 'axios', '.get(', '.post(', 'graphql', 'trpc']):
-                          print('NETWORK_CONTEXT', keyword, url)
-                          print(context[:2800])
-                          shown += 1
-                      pos = idx + len(keyword)
+                      context = re.sub(r'\s+', ' ', text[max(0, idx-220):min(len(text), idx+520)])
+                      if any(word in context.lower() for word in signal_words):
+                          print(f'NETWORK chunk={chunk_id} needle={needle} ctx={context[:650]}')
+                          emitted += 1
+                      pos = idx + len(needle)
 
-          print('=== ENDPOINTS ===')
-          ranked = sorted(endpoints.items(), key=lambda item: (-len(item[1]['signals']), item[0]))
-          for path, info in ranked:
-              print('ENDPOINT', path)
-              print('  SIGNALS', ','.join(sorted(info['signals'])) or '-')
-              print('  SOURCES', ','.join(sorted(info['sources'])))
-              for context in info['contexts']:
-                  print('  CONTEXT', context)
-
-          print('SUMMARY selectedChunks=', len(selected_ids), 'fetchedChunks=', len(sources), 'endpoints=', len(endpoints))
+          print(f'SUMMARY targets={len(target_chunks)} selected_chunks={len(all_chunks)}')
           PY
