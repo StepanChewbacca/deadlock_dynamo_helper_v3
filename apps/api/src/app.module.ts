@@ -61,7 +61,7 @@ import { ShadowModeDecision } from './deadlock-live/entities/shadow-mode-decisio
         CrawlerState,
         ShadowModeDecision,
       ],
-      synchronize: true,
+      synchronize: process.env.TYPEORM_SYNCHRONIZE === 'true',
     }),
     DeadlockLiveModule,
   ],

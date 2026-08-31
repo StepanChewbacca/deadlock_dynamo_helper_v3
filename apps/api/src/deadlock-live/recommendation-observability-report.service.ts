@@ -165,7 +165,7 @@ WITH decisions AS (
       AND COALESCE(a."catalogSha256", '') ~ '^[a-fA-F0-9]{64}$'
       AND EXISTS (
         SELECT 1
-        FROM item_catalog_versions cv
+        FROM recommendation_item_catalog_versions_v8 cv
         WHERE cv."payloadSha256" = a."catalogSha256"
           AND COALESCE(cv."rulesetKey", cv."rulesetId"::text, cv."clientVersion") = a."rulesetVersion"
       )) AS ruleset_catalog_known,

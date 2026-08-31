@@ -351,7 +351,7 @@ export class RecommendationRealtimeStateV8Service {
   private async loadCatalog(catalogSha256: string) {
     const versionRows = await this.dataSource.query(
       `SELECT "catalogVersionId", "contentCatalogVersionId", "clientVersion", "rulesetId", "rulesetKey", "source", "payloadSha256", "importedAt"
-       FROM item_catalog_versions
+       FROM recommendation_item_catalog_versions_v8
        WHERE "payloadSha256" = $1
        ORDER BY "importedAt" DESC
        LIMIT 1`,
@@ -363,14 +363,14 @@ export class RecommendationRealtimeStateV8Service {
     const [itemRows, recipeRows] = await Promise.all([
       this.dataSource.query(
         `SELECT "itemId", "name", "className", "itemType", "slotType", "cost", "tier", "shopable", "disabled", "active", "isActiveItem", "activationType", "rawPayload"
-         FROM item_catalog_items
+         FROM recommendation_item_catalog_items_v8
          WHERE "catalogVersionId" = $1
          ORDER BY "itemId"`,
         [contentCatalogVersionId],
       ),
       this.dataSource.query(
         `SELECT "parentItemId", "componentItemId", "componentOrder"
-         FROM item_catalog_recipes
+         FROM recommendation_item_catalog_recipes_v8
          WHERE "catalogVersionId" = $1
          ORDER BY "parentItemId", "componentOrder", "componentItemId"`,
         [contentCatalogVersionId],

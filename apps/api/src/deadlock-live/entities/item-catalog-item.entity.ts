@@ -1,12 +1,12 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
-@Entity('item_catalog_items')
-@Index('idx_item_catalog_items_version_item', ['catalogVersionId', 'itemId'], { unique: true })
+@Entity('recommendation_item_catalog_items_v8')
+@Index('idx_rec_v8_item_version_item', ['catalogVersionId', 'itemId'], { unique: true })
 export class ItemCatalogItem {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @Index('idx_item_catalog_items_catalog_version_id')
+  @Index('idx_rec_v8_item_catalog_version')
   @Column({ type: 'varchar', length: 128 })
   catalogVersionId!: string;
 

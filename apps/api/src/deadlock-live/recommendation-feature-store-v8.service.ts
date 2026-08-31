@@ -99,8 +99,8 @@ export class RecommendationFeatureStoreV8Service {
       ),
       this.dataSource.query(
         `SELECT i."itemId", i."slotType", i."isActiveItem"
-         FROM item_catalog_items i
-         JOIN item_catalog_versions v ON v."catalogVersionId" = i."catalogVersionId"
+         FROM recommendation_item_catalog_items_v8 i
+         JOIN recommendation_item_catalog_versions_v8 v ON v."catalogVersionId" = i."catalogVersionId"
          WHERE v."payloadSha256" = $1`,
         [decision.catalogSha256],
       ),

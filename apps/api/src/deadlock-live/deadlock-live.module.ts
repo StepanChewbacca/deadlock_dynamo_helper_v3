@@ -26,6 +26,8 @@ import { RecommendationRealtimeStateV8Service } from './recommendation-realtime-
 import { RecommendationRealtimeCoordinatorV8Service } from './recommendation-realtime-coordinator-v8.service';
 import { RecommendationRuntimeTrustV8Service } from './recommendation-runtime-trust-v8.service';
 import { RecommendationRuntimeHealthV8Service } from './recommendation-runtime-health-v8.service';
+import { RecommendationProspectiveCollectorV8Controller } from './recommendation-prospective-collector-v8.controller';
+import { RecommendationProspectiveCollectorV8Service } from './recommendation-prospective-collector-v8.service';
 import { RecommendationReadinessV8Controller } from './recommendation-readiness-v8.controller';
 import { RecommendationReadinessV8Service } from './recommendation-readiness-v8.service';
 import { RecommendationObservabilityController } from './recommendation-observability.controller';
@@ -131,6 +133,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationTelemetryController,
     RecommendationObservabilityController,
     RecommendationReadinessV8Controller,
+    RecommendationProspectiveCollectorV8Controller,
     RecommendationFeatureStoreV8Controller,
     RecommendationDatasetV8Controller,
     RecommendationDatasetRegistryController,
@@ -167,6 +170,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationRealtimeCoordinatorV8Service,
     RecommendationRuntimeTrustV8Service,
     RecommendationRuntimeHealthV8Service,
+    RecommendationProspectiveCollectorV8Service,
     RecommendationReadinessV8Service,
     RecommendationTelemetryStoreService,
     RecommendationTelemetryIngestV8Service,
@@ -212,6 +216,7 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
     RecommendationRealtimeCoordinatorV8Service,
     RecommendationRuntimeTrustV8Service,
     RecommendationRuntimeHealthV8Service,
+    RecommendationProspectiveCollectorV8Service,
     RecommendationReadinessV8Service,
     RecommendationTelemetryStoreService,
     RecommendationTelemetryIngestV8Service,

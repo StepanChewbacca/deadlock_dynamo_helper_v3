@@ -72,7 +72,7 @@ export class RecommendationReadinessV8Service {
     if (!databaseReachable) return unavailable(checkedAt, false, this.behavioralServing.configured(), ['DATABASE_UNREACHABLE']);
 
     const [catalogCount, runtimeHealthCount, decisionRows] = await Promise.all([
-      this.countSafely('SELECT COUNT(*) AS count FROM item_catalog_versions WHERE "payloadSha256" IS NOT NULL'),
+      this.countSafely('SELECT COUNT(*) AS count FROM recommendation_item_catalog_versions_v8 WHERE "payloadSha256" IS NOT NULL'),
       this.countSafely(`SELECT COUNT(*) AS count
         FROM recommendation_telemetry_events
         WHERE "eventType" = 'RECOMMENDATION_RUNTIME_HEALTH'`),

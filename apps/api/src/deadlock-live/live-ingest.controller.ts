@@ -5,6 +5,7 @@ import { InventoryShadowReplayService } from './inventory-shadow-replay.service'
 import { LiveMatchStateService } from './live-match-state.service';
 import { RawEventLogService } from './raw-event-log.service';
 import { RecentLiveEventsService } from './recent-live-events.service';
+import { RecommendationProspectiveCollectorV8Service } from './recommendation-prospective-collector-v8.service';
 
 @Controller('deadlock/live')
 export class LiveIngestController {
@@ -13,6 +14,7 @@ export class LiveIngestController {
     private readonly liveMatchStateService: LiveMatchStateService,
     private readonly inventoryShadowReplayService: InventoryShadowReplayService,
     private readonly recentLiveEventsService: RecentLiveEventsService,
+    private readonly prospectiveCollector: RecommendationProspectiveCollectorV8Service,
   ) {}
 
   @Post('events')
@@ -22,6 +24,7 @@ export class LiveIngestController {
     const stateBatch = canonicalizeLiveBatchForStateV2(batch);
     const state = this.liveMatchStateService.applyBatch(stateBatch);
     this.inventoryShadowReplayService.applyBatch(batch, state?.matchId);
+    this.prospectiveCollector.observeBatch(batch, state);
     return { ok: true };
   }
 
