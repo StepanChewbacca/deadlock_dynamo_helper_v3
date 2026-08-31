@@ -1,11 +1,11 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
-@Entity('item_catalog_versions')
+@Entity('recommendation_item_catalog_versions_v1')
 export class ItemCatalogVersion {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
-  @Index('idx_item_catalog_versions_catalog_version_id', { unique: true })
+  @Index('idx_recommendation_item_catalog_versions_v1_catalog_id', { unique: true })
   @Column({ type: 'varchar', length: 128 })
   catalogVersionId!: string;
 
@@ -21,7 +21,7 @@ export class ItemCatalogVersion {
   @Column({ type: 'varchar', length: 64 })
   source!: string;
 
-  @Index('idx_item_catalog_versions_payload_sha256', { unique: true })
+  @Index('idx_recommendation_item_catalog_versions_v1_sha256', { unique: true })
   @Column({ type: 'char', length: 64 })
   payloadSha256!: string;
 
