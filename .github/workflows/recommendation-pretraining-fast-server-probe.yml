@@ -1,0 +1,36 @@
+name: Recommendation V8 Pretraining Fast Server Probe
+
+on:
+  push:
+    branches:
+      - agent/recommendation-v8-pretraining-execution
+    paths:
+      - .github/workflows/recommendation-pretraining-fast-server-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Probe server paths without mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "runner.name=${RUNNER_NAME:-unknown}"
+          echo "runner.os=${RUNNER_OS:-unknown}"
+          echo "runner.arch=${RUNNER_ARCH:-unknown}"
+          echo "workspace=${RUNNER_WORKSPACE:-unknown}"
+          echo "home=$HOME"
+          echo "hostname=$(hostname)"
+          echo "--- top-level home entries ---"
+          find "$HOME" -maxdepth 2 -mindepth 1 -type d -print 2>/dev/null | sort | head -n 120
+          echo "--- candidate repositories ---"
+          find "$HOME" /opt /srv -maxdepth 5 -type d -name .git -print 2>/dev/null | sed 's#/.git$##' | sort | head -n 120 || true
+          echo "--- env file locations only ---"
+          find "$HOME" /opt /srv -maxdepth 5 -type f -name .env -print 2>/dev/null | sort | head -n 120 || true
+          echo "--- compose file locations ---"
+          find "$HOME" /opt /srv -maxdepth 5 -type f \( -name docker-compose.yml -o -name compose.yml \) -print 2>/dev/null | sort | head -n 120 || true
