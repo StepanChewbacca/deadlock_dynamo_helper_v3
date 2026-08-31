@@ -21,7 +21,7 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Inspect Statlocker build and hero evidence payloads
+      - name: Inspect current Statlocker Item Meta frontend code
         shell: bash
         run: |
           set -euo pipefail
@@ -55,124 +55,59 @@ jobs:
             '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
           );
 
-          let selectedPlayerBuild = null;
-          let leaderboardSamples = [];
-          let allHeroWpa = null;
-          const pending = new Set();
+          await page.goto('https://statlocker.gg/items/meta-model', {
+            waitUntil: 'domcontentloaded',
+            timeout: 60000,
+          });
+          await sleep(12000);
 
-          page.on('response', (response) => {
-            const task = (async () => {
-              const url = response.url();
-              if (!url.startsWith('https://statlocker.gg/api/')) return;
-              if (response.status() !== 200) return;
-              const parsed = new URL(url);
-              const contentType = response.headers()['content-type'] || '';
-              if (!contentType.includes('application/json')) return;
+          const result = await page.evaluate(async () => {
+            const scriptUrls = Array.from(new Set([
+              ...Array.from(document.scripts).map((s) => s.src).filter(Boolean),
+              ...performance.getEntriesByType('resource')
+                .map((entry) => entry.name)
+                .filter((name) => /\.js(?:\?|$)/.test(name)),
+            ])).filter((url) => url.startsWith(location.origin));
 
+            const needles = [
+              'vs-hero-wpa-data',
+              'wpa-filtered-items',
+              'heroData',
+              'Items to Heroes',
+              'items-heroes',
+              'teamComp',
+            ];
+
+            const matches = [];
+            for (const url of scriptUrls) {
               try {
-                if (parsed.pathname === '/api/leaderboard/get-valve-leaderboard') {
-                  const data = await response.json();
-                  leaderboardSamples.push({
-                    region: parsed.searchParams.get('region'),
-                    heroId: parsed.searchParams.get('heroId'),
-                    players: (data?.data || []).slice(0, 10).map((p) => ({
-                      accountName: p.account_name,
-                      accountId: p.steamProfile?.account_id ?? p.account_id ?? p.steam_id3,
-                      rank: p.rank,
-                      rankedRank: p.ranked_rank,
-                      heroPerformanceRank: p.heroPerformanceRank,
-                    })),
+                const text = await fetch(url).then((r) => r.text());
+                const found = [];
+                for (const needle of needles) {
+                  const index = text.indexOf(needle);
+                  if (index === -1) continue;
+                  found.push({
+                    needle,
+                    snippet: text.slice(Math.max(0, index - 500), Math.min(text.length, index + 900)),
                   });
                 }
-
-                if (parsed.pathname.startsWith('/api/info/player-build-analysis/')) {
-                  const data = await response.json();
-                  selectedPlayerBuild = {
-                    path: parsed.pathname,
-                    accountId: data.accountId,
-                    heroId: data.heroId,
-                    totalMatches: data.totalMatches,
-                    winRate: data.winRate,
-                    items: (data.items || [])
-                      .slice()
-                      .sort((a, b) => (a.medianBuyTimeS ?? a.avgBuyTimeS ?? 0) - (b.medianBuyTimeS ?? b.avgBuyTimeS ?? 0))
-                      .map((item) => ({
-                        itemId: item.itemId,
-                        name: item.name,
-                        tier: item.tier,
-                        slotType: item.slotType,
-                        purchaseRate: item.purchaseRate,
-                        winRate: item.winRate,
-                        avgBuyTimeS: item.avgBuyTimeS,
-                        medianBuyTimeS: item.medianBuyTimeS,
-                        purchaseCount: item.purchaseCount,
-                        frequencyTier: item.frequencyTier,
-                        phase: item.phase,
-                      })),
-                    itemRelationshipsCount: (data.itemRelationships || []).length,
-                  };
-                }
-
-                if (parsed.pathname === '/api/info/wpa-filtered-items' && parsed.searchParams.get('hero') === 'all') {
-                  const data = await response.json();
-                  allHeroWpa = data;
+                if (found.length) {
+                  matches.push({ url, found });
                 }
               } catch (error) {
-                console.log('CAPTURE_ERROR=' + JSON.stringify({ url, message: error instanceof Error ? error.message : String(error) }));
+                matches.push({ url, error: error instanceof Error ? error.message : String(error) });
               }
-            })();
-            pending.add(task);
-            task.finally(() => pending.delete(task));
+            }
+
+            return {
+              currentUrl: location.href,
+              scriptCount: scriptUrls.length,
+              matchingScriptCount: matches.filter((m) => m.found?.length).length,
+              matches,
+            };
           });
 
-          console.log('OPEN_PRO=https://statlocker.gg/builds/eternus-builds/abrams');
-          await page.goto('https://statlocker.gg/builds/eternus-builds/abrams', {
-            waitUntil: 'domcontentloaded',
-            timeout: 60000,
-          });
-          await sleep(14000);
-
-          console.log('OPEN_META=https://statlocker.gg/items/meta-model?hero=all&min=500');
-          await page.goto('https://statlocker.gg/items/meta-model?hero=all&min=500', {
-            waitUntil: 'domcontentloaded',
-            timeout: 60000,
-          });
-          await sleep(14000);
-          await Promise.allSettled([...pending]);
-
-          if (!selectedPlayerBuild) {
-            console.log('PRO_BUILD_RESULT=null');
-          } else {
-            console.log('PRO_BUILD_RESULT=' + JSON.stringify(selectedPlayerBuild, null, 2));
-          }
-
-          console.log('LEADERBOARD_RESULT=' + JSON.stringify(leaderboardSamples, null, 2));
-
-          if (!allHeroWpa) {
-            console.log('ALL_HERO_WPA_RESULT=null');
-          } else {
-            const items = allHeroWpa.items || [];
-            const withHeroData = items.filter((item) => item && item.heroData && typeof item.heroData === 'object');
-            const knockdown = items.find((item) => String(item.item || '').toLowerCase() === 'knockdown');
-            const sample = knockdown || withHeroData[0] || items[0];
-            console.log('ALL_HERO_WPA_RESULT=' + JSON.stringify({
-              itemCount: items.length,
-              availableHeroes: allHeroWpa.availableHeroes,
-              heroDataItemCount: withHeroData.length,
-              sampleItem: sample ? {
-                item: sample.item,
-                wpaValue: sample.wpaValue,
-                sampleSize: sample.sampleSize,
-                meanPurchaseTimeMin: sample.mean_purchase_time_min,
-                aheadWpa: sample.aheadWpa,
-                behindWpa: sample.behindWpa,
-                bestPurchaseTime: sample.best_purchase_time,
-                heroDataType: Array.isArray(sample.heroData) ? 'array' : typeof sample.heroData,
-                heroData: sample.heroData,
-              } : null,
-            }, null, 2));
-          }
-
+          console.log('FRONTEND_CODE_RESULT=' + JSON.stringify(result, null, 2));
           await browser.close();
           NODE
 
