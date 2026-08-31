@@ -1,0 +1,51 @@
+name: Recommendation V8 Pretraining Code Validation
+
+on:
+  push:
+    branches:
+      - agent/recommendation-v8-pretraining-execution
+    paths:
+      - Dockerfile
+      - apps/**
+      - packages/**
+      - package.json
+      - yarn.lock
+      - .github/workflows/recommendation-v8-pretraining-code-validation.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: self-hosted
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: yarn
+      - name: Install
+        run: yarn install --frozen-lockfile
+      - name: Build shared
+        run: yarn workspace @deadlock-live-probe/shared build
+      - name: Build build-domain
+        run: yarn workspace @deadlock-live-probe/build-domain build
+      - name: Build API
+        run: yarn workspace @deadlock-live-probe/api build
+      - name: Test shared
+        run: yarn workspace @deadlock-live-probe/shared test --runInBand
+      - name: Test build-domain
+        run: yarn workspace @deadlock-live-probe/build-domain test --runInBand
+      - name: Test API
+        run: yarn workspace @deadlock-live-probe/api test --runInBand
+      - name: Test Overwolf
+        run: yarn workspace @deadlock-live-probe/overwolf-client test --runInBand
+      - name: Build production Docker image
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo docker build --pull=false -t deadlock-v8-pretraining-validation:${GITHUB_SHA} .
+          sudo docker image inspect deadlock-v8-pretraining-validation:${GITHUB_SHA} --format '{{.Id}} {{.Size}}'
+          sudo docker image rm deadlock-v8-pretraining-validation:${GITHUB_SHA}
