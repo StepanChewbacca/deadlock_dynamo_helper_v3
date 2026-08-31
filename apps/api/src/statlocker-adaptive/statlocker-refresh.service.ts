@@ -1,0 +1,322 @@
+import { Injectable } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
+import {
+  StatlockerBrowserCollectorService,
+  StatlockerCollectedDatasetV1,
+  StatlockerCollectionTargetV1,
+} from './statlocker-browser-collector.service';
+import { StatlockerNormalizerService } from './statlocker-normalizer.service';
+import {
+  StatlockerNormalizedDatasetV1,
+  StatlockerNormalizedPayloadV1,
+} from './statlocker-adaptive.types';
+import { StatlockerSnapshotStoreService } from './statlocker-snapshot-store.service';
+
+export interface StatlockerGameIdentityV1 {
+  rulesetVersion: string;
+  catalogSha256: string;
+}
+
+export interface StatlockerRefreshStatusV1 {
+  activeHeroIds: readonly number[];
+  inFlightKeys: readonly string[];
+  lastAttemptAt?: string;
+  lastSuccessAt?: string;
+  lastError?: string;
+  identity?: StatlockerGameIdentityV1;
+}
+
+const GLOBAL_REFRESH_TTL_MS = 30 * 60_000;
+const HERO_REFRESH_TTL_MS = 60 * 60_000;
+const DEFAULT_ACTIVE_HERO_TTL_MS = 30 * 60_000;
+const MAX_PROFILES_PER_HERO = 10;
+const SNAPSHOT_SCHEMA_VERSION = 'statlocker-evidence-v1';
+const COLLECTOR_VERSION = 'statlocker-browser-collector-v1';
+const NORMALIZER_VERSION = 'statlocker-normalizer-v1';
+
+@Injectable()
+export class StatlockerRefreshService {
+  private identity?: StatlockerGameIdentityV1;
+  private readonly activeHeroes = new Map<number, number>();
+  private readonly lastSuccessByKey = new Map<string, number>();
+  private readonly inFlight = new Map<string, Promise<void>>();
+  private readonly activeHeroTtlMs = readBoundedMs(
+    process.env.STATLOCKER_ACTIVE_HERO_TTL_MS,
+    DEFAULT_ACTIVE_HERO_TTL_MS,
+    60_000,
+    24 * 60 * 60_000,
+  );
+  private lastAttemptAt?: string;
+  private lastSuccessAt?: string;
+  private lastError?: string;
+
+  constructor(
+    private readonly collector: StatlockerBrowserCollectorService,
+    private readonly normalizer: StatlockerNormalizerService,
+    private readonly store: StatlockerSnapshotStoreService,
+  ) {}
+
+  observeGameIdentity(identity: StatlockerGameIdentityV1, _nowMs = Date.now()): void {
+    validateIdentity(identity);
+    const changed =
+      this.identity?.rulesetVersion !== identity.rulesetVersion ||
+      this.identity?.catalogSha256.toLowerCase() !== identity.catalogSha256.toLowerCase();
+    this.identity = {
+      rulesetVersion: identity.rulesetVersion,
+      catalogSha256: identity.catalogSha256.toLowerCase(),
+    };
+    if (changed) {
+      this.lastSuccessByKey.delete(this.globalRefreshKey(this.identity));
+      for (const heroId of this.activeHeroes.keys()) {
+        this.lastSuccessByKey.delete(this.heroRefreshKey(this.identity, heroId));
+      }
+    }
+  }
+
+  enqueueHeroRefresh(heroId: number, nowMs = Date.now()): void {
+    if (!Number.isInteger(heroId) || heroId <= 0) return;
+    this.activeHeroes.set(heroId, nowMs);
+    void this.refreshHeroNow(heroId, false, nowMs).catch((error) => {
+      this.lastError = describeError(error);
+    });
+  }
+
+  async refreshGlobalNow(force = false, nowMs = Date.now()): Promise<void> {
+    const identity = this.requireIdentity();
+    const key = this.globalRefreshKey(identity);
+    if (!force && !this.isDue(key, GLOBAL_REFRESH_TTL_MS, nowMs)) return;
+    return this.singleFlight(key, async () => {
+      this.markAttempt(nowMs);
+      try {
+        const result = await this.collector.collectBatch([
+          { dataset: 'WPA_PATCH_DATA', scopeKey: 'patch:current' },
+          { dataset: 'VS_HERO_WPA', scopeKey: 'global' },
+          { dataset: 'T4_CHAINS', scopeKey: 'global' },
+        ]);
+        for (const dataset of result.datasets) {
+          const normalized = this.normalizeCollected(dataset, result.statlockerPatchId);
+          await this.publishIfChanged(normalized, identity, dataset);
+        }
+        this.lastSuccessByKey.set(key, nowMs);
+        this.markSuccess(nowMs);
+      } catch (error) {
+        this.lastError = describeError(error);
+        throw error;
+      }
+    });
+  }
+
+  async refreshHeroNow(heroId: number, force = false, nowMs = Date.now()): Promise<void> {
+    if (!Number.isInteger(heroId) || heroId <= 0) return;
+    const identity = this.requireIdentity();
+    const key = this.heroRefreshKey(identity, heroId);
+    if (!force && !this.isDue(key, HERO_REFRESH_TTL_MS, nowMs)) return;
+    return this.singleFlight(key, async () => {
+      this.markAttempt(nowMs);
+      try {
+        const leaderboardResult = await this.collector.collectBatch([
+          { dataset: 'HERO_LEADERBOARD', scopeKey: `hero:${heroId}`, heroId },
+        ]);
+        const leaderboardRaw = leaderboardResult.datasets[0];
+        if (!leaderboardRaw) throw new Error(`Missing leaderboard collection for hero ${heroId}`);
+        const leaderboard = this.normalizer.normalizeHeroLeaderboard(
+          leaderboardRaw.data,
+          leaderboardResult.statlockerPatchId,
+          heroId,
+        );
+        await this.publishIfChanged(leaderboard, identity, leaderboardRaw);
+
+        const profiles = leaderboard.payload.profiles.slice(0, MAX_PROFILES_PER_HERO);
+        if (profiles.length > 0) {
+          const targets: StatlockerCollectionTargetV1[] = profiles.map((profile) => ({
+            dataset: 'PRO_BUILD_ANALYSIS',
+            scopeKey: `hero:${heroId}:account:${profile.accountId}`,
+            heroId,
+            accountId: profile.accountId,
+          }));
+          const profileResult = await this.collector.collectBatch(targets);
+          for (const dataset of profileResult.datasets) {
+            const accountId = accountIdFromScope(dataset.scopeKey);
+            const normalized = this.normalizer.normalizeProBuildAnalysis(
+              dataset.data,
+              profileResult.statlockerPatchId,
+              accountId,
+              heroId,
+            );
+            await this.publishIfChanged(normalized, identity, dataset);
+          }
+        }
+
+        this.lastSuccessByKey.set(key, nowMs);
+        this.markSuccess(nowMs);
+      } catch (error) {
+        this.lastError = describeError(error);
+        throw error;
+      }
+    });
+  }
+
+  @Cron('* * * * *')
+  async scheduledTick(): Promise<void> {
+    const nowMs = Date.now();
+    this.pruneInactiveHeroes(nowMs);
+    if (!this.identity) return;
+
+    await this.refreshGlobalNow(false, nowMs).catch((error) => {
+      this.lastError = describeError(error);
+    });
+    for (const heroId of [...this.activeHeroes.keys()].sort((a, b) => a - b)) {
+      await this.refreshHeroNow(heroId, false, nowMs).catch((error) => {
+        this.lastError = describeError(error);
+      });
+    }
+  }
+
+  getStatus(): StatlockerRefreshStatusV1 {
+    return {
+      activeHeroIds: [...this.activeHeroes.keys()].sort((a, b) => a - b),
+      inFlightKeys: [...this.inFlight.keys()].sort(),
+      lastAttemptAt: this.lastAttemptAt,
+      lastSuccessAt: this.lastSuccessAt,
+      lastError: this.lastError,
+      identity: this.identity ? { ...this.identity } : undefined,
+    };
+  }
+
+  private normalizeCollected(
+    dataset: StatlockerCollectedDatasetV1,
+    statlockerPatchId: string,
+  ): StatlockerNormalizedDatasetV1 {
+    if (dataset.dataset === 'WPA_PATCH_DATA') {
+      return this.normalizer.normalizeWpaPatchData(dataset.data, statlockerPatchId);
+    }
+    if (dataset.dataset === 'VS_HERO_WPA') {
+      return this.normalizer.normalizeVsHeroWpa(dataset.data, statlockerPatchId);
+    }
+    if (dataset.dataset === 'T4_CHAINS') {
+      return this.normalizer.normalizeT4Chains(dataset.data, statlockerPatchId);
+    }
+    if (dataset.dataset === 'HERO_LEADERBOARD') {
+      const heroId = heroIdFromScope(dataset.scopeKey);
+      return this.normalizer.normalizeHeroLeaderboard(dataset.data, statlockerPatchId, heroId);
+    }
+    if (dataset.dataset === 'PRO_BUILD_ANALYSIS') {
+      const heroId = heroIdFromScope(dataset.scopeKey);
+      return this.normalizer.normalizeProBuildAnalysis(
+        dataset.data,
+        statlockerPatchId,
+        accountIdFromScope(dataset.scopeKey),
+        heroId,
+      );
+    }
+    if (dataset.dataset === 'WPA_FILTERED_ITEMS') {
+      const heroId = heroIdFromScope(dataset.scopeKey);
+      return this.normalizer.normalizeWpaFilteredItems(dataset.data, statlockerPatchId, heroId);
+    }
+    throw new Error(`Unsupported collected dataset ${String(dataset.dataset)}`);
+  }
+
+  private async publishIfChanged(
+    normalized: StatlockerNormalizedDatasetV1<StatlockerNormalizedPayloadV1>,
+    identity: StatlockerGameIdentityV1,
+    source: StatlockerCollectedDatasetV1,
+  ): Promise<void> {
+    const lookup = {
+      dataset: normalized.dataset,
+      rulesetVersion: identity.rulesetVersion,
+      catalogSha256: identity.catalogSha256,
+      statlockerPatchId: normalized.statlockerPatchId,
+      scopeKey: normalized.scopeKey,
+    };
+    const active = this.store.getActive(lookup);
+    if (active?.contentSha256 === normalized.contentSha256) return;
+
+    await this.store.publish({
+      ...lookup,
+      contentSha256: normalized.contentSha256,
+      fetchedAt: new Date(source.fetchedAt),
+      schemaVersion: SNAPSHOT_SCHEMA_VERSION,
+      collectorVersion: COLLECTOR_VERSION,
+      normalizerVersion: NORMALIZER_VERSION,
+      payload: normalized.payload as unknown as Record<string, unknown>,
+      metadata: {
+        sourcePath: source.path,
+        httpStatus: source.status,
+      },
+    });
+  }
+
+  private singleFlight(key: string, work: () => Promise<void>): Promise<void> {
+    const current = this.inFlight.get(key);
+    if (current) return current;
+    const promise = work().finally(() => {
+      if (this.inFlight.get(key) === promise) this.inFlight.delete(key);
+    });
+    this.inFlight.set(key, promise);
+    return promise;
+  }
+
+  private isDue(key: string, ttlMs: number, nowMs: number): boolean {
+    const lastSuccess = this.lastSuccessByKey.get(key);
+    return lastSuccess === undefined || nowMs - lastSuccess >= ttlMs;
+  }
+
+  private pruneInactiveHeroes(nowMs: number): void {
+    for (const [heroId, lastSeenAt] of this.activeHeroes.entries()) {
+      if (nowMs - lastSeenAt > this.activeHeroTtlMs) this.activeHeroes.delete(heroId);
+    }
+  }
+
+  private requireIdentity(): StatlockerGameIdentityV1 {
+    if (!this.identity) throw new Error('Statlocker game identity is unavailable');
+    return this.identity;
+  }
+
+  private globalRefreshKey(identity: StatlockerGameIdentityV1): string {
+    return `global:${identity.rulesetVersion}:${identity.catalogSha256}`;
+  }
+
+  private heroRefreshKey(identity: StatlockerGameIdentityV1, heroId: number): string {
+    return `hero:${heroId}:${identity.rulesetVersion}:${identity.catalogSha256}`;
+  }
+
+  private markAttempt(nowMs: number): void {
+    this.lastAttemptAt = new Date(nowMs).toISOString();
+    this.lastError = undefined;
+  }
+
+  private markSuccess(nowMs: number): void {
+    this.lastSuccessAt = new Date(nowMs).toISOString();
+    this.lastError = undefined;
+  }
+}
+
+function validateIdentity(identity: StatlockerGameIdentityV1): void {
+  if (!identity.rulesetVersion || !/^[a-f0-9]{64}$/i.test(identity.catalogSha256)) {
+    throw new Error('Invalid Statlocker game identity');
+  }
+}
+
+function heroIdFromScope(scopeKey: string): number {
+  const match = /^hero:(\d+)/.exec(scopeKey);
+  const heroId = match ? Number(match[1]) : Number.NaN;
+  if (!Number.isInteger(heroId) || heroId <= 0) throw new Error(`Invalid hero scope ${scopeKey}`);
+  return heroId;
+}
+
+function accountIdFromScope(scopeKey: string): string {
+  const match = /:account:([^:]+)$/.exec(scopeKey);
+  if (!match?.[1]) throw new Error(`Invalid account scope ${scopeKey}`);
+  return match[1];
+}
+
+function readBoundedMs(raw: string | undefined, fallback: number, min: number, max: number): number {
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < min || value > max) return fallback;
+  return value;
+}
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unknown Statlocker refresh failure';
+}
