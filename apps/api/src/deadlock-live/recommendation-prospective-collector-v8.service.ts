@@ -235,7 +235,7 @@ export class RecommendationProspectiveCollectorV8Service {
         runtimeMode: 'SHADOW',
         healthType: 'HEARTBEAT',
         crashCountDelta: 0,
-        recommendationReady: true,
+        recommendationReady: this.decisionReadyCount > 0 && this.lastDecisionBlockers.length === 0,
         modelVersion: config.modelVersion,
       });
       this.lastHeartbeatAtByPlayer.set(playerScope, now);
