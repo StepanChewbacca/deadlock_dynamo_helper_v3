@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { AdaptiveEvidenceFreshnessV1 } from '@deadlock-live-probe/shared';
 import {
-  StatlockerDatasetV1,
   StatlockerEvidenceFamilyV1,
   StatlockerNormalizedPayloadV1,
 } from './statlocker-adaptive.types';
@@ -69,6 +68,22 @@ export class StatlockerEvidenceService {
   ) {}
 
   getEvidence(input: StatlockerEvidenceRequestV1): StatlockerEvidenceBundleV1 {
+    const bundle = this.getLocalEvidence(input);
+    const nowMs = input.nowMs ?? Date.now();
+    this.refresh.observeGameIdentity({
+      rulesetVersion: input.rulesetVersion,
+      catalogSha256: input.catalogSha256,
+    }, nowMs);
+    if (needsGlobalRefresh(bundle.byDataset)) {
+      void this.refresh.refreshGlobalNow(false, nowMs).catch(() => undefined);
+    }
+    if (needsHeroRefresh(bundle.byDataset.CONSENSUS_SKELETON)) {
+      this.refresh.enqueueHeroRefresh(input.heroId, nowMs);
+    }
+    return bundle;
+  }
+
+  getLocalEvidence(input: StatlockerEvidenceRequestV1): StatlockerEvidenceBundleV1 {
     validateRequest(input);
     const nowMs = input.nowMs ?? Date.now();
     const rows = this.store.listActive();
@@ -93,17 +108,6 @@ export class StatlockerEvidenceService {
       family.payload !== undefined,
     );
 
-    this.refresh.observeGameIdentity({
-      rulesetVersion: input.rulesetVersion,
-      catalogSha256: input.catalogSha256,
-    }, nowMs);
-    if (needsGlobalRefresh(byDataset)) {
-      void this.refresh.refreshGlobalNow(false, nowMs).catch(() => undefined);
-    }
-    if (needsHeroRefresh(byDataset.CONSENSUS_SKELETON)) {
-      this.refresh.enqueueHeroRefresh(input.heroId, nowMs);
-    }
-
     return {
       heroId: input.heroId,
       rulesetVersion: input.rulesetVersion,
@@ -115,6 +119,17 @@ export class StatlockerEvidenceService {
       families,
       byDataset,
     };
+  }
+
+  resolveLocalPatchId(rulesetVersion: string, catalogSha256: string): string | undefined {
+    if (!rulesetVersion || !/^[a-f0-9]{64}$/i.test(catalogSha256)) return undefined;
+    return this.store.listActive()
+      .filter((row) =>
+        row.rulesetVersion === rulesetVersion &&
+        row.catalogSha256.toLowerCase() === catalogSha256.toLowerCase() &&
+        Boolean(row.statlockerPatchId),
+      )
+      .sort(compareNewest)[0]?.statlockerPatchId;
   }
 
   private resolveFamily(
