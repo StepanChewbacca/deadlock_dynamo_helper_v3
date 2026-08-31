@@ -96,6 +96,7 @@ jobs:
             const initial = await page.evaluate(() => ({
               title: document.title,
               runText: document.querySelector('#run')?.textContent,
+              runDisabled: document.querySelector('#run')?.disabled,
               clientState: document.querySelector('#clientState')?.textContent,
               statusModel: document.querySelector('#statusModel')?.textContent,
               selectedCards: document.querySelectorAll('.card.selected').length,
@@ -112,19 +113,18 @@ jobs:
             }));
             console.log('SELECTION', JSON.stringify(selection));
 
+            const requestPromise = page.waitForRequest(
+              request => request.url().includes('/deadlock/tools/statlocker/browser-request') && request.method() === 'POST',
+              {timeout: 5000},
+            );
+
             await page.click('#run');
+            const sentRequest = await requestPromise;
+            const sentBody = JSON.parse(sentRequest.postData() || '{}');
+            console.log('RUN_REQUEST', JSON.stringify({method: sentRequest.method(), url: sentRequest.url(), body: sentBody}));
 
-            await page.waitForFunction(() => {
-              const text = document.querySelector('#statusText')?.textContent || '';
-              return text.includes('Request sent to') || text.includes('backend probe');
-            }, {timeout: 5000});
-
-            await new Promise(resolve => setTimeout(resolve, 400));
-            console.log('BROWSER_REQUESTS', JSON.stringify(browserRequests));
-            if (browserRequests.length !== 1) throw new Error('Run button did not send exactly one /browser-request POST');
-            if (browserRequests[0].method !== 'POST') throw new Error('Expected /browser-request POST');
-            const sentBody = JSON.parse(browserRequests[0].postData || '{}');
             if (sentBody.model !== 'T4_BUILD_CHAINS') throw new Error('Run button sent the wrong selected model');
+            if (browserRequests.length !== 1) throw new Error('Run button did not send exactly one /browser-request POST');
 
             await page.waitForFunction(() => {
               const title = document.querySelector('#statusTitle')?.textContent || '';
@@ -142,6 +142,7 @@ jobs:
               runDisabled: document.querySelector('#run')?.disabled,
             }));
 
+            console.log('BROWSER_REQUESTS', JSON.stringify(browserRequests));
             console.log('FINAL', JSON.stringify(final));
             console.log('PAGE_ERRORS', JSON.stringify(pageErrors));
             console.log('CONSOLE_ERRORS', JSON.stringify(consoleErrors));
@@ -151,12 +152,13 @@ jobs:
             if (pageErrors.length) process.exit(2);
             if (consoleErrors.length) process.exit(3);
             if (initial.clientState !== 'UI READY') process.exit(4);
-            if (selection.statusModel !== 'T4_BUILD_CHAINS' || selection.selectedModel !== 'T4_BUILD_CHAINS') process.exit(5);
-            if (browserRequests.length !== 1) process.exit(6);
-            if (final.statusTitle !== 'Live model response captured') process.exit(7);
-            if (!String(final.statusHttp || '').includes('200')) process.exit(8);
-            if (!String(final.outputText || '').trim()) process.exit(9);
-            if (final.runDisabled) process.exit(10);
+            if (initial.runDisabled) process.exit(5);
+            if (selection.statusModel !== 'T4_BUILD_CHAINS' || selection.selectedModel !== 'T4_BUILD_CHAINS') process.exit(6);
+            if (browserRequests.length !== 1) process.exit(7);
+            if (final.statusTitle !== 'Live model response captured') process.exit(8);
+            if (!String(final.statusHttp || '').includes('200')) process.exit(9);
+            if (!String(final.outputText || '').trim()) process.exit(10);
+            if (final.runDisabled) process.exit(11);
           })().catch(error => {
             console.error(error && error.stack || error);
             process.exit(1);
