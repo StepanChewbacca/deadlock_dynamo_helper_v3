@@ -68,12 +68,7 @@ function decision(options: { wallet?: number; shop?: 'AVAILABLE' | 'UNKNOWN'; re
 }
 
 function evidence(usable = true) {
-  const unavailable = (dataset: string, scopeKey: string) => ({
-    dataset,
-    scopeKey,
-    freshness: 'UNAVAILABLE',
-    confidence: 0,
-  });
+  const unavailable = (dataset: string, scopeKey: string) => ({ dataset, scopeKey, freshness: 'UNAVAILABLE', confidence: 0 });
   const fresh = {
     dataset: 'WPA_PATCH_DATA',
     scopeKey: 'patch:15-1',
@@ -92,9 +87,7 @@ function evidence(usable = true) {
     usable,
     snapshotIds: usable ? ['snapshot-wpa'] : [],
     degradedReasons: usable ? [] : ['WPA_PATCH_DATA:UNAVAILABLE'],
-    families: usable
-      ? [fresh]
-      : [unavailable('WPA_PATCH_DATA', 'patch:15-1')],
+    families: usable ? [fresh] : [unavailable('WPA_PATCH_DATA', 'patch:15-1')],
     byDataset: {
       WPA_PATCH_DATA: usable ? fresh : unavailable('WPA_PATCH_DATA', 'patch:15-1'),
       VS_HERO_WPA: unavailable('VS_HERO_WPA', 'global'),
@@ -108,13 +101,7 @@ function evidence(usable = true) {
 function plannerResult() {
   return {
     gameState: 'EVEN',
-    nextAction: {
-      actionKey: 'BUY_ITEM:1',
-      type: 'BUY',
-      itemId: 1,
-      targetItemId: 1,
-      reasonCodes: ['FEASIBLE'],
-    },
+    nextAction: { actionKey: 'BUY_ITEM:1', type: 'BUY', itemId: 1, targetItemId: 1, reasonCodes: ['FEASIBLE'] },
     recommendedBuild: [{
       itemId: 1,
       position: 1,
@@ -179,61 +166,39 @@ function previousResult() {
 function harness(options: {
   states?: any[];
   localEvidence?: any;
-  patchId?: string;
+  patchId?: string | null;
   previous?: any;
   plan?: any;
 } = {}) {
   const states = options.states ?? [decision({ wallet: 1000 }), decision({ wallet: 1000 })];
   const stateService = {
-    build: jest.fn()
-      .mockResolvedValueOnce(states[0])
-      .mockResolvedValueOnce(states[1] ?? states[0]),
+    build: jest.fn().mockResolvedValueOnce(states[0]).mockResolvedValueOnce(states[1] ?? states[0]),
   };
   const evidenceService = {
-    resolveLocalPatchId: jest.fn(() => options.patchId ?? '15-1'),
+    observeServingScope: jest.fn(),
+    resolveLocalPatchId: jest.fn(() => options.patchId === null ? undefined : (options.patchId ?? '15-1')),
     getLocalEvidence: jest.fn(() => options.localEvidence ?? evidence(true)),
   };
-  const planner = {
-    version: 'adaptive-build-planner-v1',
-    plan: jest.fn(() => options.plan ?? plannerResult()),
-  };
+  const planner = { version: 'adaptive-build-planner-v1', plan: jest.fn(() => options.plan ?? plannerResult()) };
   const replay = {
     getPreviousPlan: jest.fn().mockResolvedValue(options.previous),
     toReplayInput: jest.fn(() => ({ snapshotIds: ['snapshot-wpa'] })),
     persist: jest.fn().mockResolvedValue(undefined),
   };
-  const service = new AdaptiveRecommendationV1Service(
-    stateService as any,
-    evidenceService as any,
-    planner as any,
-    replay as any,
-  );
+  const service = new AdaptiveRecommendationV1Service(stateService as any, evidenceService as any, planner as any, replay as any);
   return { service, stateService, evidenceService, planner, replay };
 }
 
 describe('AdaptiveRecommendationV1Service', () => {
   it('has no Chromium collector or V8 runtime constructor dependency', () => {
-    const names = (Reflect.getMetadata('design:paramtypes', AdaptiveRecommendationV1Service) ?? [])
-      .map((type: any) => type?.name ?? 'unknown');
-    expect(names).toEqual([
-      'AdaptiveDecisionStateV1Service',
-      'StatlockerEvidenceService',
-      'AdaptiveBuildPlannerV1Service',
-      'AdaptiveReplayV1Service',
-    ]);
+    const names = (Reflect.getMetadata('design:paramtypes', AdaptiveRecommendationV1Service) ?? []).map((type: any) => type?.name ?? 'unknown');
+    expect(names).toEqual(['AdaptiveDecisionStateV1Service', 'StatlockerEvidenceService', 'AdaptiveBuildPlannerV1Service', 'AdaptiveReplayV1Service']);
     expect(names.join('|')).not.toMatch(/BrowserCollector|RecommendationRealtime|RecommendationEngine|Behavioral|Value|Policy/);
   });
 
   it('re-checks legality on fresh state and never publishes a stale legal BUY', async () => {
-    const h = harness({
-      states: [
-        decision({ wallet: 1000, revision: 'revision-a' }),
-        decision({ wallet: undefined, revision: 'revision-b' }),
-      ],
-    });
-
+    const h = harness({ states: [decision({ wallet: 1000, revision: 'revision-a' }), decision({ wallet: undefined, revision: 'revision-b' })] });
     const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
-
     expect(h.stateService.build).toHaveBeenCalledTimes(2);
     expect(result.nextAction.type).toBe('WAIT');
     expect(result.nextAction.actionKey).toBe('WAIT_SAVE');
@@ -245,9 +210,7 @@ describe('AdaptiveRecommendationV1Service', () => {
   it('preserves a previous valid plan conservatively when local Statlocker evidence is unavailable', async () => {
     const previous = previousResult();
     const h = harness({ previous, localEvidence: evidence(false) });
-
     const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
-
     expect(result.recommendedBuild).toEqual(previous.recommendedBuild);
     expect(['HOLD', 'WAIT', 'CONTINUE_CORE']).toContain(result.nextAction.type);
     expect(result.confidence).toBeLessThan(previous.confidence);
@@ -256,9 +219,7 @@ describe('AdaptiveRecommendationV1Service', () => {
 
   it('returns a safe non-transaction action when no local evidence and no previous plan exist', async () => {
     const h = harness({ localEvidence: evidence(false), previous: undefined });
-
     const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
-
     expect(['WAIT', 'HOLD', 'CONTINUE_CORE', 'ABSTAIN']).toContain(result.nextAction.type);
     expect(['BUY', 'UPGRADE', 'SELL', 'REPLACE']).not.toContain(result.nextAction.type);
     expect(result.blockers).toContain('STATLOCKER_EVIDENCE_UNAVAILABLE');
@@ -269,5 +230,14 @@ describe('AdaptiveRecommendationV1Service', () => {
     await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
     expect(h.evidenceService.getLocalEvidence).toHaveBeenCalledTimes(1);
     expect((h.evidenceService as any).getEvidence).toBeUndefined();
+  });
+
+  it('registers the serving identity and hero even when no Statlocker snapshot exists yet', async () => {
+    const h = harness({ patchId: null, previous: undefined });
+    const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
+    expect(h.evidenceService.observeServingScope).toHaveBeenCalledWith(10, 'ruleset-a', catalogSha256);
+    expect(h.evidenceService.getLocalEvidence).not.toHaveBeenCalled();
+    expect(result.nextAction.type).not.toBe('BUY');
+    expect(result.blockers).toContain('STATLOCKER_EVIDENCE_UNAVAILABLE');
   });
 });
