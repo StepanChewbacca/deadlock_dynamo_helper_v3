@@ -1,0 +1,167 @@
+name: Statlocker Model Endpoint Hunt
+
+on:
+  push:
+    branches:
+      - agent/statlocker-model-probe-poc
+    paths:
+      - '.github/workflows/statlocker-model-endpoint-hunt.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-public-assets:
+    if: github.repository == 'StepanChewbacca/deadlock_dynamo_helper_v2' && github.actor == 'StepanChewbacca'
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - name: Inspect Statlocker public pages and frontend assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import html
+          import re
+          import urllib.request
+          from urllib.parse import urljoin, urlparse
+
+          BASE = 'https://statlocker.gg'
+          PAGES = [
+              '/vision/wpa',
+              '/wpa-analysis',
+              '/vision/win-chance',
+              '/items',
+              '/builds/eternus-builds/abrams',
+              '/builds/build-lab/353960',
+              '/builds/build-lab/514172',
+          ]
+          HEADERS = {
+              'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140 Safari/537.36',
+              'Accept': 'text/html,application/xhtml+xml,application/json,text/plain,*/*',
+          }
+
+          def fetch(url, max_bytes=12_000_000):
+              req = urllib.request.Request(url, headers=HEADERS)
+              with urllib.request.urlopen(req, timeout=20) as res:
+                  data = res.read(max_bytes)
+                  charset = res.headers.get_content_charset() or 'utf-8'
+                  return res.status, data.decode(charset, errors='replace'), dict(res.headers.items())
+
+          pages = {}
+          assets = set()
+          attr_re = re.compile(r'''(?:src|href)=["']([^"']+)["']''', re.I)
+          raw_asset_re = re.compile(r'''(?:https?:)?//[^"'\s<>]+\.js(?:\?[^"'\s<>]*)?|/_next/[^"'\s<>]+\.js(?:\?[^"'\s<>]*)?''', re.I)
+
+          print('=== PAGE FETCH ===')
+          for path in PAGES:
+              url = urljoin(BASE, path)
+              try:
+                  status, text, headers = fetch(url, 4_000_000)
+                  pages[url] = text
+                  print(f'{status} {url} bytes={len(text)} content-type={headers.get("Content-Type", "")[:80]}')
+                  for value in attr_re.findall(text):
+                      absolute = urljoin(url, html.unescape(value))
+                      parsed = urlparse(absolute)
+                      if parsed.hostname in ('statlocker.gg', 'www.statlocker.gg') and parsed.path.endswith('.js'):
+                          assets.add(absolute)
+                  for value in raw_asset_re.findall(text.replace('\\/', '/')):
+                      absolute = urljoin(url, value)
+                      parsed = urlparse(absolute)
+                      if parsed.hostname in ('statlocker.gg', 'www.statlocker.gg') and parsed.path.endswith('.js'):
+                          assets.add(absolute)
+              except Exception as exc:
+                  print(f'ERROR page {url}: {exc}')
+
+          print(f'PUBLIC_JS_ASSETS={len(assets)}')
+          for asset in sorted(assets):
+              print('ASSET', asset)
+
+          all_sources = dict(pages)
+          print('=== ASSET FETCH ===')
+          for asset in sorted(assets)[:160]:
+              try:
+                  status, text, headers = fetch(asset)
+                  all_sources[asset] = text
+                  print(f'{status} {asset} bytes={len(text)}')
+              except Exception as exc:
+                  print(f'ERROR asset {asset}: {exc}')
+
+          keywords = [
+              'wpa', 'win chance', 'win-chance', 'win_probability', 'win-probability',
+              'winprob', 'winprobability', 'prediction', 'predict', 'model',
+              'purchase time', 'purchase-time', 'timing', 'comeback', 'win-more',
+              't4', 'chain', 'synergy', 'eternus', 'build-analysis', 'recommend',
+              'item meta', 'item-meta', 'pim',
+          ]
+
+          endpoint_re = re.compile(r'''/api/[A-Za-z0-9_./?=&:$%+\-{}\[\]]{1,380}''')
+          endpoint_hits = {}
+          contexts = []
+
+          for source_url, original in all_sources.items():
+              text = html.unescape(original.replace('\\/', '/').replace('\\u0026', '&'))
+              lower = text.lower()
+
+              for match in endpoint_re.finditer(text):
+                  path = match.group(0).rstrip('),;\"\'`')
+                  start = max(0, match.start() - 260)
+                  end = min(len(text), match.end() + 340)
+                  context = re.sub(r'\s+', ' ', text[start:end])
+                  lower_context = context.lower()
+                  matched = sorted({keyword for keyword in keywords if keyword in lower_context or keyword in path.lower()})
+                  endpoint_hits.setdefault(path, {'sources': set(), 'keywords': set(), 'contexts': []})
+                  endpoint_hits[path]['sources'].add(source_url)
+                  endpoint_hits[path]['keywords'].update(matched)
+                  if matched and len(endpoint_hits[path]['contexts']) < 2:
+                      endpoint_hits[path]['contexts'].append(context[:900])
+
+              for keyword in keywords:
+                  pos = 0
+                  while True:
+                      idx = lower.find(keyword, pos)
+                      if idx < 0:
+                          break
+                      start = max(0, idx - 300)
+                      end = min(len(text), idx + 650)
+                      context = re.sub(r'\s+', ' ', text[start:end])
+                      if '/api/' in context or 'fetch(' in context or 'axios' in context or 'graphql' in context or 'trpc' in context:
+                          contexts.append((keyword, source_url, context[:1100]))
+                      pos = idx + len(keyword)
+
+          print('=== API PATHS RANKED ===')
+          ranked = sorted(
+              endpoint_hits.items(),
+              key=lambda item: (-len(item[1]['keywords']), item[0]),
+          )
+          for path, info in ranked:
+              print('PATH', path)
+              print('  keywords=', ','.join(sorted(info['keywords'])) or '-')
+              print('  sources=', len(info['sources']))
+              for context in info['contexts']:
+                  print('  context=', context)
+
+          print('=== KEYWORD NETWORK CONTEXTS ===')
+          seen = set()
+          emitted = 0
+          for keyword, source_url, context in contexts:
+              signature = context[:260]
+              if signature in seen:
+                  continue
+              seen.add(signature)
+              print(f'KEYWORD={keyword} SOURCE={source_url}')
+              print(context)
+              emitted += 1
+              if emitted >= 120:
+                  break
+
+          useful = [
+              (path, info) for path, info in ranked
+              if info['keywords']
+              and not path.lower().startswith(('/api/public/match/', '/api/public/matches', '/api/public/profile/', '/api/public/profiles'))
+          ]
+          print('=== SUMMARY ===')
+          print(f'pages={len(pages)} assets={len(assets)} sources={len(all_sources)} endpoints={len(endpoint_hits)} usefulCandidates={len(useful)} contexts={len(contexts)}')
+          for path, info in useful[:50]:
+              print('USEFUL', path, 'signals=' + ','.join(sorted(info['keywords'])))
+          PY
