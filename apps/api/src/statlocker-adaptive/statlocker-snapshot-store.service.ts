@@ -33,6 +33,20 @@ export interface StatlockerSnapshotPublishInputV1 extends StatlockerSnapshotIden
 
 export type StatlockerStoredSnapshotV1 = StatlockerEvidenceSnapshotV1Entity;
 
+type ValidatedStoredSnapshotV1 = StatlockerStoredSnapshotV1 & {
+  dataset: StatlockerDatasetV1;
+};
+
+const STATLOCKER_DATASETS_V1 = new Set<StatlockerDatasetV1>([
+  'WPA_PATCH_DATA',
+  'VS_HERO_WPA',
+  'T4_CHAINS',
+  'HERO_LEADERBOARD',
+  'PRO_BUILD_ANALYSIS',
+  'WPA_FILTERED_ITEMS',
+  'CONSENSUS_SKELETON',
+]);
+
 @Injectable()
 export class StatlockerSnapshotStoreService implements OnModuleInit {
   private readonly active = new Map<string, StatlockerStoredSnapshotV1>();
@@ -139,10 +153,10 @@ function validatePublishInput(input: StatlockerSnapshotPublishInputV1): void {
   }
 }
 
-function isValidStoredSnapshot(row: StatlockerStoredSnapshotV1): boolean {
+function isValidStoredSnapshot(row: StatlockerStoredSnapshotV1): row is ValidatedStoredSnapshotV1 {
   return Boolean(
     row.snapshotId &&
-    row.dataset &&
+    isStatlockerDatasetV1(row.dataset) &&
     row.rulesetVersion &&
     isSha(row.catalogSha256) &&
     row.statlockerPatchId &&
@@ -152,6 +166,10 @@ function isValidStoredSnapshot(row: StatlockerStoredSnapshotV1): boolean {
     isSha(row.contentSha256) &&
     row.payload && typeof row.payload === 'object',
   );
+}
+
+function isStatlockerDatasetV1(value: string): value is StatlockerDatasetV1 {
+  return STATLOCKER_DATASETS_V1.has(value as StatlockerDatasetV1);
 }
 
 function isSha(value: string): boolean {
