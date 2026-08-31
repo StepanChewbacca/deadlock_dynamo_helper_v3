@@ -1,0 +1,29 @@
+name: Recommendation V8 Schema Compatibility Audit
+
+on:
+  push:
+    branches:
+      - agent/recommendation-v8-pretraining-implementation
+    paths:
+      - .github/workflows/recommendation-v8-schema-compat-audit.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+      - name: Audit catalog and telemetry schema references
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '--- catalog table references ---'
+          grep -RIn --exclude='*.spec.ts' --exclude-dir=node_modules 'item_catalog_versions\|item_catalog_items\|item_catalog_recipes' apps packages | head -n 400 || true
+          echo '--- current v8 entity tables ---'
+          grep -RIn '@Entity(' apps/api/src/deadlock-live/entities | sort | head -n 300 || true
+          echo '--- synchronize setting ---'
+          grep -RIn 'synchronize:' apps/api/src || true
+          echo '--- v8 prospective/realtime entrypoints ---'
+          grep -RIn --exclude='*.spec.ts' 'RecommendationRealtimeCoordinatorV8Service\|recommendation-telemetry/v8\|RecommendationOutcomeEventV8' apps packages | head -n 400 || true
