@@ -23,8 +23,9 @@ import { RecommendationRoadmapEvidenceEntityV1 } from './deadlock-live/entities/
 import { RecommendationTelemetryEvent } from './deadlock-live/entities/recommendation-telemetry-event.entity';
 import { RecommendationTelemetryRejectionV8 } from './deadlock-live/entities/recommendation-telemetry-rejection.entity';
 import { RecommendationValueDatasetRegistryV1 } from './deadlock-live/entities/recommendation-value-dataset-registry.entity';
-import { SoulsAffordabilityEvidenceV2Entity } from './deadlock-live/entities/souls-affordability-evidence-v2.entity';
 import { ShadowModeDecision } from './deadlock-live/entities/shadow-mode-decision.entity';
+import { SoulsAffordabilityEvidenceV2Entity } from './deadlock-live/entities/souls-affordability-evidence-v2.entity';
+import { StatlockerEvidenceSnapshotV1Entity } from './deadlock-live/entities/statlocker-evidence-snapshot-v1.entity';
 import { StatlockerProbeModule } from './statlocker-probe/statlocker-probe.module';
 
 @Module({
@@ -54,6 +55,7 @@ import { StatlockerProbeModule } from './statlocker-probe/statlocker-probe.modul
         RecommendationEvidenceSnapshotV8,
         RecommendationExposureAckV8,
         SoulsAffordabilityEvidenceV2Entity,
+        StatlockerEvidenceSnapshotV1Entity,
         ModelBundleRegistryV1,
         RecommendationDatasetRegistryV1,
         RecommendationValueDatasetRegistryV1,
