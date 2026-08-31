@@ -111,4 +111,35 @@ describe('StatlockerEvidenceService', () => {
 
     expect(h.refresh.enqueueHeroRefresh).toHaveBeenCalledWith(10, now);
   });
+
+  it('reads local evidence without scheduling any refresh work', () => {
+    const h = service([
+      row('WPA_PATCH_DATA', 'patch:15-1', 5 * 60_000),
+      row('VS_HERO_WPA', 'global', 5 * 60_000),
+      row('CONSENSUS_SKELETON', 'hero:10:consensus', 5 * 60_000),
+    ]);
+
+    const bundle = h.service.getLocalEvidence({
+      heroId: 10,
+      rulesetVersion: 'ruleset-a',
+      catalogSha256,
+      statlockerPatchId: '15-1',
+      nowMs: now,
+    });
+
+    expect(bundle.usable).toBe(true);
+    expect(h.refresh.observeGameIdentity).not.toHaveBeenCalled();
+    expect(h.refresh.refreshGlobalNow).not.toHaveBeenCalled();
+    expect(h.refresh.enqueueHeroRefresh).not.toHaveBeenCalled();
+  });
+
+  it('resolves the newest compatible Statlocker minor patch from local snapshots', () => {
+    const h = service([
+      row('WPA_PATCH_DATA', 'patch:15-0', 20 * 60_000, { statlockerPatchId: '15-0' }),
+      row('VS_HERO_WPA', 'global', 5 * 60_000, { statlockerPatchId: '15-1' }),
+      row('T4_CHAINS', 'global', 1 * 60_000, { rulesetVersion: 'ruleset-old', statlockerPatchId: '99-9' }),
+    ]);
+
+    expect(h.service.resolveLocalPatchId('ruleset-a', catalogSha256)).toBe('15-1');
+  });
 });
