@@ -61,4 +61,16 @@ describe('StatlockerSnapshotStoreService', () => {
     expect(store.getActive(base)?.snapshotId).toBe('new');
     expect(store.getActive(base)?.payload).toEqual({ version: 2 });
   });
+
+  it('ignores persisted snapshots with an unknown dataset during bootstrap', async () => {
+    const repository = repo();
+    repository.find.mockResolvedValue([
+      { ...base, dataset: 'UNKNOWN_DATASET', snapshotId: 'invalid' },
+    ]);
+    const store = new StatlockerSnapshotStoreService(repository);
+
+    await store.onModuleInit();
+
+    expect(store.listActive()).toEqual([]);
+  });
 });
