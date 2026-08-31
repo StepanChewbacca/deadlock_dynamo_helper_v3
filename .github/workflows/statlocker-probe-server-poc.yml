@@ -184,7 +184,6 @@ jobs:
           '''
               updated = source.replace(anchor, snippet + anchor, 1)
 
-          # Browser model calls can take several seconds, so ensure the existing marker has enough timeout.
           updated = re.sub(
               r'(location \^~ /deadlock/tools/statlocker \{.*?proxy_read_timeout\s+)\d+s;',
               r'\g<1>90s;',
@@ -211,7 +210,8 @@ jobs:
               "https://${domain}/deadlock/tools/statlocker" || true)"
 
             if [ "$status" = '200' ] \
-              && grep -q 'Statlocker Model Explorer' "$RUNNER_TEMP/statlocker-ui.html"; then
+              && grep -q 'STATLOCKER' "$RUNNER_TEMP/statlocker-ui.html" \
+              && grep -q 'browser-request' "$RUNNER_TEMP/statlocker-ui.html"; then
               break
             fi
 
