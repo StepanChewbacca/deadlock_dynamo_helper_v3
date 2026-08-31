@@ -58,6 +58,19 @@ export class SoulsAffordabilityEvidenceV2Service {
     const rows = await this.evidenceRepo.find({ order: { createdAt: 'ASC', observationId: 'ASC' } });
     return evaluateSoulsAffordabilityEvidenceV2(rows.map((row) => row.observation));
   }
+
+  async canVerifyScope(rulesetVersion: string, catalogSha256: string): Promise<boolean> {
+    if (!rulesetVersion || !/^[a-f0-9]{64}$/i.test(catalogSha256)) return false;
+    const rows = await this.evidenceRepo.find({ order: { createdAt: 'ASC', observationId: 'ASC' } });
+    const scoped = rows
+      .map((row) => row.observation)
+      .filter(
+        (observation) =>
+          observation.rulesetVersion === rulesetVersion &&
+          observation.catalogSha256.toLowerCase() === catalogSha256.toLowerCase(),
+      );
+    return evaluateSoulsAffordabilityEvidenceV2(scoped).canMarkSpendableSoulsVerified === true;
+  }
 }
 
 function isUniqueViolation(error: unknown): boolean {
