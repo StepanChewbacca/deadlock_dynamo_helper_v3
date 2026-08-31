@@ -1,0 +1,70 @@
+name: Recommendation V8 Production Preflight
+
+on:
+  push:
+    branches:
+      - agent/recommendation-v8-pretraining-implementation
+    paths:
+      - .github/workflows/recommendation-v8-production-preflight.yml
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: self-hosted
+    steps:
+      - name: Inspect production deployment without secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          API_CONTAINER=deadlock_dynamo_helper-api-1
+          DB_CONTAINER=aboba-telegramovich-postgres-1
+
+          echo '--- docker containers ---'
+          sudo docker ps -a --format '{{.Names}}\t{{.Image}}\t{{.Status}}' | sort
+
+          echo '--- api compose labels ---'
+          if sudo docker inspect "$API_CONTAINER" >/dev/null 2>&1; then
+            sudo docker inspect -f 'project={{index .Config.Labels "com.docker.compose.project"}}' "$API_CONTAINER"
+            sudo docker inspect -f 'working_dir={{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$API_CONTAINER"
+            sudo docker inspect -f 'config_files={{index .Config.Labels "com.docker.compose.project.config_files"}}' "$API_CONTAINER"
+            sudo docker inspect -f 'status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} image={{.Image}}' "$API_CONTAINER"
+            echo '--- api mounts ---'
+            sudo docker inspect -f '{{range .Mounts}}{{.Type}}\t{{.Name}}\t{{.Source}}\t{{.Destination}}{{println}}{{end}}' "$API_CONTAINER"
+          else
+            echo 'api_container_missing=true'
+          fi
+
+          PROD_DIR=$(sudo docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' "$API_CONTAINER" 2>/dev/null || true)
+          if test -z "$PROD_DIR" || ! test -d "$PROD_DIR"; then
+            PROD_DIR=$(find /home/ubuntu/apps -maxdepth 3 -type f \( -name docker-compose.yml -o -name compose.yml \) -printf '%h\n' 2>/dev/null | grep 'deadlock' | head -n1 || true)
+          fi
+          echo "prod_dir=$PROD_DIR"
+
+          if test -n "$PROD_DIR" && test -d "$PROD_DIR"; then
+            echo '--- production git ---'
+            sudo git -C "$PROD_DIR" status --short --branch || true
+            sudo git -C "$PROD_DIR" rev-parse HEAD || true
+            echo '--- compose services ---'
+            (cd "$PROD_DIR" && sudo docker compose config --services) || true
+            echo '--- env keys only ---'
+            if test -f "$PROD_DIR/.env"; then
+              sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' "$PROD_DIR/.env" | sort
+            else
+              echo '.env missing'
+            fi
+          fi
+
+          echo '--- database schema inventory ---'
+          if sudo docker inspect "$DB_CONTAINER" >/dev/null 2>&1; then
+            sudo docker exec "$DB_CONTAINER" sh -lc 'PGPASSWORD="${POSTGRES_PASSWORD:-}" psql -X -v ON_ERROR_STOP=1 -U "${POSTGRES_USER:-postgres}" -d deadlock_builds -Atc "SELECT table_name FROM information_schema.tables WHERE table_schema=current_schema() AND (table_name LIKE '\''recommendation_%'\'' OR table_name LIKE '\''item_catalog_%'\'' OR table_name='\''model_bundle_registry_v1'\'' OR table_name='\''souls_affordability_evidence_v2'\'') ORDER BY table_name"'
+            echo '--- legacy catalog columns ---'
+            sudo docker exec "$DB_CONTAINER" sh -lc 'PGPASSWORD="${POSTGRES_PASSWORD:-}" psql -X -v ON_ERROR_STOP=1 -U "${POSTGRES_USER:-postgres}" -d deadlock_builds -Atc "SELECT column_name||'\''|'\''||data_type FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='\''item_catalog_versions'\'' ORDER BY ordinal_position"'
+          else
+            echo 'db_container_missing=true'
+          fi
+
+          echo '--- disk ---'
+          df -h /
+          sudo docker system df
