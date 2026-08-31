@@ -22,6 +22,7 @@ function service(rows: any[]) {
   const store = { listActive: jest.fn(() => rows) };
   const refresh = {
     observeGameIdentity: jest.fn(),
+    observeActiveHero: jest.fn(),
     enqueueHeroRefresh: jest.fn(),
     refreshGlobalNow: jest.fn().mockResolvedValue(undefined),
   };
@@ -36,15 +37,7 @@ describe('StatlockerEvidenceService', () => {
       row('T4_CHAINS', 'global', 10 * 60 * 60_000),
       row('CONSENSUS_SKELETON', 'hero:10:consensus', 10 * 60_000),
     ]);
-
-    const bundle = h.service.getEvidence({
-      heroId: 10,
-      rulesetVersion: 'ruleset-a',
-      catalogSha256,
-      statlockerPatchId: '15-1',
-      nowMs: now,
-    });
-
+    const bundle = h.service.getEvidence({ heroId: 10, rulesetVersion: 'ruleset-a', catalogSha256, statlockerPatchId: '15-1', nowMs: now });
     expect(bundle.byDataset.WPA_PATCH_DATA.freshness).toBe('FRESH');
     expect(bundle.byDataset.VS_HERO_WPA.freshness).toBe('STALE_USABLE');
     expect(bundle.byDataset.T4_CHAINS.freshness).toBe('UNAVAILABLE');
@@ -57,15 +50,7 @@ describe('StatlockerEvidenceService', () => {
       row('WPA_PATCH_DATA', 'patch:15-1', 5 * 60_000, { rulesetVersion: 'ruleset-old' }),
       row('VS_HERO_WPA', 'global', 5 * 60_000, { catalogSha256: 'c'.repeat(64) }),
     ]);
-
-    const bundle = h.service.getEvidence({
-      heroId: 10,
-      rulesetVersion: 'ruleset-a',
-      catalogSha256,
-      statlockerPatchId: '15-1',
-      nowMs: now,
-    });
-
+    const bundle = h.service.getEvidence({ heroId: 10, rulesetVersion: 'ruleset-a', catalogSha256, statlockerPatchId: '15-1', nowMs: now });
     expect(bundle.byDataset.WPA_PATCH_DATA.freshness).toBe('PATCH_MISMATCH');
     expect(bundle.byDataset.WPA_PATCH_DATA.payload).toBeUndefined();
     expect(bundle.byDataset.VS_HERO_WPA.freshness).toBe('PATCH_MISMATCH');
@@ -78,15 +63,7 @@ describe('StatlockerEvidenceService', () => {
       row('VS_HERO_WPA', 'global', 5 * 60_000),
       row('CONSENSUS_SKELETON', 'hero:10:consensus', 5 * 60_000),
     ]);
-
-    const bundle = h.service.getEvidence({
-      heroId: 10,
-      rulesetVersion: 'ruleset-a',
-      catalogSha256,
-      statlockerPatchId: '15-1',
-      nowMs: now,
-    });
-
+    const bundle = h.service.getEvidence({ heroId: 10, rulesetVersion: 'ruleset-a', catalogSha256, statlockerPatchId: '15-1', nowMs: now });
     expect(bundle.usable).toBe(true);
     expect(bundle.byDataset.T4_CHAINS.freshness).toBe('UNAVAILABLE');
     expect(bundle.byDataset.WPA_PATCH_DATA.payload).toBeDefined();
@@ -100,35 +77,20 @@ describe('StatlockerEvidenceService', () => {
       row('VS_HERO_WPA', 'global', 5 * 60_000),
       row('T4_CHAINS', 'global', 5 * 60_000),
     ]);
-
-    h.service.getEvidence({
-      heroId: 10,
-      rulesetVersion: 'ruleset-a',
-      catalogSha256,
-      statlockerPatchId: '15-1',
-      nowMs: now,
-    });
-
+    h.service.getEvidence({ heroId: 10, rulesetVersion: 'ruleset-a', catalogSha256, statlockerPatchId: '15-1', nowMs: now });
     expect(h.refresh.enqueueHeroRefresh).toHaveBeenCalledWith(10, now);
   });
 
-  it('reads local evidence without scheduling any refresh work', () => {
+  it('reads local evidence without scheduling collection while passively observing the serving scope', () => {
     const h = service([
       row('WPA_PATCH_DATA', 'patch:15-1', 5 * 60_000),
       row('VS_HERO_WPA', 'global', 5 * 60_000),
       row('CONSENSUS_SKELETON', 'hero:10:consensus', 5 * 60_000),
     ]);
-
-    const bundle = h.service.getLocalEvidence({
-      heroId: 10,
-      rulesetVersion: 'ruleset-a',
-      catalogSha256,
-      statlockerPatchId: '15-1',
-      nowMs: now,
-    });
-
+    const bundle = h.service.getLocalEvidence({ heroId: 10, rulesetVersion: 'ruleset-a', catalogSha256, statlockerPatchId: '15-1', nowMs: now });
     expect(bundle.usable).toBe(true);
-    expect(h.refresh.observeGameIdentity).not.toHaveBeenCalled();
+    expect(h.refresh.observeGameIdentity).toHaveBeenCalledWith({ rulesetVersion: 'ruleset-a', catalogSha256 }, now);
+    expect(h.refresh.observeActiveHero).toHaveBeenCalledWith(10, now);
     expect(h.refresh.refreshGlobalNow).not.toHaveBeenCalled();
     expect(h.refresh.enqueueHeroRefresh).not.toHaveBeenCalled();
   });
@@ -139,7 +101,6 @@ describe('StatlockerEvidenceService', () => {
       row('VS_HERO_WPA', 'global', 5 * 60_000, { statlockerPatchId: '15-1' }),
       row('T4_CHAINS', 'global', 1 * 60_000, { rulesetVersion: 'ruleset-old', statlockerPatchId: '99-9' }),
     ]);
-
     expect(h.service.resolveLocalPatchId('ruleset-a', catalogSha256)).toBe('15-1');
   });
 });
