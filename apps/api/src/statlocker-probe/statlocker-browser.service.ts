@@ -3,12 +3,14 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 export type StatlockerBrowserModel =
   | 'ITEM_META_WPA'
   | 'ETERNUS_BUILD_ANALYSIS'
-  | 'T4_BUILD_CHAINS';
+  | 'T4_BUILD_CHAINS'
+  | 'WIN_CHANCE';
 
 export interface StatlockerBrowserProbeRequest {
   model: StatlockerBrowserModel;
   hero?: string;
   minSampleSize?: number;
+  matchId?: string;
 }
 
 export interface StatlockerBrowserCapturedResponse {
@@ -85,9 +87,30 @@ export class StatlockerBrowserService {
         timeout: 45_000,
       });
 
+      if (input.model === 'WIN_CHANCE') {
+        await this.triggerWinChance(page, this.normalizeMatchId(input.matchId));
+      }
+
+      if (input.model === 'T4_BUILD_CHAINS') {
+        // The route can render from cached state without re-requesting the T4 dataset.
+        // Trigger the same public fetch from inside the Statlocker page so the probe stays browser-driven.
+        await this.sleep(1_500);
+        if (!target.primary(captured)) {
+          await page.evaluate(async () => {
+            await fetch('/api/info/t4-chains-data');
+          });
+        }
+      }
+
       // The WPA page performs a default request first and then a patch-specific request.
       // Eternus also loads leaderboard data before its derived build analysis.
-      await this.sleep(input.model === 'ETERNUS_BUILD_ANALYSIS' ? 9_000 : 7_000);
+      const settleMs =
+        input.model === 'ETERNUS_BUILD_ANALYSIS'
+          ? 9_000
+          : input.model === 'WIN_CHANCE'
+            ? 12_000
+            : 7_000;
+      await this.sleep(settleMs);
       await Promise.allSettled(Array.from(pending));
 
       const primary = target.primary(captured);
@@ -174,7 +197,56 @@ export class StatlockerBrowserService {
       };
     }
 
+    if (model === 'WIN_CHANCE') {
+      return {
+        sourcePage: () => `${this.baseUrl}/vision/win-chance`,
+        matches: (path) => /^\/api\/match\/[^/]+\/win-rate$/.test(path),
+        primary: (responses) =>
+          [...responses]
+            .reverse()
+            .find((entry) => /^\/api\/match\/[^/]+\/win-rate$/.test(entry.path) && entry.status === 200),
+      };
+    }
+
     throw new BadRequestException('Unsupported browser model');
+  }
+
+  private async triggerWinChance(page: any, matchId: string): Promise<void> {
+    const triggered = await page.evaluate((value: string) => {
+      const inputs = Array.from(document.querySelectorAll('input')) as HTMLInputElement[];
+      const input =
+        inputs.find((element) =>
+          /match/i.test(`${element.placeholder} ${element.name} ${element.id}`),
+        ) ?? inputs[0];
+
+      if (!input) {
+        return false;
+      }
+
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        'value',
+      )?.set;
+      setter?.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+
+      const buttons = Array.from(document.querySelectorAll('button')) as HTMLButtonElement[];
+      const button =
+        buttons.find((element) => /analy|load|submit/i.test(element.textContent ?? '')) ??
+        buttons.find((element) => element.type === 'submit');
+
+      if (!button) {
+        return false;
+      }
+
+      button.click();
+      return true;
+    }, matchId);
+
+    if (!triggered) {
+      throw new BadRequestException('Could not find Win Chance input/button on Statlocker page');
+    }
   }
 
   private async captureResponse(
@@ -235,6 +307,14 @@ export class StatlockerBrowserService {
       throw new BadRequestException('minSampleSize must be between 1 and 100000');
     }
     return Math.floor(value);
+  }
+
+  private normalizeMatchId(value: string | undefined): string {
+    const normalized = value?.trim();
+    if (!normalized || !/^\d{6,30}$/.test(normalized)) {
+      throw new BadRequestException('matchId must be a numeric Deadlock match ID');
+    }
+    return normalized;
   }
 
   private toHeroSlug(hero: string): string {
