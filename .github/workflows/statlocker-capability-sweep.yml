@@ -14,7 +14,7 @@ permissions:
 jobs:
   capability-sweep:
     if: github.repository == 'StepanChewbacca/deadlock_dynamo_helper_v2'
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
       - name: Checkout exact sweep commit
@@ -220,7 +220,7 @@ jobs:
             );
             await browserFetch('T4_BUILD_CHAINS', '/api/info/t4-chains-data');
             await browserFetch('VS_HERO_WPA', '/api/info/vs-hero-wpa-data');
-            const patches = await browserFetch('WPA_PATCHES', '/api/info/wpa-patches');
+            await browserFetch('WPA_PATCHES', '/api/info/wpa-patches');
             await browserFetch('PRO_BUILD_ANALYSIS', '/api/info/player-build-analysis/281768392/6');
             await browserFetch('HERO_LEADERBOARD', '/api/leaderboard/get-valve-leaderboard?region=Europe&heroId=6&page=1&pageSize=10&version=2');
             await browserFetch('ACCOUNT_IDS_WITH_HERO_MATCHES', '/api/profile/account-ids-with-hero-matches?heroId=6&accountIds=281768392');
@@ -247,8 +247,8 @@ jobs:
           console.log(JSON.stringify(report, null, 2));
           NODE
 
-          sudo docker build -t statlocker-capability-sweep "$work"
-          sudo docker run --rm --shm-size=1g \
+          docker build -t statlocker-capability-sweep "$work"
+          docker run --rm --shm-size=1g \
             -v "$GITHUB_WORKSPACE:/out" \
             statlocker-capability-sweep
 
