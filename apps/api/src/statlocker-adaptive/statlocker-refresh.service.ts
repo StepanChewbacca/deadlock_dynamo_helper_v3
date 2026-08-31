@@ -1,10 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import {
   StatlockerBrowserCollectorService,
   StatlockerCollectedDatasetV1,
   StatlockerCollectionTargetV1,
 } from './statlocker-browser-collector.service';
+import { BuildSkeletonService } from './build-skeleton.service';
 import { StatlockerNormalizerService } from './statlocker-normalizer.service';
 import {
   StatlockerNormalizedDatasetV1,
@@ -54,6 +55,7 @@ export class StatlockerRefreshService {
     private readonly collector: StatlockerBrowserCollectorService,
     private readonly normalizer: StatlockerNormalizerService,
     private readonly store: StatlockerSnapshotStoreService,
+    @Optional() private readonly skeleton?: BuildSkeletonService,
   ) {}
 
   observeGameIdentity(identity: StatlockerGameIdentityV1, _nowMs = Date.now()): void {
@@ -73,9 +75,14 @@ export class StatlockerRefreshService {
     }
   }
 
-  enqueueHeroRefresh(heroId: number, nowMs = Date.now()): void {
+  observeActiveHero(heroId: number, nowMs = Date.now()): void {
     if (!Number.isInteger(heroId) || heroId <= 0) return;
     this.activeHeroes.set(heroId, nowMs);
+  }
+
+  enqueueHeroRefresh(heroId: number, nowMs = Date.now()): void {
+    this.observeActiveHero(heroId, nowMs);
+    if (!Number.isInteger(heroId) || heroId <= 0) return;
     void this.refreshHeroNow(heroId, false, nowMs).catch((error) => {
       this.lastError = describeError(error);
     });
@@ -147,6 +154,12 @@ export class StatlockerRefreshService {
           }
         }
 
+        await this.skeleton?.rebuild({
+          heroId,
+          rulesetVersion: identity.rulesetVersion,
+          catalogSha256: identity.catalogSha256,
+          statlockerPatchId: leaderboardResult.statlockerPatchId,
+        });
         this.lastSuccessByKey.set(key, nowMs);
         this.markSuccess(nowMs);
       } catch (error) {
@@ -187,27 +200,16 @@ export class StatlockerRefreshService {
     dataset: StatlockerCollectedDatasetV1,
     statlockerPatchId: string,
   ): StatlockerNormalizedDatasetV1 {
-    if (dataset.dataset === 'WPA_PATCH_DATA') {
-      return this.normalizer.normalizeWpaPatchData(dataset.data, statlockerPatchId);
-    }
-    if (dataset.dataset === 'VS_HERO_WPA') {
-      return this.normalizer.normalizeVsHeroWpa(dataset.data, statlockerPatchId);
-    }
-    if (dataset.dataset === 'T4_CHAINS') {
-      return this.normalizer.normalizeT4Chains(dataset.data, statlockerPatchId);
-    }
+    if (dataset.dataset === 'WPA_PATCH_DATA') return this.normalizer.normalizeWpaPatchData(dataset.data, statlockerPatchId);
+    if (dataset.dataset === 'VS_HERO_WPA') return this.normalizer.normalizeVsHeroWpa(dataset.data, statlockerPatchId);
+    if (dataset.dataset === 'T4_CHAINS') return this.normalizer.normalizeT4Chains(dataset.data, statlockerPatchId);
     if (dataset.dataset === 'HERO_LEADERBOARD') {
       const heroId = heroIdFromScope(dataset.scopeKey);
       return this.normalizer.normalizeHeroLeaderboard(dataset.data, statlockerPatchId, heroId);
     }
     if (dataset.dataset === 'PRO_BUILD_ANALYSIS') {
       const heroId = heroIdFromScope(dataset.scopeKey);
-      return this.normalizer.normalizeProBuildAnalysis(
-        dataset.data,
-        statlockerPatchId,
-        accountIdFromScope(dataset.scopeKey),
-        heroId,
-      );
+      return this.normalizer.normalizeProBuildAnalysis(dataset.data, statlockerPatchId, accountIdFromScope(dataset.scopeKey), heroId);
     }
     if (dataset.dataset === 'WPA_FILTERED_ITEMS') {
       const heroId = heroIdFromScope(dataset.scopeKey);
@@ -239,10 +241,7 @@ export class StatlockerRefreshService {
       collectorVersion: COLLECTOR_VERSION,
       normalizerVersion: NORMALIZER_VERSION,
       payload: normalized.payload as unknown as Record<string, unknown>,
-      metadata: {
-        sourcePath: source.path,
-        httpStatus: source.status,
-      },
+      metadata: { sourcePath: source.path, httpStatus: source.status },
     });
   }
 
