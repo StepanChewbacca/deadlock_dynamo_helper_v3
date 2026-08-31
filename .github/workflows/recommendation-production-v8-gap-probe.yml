@@ -1,0 +1,60 @@
+name: Recommendation V8 Production Gap Probe
+
+on:
+  push:
+    branches:
+      - agent/recommendation-v8-pretraining-execution
+    paths:
+      - .github/workflows/recommendation-production-v8-gap-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - name: Inspect production code, container and storage without mutation
+        shell: bash
+        run: |
+          set -u
+          APP=/home/ubuntu/apps/deadlock_dynamo_helper
+          CONTAINER=deadlock_dynamo_helper-api-1
+          echo '--- production checkout ---'
+          cd "$APP" || exit 2
+          echo "head=$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+          echo "branch=$(git branch --show-current 2>/dev/null || echo unknown)"
+          echo 'status:'
+          git status --short || true
+          echo 'remotes:'
+          git remote -v | sed -E 's#(https?://)[^/@]+@#\1***@#g' || true
+          echo '--- container state ---'
+          sudo docker inspect -f 'running={{.State.Running}} status={{.State.Status}} restartCount={{.RestartCount}} image={{.Image}}' "$CONTAINER" || true
+          sudo docker inspect -f 'health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CONTAINER" || true
+          echo '--- health command ---'
+          sudo docker inspect -f '{{json .Config.Healthcheck}}' "$CONTAINER" || true
+          echo '--- mounts ---'
+          sudo docker inspect -f '{{range .Mounts}}{{println .Type .Name .Source "->" .Destination}}{{end}}' "$CONTAINER" || true
+          echo '--- last health logs ---'
+          sudo docker inspect -f '{{if .State.Health}}{{range .State.Health.Log}}{{println .Start "exit=" .ExitCode}}{{println .Output}}{{end}}{{end}}' "$CONTAINER" | tail -n 80 || true
+          echo '--- HTTP checks ---'
+          for path in / /deadlock/live/build-recommendations/status /deadlock/analysis/contextual-v3-live/status /deadlock-live/recommendation-observability/v1/report /deadlock-live/recommendation-dataset/v8/report; do
+            code=$(curl -sS -o /tmp/recommendation_probe_body -w '%{http_code}' "http://127.0.0.1:3000$path" || true)
+            echo "$path -> $code"
+            if test "$code" != 000; then head -c 600 /tmp/recommendation_probe_body | tr '\n' ' '; echo; fi
+          done
+          rm -f /tmp/recommendation_probe_body
+          echo '--- storage mount inventory ---'
+          volume_name=$(sudo docker inspect -f '{{range .Mounts}}{{if eq .Destination "/app/apps/api/storage"}}{{.Name}}{{end}}{{end}}' "$CONTAINER" 2>/dev/null || true)
+          echo "storageVolume=${volume_name:-none}"
+          if test -n "$volume_name"; then
+            mountpoint=$(sudo docker volume inspect -f '{{.Mountpoint}}' "$volume_name" 2>/dev/null || true)
+            echo "storageMountpoint=${mountpoint:-unknown}"
+            if test -n "$mountpoint"; then
+              sudo find "$mountpoint" -maxdepth 3 -type f \( -name manifest.json -o -name '*.onnx' -o -name '*.json' \) -printf '%p\t%s bytes\n' 2>/dev/null | sort | head -n 300 || true
+              echo 'storage sizes:'
+              sudo du -sh "$mountpoint"/* 2>/dev/null | sort -h | tail -n 100 || true
+            fi
+          fi
