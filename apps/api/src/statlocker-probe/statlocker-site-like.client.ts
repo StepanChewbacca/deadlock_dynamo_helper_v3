@@ -29,30 +29,25 @@ export const STATLOCKER_SITE_LIKE_PROBE_CLIENT_JS = `(() => {
     clientState: byId('clientState'),
   };
 
-  const required = ['run', 'hero', 'min', 'matchId', 'statusIcon', 'statusTitle', 'statusText', 'statusModel', 'statusHttp', 'statusTime', 'output', 'outputHint', 'captured', 'raw'];
+  const required = ['run', 'hero', 'min', 'matchId', 'statusIcon', 'statusTitle', 'statusText', 'statusModel', 'statusHttp', 'statusTime', 'output', 'outputHint', 'captured', 'raw', 'clientState'];
   const missing = required.filter((key) => !elements[key]);
   if (missing.length) {
     document.body.insertAdjacentHTML('afterbegin', '<pre style="padding:12px;background:#310f0f;color:#ffd3d3">Statlocker UI initialization failed. Missing: ' + escapeHtml(missing.join(', ')) + '</pre>');
     return;
   }
 
+  elements.cards.forEach((card) => {
+    card.addEventListener('click', () => {
+      selectModel(card.dataset.model || 'ITEM_META_WPA');
+    });
+  });
+
+  elements.run.addEventListener('click', () => {
+    void runModel();
+  });
+
   elements.clientState.textContent = 'UI READY';
   elements.clientState.className = 'pill good';
-
-  document.addEventListener('click', (event) => {
-    const card = event.target.closest('[data-model]');
-    if (card) {
-      selectModel(card.dataset.model || 'ITEM_META_WPA');
-      return;
-    }
-
-    const action = event.target.closest('[data-action]');
-    if (!action) return;
-
-    if (action.dataset.action === 'run') {
-      void runModel();
-    }
-  });
 
   function selectModel(model) {
     state.model = model;
