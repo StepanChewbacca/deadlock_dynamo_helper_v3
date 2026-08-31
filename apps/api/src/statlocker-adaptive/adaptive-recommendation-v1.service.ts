@@ -37,17 +37,14 @@ export class AdaptiveRecommendationV1Service {
   async recommend(request: AdaptiveRecommendationRequestV1): Promise<AdaptiveRecommendationResultV1> {
     validateRequest(request);
     const initial = await this.decisionState.build(request.matchId, request.localSteamId);
-    this.evidence.observeServingScope(initial.state.heroId, initial.rulesetId, initial.catalogSha256);
     const previous = await this.replay.getPreviousPlan(initial.state.matchId, initial.localSteamId);
-    const patchId = this.evidence.resolveLocalPatchId(initial.rulesetId, initial.catalogSha256);
-    const localEvidence = patchId
-      ? this.evidence.getLocalEvidence({
-          heroId: initial.state.heroId,
-          rulesetVersion: initial.rulesetId,
-          catalogSha256: initial.catalogSha256,
-          statlockerPatchId: patchId,
-        })
-      : unavailableEvidence(initial, 'UNKNOWN');
+    const patchId = this.evidence.resolveLocalPatchId(initial.rulesetId, initial.catalogSha256) ?? 'UNKNOWN';
+    const localEvidence = this.evidence.getLocalEvidence({
+      heroId: initial.state.heroId,
+      rulesetVersion: initial.rulesetId,
+      catalogSha256: initial.catalogSha256,
+      statlockerPatchId: patchId,
+    });
 
     const planned = localEvidence.usable
       ? this.planner.plan({
