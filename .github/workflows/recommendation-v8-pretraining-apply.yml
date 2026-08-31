@@ -1,0 +1,142 @@
+name: Recommendation V8 Pretraining Apply
+
+on:
+  push:
+    branches:
+      - agent/recommendation-v8-pretraining-implementation
+    paths:
+      - .github/workflows/recommendation-v8-pretraining-apply.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply schema isolation and live integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          replacements = {
+              'apps/api/src/deadlock-live/entities/item-catalog-version.entity.ts': [
+                  ("@Entity('item_catalog_versions')", "@Entity('recommendation_item_catalog_versions_v8')"),
+                  ("idx_item_catalog_versions_catalog_version_id", "idx_rec_v8_catalog_version_id"),
+                  ("idx_item_catalog_versions_payload_sha256", "idx_rec_v8_catalog_payload_sha256"),
+              ],
+              'apps/api/src/deadlock-live/entities/item-catalog-item.entity.ts': [
+                  ("@Entity('item_catalog_items')", "@Entity('recommendation_item_catalog_items_v8')"),
+                  ("idx_item_catalog_items_version_item", "idx_rec_v8_item_version_item"),
+                  ("idx_item_catalog_items_catalog_version_id", "idx_rec_v8_item_catalog_version"),
+              ],
+              'apps/api/src/deadlock-live/entities/item-catalog-recipe.entity.ts': [
+                  ("@Entity('item_catalog_recipes')", "@Entity('recommendation_item_catalog_recipes_v8')"),
+                  ("idx_item_catalog_recipes_version_parent_component", "idx_rec_v8_recipe_version_parent_component"),
+                  ("idx_item_catalog_recipes_catalog_version_id", "idx_rec_v8_recipe_catalog_version"),
+              ],
+          }
+          for path_text, pairs in replacements.items():
+              path = Path(path_text)
+              text = path.read_text()
+              for old, new in pairs:
+                  if old not in text:
+                      raise SystemExit(f'missing replacement token {old!r} in {path}')
+                  text = text.replace(old, new)
+              path.write_text(text)
+
+          for path_text in [
+              'apps/api/src/deadlock-live/recommendation-readiness-v8.service.ts',
+              'apps/api/src/deadlock-live/recommendation-realtime-state-v8.service.ts',
+              'apps/api/src/deadlock-live/recommendation-feature-store-v8.service.ts',
+              'apps/api/src/deadlock-live/recommendation-observability-report.service.ts',
+          ]:
+              path = Path(path_text)
+              text = path.read_text()
+              text = text.replace('item_catalog_versions', 'recommendation_item_catalog_versions_v8')
+              text = text.replace('item_catalog_items', 'recommendation_item_catalog_items_v8')
+              text = text.replace('item_catalog_recipes', 'recommendation_item_catalog_recipes_v8')
+              path.write_text(text)
+
+          app_module = Path('apps/api/src/app.module.ts')
+          text = app_module.read_text()
+          if 'synchronize: true,' not in text:
+              raise SystemExit('expected synchronize: true in app.module.ts')
+          text = text.replace('synchronize: true,', "synchronize: process.env.TYPEORM_SYNCHRONIZE === 'true',")
+          app_module.write_text(text)
+
+          module = Path('apps/api/src/deadlock-live/deadlock-live.module.ts')
+          text = module.read_text()
+          import_anchor = "import { RecommendationRuntimeHealthV8Service } from './recommendation-runtime-health-v8.service';\n"
+          imports = (
+              "import { RecommendationProspectiveCollectorV8Controller } from './recommendation-prospective-collector-v8.controller';\n"
+              "import { RecommendationProspectiveCollectorV8Service } from './recommendation-prospective-collector-v8.service';\n"
+          )
+          if imports not in text:
+              if import_anchor not in text:
+                  raise SystemExit('module import anchor missing')
+              text = text.replace(import_anchor, import_anchor + imports)
+          controller_anchor = '    RecommendationReadinessV8Controller,\n'
+          if '    RecommendationProspectiveCollectorV8Controller,\n' not in text:
+              if controller_anchor not in text:
+                  raise SystemExit('module controller anchor missing')
+              text = text.replace(controller_anchor, controller_anchor + '    RecommendationProspectiveCollectorV8Controller,\n')
+          provider_anchor = '    RecommendationRuntimeHealthV8Service,\n'
+          if '    RecommendationProspectiveCollectorV8Service,\n' not in text:
+              if provider_anchor not in text:
+                  raise SystemExit('module provider anchor missing')
+              text = text.replace(provider_anchor, provider_anchor + '    RecommendationProspectiveCollectorV8Service,\n', 1)
+          export_pos = text.rfind(provider_anchor)
+          if export_pos == -1:
+              raise SystemExit('module export anchor missing')
+          after = export_pos + len(provider_anchor)
+          if '    RecommendationProspectiveCollectorV8Service,\n' not in text[export_pos:export_pos + 180]:
+              text = text[:after] + '    RecommendationProspectiveCollectorV8Service,\n' + text[after:]
+          module.write_text(text)
+
+          ingest = Path('apps/api/src/deadlock-live/live-ingest.controller.ts')
+          text = ingest.read_text()
+          import_anchor = "import { RecentLiveEventsService } from './recent-live-events.service';\n"
+          new_import = "import { RecommendationProspectiveCollectorV8Service } from './recommendation-prospective-collector-v8.service';\n"
+          if new_import not in text:
+              if import_anchor not in text:
+                  raise SystemExit('live ingest import anchor missing')
+              text = text.replace(import_anchor, import_anchor + new_import)
+          constructor_anchor = '    private readonly recentLiveEventsService: RecentLiveEventsService,\n'
+          new_param = '    private readonly prospectiveCollector: RecommendationProspectiveCollectorV8Service,\n'
+          if new_param not in text:
+              if constructor_anchor not in text:
+                  raise SystemExit('live ingest constructor anchor missing')
+              text = text.replace(constructor_anchor, constructor_anchor + new_param)
+          apply_anchor = '    this.inventoryShadowReplayService.applyBatch(batch, state?.matchId);\n'
+          observe_line = '    this.prospectiveCollector.observeBatch(batch, state);\n'
+          if observe_line not in text:
+              if apply_anchor not in text:
+                  raise SystemExit('live ingest apply anchor missing')
+              text = text.replace(apply_anchor, apply_anchor + observe_line)
+          ingest.write_text(text)
+          PY
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile --ignore-engines
+      - name: Build
+        run: yarn build
+      - name: Test
+        run: yarn test
+      - name: Commit integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo 'No generated integration changes to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add apps/api/src
+          git commit -m 'feat: wire V8 prospective pretraining collection'
+          git push origin HEAD:agent/recommendation-v8-pretraining-implementation
