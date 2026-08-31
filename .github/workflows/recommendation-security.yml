@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - agent/add-inventory-simulator
+      - agent/statlocker-model-probe-poc
       - agent/recommendation-roadmap-v8-runtime-finalization
       - agent/recommendation-v8-pretraining-absolute-final
       - 'frozen/recommendation-v8-behavioral-*'
