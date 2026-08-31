@@ -67,29 +67,29 @@ function decision(options: { wallet?: number; shop?: 'AVAILABLE' | 'UNKNOWN'; re
   } as any;
 }
 
-function evidence(usable = true) {
+function evidence(usable = true, patchId = '15-1') {
   const unavailable = (dataset: string, scopeKey: string) => ({ dataset, scopeKey, freshness: 'UNAVAILABLE', confidence: 0 });
   const fresh = {
     dataset: 'WPA_PATCH_DATA',
-    scopeKey: 'patch:15-1',
+    scopeKey: `patch:${patchId}`,
     snapshotId: 'snapshot-wpa',
     contentSha256: 'b'.repeat(64),
     fetchedAt: '2026-08-31T12:00:00.000Z',
     freshness: 'FRESH',
     confidence: 1,
-    payload: { patchId: '15-1', items: [] },
+    payload: { patchId, items: [] },
   };
   return {
     heroId: 10,
     rulesetVersion: 'ruleset-a',
     catalogSha256,
-    statlockerPatchId: '15-1',
+    statlockerPatchId: patchId,
     usable,
     snapshotIds: usable ? ['snapshot-wpa'] : [],
     degradedReasons: usable ? [] : ['WPA_PATCH_DATA:UNAVAILABLE'],
-    families: usable ? [fresh] : [unavailable('WPA_PATCH_DATA', 'patch:15-1')],
+    families: usable ? [fresh] : [unavailable('WPA_PATCH_DATA', `patch:${patchId}`)],
     byDataset: {
-      WPA_PATCH_DATA: usable ? fresh : unavailable('WPA_PATCH_DATA', 'patch:15-1'),
+      WPA_PATCH_DATA: usable ? fresh : unavailable('WPA_PATCH_DATA', `patch:${patchId}`),
       VS_HERO_WPA: unavailable('VS_HERO_WPA', 'global'),
       T4_CHAINS: unavailable('T4_CHAINS', 'global'),
       CONSENSUS_SKELETON: unavailable('CONSENSUS_SKELETON', 'hero:10:consensus'),
@@ -102,32 +102,11 @@ function plannerResult() {
   return {
     gameState: 'EVEN',
     nextAction: { actionKey: 'BUY_ITEM:1', type: 'BUY', itemId: 1, targetItemId: 1, reasonCodes: ['FEASIBLE'] },
-    recommendedBuild: [{
-      itemId: 1,
-      position: 1,
-      status: 'NEXT',
-      score: 0.9,
-      confidence: 0.8,
-      skeletonStrength: 0.7,
-      contextualSupport: 0.2,
-      reasonCodes: ['SKELETON_CORE'],
-    }],
+    recommendedBuild: [{ itemId: 1, position: 1, status: 'NEXT', score: 0.9, confidence: 0.8, skeletonStrength: 0.7, contextualSupport: 0.2, reasonCodes: ['SKELETON_CORE'] }],
     changes: [{ type: 'INSERT', itemId: 1, toPosition: 1, reasonCodes: ['PLAN_TARGET_ADDED'] }],
     rankedImmediateCandidates: [
-      {
-        action: { actionKey: 'BUY_ITEM:1', type: 'BUY', itemId: 1, targetItemId: 1, reasonCodes: ['FEASIBLE'] },
-        score: 0.9,
-        confidence: 0.8,
-        components: [],
-        reasonCodes: ['FEASIBLE'],
-      },
-      {
-        action: { actionKey: 'WAIT_SAVE', type: 'WAIT', targetItemId: 1, reasonCodes: ['FEASIBLE'] },
-        score: 0.1,
-        confidence: 0.5,
-        components: [],
-        reasonCodes: ['FEASIBLE'],
-      },
+      { action: { actionKey: 'BUY_ITEM:1', type: 'BUY', itemId: 1, targetItemId: 1, reasonCodes: ['FEASIBLE'] }, score: 0.9, confidence: 0.8, components: [], reasonCodes: ['FEASIBLE'] },
+      { action: { actionKey: 'WAIT_SAVE', type: 'WAIT', targetItemId: 1, reasonCodes: ['FEASIBLE'] }, score: 0.1, confidence: 0.5, components: [], reasonCodes: ['FEASIBLE'] },
     ],
     totalScore: 0.9,
     confidence: 0.8,
@@ -152,14 +131,7 @@ function previousResult() {
     scorerVersion: 'adaptive-evidence-scorer-v1',
     plannerVersion: 'adaptive-build-planner-v1',
     configVersion: 'statlocker-adaptive-v1.0.0',
-    evidence: {
-      rulesetVersion: 'ruleset-a',
-      catalogSha256,
-      statlockerPatchId: '15-1',
-      snapshotIds: ['snapshot-old'],
-      families: [],
-      degradedReasons: [],
-    },
+    evidence: { rulesetVersion: 'ruleset-a', catalogSha256, statlockerPatchId: '15-1', snapshotIds: ['snapshot-old'], families: [], degradedReasons: [] },
   } as any;
 }
 
@@ -171,13 +143,10 @@ function harness(options: {
   plan?: any;
 } = {}) {
   const states = options.states ?? [decision({ wallet: 1000 }), decision({ wallet: 1000 })];
-  const stateService = {
-    build: jest.fn().mockResolvedValueOnce(states[0]).mockResolvedValueOnce(states[1] ?? states[0]),
-  };
+  const stateService = { build: jest.fn().mockResolvedValueOnce(states[0]).mockResolvedValueOnce(states[1] ?? states[0]) };
   const evidenceService = {
-    observeServingScope: jest.fn(),
     resolveLocalPatchId: jest.fn(() => options.patchId === null ? undefined : (options.patchId ?? '15-1')),
-    getLocalEvidence: jest.fn(() => options.localEvidence ?? evidence(true)),
+    getLocalEvidence: jest.fn((input: any) => options.localEvidence ?? evidence(true, input.statlockerPatchId)),
   };
   const planner = { version: 'adaptive-build-planner-v1', plan: jest.fn(() => options.plan ?? plannerResult()) };
   const replay = {
@@ -232,11 +201,15 @@ describe('AdaptiveRecommendationV1Service', () => {
     expect((h.evidenceService as any).getEvidence).toBeUndefined();
   });
 
-  it('registers the serving identity and hero even when no Statlocker snapshot exists yet', async () => {
-    const h = harness({ patchId: null, previous: undefined });
+  it('bootstraps an empty snapshot cache through a passive local lookup', async () => {
+    const h = harness({ patchId: null, localEvidence: evidence(false, 'UNKNOWN'), previous: undefined });
     const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
-    expect(h.evidenceService.observeServingScope).toHaveBeenCalledWith(10, 'ruleset-a', catalogSha256);
-    expect(h.evidenceService.getLocalEvidence).not.toHaveBeenCalled();
+    expect(h.evidenceService.getLocalEvidence).toHaveBeenCalledWith({
+      heroId: 10,
+      rulesetVersion: 'ruleset-a',
+      catalogSha256,
+      statlockerPatchId: 'UNKNOWN',
+    });
     expect(result.nextAction.type).not.toBe('BUY');
     expect(result.blockers).toContain('STATLOCKER_EVIDENCE_UNAVAILABLE');
   });
