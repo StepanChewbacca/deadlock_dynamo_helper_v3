@@ -1,0 +1,71 @@
+name: Recommendation V8 Pretraining Server Cleanup And Health
+
+on:
+  push:
+    branches:
+      - agent/recommendation-v8-pretraining-execution
+    paths:
+      - .github/workflows/recommendation-pretraining-server-cleanup-health.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup-health:
+    runs-on: self-hosted
+    timeout-minutes: 20
+    steps:
+      - name: Capture pre-cleanup state
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '--- disk before ---'
+          df -h /
+          echo '--- docker before ---'
+          sudo docker system df
+          echo '--- running containers before ---'
+          sudo docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+
+      - name: Reclaim disposable Docker build cache only
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo docker builder prune --all --force
+
+      - name: Capture post-cleanup state
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '--- disk after ---'
+          df -h /
+          echo '--- docker after ---'
+          sudo docker system df
+          echo '--- running containers after ---'
+          sudo docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+
+      - name: Inspect Deadlock production health without mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          CONTAINER=deadlock_dynamo_helper-api-1
+          test "$(sudo docker inspect -f '{{.State.Running}}' "$CONTAINER")" = 'true'
+          echo "container=$CONTAINER"
+          echo "image=$(sudo docker inspect -f '{{.Image}}' "$CONTAINER")"
+          echo "health=$(sudo docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CONTAINER")"
+          echo '--- mounts ---'
+          sudo docker inspect -f '{{range .Mounts}}{{println .Type .Source "->" .Destination}}{{end}}' "$CONTAINER"
+          echo '--- recent healthcheck output ---'
+          sudo docker inspect -f '{{if .State.Health}}{{range .State.Health.Log}}{{println .Start "exit=" .ExitCode}}{{println .Output}}{{end}}{{end}}' "$CONTAINER" | tail -n 100
+          echo '--- deployment checkout ---'
+          cd /home/ubuntu/apps/deadlock_dynamo_helper
+          git rev-parse HEAD
+          git status --short
+          echo '--- contextual-v3 artifact candidates ---'
+          find /home/ubuntu/apps/deadlock_dynamo_helper /home/ubuntu/deadlock-training-results /home/ubuntu/deadlock-training-jobs \
+            -type f \( -name manifest.json -o -name '*.onnx' -o -name '*.json' \) \
+            -path '*contextual-v3*' -printf '%p\t%s bytes\n' 2>/dev/null | sort | head -n 200 || true
+          echo '--- storage top-level sizes ---'
+          if test -d /home/ubuntu/apps/deadlock_dynamo_helper/storage; then
+            sudo du -sh /home/ubuntu/apps/deadlock_dynamo_helper/storage/* 2>/dev/null | sort -h | tail -n 80 || true
+          fi
