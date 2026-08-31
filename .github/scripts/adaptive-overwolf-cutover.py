@@ -32,8 +32,8 @@ replace_once(
 )
 
 replace_once(
-    "    mainWindow.latestRecommendation = null;\n",
-    "    mainWindow.latestRecommendation = null;\n    mainWindow.latestAdaptiveRecommendation = null;\n",
+    "    const mainWindow = ow.windows.getMainWindow() as any;\n    mainWindow.latestRecommendation = null;\n    mainWindow.heroName = '';\n",
+    "    const mainWindow = ow.windows.getMainWindow() as any;\n    mainWindow.latestRecommendation = null;\n    mainWindow.latestAdaptiveRecommendation = null;\n    mainWindow.heroName = '';\n",
     'adaptive state init',
 )
 
