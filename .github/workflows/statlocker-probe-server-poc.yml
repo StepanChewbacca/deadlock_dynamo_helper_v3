@@ -58,20 +58,32 @@ jobs:
             .
           echo "STATLOCKER_PROBE_IMAGE=$image" >> "$GITHUB_ENV"
 
-      - name: Start isolated probe on loopback port 3001
+      - name: Start isolated probe on a free loopback port
         shell: bash
         run: |
           set -euo pipefail
+
+          host_port="$(python3 - <<'PY'
+          import socket
+          sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+          sock.bind(('127.0.0.1', 0))
+          print(sock.getsockname()[1])
+          sock.close()
+          PY
+          )"
+          [[ "$host_port" =~ ^[0-9]+$ ]]
+          echo "STATLOCKER_PROBE_PORT=$host_port" >> "$GITHUB_ENV"
+
           sudo docker rm -f deadlock-statlocker-probe >/dev/null 2>&1 || true
           sudo docker run -d \
             --name deadlock-statlocker-probe \
             --restart unless-stopped \
-            -p 127.0.0.1:3001:3000 \
+            -p "127.0.0.1:${host_port}:3000" \
             "$STATLOCKER_PROBE_IMAGE" >/dev/null
 
           for attempt in $(seq 1 30); do
             if curl --fail --silent --show-error \
-              http://127.0.0.1:3001/deadlock/tools/statlocker/presets \
+              "http://127.0.0.1:${host_port}/deadlock/tools/statlocker/presets" \
               -o "$RUNNER_TEMP/statlocker-presets.json"; then
               break
             fi
@@ -82,7 +94,7 @@ jobs:
             sleep 1
           done
 
-          echo 'Standalone probe is healthy on 127.0.0.1:3001'
+          echo "Standalone probe is healthy on 127.0.0.1:${host_port}"
 
       - name: Install Nginx route with rollback
         shell: bash
@@ -125,12 +137,17 @@ jobs:
 
           source_path = Path(os.environ['NGINX_TARGET_FILE'])
           output_path = Path(os.environ['NGINX_EDIT_FILE'])
-          text = source_path.read_text(encoding='utf-8')
+          probe_port = os.environ['STATLOCKER_PROBE_PORT']
+          if not probe_port.isdigit():
+              raise SystemExit('Invalid Statlocker probe port')
 
-          marker = '# BEGIN STATLOCKER_PROBE_POC'
-          if marker in text:
-              output_path.write_text(text, encoding='utf-8')
-              raise SystemExit(0)
+          text = source_path.read_text(encoding='utf-8')
+          text = re.sub(
+              r'\n?\s*# BEGIN STATLOCKER_PROBE_POC\n.*?# END STATLOCKER_PROBE_POC\n?',
+              '\n',
+              text,
+              flags=re.S,
+          )
 
           proxy_re = re.compile(r'proxy_pass\s+http://(?:127\.0\.0\.1|localhost):3000\b')
           server_re = re.compile(r'\bserver\s*\{')
@@ -179,7 +196,7 @@ jobs:
           if not spans:
               raise SystemExit('No server block containing the production :3000 proxy was found')
 
-          snippet = '''\n    # BEGIN STATLOCKER_PROBE_POC\n    location ^~ /deadlock/tools/statlocker {\n        proxy_pass http://127.0.0.1:3001;\n        proxy_http_version 1.1;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_connect_timeout 5s;\n        proxy_read_timeout 30s;\n        proxy_send_timeout 30s;\n    }\n    # END STATLOCKER_PROBE_POC\n'''
+          snippet = f'''\n    # BEGIN STATLOCKER_PROBE_POC\n    location ^~ /deadlock/tools/statlocker {{\n        proxy_pass http://127.0.0.1:{probe_port};\n        proxy_http_version 1.1;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_connect_timeout 5s;\n        proxy_read_timeout 30s;\n        proxy_send_timeout 30s;\n    }}\n    # END STATLOCKER_PROBE_POC\n'''
 
           for _, close_index in reversed(spans):
               text = text[:close_index] + snippet + text[close_index:]
