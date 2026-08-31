@@ -22,20 +22,36 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 10
     steps:
-      - name: Wait for deployed probe container
+      - name: Wait for the new public UI client
         shell: bash
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 120); do
-            if sudo docker ps --format '{{.Names}}' | grep -qx 'deadlock-statlocker-probe'; then
+          domain='aboba-telegramovich.duckdns.org'
+          base="https://${domain}/deadlock/tools/statlocker"
+          curl_args=(-k --resolve "${domain}:443:127.0.0.1" --silent --show-error)
+
+          for attempt in $(seq 1 180); do
+            html="$(curl "${curl_args[@]}" "$base" || true)"
+            js="$(curl "${curl_args[@]}" "$base/client.js?v=3" || true)"
+
+            if grep -q 'id="clientState"' <<<"$html" \
+              && grep -q 'client.js?v=3' <<<"$html" \
+              && grep -q "elements.run.addEventListener('click'" <<<"$js" \
+              && grep -q "Request sent to" <<<"$js"; then
+              echo 'New external Statlocker UI client is deployed.'
               break
             fi
-            if [ "$attempt" -eq 120 ]; then
-              echo 'deadlock-statlocker-probe is not running' >&2
+
+            if [ "$attempt" -eq 180 ]; then
+              echo 'Timed out waiting for the new public Statlocker UI/client.js.' >&2
+              echo "HTML bytes: ${#html}" >&2
+              echo "JS bytes: ${#js}" >&2
+              sudo docker ps --filter name=deadlock-statlocker-probe --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' || true
               exit 1
             fi
             sleep 1
           done
+
           sudo docker ps --filter name=deadlock-statlocker-probe --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
 
       - name: Exercise public UI buttons and request in Chromium
@@ -96,8 +112,6 @@ jobs:
             }));
             console.log('SELECTION', JSON.stringify(selection));
 
-            await page.click('[data-model="ITEM_META_WPA"]');
-            await page.waitForFunction(() => document.querySelector('#statusModel')?.textContent === 'ITEM_META_WPA', {timeout: 5000});
             await page.click('#run');
 
             await page.waitForFunction(() => {
@@ -109,6 +123,8 @@ jobs:
             console.log('BROWSER_REQUESTS', JSON.stringify(browserRequests));
             if (browserRequests.length !== 1) throw new Error('Run button did not send exactly one /browser-request POST');
             if (browserRequests[0].method !== 'POST') throw new Error('Expected /browser-request POST');
+            const sentBody = JSON.parse(browserRequests[0].postData || '{}');
+            if (sentBody.model !== 'T4_BUILD_CHAINS') throw new Error('Run button sent the wrong selected model');
 
             await page.waitForFunction(() => {
               const title = document.querySelector('#statusTitle')?.textContent || '';
