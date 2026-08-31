@@ -19,7 +19,7 @@ jobs:
   preflight:
     if: github.repository == 'StepanChewbacca/deadlock_dynamo_helper_v2' && github.actor == 'StepanChewbacca'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - name: Checkout exact candidate commit
         uses: actions/checkout@v4
@@ -43,23 +43,47 @@ jobs:
         run: yarn workspace @deadlock-live-probe/api test
 
       - name: Build production image
-        run: sudo docker build -t deadlock-adaptive-preflight:${GITHUB_SHA} .
+        run: sudo docker build -t deadlock-adaptive-v1:${GITHUB_SHA} .
 
       - name: Verify production runtime dependencies
         run: |
-          sudo docker run --rm --entrypoint sh deadlock-adaptive-preflight:${GITHUB_SHA} -c \
+          sudo docker run --rm --entrypoint sh deadlock-adaptive-v1:${GITHUB_SHA} -c \
             'test -x "$CHROMIUM_PATH" && node -e "require(\"puppeteer-core\"); require(\"@deadlock-live-probe/build-domain\")"'
+
+      - name: Export verified production image
+        run: |
+          mkdir -p "$RUNNER_TEMP/statlocker-adaptive-image"
+          sudo docker save deadlock-adaptive-v1:${GITHUB_SHA} | gzip -1 > "$RUNNER_TEMP/statlocker-adaptive-image/image.tar.gz"
+          sha256sum "$RUNNER_TEMP/statlocker-adaptive-image/image.tar.gz" > "$RUNNER_TEMP/statlocker-adaptive-image/image.tar.gz.sha256"
+
+      - name: Upload verified production image
+        uses: actions/upload-artifact@v4
+        with:
+          name: statlocker-adaptive-image-${{ github.sha }}
+          path: ${{ runner.temp }}/statlocker-adaptive-image
+          if-no-files-found: error
+          retention-days: 3
 
   deploy-smoke:
     needs: preflight
     if: github.repository == 'StepanChewbacca/deadlock_dynamo_helper_v2' && github.actor == 'StepanChewbacca'
     runs-on: self-hosted
-    timeout-minutes: 35
+    timeout-minutes: 25
     steps:
-      - name: Checkout exact candidate commit
-        uses: actions/checkout@v4
+      - name: Download verified production image
+        uses: actions/download-artifact@v4
         with:
-          fetch-depth: 1
+          name: statlocker-adaptive-image-${{ github.sha }}
+          path: ${{ runner.temp }}/statlocker-adaptive-image
+
+      - name: Load verified production image
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd "$RUNNER_TEMP/statlocker-adaptive-image"
+          sha256sum -c image.tar.gz.sha256
+          gzip -dc image.tar.gz | sudo docker load
+          sudo docker image inspect deadlock-adaptive-v1:${GITHUB_SHA} >/dev/null
 
       - name: Deploy candidate and run rollback-safe adaptive smoke
         id: rollout
@@ -75,29 +99,23 @@ jobs:
           domain='aboba-telegramovich.duckdns.org'
           candidate_image="deadlock-adaptive-v1:${GITHUB_SHA}"
           candidate_override="$RUNNER_TEMP/statlocker-adaptive-candidate.override.yml"
+          failure_override="$RUNNER_TEMP/statlocker-adaptive-failure.override.yml"
           rollback_override="$RUNNER_TEMP/statlocker-adaptive-rollback.override.yml"
           mutated=0
           rollback_attempted=false
           rollback_verified=false
-          cleanup_raw_event=false
-          cleanup_decision=false
-          refresh_attempt_observed=false
           migration_verified=false
           legacy_catalog_preserved=false
+          refresh_attempt_observed=false
+          collector_failure_observed=false
+          lkg_or_safe_fallback_verified=false
+          ml_runtime_log_clean=false
+          cleanup_raw_event=false
+          cleanup_decision=false
 
-          api_container="$(sudo docker ps \
-            --filter 'label=com.docker.compose.service=api' \
-            --format '{{.Names}}' \
-            | grep -E '^deadlock-api-[0-9]+$' \
-            | head -n 1 || true)"
+          api_container="$(sudo docker ps --filter 'label=com.docker.compose.service=api' --format '{{.Names}}' | head -n 1 || true)"
           if [ -z "$api_container" ]; then
-            api_container="$(sudo docker ps \
-              --filter 'label=com.docker.compose.service=api' \
-              --format '{{.Names}}' \
-              | head -n 1 || true)"
-          fi
-          if [ -z "$api_container" ]; then
-            echo 'Could not locate the running production Compose api container' >&2
+            echo 'Could not locate production Compose api container' >&2
             exit 1
           fi
 
@@ -106,6 +124,7 @@ jobs:
           config_files="$(sudo docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$api_container")"
           previous_image_id="$(sudo docker inspect -f '{{.Image}}' "$api_container")"
           previous_image_ref="$(sudo docker inspect -f '{{.Config.Image}}' "$api_container")"
+          candidate_image_id="$(sudo docker image inspect -f '{{.Id}}' "$candidate_image")"
           db_env="$(sudo docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$api_container")"
           db_host="$(printf '%s\n' "$db_env" | sed -n 's/^DB_HOST=//p' | head -n 1)"
           db_user="$(printf '%s\n' "$db_env" | sed -n 's/^DB_USER=//p' | head -n 1)"
@@ -115,50 +134,135 @@ jobs:
             echo 'Production Compose rollback metadata is incomplete' >&2
             exit 1
           fi
-          if [ ! -d "$working_dir" ]; then
-            echo "Production Compose working directory does not exist: $working_dir" >&2
+          if [ ! -d "$working_dir" ] || [ -z "$db_host" ] || [ -z "$db_user" ] || [ -z "$db_name" ]; then
+            echo 'Production working directory/database identity is incomplete' >&2
             exit 1
           fi
-          if [ -z "$db_host" ] || [ -z "$db_user" ] || [ -z "$db_name" ]; then
-            echo 'Production database identity is incomplete' >&2
-            exit 1
-          fi
-          if ! sudo docker inspect "$db_host" >/dev/null 2>&1; then
-            echo "DB_HOST does not name a local Docker container: $db_host" >&2
-            exit 1
-          fi
-
-          legacy_catalog_counts() {
-            sudo docker exec "$db_host" psql -At -v ON_ERROR_STOP=1 \
-              -U "$db_user" -d "$db_name" \
-              -c "SELECT (SELECT COUNT(*) FROM item_catalog_versions)::text || '|' || (SELECT COUNT(*) FROM item_catalog_items)::text || '|' || (SELECT COUNT(*) FROM item_catalog_recipes)::text;"
-          }
-
-          legacy_counts_before="$(legacy_catalog_counts)"
+          sudo docker inspect "$db_host" >/dev/null
 
           compose_args=(sudo docker compose --project-name "$project" --project-directory "$working_dir")
           IFS=',' read -ra compose_files <<< "$config_files"
           for config_file in "${compose_files[@]}"; do
-            if [[ "$config_file" != /* ]]; then
-              config_file="$working_dir/$config_file"
-            fi
-            if [ ! -f "$config_file" ]; then
-              echo "Production Compose config file does not exist: $config_file" >&2
-              exit 1
-            fi
+            [[ "$config_file" = /* ]] || config_file="$working_dir/$config_file"
+            [ -f "$config_file" ] || { echo "Missing production Compose file: $config_file" >&2; exit 1; }
             compose_args+=(-f "$config_file")
           done
 
-          curl --fail --silent --show-error \
-            --max-time 15 \
-            'http://127.0.0.1:3000/deadlock/live/build-recommendations/status' \
-            -o "$evidence_dir/preflight-live-recommendation-status.json"
+          current_api_container() {
+            "${compose_args[@]}" ps -q api
+          }
 
-          echo "Building immutable candidate image $candidate_image"
-          sudo docker build -t "$candidate_image" .
-          candidate_image_id="$(sudo docker image inspect -f '{{.Id}}' "$candidate_image")"
-          sudo docker run --rm --entrypoint sh "$candidate_image" -c \
-            'test -x "$CHROMIUM_PATH" && node -e "require(\"puppeteer-core\"); require(\"@deadlock-live-probe/build-domain\")"'
+          wait_status() {
+            local output="$1"
+            for attempt in $(seq 1 60); do
+              if curl --fail --silent --show-error --max-time 10 \
+                'http://127.0.0.1:3000/deadlock/adaptive/v1/status' -o "$output"; then
+                return 0
+              fi
+              sleep 2
+            done
+            return 1
+          }
+
+          wait_baseline() {
+            for attempt in $(seq 1 60); do
+              if curl --fail --silent --show-error --max-time 10 \
+                'http://127.0.0.1:3000/deadlock/live/build-recommendations/status' >/dev/null; then
+                return 0
+              fi
+              sleep 2
+            done
+            return 1
+          }
+
+          legacy_catalog_counts() {
+            sudo docker exec "$db_host" psql -At -v ON_ERROR_STOP=1 -U "$db_user" -d "$db_name" \
+              -c "SELECT (SELECT COUNT(*) FROM item_catalog_versions)::text || '|' || (SELECT COUNT(*) FROM item_catalog_items)::text || '|' || (SELECT COUNT(*) FROM item_catalog_recipes)::text;"
+          }
+
+          cleanup_smoke_data() {
+            local current_container
+            current_container="$(current_api_container 2>/dev/null || true)"
+            if [ -n "$current_container" ] && sudo docker exec "$current_container" \
+              rm -f "/app/apps/api/storage/deadlock-live/${smoke_match}.ndjson"; then
+              cleanup_raw_event=true
+            fi
+            if sudo docker exec "$db_host" psql -At -v ON_ERROR_STOP=1 -U "$db_user" -d "$db_name" \
+              -c "SELECT to_regclass('public.adaptive_recommendation_decisions_v1') IS NOT NULL;" | grep -qx 't'; then
+              if sudo docker exec "$db_host" psql -v ON_ERROR_STOP=1 -U "$db_user" -d "$db_name" \
+                -c "DELETE FROM adaptive_recommendation_decisions_v1 WHERE \"matchId\" = '${smoke_match}';" >/dev/null; then
+                cleanup_decision=true
+              fi
+            fi
+          }
+
+          write_evidence() {
+            ROLLBACK_ATTEMPTED="$rollback_attempted" ROLLBACK_VERIFIED="$rollback_verified" \
+            MIGRATION_VERIFIED="$migration_verified" LEGACY_CATALOG_PRESERVED="$legacy_catalog_preserved" \
+            REFRESH_ATTEMPT_OBSERVED="$refresh_attempt_observed" COLLECTOR_FAILURE_OBSERVED="$collector_failure_observed" \
+            LKG_OR_SAFE_FALLBACK_VERIFIED="$lkg_or_safe_fallback_verified" ML_RUNTIME_LOG_CLEAN="$ml_runtime_log_clean" \
+            CLEANUP_RAW_EVENT="$cleanup_raw_event" CLEANUP_DECISION="$cleanup_decision" \
+            PREVIOUS_IMAGE_ID="$previous_image_id" PREVIOUS_IMAGE_REF="$previous_image_ref" \
+            CANDIDATE_IMAGE="$candidate_image" CANDIDATE_IMAGE_ID="$candidate_image_id" \
+            SMOKE_MATCH="$smoke_match" GITHUB_SHA_VALUE="$GITHUB_SHA" \
+            python3 - "$evidence_dir/deployment-evidence.json" <<'PY'
+          import json, os, sys
+          from pathlib import Path
+          keys = {
+              'rollbackAttempted': 'ROLLBACK_ATTEMPTED',
+              'rollbackVerified': 'ROLLBACK_VERIFIED',
+              'migrationVerified': 'MIGRATION_VERIFIED',
+              'legacyCatalogPreserved': 'LEGACY_CATALOG_PRESERVED',
+              'refreshAttemptObserved': 'REFRESH_ATTEMPT_OBSERVED',
+              'collectorFailureObserved': 'COLLECTOR_FAILURE_OBSERVED',
+              'lkgOrSafeFallbackVerified': 'LKG_OR_SAFE_FALLBACK_VERIFIED',
+              'mlRuntimeLogClean': 'ML_RUNTIME_LOG_CLEAN',
+              'cleanupRawEvent': 'CLEANUP_RAW_EVENT',
+              'cleanupDecision': 'CLEANUP_DECISION',
+          }
+          payload = {k: os.environ[v] == 'true' for k, v in keys.items()}
+          payload.update({
+              'schemaVersion': 'statlocker-adaptive-production-smoke-v3',
+              'candidateCommit': os.environ['GITHUB_SHA_VALUE'],
+              'previousImageId': os.environ['PREVIOUS_IMAGE_ID'],
+              'previousImageRef': os.environ['PREVIOUS_IMAGE_REF'],
+              'candidateImage': os.environ['CANDIDATE_IMAGE'],
+              'candidateImageId': os.environ['CANDIDATE_IMAGE_ID'],
+              'smokeMatchId': os.environ['SMOKE_MATCH'],
+              'trainingPerformed': False,
+              'valueTrainingPerformed': False,
+              'policyTrainingPerformed': False,
+          })
+          Path(sys.argv[1]).write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+          PY
+          }
+
+          rollback() {
+            rollback_attempted=true
+            echo "Rolling back production API to $previous_image_id" >&2
+            if "${compose_args[@]}" -f "$rollback_override" up -d --no-deps --force-recreate --no-build api \
+              && wait_baseline; then
+              rollback_verified=true
+            fi
+          }
+
+          on_exit() {
+            local status=$?
+            trap - EXIT
+            if [ "$status" -ne 0 ] && [ "$mutated" -eq 1 ]; then rollback || true; fi
+            cleanup_smoke_data || true
+            write_evidence || true
+            if [ "$status" -ne 0 ]; then
+              echo "Candidate smoke failed; rollbackAttempted=$rollback_attempted rollbackVerified=$rollback_verified" >&2
+            fi
+            exit "$status"
+          }
+          trap on_exit EXIT
+
+          legacy_counts_before="$(legacy_catalog_counts)"
+          curl --fail --silent --show-error --max-time 15 \
+            'http://127.0.0.1:3000/deadlock/live/build-recommendations/status' \
+            -o "$evidence_dir/preflight-live-status.json"
 
           cat > "$candidate_override" <<EOF
           services:
@@ -168,389 +272,169 @@ jobs:
                 CHROMIUM_PATH: /usr/bin/chromium-browser
                 DB_RUN_MIGRATIONS: 'true'
           EOF
-
+          cat > "$failure_override" <<EOF
+          services:
+            api:
+              image: ${candidate_image}
+              environment:
+                CHROMIUM_PATH: /definitely-missing-chromium
+                DB_RUN_MIGRATIONS: 'true'
+          EOF
           cat > "$rollback_override" <<EOF
           services:
             api:
               image: ${previous_image_id}
           EOF
 
-          current_api_container() {
-            "${compose_args[@]}" ps -q api
-          }
-
-          verify_baseline_health() {
-            for attempt in $(seq 1 60); do
-              if curl --fail --silent --show-error --max-time 10 \
-                'http://127.0.0.1:3000/deadlock/live/build-recommendations/status' \
-                -o "$evidence_dir/rollback-live-recommendation-status.json"; then
-                return 0
-              fi
-              sleep 2
-            done
-            return 1
-          }
-
-          cleanup_smoke_data() {
-            local current_container
-            current_container="$(current_api_container 2>/dev/null || true)"
-            if [ -n "$current_container" ]; then
-              if sudo docker exec "$current_container" \
-                rm -f "/app/apps/api/storage/deadlock-live/${smoke_match}.ndjson"; then
-                cleanup_raw_event=true
-              fi
-            fi
-
-            if sudo docker exec "$db_host" psql -At -v ON_ERROR_STOP=1 \
-              -U "$db_user" -d "$db_name" \
-              -c "SELECT to_regclass('public.adaptive_recommendation_decisions_v1') IS NOT NULL;" \
-              | grep -qx 't'; then
-              if sudo docker exec "$db_host" psql -v ON_ERROR_STOP=1 \
-                -U "$db_user" -d "$db_name" \
-                -c "DELETE FROM adaptive_recommendation_decisions_v1 WHERE \"matchId\" = '${smoke_match}';" \
-                >/dev/null; then
-                cleanup_decision=true
-              fi
-            fi
-          }
-
-          write_evidence() {
-            ROLLBACK_ATTEMPTED="$rollback_attempted" \
-            ROLLBACK_VERIFIED="$rollback_verified" \
-            CLEANUP_RAW_EVENT="$cleanup_raw_event" \
-            CLEANUP_DECISION="$cleanup_decision" \
-            REFRESH_ATTEMPT_OBSERVED="$refresh_attempt_observed" \
-            MIGRATION_VERIFIED="$migration_verified" \
-            LEGACY_CATALOG_PRESERVED="$legacy_catalog_preserved" \
-            LEGACY_COUNTS_BEFORE="$legacy_counts_before" \
-            PROJECT="$project" \
-            PREVIOUS_IMAGE_ID="$previous_image_id" \
-            PREVIOUS_IMAGE_REF="$previous_image_ref" \
-            CANDIDATE_IMAGE="$candidate_image" \
-            CANDIDATE_IMAGE_ID="$candidate_image_id" \
-            SMOKE_MATCH="$smoke_match" \
-            DEPLOY_STARTED_AT="$deploy_started_at" \
-            GITHUB_SHA_VALUE="$GITHUB_SHA" \
-            python3 - "$evidence_dir/deployment-evidence.json" <<'PY'
-          import json
-          import os
-          import sys
-          from pathlib import Path
-
-          payload = {
-              'schemaVersion': 'statlocker-adaptive-production-smoke-v2',
-              'candidateCommit': os.environ['GITHUB_SHA_VALUE'],
-              'composeProject': os.environ['PROJECT'],
-              'previousImageId': os.environ['PREVIOUS_IMAGE_ID'],
-              'previousImageRef': os.environ['PREVIOUS_IMAGE_REF'],
-              'candidateImage': os.environ['CANDIDATE_IMAGE'],
-              'candidateImageId': os.environ['CANDIDATE_IMAGE_ID'],
-              'smokeMatchId': os.environ['SMOKE_MATCH'],
-              'deployStartedAt': os.environ['DEPLOY_STARTED_AT'],
-              'rollbackAttempted': os.environ['ROLLBACK_ATTEMPTED'] == 'true',
-              'rollbackVerified': os.environ['ROLLBACK_VERIFIED'] == 'true',
-              'cleanupRawEvent': os.environ['CLEANUP_RAW_EVENT'] == 'true',
-              'cleanupDecision': os.environ['CLEANUP_DECISION'] == 'true',
-              'refreshAttemptObserved': os.environ['REFRESH_ATTEMPT_OBSERVED'] == 'true',
-              'migrationVerified': os.environ['MIGRATION_VERIFIED'] == 'true',
-              'legacyCatalogPreserved': os.environ['LEGACY_CATALOG_PRESERVED'] == 'true',
-              'legacyCatalogCountsBefore': os.environ['LEGACY_COUNTS_BEFORE'],
-              'trainingPerformed': False,
-              'valueTrainingPerformed': False,
-              'futureTestEvaluated': False,
-          }
-          Path(sys.argv[1]).write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n', encoding='utf-8')
-          PY
-          }
-
-          rollback() {
-            rollback_attempted=true
-            echo "Rolling back production API to $previous_image_id" >&2
-            if "${compose_args[@]}" -f "$rollback_override" \
-              up -d --no-deps --force-recreate --no-build api; then
-              if verify_baseline_health; then
-                rollback_verified=true
-              fi
-            fi
-          }
-
-          on_exit() {
-            local status=$?
-            trap - EXIT
-            if [ "$status" -ne 0 ] && [ "$mutated" -eq 1 ]; then
-              rollback || true
-            fi
-            cleanup_smoke_data || true
-            write_evidence || true
-            if [ "$status" -ne 0 ]; then
-              echo "Candidate deployment failed; rollbackAttempted=$rollback_attempted rollbackVerified=$rollback_verified" >&2
-            fi
-            exit "$status"
-          }
-          trap on_exit EXIT
-
           mutated=1
-          "${compose_args[@]}" -f "$candidate_override" \
-            up -d --no-deps --force-recreate --no-build api
-
-          for attempt in $(seq 1 60); do
-            if curl --fail --silent --show-error --max-time 10 \
-              'http://127.0.0.1:3000/deadlock/adaptive/v1/status' \
-              -o "$evidence_dir/adaptive-status-initial.json"; then
-              break
-            fi
-            if [ "$attempt" -eq 60 ]; then
-              current_container="$(current_api_container || true)"
-              [ -n "$current_container" ] && sudo docker logs --tail 250 "$current_container" || true
-              exit 1
-            fi
-            sleep 2
-          done
+          "${compose_args[@]}" -f "$candidate_override" up -d --no-deps --force-recreate --no-build api
+          wait_status "$evidence_dir/adaptive-status-initial.json"
 
           running_container="$(current_api_container)"
           running_image_id="$(sudo docker inspect -f '{{.Image}}' "$running_container")"
-          if [ "$running_image_id" != "$candidate_image_id" ]; then
-            echo "Running image mismatch: expected $candidate_image_id got $running_image_id" >&2
-            exit 1
-          fi
+          [ "$running_image_id" = "$candidate_image_id" ] || { echo 'Running candidate image mismatch' >&2; exit 1; }
 
-          migration_count="$(sudo docker exec "$db_host" psql -At -v ON_ERROR_STOP=1 \
-            -U "$db_user" -d "$db_name" \
+          migration_count="$(sudo docker exec "$db_host" psql -At -v ON_ERROR_STOP=1 -U "$db_user" -d "$db_name" \
             -c "SELECT COUNT(*) FROM migrations WHERE name = 'CreateRecommendationRuntimeTables1788220800000';")"
-          if [ "$migration_count" != '1' ]; then
-            echo "Runtime migration was not recorded exactly once: $migration_count" >&2
-            exit 1
-          fi
-
-          missing_tables="$(sudo docker exec "$db_host" psql -At -v ON_ERROR_STOP=1 \
-            -U "$db_user" -d "$db_name" \
-            -c "SELECT string_agg(name, ',') FROM (VALUES
-              ('adaptive_recommendation_decisions_v1'),
-              ('model_bundle_registry_v1'),
-              ('recommendation_dataset_registry_v1'),
-              ('recommendation_decision_candidates_v8'),
-              ('recommendation_decisions_v8'),
-              ('recommendation_evidence_snapshots_v8'),
-              ('recommendation_exposure_acks_v8'),
-              ('recommendation_roadmap_evidence_v1'),
-              ('recommendation_telemetry_events'),
-              ('recommendation_telemetry_rejections_v8'),
-              ('recommendation_value_dataset_registry_v1'),
-              ('souls_affordability_evidence_v2'),
-              ('statlocker_evidence_snapshots_v1'),
-              ('recommendation_item_catalog_versions_v1'),
-              ('recommendation_item_catalog_items_v1'),
-              ('recommendation_item_catalog_recipes_v1')
-            ) AS required(name) WHERE to_regclass('public.' || name) IS NULL;")"
-          if [ -n "$missing_tables" ]; then
-            echo "Runtime migration is missing tables: $missing_tables" >&2
-            exit 1
-          fi
+          [ "$migration_count" = '1' ] || { echo "Migration count is $migration_count" >&2; exit 1; }
+          missing_tables="$(sudo docker exec "$db_host" psql -At -v ON_ERROR_STOP=1 -U "$db_user" -d "$db_name" -c "SELECT string_agg(name, ',') FROM (VALUES
+            ('adaptive_recommendation_decisions_v1'),('model_bundle_registry_v1'),('recommendation_dataset_registry_v1'),
+            ('recommendation_decision_candidates_v8'),('recommendation_decisions_v8'),('recommendation_evidence_snapshots_v8'),
+            ('recommendation_exposure_acks_v8'),('recommendation_roadmap_evidence_v1'),('recommendation_telemetry_events'),
+            ('recommendation_telemetry_rejections_v8'),('recommendation_value_dataset_registry_v1'),('souls_affordability_evidence_v2'),
+            ('statlocker_evidence_snapshots_v1'),('recommendation_item_catalog_versions_v1'),('recommendation_item_catalog_items_v1'),
+            ('recommendation_item_catalog_recipes_v1')) AS required(name) WHERE to_regclass('public.' || name) IS NULL;")"
+          [ -z "$missing_tables" ] || { echo "Missing runtime tables: $missing_tables" >&2; exit 1; }
           migration_verified=true
 
           legacy_counts_after="$(legacy_catalog_counts)"
-          if [ "$legacy_counts_after" != "$legacy_counts_before" ]; then
-            echo "Legacy catalog row counts changed: before=$legacy_counts_before after=$legacy_counts_after" >&2
-            exit 1
-          fi
+          [ "$legacy_counts_after" = "$legacy_counts_before" ] || { echo "Legacy catalog changed: $legacy_counts_before -> $legacy_counts_after" >&2; exit 1; }
           legacy_catalog_preserved=true
 
-          curl -k --fail --silent --show-error --max-time 15 \
-            --resolve "${domain}:443:127.0.0.1" \
-            "https://${domain}/deadlock/adaptive/v1/status" \
-            -o "$evidence_dir/adaptive-status-public.json"
+          for attempt in 1 2 3 4 5; do
+            if curl -k --fail --silent --show-error --max-time 15 --resolve "${domain}:443:127.0.0.1" \
+              "https://${domain}/deadlock/adaptive/v1/status" -o "$evidence_dir/adaptive-status-public.json"; then break; fi
+            [ "$attempt" -lt 5 ] || exit 1
+            sleep 1
+          done
 
           SMOKE_MATCH="$smoke_match" SMOKE_PLAYER="$smoke_player" python3 - "$evidence_dir/smoke-events.json" <<'PY'
-          import json
-          import os
-          import sys
-          import time
+          import json, os, sys, time
           from pathlib import Path
-
-          match_id = os.environ['SMOKE_MATCH']
-          local_id = os.environ['SMOKE_PLAYER']
-          now = int(time.time() * 1000)
+          match_id, local_id, now = os.environ['SMOKE_MATCH'], os.environ['SMOKE_PLAYER'], int(time.time() * 1000)
           events = [
               {'matchId': match_id, 'receivedAt': now, 'source': 'onInfoUpdates2', 'key': 'match_id', 'payload': match_id},
               {'matchId': match_id, 'receivedAt': now + 1, 'source': 'onInfoUpdates2', 'key': 'match_clock', 'payload': '12:00'},
-              {
-                  'matchId': match_id,
-                  'receivedAt': now + 2,
-                  'source': 'onInfoUpdates2',
-                  'key': 'roster_0',
-                  'payload': {
-                      'steam_id': local_id,
-                      'player_name': 'Adaptive Smoke Local',
-                      'is_local': True,
-                      'hero_id': 6,
-                      'hero_name': 'Abrams',
-                      'team_id': 1,
-                      'assigned_lane': 1,
-                      'level': 8,
-                      'souls': 5000,
-                      'health': 900,
-                      'max_health': 1200,
-                      'kills': 2,
-                      'deaths': 1,
-                      'assist': 4,
-                      'hero_damage': 8000,
-                      'object_damage': 2000,
-                      'hero_healing': 0,
-                  },
-              },
-              {
-                  'matchId': match_id,
-                  'receivedAt': now + 3,
-                  'source': 'onInfoUpdates2',
-                  'key': 'roster_1',
-                  'payload': {
-                      'steam_id': 'adaptive-smoke-enemy',
-                      'player_name': 'Adaptive Smoke Enemy',
-                      'is_local': False,
-                      'hero_id': 13,
-                      'hero_name': 'Haze',
-                      'team_id': 2,
-                      'assigned_lane': 2,
-                      'level': 8,
-                      'souls': 5200,
-                      'health': 800,
-                      'max_health': 1000,
-                      'kills': 3,
-                      'deaths': 2,
-                      'assist': 2,
-                      'hero_damage': 9000,
-                      'object_damage': 1500,
-                      'hero_healing': 0,
-                  },
-              },
-              {
-                  'matchId': match_id,
-                  'receivedAt': now + 4,
-                  'source': 'onInfoUpdates2',
-                  'key': 'items_0',
-                  'payload': {
-                      'steam_id': local_id,
-                      'items': [
-                          {'id': 668299740, 'name': 'Rapid Rounds', 'class_name': 'upgrade_rapid_rounds', 'enhanced': False},
-                          {'id': 558396679, 'name': 'Enduring Spirit', 'class_name': 'upgrade_resilience', 'enhanced': False},
-                          {'id': 465043967, 'name': 'Spirit Strike', 'class_name': 'upgrade_acolytes_glove', 'enhanced': False},
-                      ],
-                  },
-              },
+              {'matchId': match_id, 'receivedAt': now + 2, 'source': 'onInfoUpdates2', 'key': 'roster_0', 'payload': {
+                  'steam_id': local_id, 'player_name': 'Adaptive Smoke Local', 'is_local': True, 'hero_id': 6,
+                  'hero_name': 'Abrams', 'team_id': 1, 'assigned_lane': 1, 'level': 8, 'souls': 5000,
+                  'health': 900, 'max_health': 1200, 'kills': 2, 'deaths': 1, 'assist': 4}},
+              {'matchId': match_id, 'receivedAt': now + 3, 'source': 'onInfoUpdates2', 'key': 'roster_1', 'payload': {
+                  'steam_id': 'adaptive-smoke-enemy', 'player_name': 'Adaptive Smoke Enemy', 'is_local': False, 'hero_id': 13,
+                  'hero_name': 'Haze', 'team_id': 2, 'assigned_lane': 2, 'level': 8, 'souls': 5200,
+                  'health': 800, 'max_health': 1000, 'kills': 3, 'deaths': 2, 'assist': 2}},
+              {'matchId': match_id, 'receivedAt': now + 4, 'source': 'onInfoUpdates2', 'key': 'items_0', 'payload': {
+                  'steam_id': local_id, 'items': [
+                      {'id': 668299740, 'name': 'Rapid Rounds', 'class_name': 'upgrade_rapid_rounds', 'enhanced': False},
+                      {'id': 558396679, 'name': 'Enduring Spirit', 'class_name': 'upgrade_resilience', 'enhanced': False},
+                      {'id': 465043967, 'name': 'Spirit Strike', 'class_name': 'upgrade_acolytes_glove', 'enhanced': False}]}}
           ]
           Path(sys.argv[1]).write_text(json.dumps({'clientId': f'adaptive-smoke-{match_id}', 'events': events}), encoding='utf-8')
           PY
 
-          curl --fail --silent --show-error --max-time 15 \
-            -H 'Content-Type: application/json' \
-            -X POST 'http://127.0.0.1:3000/deadlock/live/events' \
-            --data-binary "@$evidence_dir/smoke-events.json" \
+          curl --fail --silent --show-error --max-time 15 -H 'Content-Type: application/json' \
+            -X POST 'http://127.0.0.1:3000/deadlock/live/events' --data-binary "@$evidence_dir/smoke-events.json" \
             -o "$evidence_dir/smoke-ingest.json"
-
-          curl --fail --silent --show-error --max-time 15 \
-            "http://127.0.0.1:3000/deadlock/live/matches/${smoke_match}/state" \
-            -o "$evidence_dir/smoke-state.json"
-
-          SMOKE_MATCH="$smoke_match" SMOKE_PLAYER="$smoke_player" \
-          python3 - "$evidence_dir/smoke-state.json" <<'PY'
-          import json
-          import os
-          import sys
-          from pathlib import Path
-
-          state = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
-          local_id = os.environ['SMOKE_PLAYER']
-          if state.get('matchId') != os.environ['SMOKE_MATCH']:
-              raise SystemExit('Synthetic match ID was not preserved')
-          player = (state.get('playersBySteamId') or {}).get(local_id) or {}
-          if player.get('heroId') != 6 or player.get('teamId') != 1 or player.get('isLocal') is not True:
-              raise SystemExit('Canonical local-player state is incomplete')
-          item_ids = sorted(item.get('id') for item in player.get('items') or [])
-          if item_ids != sorted([668299740, 558396679, 465043967]):
-              raise SystemExit(f'Canonical inventory mismatch: {item_ids}')
-          PY
-
           cat > "$evidence_dir/recommend-request.json" <<EOF
           {"matchId":"${smoke_match}","localSteamId":"${smoke_player}"}
           EOF
 
-          curl --fail --silent --show-error --max-time 30 \
-            -H 'Content-Type: application/json' \
-            -X POST 'http://127.0.0.1:3000/deadlock/adaptive/v1/recommend' \
-            --data-binary "@$evidence_dir/recommend-request.json" \
-            -o "$evidence_dir/recommendation-first.json"
-
-          python3 - "$evidence_dir/recommendation-first.json" <<'PY'
-          import json
-          import re
-          import sys
+          recommend_and_validate() {
+            local output="$1"
+            curl --fail --silent --show-error --max-time 30 -H 'Content-Type: application/json' \
+              -X POST 'http://127.0.0.1:3000/deadlock/adaptive/v1/recommend' \
+              --data-binary "@$evidence_dir/recommend-request.json" -o "$output"
+            python3 - "$output" <<'PY'
+          import json, re, sys
           from pathlib import Path
-
-          result = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
-          allowed = {'BUY', 'UPGRADE', 'SELL', 'REPLACE', 'WAIT', 'HOLD', 'CONTINUE_CORE', 'ABSTAIN'}
-          if result.get('ready') is not True:
-              raise SystemExit(f"Adaptive result is not ready: {result.get('blockers')}")
-          if not result.get('decisionId') or not re.fullmatch(r'[a-f0-9]{64}', str(result.get('stateRevision') or '')):
-              raise SystemExit('Adaptive result is missing decision identity')
-          action_type = (result.get('nextAction') or {}).get('type')
-          if action_type not in allowed:
-              raise SystemExit(f'Unexpected adaptive action type: {action_type}')
-          evidence = result.get('evidence') or {}
-          if not evidence.get('rulesetVersion') or not re.fullmatch(r'[a-f0-9]{64}', str(evidence.get('catalogSha256') or ''), re.I):
-              raise SystemExit('Adaptive evidence identity is missing')
-          blockers = set(result.get('blockers') or [])
-          if 'STATLOCKER_EVIDENCE_UNAVAILABLE' in blockers and action_type not in {'WAIT', 'HOLD', 'ABSTAIN'}:
-              raise SystemExit('Unavailable Statlocker evidence produced a transaction action')
+          r = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+          if r.get('ready') is not True: raise SystemExit(f"Adaptive result not ready: {r.get('blockers')}")
+          action = (r.get('nextAction') or {}).get('type')
+          if action not in {'BUY','UPGRADE','SELL','REPLACE','WAIT','HOLD','CONTINUE_CORE','ABSTAIN'}: raise SystemExit(f'Bad action: {action}')
+          blockers = set(r.get('blockers') or [])
+          if 'STATLOCKER_EVIDENCE_UNAVAILABLE' in blockers and action not in {'WAIT','HOLD','ABSTAIN'}:
+              raise SystemExit('Unavailable evidence produced transaction action')
+          if not re.fullmatch(r'[a-f0-9]{64}', str(r.get('stateRevision') or '')): raise SystemExit('Missing state revision')
           PY
+          }
+
+          recommend_and_validate "$evidence_dir/recommendation-first.json"
 
           for attempt in $(seq 1 45); do
-            curl --fail --silent --show-error --max-time 10 \
-              'http://127.0.0.1:3000/deadlock/adaptive/v1/status' \
+            curl --fail --silent --show-error --max-time 10 'http://127.0.0.1:3000/deadlock/adaptive/v1/status' \
               -o "$evidence_dir/adaptive-status-after-recommend.json"
             if python3 - "$evidence_dir/adaptive-status-after-recommend.json" <<'PY'
-          import json
-          import sys
+          import json, sys
           from pathlib import Path
-          status = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
-          raise SystemExit(0 if (status.get('refresh') or {}).get('lastAttemptAt') else 1)
+          s = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+          raise SystemExit(0 if (s.get('refresh') or {}).get('lastAttemptAt') else 1)
           PY
-            then
-              refresh_attempt_observed=true
-              break
-            fi
+            then refresh_attempt_observed=true; break; fi
             sleep 2
           done
+          [ "$refresh_attempt_observed" = true ] || { echo 'Background refresh did not attempt' >&2; exit 1; }
+          recommend_and_validate "$evidence_dir/recommendation-after-refresh.json"
 
-          if [ "$refresh_attempt_observed" != true ]; then
-            echo 'Background Statlocker refresh did not attempt within the smoke window' >&2
-            exit 1
-          fi
-
-          curl --fail --silent --show-error --max-time 30 \
-            -H 'Content-Type: application/json' \
-            -X POST 'http://127.0.0.1:3000/deadlock/adaptive/v1/recommend' \
-            --data-binary "@$evidence_dir/recommend-request.json" \
-            -o "$evidence_dir/recommendation-after-refresh.json"
-
-          python3 - "$evidence_dir/recommendation-after-refresh.json" <<'PY'
-          import json
-          import sys
+          python3 - "$evidence_dir/recommendation-after-refresh.json" "$evidence_dir/snapshot-ids-before-failure.txt" <<'PY'
+          import json, sys
           from pathlib import Path
-
-          result = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
-          allowed = {'BUY', 'UPGRADE', 'SELL', 'REPLACE', 'WAIT', 'HOLD', 'CONTINUE_CORE', 'ABSTAIN'}
-          if result.get('ready') is not True:
-              raise SystemExit(f"Post-refresh adaptive result is not ready: {result.get('blockers')}")
-          action_type = (result.get('nextAction') or {}).get('type')
-          if action_type not in allowed:
-              raise SystemExit(f'Unexpected post-refresh action type: {action_type}')
-          blockers = set(result.get('blockers') or [])
-          if 'STATLOCKER_EVIDENCE_UNAVAILABLE' in blockers and action_type not in {'WAIT', 'HOLD', 'ABSTAIN'}:
-              raise SystemExit('Post-refresh unavailable evidence produced a transaction action')
+          r = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+          Path(sys.argv[2]).write_text('\n'.join(sorted((r.get('evidence') or {}).get('snapshotIds') or [])), encoding='utf-8')
           PY
 
-          sudo docker logs --since "$deploy_started_at" "$running_container" \
-            > "$evidence_dir/api-logs.txt" 2>&1 || true
+          "${compose_args[@]}" -f "$failure_override" up -d --no-deps --force-recreate --no-build api
+          wait_status "$evidence_dir/adaptive-status-failure-mode.json"
+          recommend_and_validate "$evidence_dir/recommendation-failure-mode-initial.json"
+
+          for attempt in $(seq 1 45); do
+            curl --fail --silent --show-error --max-time 10 'http://127.0.0.1:3000/deadlock/adaptive/v1/status' \
+              -o "$evidence_dir/adaptive-status-failure-mode.json"
+            if python3 - "$evidence_dir/adaptive-status-failure-mode.json" <<'PY'
+          import json, sys
+          from pathlib import Path
+          s = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+          refresh = s.get('refresh') or {}
+          raise SystemExit(0 if refresh.get('lastError') else 1)
+          PY
+            then collector_failure_observed=true; break; fi
+            sleep 2
+          done
+          [ "$collector_failure_observed" = true ] || { echo 'Controlled collector failure was not observed' >&2; exit 1; }
+          recommend_and_validate "$evidence_dir/recommendation-after-collector-failure.json"
+
+          python3 - "$evidence_dir/recommendation-after-collector-failure.json" "$evidence_dir/snapshot-ids-before-failure.txt" <<'PY'
+          import json, sys
+          from pathlib import Path
+          r = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+          before = [x for x in Path(sys.argv[2]).read_text(encoding='utf-8').splitlines() if x]
+          after = sorted((r.get('evidence') or {}).get('snapshotIds') or [])
+          action = (r.get('nextAction') or {}).get('type')
+          if before and not set(before).issubset(set(after)):
+              raise SystemExit(f'LKG snapshots were lost: before={before}, after={after}')
+          if not after and action not in {'WAIT','HOLD','ABSTAIN'}:
+              raise SystemExit('Collector failure without LKG did not fail closed')
+          PY
+          lkg_or_safe_fallback_verified=true
+
+          "${compose_args[@]}" -f "$candidate_override" up -d --no-deps --force-recreate --no-build api
+          wait_status "$evidence_dir/adaptive-status-restored.json"
+          running_container="$(current_api_container)"
+          sudo docker logs --since "$deploy_started_at" "$running_container" > "$evidence_dir/api-logs.txt" 2>&1 || true
+          if grep -Eiq 'RecommendationBehavioralServing|RecommendationValueServing|RecommendationPolicyServing|Behavioral model invocation|Value model invocation|Policy model invocation' "$evidence_dir/api-logs.txt"; then
+            echo 'Legacy ML serving invocation marker found during adaptive smoke' >&2
+            exit 1
+          fi
+          ml_runtime_log_clean=true
 
           cleanup_smoke_data
           write_evidence
