@@ -1,0 +1,44 @@
+name: Recommendation Production Restart After Space Recovery
+
+on:
+  push:
+    branches:
+      - agent/recommendation-v8-pretraining-execution
+    paths:
+      - .github/workflows/recommendation-production-restart-after-space-recovery.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - name: Restart existing production API container only
+        shell: bash
+        run: |
+          set -euo pipefail
+          CONTAINER=deadlock_dynamo_helper-api-1
+          echo "before=$(sudo docker inspect -f '{{.State.Status}}/{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CONTAINER")"
+          sudo docker start "$CONTAINER" >/dev/null
+          for i in $(seq 1 30); do
+            running=$(sudo docker inspect -f '{{.State.Running}}' "$CONTAINER")
+            health=$(sudo docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CONTAINER")
+            echo "attempt=$i running=$running health=$health"
+            if test "$running" != true; then
+              sudo docker logs --tail 120 "$CONTAINER" || true
+              exit 1
+            fi
+            code=$(curl -sS -o /tmp/deadlock-api-status -w '%{http_code}' http://127.0.0.1:3000/deadlock/analysis/contextual-v3-live/status || true)
+            if test "$code" = 200; then
+              echo "contextualStatusHttp=200"
+              head -c 1200 /tmp/deadlock-api-status; echo
+              exit 0
+            fi
+            sleep 2
+          done
+          echo 'API did not return Contextual V3 status after restart' >&2
+          sudo docker logs --tail 160 "$CONTAINER" || true
+          exit 1
