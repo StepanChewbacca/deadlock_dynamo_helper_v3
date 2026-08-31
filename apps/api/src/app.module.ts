@@ -27,6 +27,7 @@ import { RecommendationValueDatasetRegistryV1 } from './deadlock-live/entities/r
 import { ShadowModeDecision } from './deadlock-live/entities/shadow-mode-decision.entity';
 import { SoulsAffordabilityEvidenceV2Entity } from './deadlock-live/entities/souls-affordability-evidence-v2.entity';
 import { StatlockerEvidenceSnapshotV1Entity } from './deadlock-live/entities/statlocker-evidence-snapshot-v1.entity';
+import { StatlockerAdaptiveModule } from './statlocker-adaptive/statlocker-adaptive.module';
 import { StatlockerProbeModule } from './statlocker-probe/statlocker-probe.module';
 
 @Module({
@@ -69,6 +70,7 @@ import { StatlockerProbeModule } from './statlocker-probe/statlocker-probe.modul
       synchronize: true,
     }),
     DeadlockLiveModule,
+    StatlockerAdaptiveModule,
     StatlockerProbeModule,
   ],
 })
