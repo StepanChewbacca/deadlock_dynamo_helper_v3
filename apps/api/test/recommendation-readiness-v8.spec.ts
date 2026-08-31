@@ -17,7 +17,7 @@ function dataSource(activeExactCount = 1) {
   return {
     query: jest.fn(async (sql: string, params: readonly unknown[] = []) => {
       if (sql === 'SELECT 1') return [{ ok: 1 }];
-      if (sql.includes('FROM item_catalog_versions')) return [{ count: 1 }];
+      if (sql.includes('FROM recommendation_item_catalog_versions_v8')) return [{ count: 1 }];
       if (sql.includes('RECOMMENDATION_RUNTIME_HEALTH')) return [{ count: 1 }];
       if (sql.includes('MAX("decidedAt")')) return [{ timestamp: '2026-08-22T00:00:00.000Z' }];
       if (sql.includes('FROM model_bundle_registry_v1')) {
