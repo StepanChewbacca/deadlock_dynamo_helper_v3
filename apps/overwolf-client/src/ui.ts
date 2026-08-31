@@ -260,6 +260,38 @@ export function showSituationalPanel(data: any): void {
   reasonEl.textContent = reason;
 }
 
+export function showAdaptiveRecommendation(data: any): void {
+  const panel = document.getElementById('situational-recommendation-panel');
+  const nameEl = document.getElementById('rec-item-name');
+  const reasonEl = document.getElementById('rec-reason');
+  const titleEl = document.getElementById('rec-decision-title');
+  if (!panel || !nameEl || !reasonEl || !titleEl) return;
+
+  panel.style.display = 'flex';
+  const action = data?.nextAction || {};
+  const targetItemId = action.buyItemId ?? action.itemId ?? action.targetItemId ?? data?.nextTargetItemId;
+  const actionLabel = String(action.type || 'ABSTAIN');
+  nameEl.textContent = targetItemId ? `${actionLabel} · Item #${targetItemId}` : actionLabel;
+  const confidence = Number.isFinite(Number(data?.confidence)) ? Math.round(Number(data.confidence) * 100) : 0;
+  titleEl.textContent = `Adaptive ${data?.gameState || 'UNKNOWN'} · ${confidence}% confidence`;
+
+  const plan = Array.isArray(data?.recommendedBuild)
+    ? [...data.recommendedBuild]
+        .sort((a: any, b: any) => Number(a.position || 0) - Number(b.position || 0))
+        .map((item: any) => `#${item.itemId} [${item.status || 'PLANNED'}]`)
+        .join(' → ')
+    : '';
+  const reasons = Array.isArray(action.reasonCodes) ? action.reasonCodes.slice(0, 3).join(', ') : '';
+  const freshness = Array.isArray(data?.evidence?.families)
+    ? data.evidence.families.map((family: any) => `${family.dataset}:${family.freshness}`).join(', ')
+    : '';
+  reasonEl.textContent = [
+    plan ? `Plan: ${plan}` : 'Plan: no planned items',
+    reasons ? `Reasons: ${reasons}` : '',
+    freshness ? `Evidence: ${freshness}` : '',
+  ].filter(Boolean).join(' | ');
+}
+
 export function hideSituationalPanel(): void {
   const panel = document.getElementById('situational-recommendation-panel');
   if (panel) {

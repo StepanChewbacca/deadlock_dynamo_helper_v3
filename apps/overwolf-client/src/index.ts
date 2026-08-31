@@ -2,6 +2,7 @@ import { LiveEventBuffer } from './overwolf/live-event-buffer';
 import { setRequiredFeatures } from './overwolf/set-required-features';
 import { listenOverwolfEvents } from './overwolf/listen-overwolf-events';
 import * as ui from './ui';
+import { AdaptiveRecommendationClient } from './adaptive-recommendation-client';
 
 const clientId = `client-${Math.random().toString(36).substring(2, 8)}`;
 const apiBaseUrl = 'https://aboba-telegramovich.duckdns.org';
@@ -100,6 +101,15 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
       ensureOverlayHeight();
     };
 
+    mainWindow.inGameAdaptiveUpdate = (data: any) => {
+      if (data) {
+        ui.showAdaptiveRecommendation(data);
+      } else {
+        ui.hideSituationalPanel();
+      }
+      ensureOverlayHeight();
+    };
+
     mainWindow.inGameHide = () => {
       ui.hideHeroGuide();
       ui.hideSituationalPanel();
@@ -109,7 +119,9 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
     if (mainWindow.latestRecommendation) {
       ui.showHeroGuide(mainWindow.latestRecommendation, mainWindow.heroName);
     }
-    if (mainWindow.latestSituational) {
+    if (mainWindow.latestAdaptiveRecommendation) {
+      mainWindow.inGameAdaptiveUpdate(mainWindow.latestAdaptiveRecommendation);
+    } else if (mainWindow.latestSituational) {
       mainWindow.inGameSituationalUpdate(mainWindow.latestSituational);
     }
 
@@ -119,6 +131,7 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
 
     const mainWindow = ow.windows.getMainWindow() as any;
     mainWindow.latestRecommendation = null;
+    mainWindow.latestAdaptiveRecommendation = null;
     mainWindow.heroName = '';
     mainWindow.heroNamesMap = mainWindow.heroNamesMap || {};
     mainWindow.warningActive = false;
@@ -139,9 +152,8 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
     });
 
     mainWindow.refreshBuild = () => {
-      ui.logConsole('Manual build refresh requested.');
-      lastRecommendationPayload = '';
-      triggerRecommendation();
+      ui.logConsole('Manual adaptive build refresh requested.');
+      scheduleAdaptiveRecommendation(true);
     };
 
     mainWindow.inGameShowWarning = () => {
@@ -186,6 +198,7 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
     };
 
     const buffer = new LiveEventBuffer(clientId, apiBaseUrl, customFetch, 1000);
+    const adaptiveClient = new AdaptiveRecommendationClient(apiBaseUrl, customFetch, 1500);
 
     let guideLoaded = false;
     let currentHeroId: number | null = null;
@@ -193,11 +206,42 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
     const matchRoster: Record<string, { heroId: number; teamId: number; isLocal: boolean; level?: number; deaths?: number }> = {};
     let lastRecommendationPayload = '';
     let currentMatchId = '';
+    let currentLocalSteamId = '';
     let localPlayerDeathTimestamps: number[] = [];
     let lastWarningTriggeredAt = 0;
     let warningActive = false;
     let overlayMenuActive = false;
     let situationalTimerId: number | undefined;
+
+    const scheduleAdaptiveRecommendation = (force = false) => {
+      if (!currentHeroId || !currentMatchId) {
+        adaptiveClient.cancel();
+        mainWindow.latestAdaptiveRecommendation = null;
+        if (mainWindow.inGameAdaptiveUpdate) {
+          mainWindow.inGameAdaptiveUpdate(null);
+        }
+        return;
+      }
+
+      adaptiveClient.schedule(
+        {
+          matchId: currentMatchId,
+          localSteamId: currentLocalSteamId || undefined,
+        },
+        {
+          onResult: (data) => {
+            mainWindow.latestAdaptiveRecommendation = data;
+            if (mainWindow.inGameAdaptiveUpdate) {
+              mainWindow.inGameAdaptiveUpdate(data);
+            }
+          },
+          onError: (error) => {
+            ui.logConsole(`Failed to fetch adaptive recommendation: ${error.message}`);
+          },
+        },
+        force,
+      );
+    };
 
     const triggerSituationalRecommendation = () => {
       if (!currentHeroId || !currentMatchId) {
@@ -239,92 +283,20 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
 
     const triggerRecommendation = () => {
       if (!currentHeroId) {
-        if (guideLoaded) {
-          ui.hideHeroGuide();
-          mainWindow.latestRecommendation = null;
-          mainWindow.latestSituational = null;
-          mainWindow.heroName = '';
-          if (mainWindow.inGameHide) {
-            mainWindow.inGameHide();
-          }
-          guideLoaded = false;
-          lastRecommendationPayload = '';
+        adaptiveClient.cancel();
+        mainWindow.latestAdaptiveRecommendation = null;
+        mainWindow.latestRecommendation = null;
+        mainWindow.heroName = '';
+        ui.hideHeroGuide();
+        ui.hideSituationalPanel();
+        if (mainWindow.inGameHide) {
+          mainWindow.inGameHide();
         }
+        guideLoaded = false;
         return;
       }
 
-      // Backend situational logic depends on the live event buffer; request it after the buffer flushes.
-      scheduleSituationalRecommendation();
-
-      const localPlayer = Object.values(matchRoster).find((p) => p.isLocal);
-      if (!localPlayer) {
-        const payloadStr = JSON.stringify({ heroId: currentHeroId, teammates: [], enemies: [] });
-        if (payloadStr === lastRecommendationPayload) return;
-        lastRecommendationPayload = payloadStr;
-
-        fetch(`${apiBaseUrl}/deadlock/analysis/hero/${currentHeroId}`)
-          .then((r) => r.json())
-          .then((data) => {
-            ui.showHeroGuide(data, currentHeroName);
-            mainWindow.latestRecommendation = data;
-            mainWindow.heroName = currentHeroName;
-            if (mainWindow.inGameUIUpdate) {
-              mainWindow.inGameUIUpdate(data, currentHeroName);
-            }
-            guideLoaded = true;
-          })
-          .catch((err) => {
-            ui.logConsole(`Failed to fetch baseline builds: ${err.message}`);
-          });
-        return;
-      }
-
-      const teammates: number[] = [];
-      const enemies: number[] = [];
-
-      for (const player of Object.values(matchRoster)) {
-        if (player.isLocal) continue;
-        if (player.heroId === undefined || player.heroId === null) continue;
-
-        if (player.teamId === localPlayer.teamId) {
-          teammates.push(player.heroId);
-        } else {
-          enemies.push(player.heroId);
-        }
-      }
-
-      // Sort lists numerically to guarantee deterministic JSON string payloads
-      teammates.sort((a, b) => a - b);
-      enemies.sort((a, b) => a - b);
-
-      ui.logConsole(`DEBUG: matchRoster content: ${JSON.stringify(matchRoster)}`);
-
-      const payloadStr = JSON.stringify({ heroId: currentHeroId, teammates, enemies });
-      if (payloadStr === lastRecommendationPayload) return;
-      lastRecommendationPayload = payloadStr;
-
-      ui.logConsole(
-        `Match roster updated. Requesting build recommendation for ${currentHeroName} (ID: ${currentHeroId}). Teammates: [${teammates.join(', ')}], Enemies: [${enemies.join(', ')}]`,
-      );
-
-      fetch(`${apiBaseUrl}/deadlock/analysis/recommend`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: payloadStr,
-      })
-        .then((r) => r.json())
-        .then((data) => {
-          ui.showHeroGuide(data, currentHeroName);
-          mainWindow.latestRecommendation = data;
-          mainWindow.heroName = currentHeroName;
-          if (mainWindow.inGameUIUpdate) {
-            mainWindow.inGameUIUpdate(data, currentHeroName);
-          }
-          guideLoaded = true;
-        })
-        .catch((err) => {
-          ui.logConsole(`Failed to fetch recommendations: ${err.message}`);
-        });
+      scheduleAdaptiveRecommendation();
     };
 
     // Toggle overlay visibility helper
@@ -403,6 +375,7 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
                     if (isLocal) {
                       currentHeroId = Number(heroId);
                       currentHeroName = payload.hero_name || currentHeroName;
+                      if (steamId !== '0') currentLocalSteamId = String(steamId);
                     }
                   }
                 } catch (e: any) {
@@ -433,6 +406,9 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
               mainWindow.heroNamesMap = {};
               currentHeroId = null;
               currentHeroName = '';
+              currentLocalSteamId = '';
+              adaptiveClient.cancel();
+              mainWindow.latestAdaptiveRecommendation = null;
               lastRecommendationPayload = '';
               ui.hideHeroGuide();
               mainWindow.latestRecommendation = null;
@@ -452,6 +428,9 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
             mainWindow.heroNamesMap = {};
             currentHeroId = null;
             currentHeroName = '';
+            currentLocalSteamId = '';
+            adaptiveClient.cancel();
+            mainWindow.latestAdaptiveRecommendation = null;
             lastRecommendationPayload = '';
             ui.hideHeroGuide();
             mainWindow.latestRecommendation = null;
@@ -525,7 +504,7 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
                   localContextChanged = true;
                 }
                 if (localContextChanged) {
-                  scheduleSituationalRecommendation();
+                  scheduleAdaptiveRecommendation();
                 }
               }
 
@@ -552,6 +531,7 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
                 if (isLocal) {
                   currentHeroId = Number(heroId);
                   currentHeroName = payload.hero_name || currentHeroName;
+                  if (steamId !== '0') currentLocalSteamId = String(steamId);
                   if (payload.level !== undefined) {
                     mainWindow.localPlayerLevel = Number(payload.level);
                   }
@@ -582,7 +562,7 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
                   .filter((id: number) => Number.isFinite(id) && id > 0);
 
                 mainWindow.localPurchasedItemIds = new Set(boughtIds);
-                scheduleSituationalRecommendation();
+                scheduleAdaptiveRecommendation();
 
                 // Redraw overlay
                 if (mainWindow.latestRecommendation && mainWindow.inGameUIUpdate) {
