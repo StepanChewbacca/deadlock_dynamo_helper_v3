@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - agent/add-inventory-simulator
+      - agent/statlocker-model-probe-poc
       - agent/recommendation-roadmap-v8-runtime-finalization
       - agent/recommendation-v8-roadmap-closure
       - agent/recommendation-v8-pretraining-finalization
@@ -54,6 +55,14 @@ jobs:
 
       - name: Test API
         run: yarn workspace @deadlock-live-probe/api test
+
+      - name: Build adaptive production image
+        run: docker build -t deadlock-adaptive-v1 .
+
+      - name: Verify adaptive runtime dependencies
+        run: |
+          docker run --rm --entrypoint sh deadlock-adaptive-v1 -c \
+            'test -x "$CHROMIUM_PATH" && node -e "require(\"puppeteer-core\"); require(\"@deadlock-live-probe/build-domain\")"'
 
       - name: Test canonical model manifest identity
         run: node scripts/recommendation-model-manifest-identity-test.mjs
