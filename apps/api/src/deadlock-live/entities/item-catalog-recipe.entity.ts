@@ -1,8 +1,8 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
-@Entity('item_catalog_recipes')
+@Entity('recommendation_item_catalog_recipes_v1')
 @Index(
-  'idx_item_catalog_recipes_version_parent_component',
+  'idx_recommendation_item_catalog_recipes_v1_parent_component',
   ['catalogVersionId', 'parentItemId', 'componentItemId'],
   { unique: true },
 )
@@ -10,7 +10,7 @@ export class ItemCatalogRecipe {
   @PrimaryGeneratedColumn()
   id!: number;
 
-  @Index('idx_item_catalog_recipes_catalog_version_id')
+  @Index('idx_recommendation_item_catalog_recipes_v1_catalog_id')
   @Column({ type: 'varchar', length: 128 })
   catalogVersionId!: string;
 
