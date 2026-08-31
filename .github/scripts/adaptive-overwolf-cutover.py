@@ -143,19 +143,27 @@ replace_once(live_local, live_new, 'live local steam')
 text = text.replace('                  scheduleSituationalRecommendation();', '                  scheduleAdaptiveRecommendation();')
 text = text.replace('                scheduleSituationalRecommendation();', '                scheduleAdaptiveRecommendation();')
 
-reset_marker = """              currentHeroId = null;
+new_match_reset_marker = """              currentHeroId = null;
               currentHeroName = '';
               lastRecommendationPayload = '';"""
-reset_replacement = """              currentHeroId = null;
+new_match_reset_replacement = """              currentHeroId = null;
               currentHeroName = '';
               currentLocalSteamId = '';
               adaptiveClient.cancel();
               mainWindow.latestAdaptiveRecommendation = null;
               lastRecommendationPayload = '';"""
-count = text.count(reset_marker)
-if count != 2:
-    raise SystemExit(f'match reset blocks: expected 2, got {count}')
-text = text.replace(reset_marker, reset_replacement)
+replace_once(new_match_reset_marker, new_match_reset_replacement, 'new match reset')
+
+match_end_reset_marker = """            currentHeroId = null;
+            currentHeroName = '';
+            lastRecommendationPayload = '';"""
+match_end_reset_replacement = """            currentHeroId = null;
+            currentHeroName = '';
+            currentLocalSteamId = '';
+            adaptiveClient.cancel();
+            mainWindow.latestAdaptiveRecommendation = null;
+            lastRecommendationPayload = '';"""
+replace_once(match_end_reset_marker, match_end_reset_replacement, 'match end reset')
 index_path.write_text(text)
 
 ui_path = Path('apps/overwolf-client/src/ui.ts')
