@@ -328,12 +328,12 @@ jobs:
               {'matchId': match_id, 'receivedAt': now + 1, 'source': 'onInfoUpdates2', 'key': 'match_clock', 'payload': '12:00'},
               {'matchId': match_id, 'receivedAt': now + 2, 'source': 'onInfoUpdates2', 'key': 'roster_0', 'payload': {
                   'steam_id': local_id, 'player_name': 'Adaptive Smoke Local', 'is_local': True, 'hero_id': 6,
-                  'hero_name': 'Abrams', 'team_id': 1, 'assigned_lane': 1, 'level': 8, 'souls': 5000,
-                  'health': 900, 'max_health': 1200, 'kills': 2, 'deaths': 1, 'assist': 4}},
+                  'hero_name': 'Abrams', 'team': 1, 'lane': 1, 'level': 8, 'souls': 5000,
+                  'health': 900, 'max_health': 1200, 'kills': 2, 'deaths': 1, 'assists': 4}},
               {'matchId': match_id, 'receivedAt': now + 3, 'source': 'onInfoUpdates2', 'key': 'roster_1', 'payload': {
                   'steam_id': 'adaptive-smoke-enemy', 'player_name': 'Adaptive Smoke Enemy', 'is_local': False, 'hero_id': 13,
-                  'hero_name': 'Haze', 'team_id': 2, 'assigned_lane': 2, 'level': 8, 'souls': 5200,
-                  'health': 800, 'max_health': 1000, 'kills': 3, 'deaths': 2, 'assist': 2}},
+                  'hero_name': 'Haze', 'team': 2, 'lane': 2, 'level': 8, 'souls': 5200,
+                  'health': 800, 'max_health': 1000, 'kills': 3, 'deaths': 2, 'assists': 2}},
               {'matchId': match_id, 'receivedAt': now + 4, 'source': 'onInfoUpdates2', 'key': 'items_0', 'payload': {
                   'steam_id': local_id, 'items': [
                       {'id': 668299740, 'name': 'Rapid Rounds', 'class_name': 'upgrade_rapid_rounds', 'enhanced': False},
@@ -343,9 +343,14 @@ jobs:
           Path(sys.argv[1]).write_text(json.dumps({'clientId': f'adaptive-smoke-{match_id}', 'events': events}), encoding='utf-8')
           PY
 
-          curl --fail --silent --show-error --max-time 15 -H 'Content-Type: application/json' \
-            -X POST 'http://127.0.0.1:3000/deadlock/live/events' --data-binary "@$evidence_dir/smoke-events.json" \
-            -o "$evidence_dir/smoke-ingest.json"
+          ingest_smoke_match() {
+            local output="$1"
+            curl --fail --silent --show-error --max-time 15 -H 'Content-Type: application/json' \
+              -X POST 'http://127.0.0.1:3000/deadlock/live/events' --data-binary "@$evidence_dir/smoke-events.json" \
+              -o "$output"
+          }
+
+          ingest_smoke_match "$evidence_dir/smoke-ingest.json"
           cat > "$evidence_dir/recommend-request.json" <<EOF
           {"matchId":"${smoke_match}","localSteamId":"${smoke_player}"}
           EOF
@@ -395,6 +400,7 @@ jobs:
 
           "${compose_args[@]}" -f "$failure_override" up -d --no-deps --force-recreate --no-build api
           wait_status "$evidence_dir/adaptive-status-failure-mode.json"
+          ingest_smoke_match "$evidence_dir/smoke-ingest-failure-mode.json"
           recommend_and_validate "$evidence_dir/recommendation-failure-mode-initial.json"
 
           for attempt in $(seq 1 45); do
