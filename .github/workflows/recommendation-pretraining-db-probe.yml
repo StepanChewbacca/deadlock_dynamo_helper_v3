@@ -1,0 +1,113 @@
+name: Recommendation V8 Pretraining Database Probe
+
+on:
+  push:
+    branches:
+      - agent/recommendation-v8-pretraining-execution
+    paths:
+      - .github/workflows/recommendation-pretraining-db-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - name: Probe Recommendation V8 tables and evidence without mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          DB_CONTAINER=aboba-telegramovich-postgres-1
+          sudo docker exec -i "$DB_CONTAINER" psql -X -v ON_ERROR_STOP=1 -U postgres -d deadlock_builds <<'SQL'
+          \pset pager off
+          SELECT current_database() AS database, now() AS checked_at;
+
+          SELECT table_name
+          FROM information_schema.tables
+          WHERE table_schema = 'public'
+            AND table_name IN (
+              'recommendation_decisions_v8',
+              'recommendation_decision_candidates_v8',
+              'recommendation_telemetry_events',
+              'souls_affordability_evidence_v2',
+              'recommendation_roadmap_evidence_v1',
+              'recommendation_evidence_snapshots_v8',
+              'recommendation_dataset_registry_v1',
+              'item_catalog_versions'
+            )
+          ORDER BY table_name;
+
+          DO $$
+          DECLARE
+            r record;
+          BEGIN
+            FOR r IN
+              SELECT table_name
+              FROM information_schema.tables
+              WHERE table_schema = 'public'
+                AND table_name IN (
+                  'recommendation_decisions_v8',
+                  'recommendation_decision_candidates_v8',
+                  'recommendation_telemetry_events',
+                  'souls_affordability_evidence_v2',
+                  'recommendation_roadmap_evidence_v1',
+                  'recommendation_evidence_snapshots_v8',
+                  'recommendation_dataset_registry_v1',
+                  'item_catalog_versions'
+                )
+              ORDER BY table_name
+            LOOP
+              RAISE NOTICE 'TABLE_COUNT % = %', r.table_name,
+                (SELECT count(*) FROM pg_catalog.pg_class c WHERE c.relname = r.table_name);
+            END LOOP;
+          END $$;
+
+          SELECT
+            'recommendation_decisions_v8' AS subject,
+            CASE WHEN to_regclass('public.recommendation_decisions_v8') IS NULL THEN NULL
+                 ELSE (SELECT count(*) FROM recommendation_decisions_v8) END AS row_count;
+          SELECT
+            'recommendation_telemetry_events' AS subject,
+            CASE WHEN to_regclass('public.recommendation_telemetry_events') IS NULL THEN NULL
+                 ELSE (SELECT count(*) FROM recommendation_telemetry_events) END AS row_count;
+          SELECT
+            'souls_affordability_evidence_v2' AS subject,
+            CASE WHEN to_regclass('public.souls_affordability_evidence_v2') IS NULL THEN NULL
+                 ELSE (SELECT count(*) FROM souls_affordability_evidence_v2) END AS row_count;
+          SELECT
+            'recommendation_roadmap_evidence_v1' AS subject,
+            CASE WHEN to_regclass('public.recommendation_roadmap_evidence_v1') IS NULL THEN NULL
+                 ELSE (SELECT count(*) FROM recommendation_roadmap_evidence_v1) END AS row_count;
+          SELECT
+            'recommendation_dataset_registry_v1' AS subject,
+            CASE WHEN to_regclass('public.recommendation_dataset_registry_v1') IS NULL THEN NULL
+                 ELSE (SELECT count(*) FROM recommendation_dataset_registry_v1) END AS row_count;
+
+          DO $$
+          BEGIN
+            IF to_regclass('public.recommendation_decisions_v8') IS NOT NULL THEN
+              RAISE NOTICE 'DECISION_TIME_RANGE';
+            END IF;
+          END $$;
+          SELECT "candidateGeneratorVersion", count(*) AS decisions, min("decidedAt") AS first_at, max("decidedAt") AS last_at
+          FROM recommendation_decisions_v8
+          WHERE to_regclass('public.recommendation_decisions_v8') IS NOT NULL
+          GROUP BY "candidateGeneratorVersion"
+          ORDER BY decisions DESC
+          LIMIT 20;
+
+          SELECT "gateName", status, evaluator, "evaluatedAt", "subjectSha256", notes
+          FROM recommendation_roadmap_evidence_v1
+          WHERE to_regclass('public.recommendation_roadmap_evidence_v1') IS NOT NULL
+          ORDER BY "evaluatedAt" DESC
+          LIMIT 40;
+
+          SELECT "datasetId", status, "datasetSha256", "manifestSha256", "verifiedAt", "registeredAt"
+          FROM recommendation_dataset_registry_v1
+          WHERE to_regclass('public.recommendation_dataset_registry_v1') IS NOT NULL
+          ORDER BY "registeredAt" DESC
+          LIMIT 20;
+          SQL
