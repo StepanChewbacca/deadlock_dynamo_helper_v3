@@ -26,6 +26,8 @@ jobs:
           node-version: '20'
       - name: Audit workflow trust boundaries
         run: node scripts/recommendation-security-audit.mjs
+      - name: Audit Statlocker adaptive serving boundary
+        run: node scripts/statlocker-adaptive-serving-audit.mjs
       - name: Audit full Behavioral training pair contract
         run: node scripts/recommendation-behavioral-training-pair-audit.mjs
       - name: Audit protected Dataset V8 registry workflow
