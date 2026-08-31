@@ -2,6 +2,8 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import axios, { AxiosResponse } from 'axios';
 
 export type StatlockerProbeMethod = 'GET' | 'POST';
+export type StatlockerEndpointConfidence = 'FRONTEND_CONFIRMED' | 'DISCOVERED';
+export type StatlockerEndpointAccess = 'PUBLIC_200' | 'AUTH_401' | 'NEEDS_INPUT' | 'UNKNOWN';
 
 export interface StatlockerProbeRequest {
   method?: StatlockerProbeMethod;
@@ -26,6 +28,9 @@ export interface StatlockerProbeTarget {
   sourcePage: string;
   usefulFor: string;
   expectedSignals: string[];
+  endpoint?: string;
+  method?: StatlockerProbeMethod;
+  access?: StatlockerEndpointAccess;
   suggestedQuery?: Record<string, string | number | boolean>;
 }
 
@@ -35,6 +40,12 @@ export interface DiscoveredStatlockerEndpoint {
   likelyUseful: boolean;
   rawDeadlockDuplicate: boolean;
   matchedKeywords: string[];
+  modelFamily?: string;
+  confidence?: StatlockerEndpointConfidence;
+  access?: StatlockerEndpointAccess;
+  methodHint?: StatlockerProbeMethod;
+  notes?: string;
+  suggestedQuery?: Record<string, string | number | boolean>;
 }
 
 export interface StatlockerDiscoveryResult {
@@ -49,7 +60,7 @@ export class StatlockerProbeService {
   private readonly baseUrl = 'https://statlocker.gg';
 
   private readonly sourcePages = [
-    '/wpa-analysis',
+    '/items/meta-model/wpa-analysis/',
     '/vision/wpa',
     '/vision/win-chance',
     '/builds/eternus-builds/abrams',
@@ -57,39 +68,143 @@ export class StatlockerProbeService {
     '/items',
   ];
 
+  private readonly defaultWpaQuery: Record<string, string | number | boolean> = {
+    hero: 'Abrams',
+    tier: 'all',
+    queue: 'ranked',
+    rank: 'all',
+    category: 'all',
+    gameState: 'all',
+    purchaseTime: 'all',
+    teamComp: 'all',
+    buildType: 'all',
+    patch: 'all',
+    minSampleSize: 500,
+    searchTerm: '',
+    sortBy: 'wpa',
+    timeSyncEnabled: false,
+    currentGameTime: 0,
+    timeWindow: 5,
+  };
+
+  private readonly knownModelEndpoints: DiscoveredStatlockerEndpoint[] = [
+    {
+      path: '/api/info/wpa-filtered-items',
+      sourceAsset: 'https://statlocker.gg/static/js/4914.58610374.chunk.js',
+      likelyUseful: true,
+      rawDeadlockDuplicate: false,
+      matchedKeywords: ['wpa', 'purchase-time', 'meta'],
+      modelFamily: 'ITEM_META_WPA',
+      confidence: 'FRONTEND_CONFIRMED',
+      access: 'AUTH_401',
+      methodHint: 'GET',
+      notes: 'Primary Item Meta/WPA endpoint. Direct anonymous probe returned HTTP 401; the Statlocker frontend calls it with session credentials.',
+      suggestedQuery: this.defaultWpaQuery,
+    },
+    {
+      path: '/api/info/t4-chains-data',
+      sourceAsset: 'https://statlocker.gg/static/js/4914.58610374.chunk.js',
+      likelyUseful: true,
+      rawDeadlockDuplicate: false,
+      matchedKeywords: ['wpa', 't4', 'chain', 'synergy'],
+      modelFamily: 'T4_BUILD_CHAINS',
+      confidence: 'FRONTEND_CONFIRMED',
+      access: 'PUBLIC_200',
+      methodHint: 'GET',
+      notes: 'Frontend-confirmed chain/synergy dataset. Anonymous verification returned HTTP 200 with top-level metadata and by_hero.',
+    },
+    {
+      path: '/api/info/vs-hero-wpa-data',
+      sourceAsset: 'https://statlocker.gg/static/js/4914.58610374.chunk.js',
+      likelyUseful: true,
+      rawDeadlockDuplicate: false,
+      matchedKeywords: ['wpa'],
+      modelFamily: 'VS_HERO_WPA',
+      confidence: 'FRONTEND_CONFIRMED',
+      access: 'AUTH_401',
+      methodHint: 'GET',
+      notes: 'Counter-item / lane-matchup WPA dataset. Anonymous verification returned HTTP 401.',
+    },
+    {
+      path: '/api/info/wpa-patches',
+      sourceAsset: 'https://statlocker.gg/static/js/524.d6c66927.chunk.js',
+      likelyUseful: true,
+      rawDeadlockDuplicate: false,
+      matchedKeywords: ['wpa'],
+      modelFamily: 'WPA_PATCHES',
+      confidence: 'FRONTEND_CONFIRMED',
+      access: 'AUTH_401',
+      methodHint: 'GET',
+      notes: 'Patch selector backing the WPA UI. Anonymous verification returned HTTP 401.',
+    },
+    {
+      path: '/api/info/wpa-patch-data/{patch}',
+      sourceAsset: 'https://statlocker.gg/static/js/524.d6c66927.chunk.js',
+      likelyUseful: true,
+      rawDeadlockDuplicate: false,
+      matchedKeywords: ['wpa'],
+      modelFamily: 'WPA_PATCH_DATA',
+      confidence: 'FRONTEND_CONFIRMED',
+      access: 'NEEDS_INPUT',
+      methodHint: 'GET',
+      notes: 'Patch-specific WPA comparison data. Replace {patch} before testing.',
+    },
+    {
+      path: '/api/match/{matchId}/win-rate',
+      sourceAsset: 'https://statlocker.gg/static/js/6653.d4d5b665.chunk.js',
+      likelyUseful: true,
+      rawDeadlockDuplicate: false,
+      matchedKeywords: ['win-probability', 'prediction'],
+      modelFamily: 'WIN_CHANCE',
+      confidence: 'FRONTEND_CONFIRMED',
+      access: 'NEEDS_INPUT',
+      methodHint: 'GET',
+      notes: 'Win Chance model timeline. The frontend validates a winRateIntervals array. Replace {matchId} with a real match ID.',
+    },
+    {
+      path: '/api/match/{matchId}/wpa/{accountId}',
+      sourceAsset: 'https://statlocker.gg/static/js/7399.edf4fc62.chunk.js',
+      likelyUseful: true,
+      rawDeadlockDuplicate: false,
+      matchedKeywords: ['wpa'],
+      modelFamily: 'PLAYER_WPA',
+      confidence: 'FRONTEND_CONFIRMED',
+      access: 'NEEDS_INPUT',
+      methodHint: 'GET',
+      notes: 'Player-specific WPA analysis used by Vision/Player Improvement. Frontend code indicates session/Beta gating is possible.',
+    },
+    {
+      path: '/api/match/build-context/{matchId}/{accountId}',
+      sourceAsset: 'https://statlocker.gg/static/js/7399.edf4fc62.chunk.js',
+      likelyUseful: true,
+      rawDeadlockDuplicate: false,
+      matchedKeywords: ['timing', 'meta'],
+      modelFamily: 'BUILD_CONTEXT',
+      confidence: 'FRONTEND_CONFIRMED',
+      access: 'NEEDS_INPUT',
+      methodHint: 'GET',
+      notes: 'Build context used by Vision. Frontend consumes purchase_history and meta_popularity style data. Replace both path parameters.',
+    },
+  ];
+
   private readonly targets: StatlockerProbeTarget[] = [
     {
       id: 'item-meta-wpa',
       title: 'Item Meta / WPA',
       priority: 'HIGH',
-      sourcePage: '/wpa-analysis',
-      usefulFor: 'External candidate-value evidence and item ranking diagnostics.',
+      sourcePage: '/items/meta-model/wpa-analysis/',
+      usefulFor: 'Primary external item-value model signal for candidate ranking, purchase timing and situation-aware build analysis.',
       expectedSignals: [
         'hero/item WPA',
         'sample size',
-        'rank/queue/patch filters',
-        'build archetype filters',
+        'game-state WPA',
+        'purchase time',
+        'cost-relative WPA',
       ],
-      suggestedQuery: {
-        hero: 'Abrams',
-        mode: 'items-heroes',
-        min: 500,
-      },
-    },
-    {
-      id: 'purchase-timing',
-      title: 'Purchase Time / Souls Timing',
-      priority: 'HIGH',
-      sourcePage: '/wpa-analysis',
-      usefulFor: 'Timing priors for candidate generation and build trajectory scoring.',
-      expectedSignals: [
-        'purchase-time distribution',
-        'souls/net-worth at purchase',
-        'optimal timing bands',
-      ],
-      suggestedQuery: {
-        hero: 'Abrams',
-      },
+      endpoint: '/api/info/wpa-filtered-items',
+      method: 'GET',
+      access: 'AUTH_401',
+      suggestedQuery: this.defaultWpaQuery,
     },
     {
       id: 't4-build-chains',
@@ -99,75 +214,65 @@ export class StatlockerProbeService {
       usefulFor: 'Build continuation priors and candidate-item interaction features.',
       expectedSignals: [
         'ordered item chains',
-        'per-item WPA',
-        'chain WPA',
-        'games/sample size',
-        'win rate',
+        'chain/meta metadata',
+        'hero-specific chain data',
       ],
-      suggestedQuery: {
-        hero: 'Abrams',
-        graph: 't4-chains',
-        mode: 'items-heroes',
-        min: 500,
-      },
+      endpoint: '/api/info/t4-chains-data',
+      method: 'GET',
+      access: 'PUBLIC_200',
     },
     {
-      id: 'comeback-win-more',
-      title: 'Comeback / Win-More',
+      id: 'vs-hero-wpa',
+      title: 'Counter / Vs Hero WPA',
       priority: 'HIGH',
-      sourcePage: '/wpa-analysis',
-      usefulFor: 'Situation-aware item evidence when the team is ahead or behind.',
-      expectedSignals: [
-        'comeback score',
-        'win-more score',
-        'state-conditioned item impact',
-      ],
-      suggestedQuery: {
-        hero: 'Abrams',
-      },
-    },
-    {
-      id: 'eternus-builds',
-      title: 'Eternus Derived Build Analytics',
-      priority: 'HIGH',
-      sourcePage: '/builds/eternus-builds/abrams',
-      usefulFor: 'High-rank build trajectory priors. Only derived aggregates are interesting; raw purchases are already available elsewhere.',
-      expectedSignals: [
-        'item pick rate by phase',
-        'WPA impact',
-        'buy timing',
-        'synergy',
-        'core/frequent/sometimes classification',
-      ],
-      suggestedQuery: {
-        hero: 'Abrams',
-      },
-    },
-    {
-      id: 'build-lab-recommendations',
-      title: 'Build Lab WPA Recommendations',
-      priority: 'HIGH',
-      sourcePage: '/builds/build-lab',
-      usefulFor: 'External recommendation evidence and offline comparison with our own candidate ranker.',
-      expectedSignals: [
-        'purchase rate',
-        'WPA impact',
-        'optimal buy time',
-        'net worth at purchase',
-        'Essential/Core/Underrated/Overrated tags',
-      ],
+      sourcePage: '/items/meta-model/wpa-analysis/',
+      usefulFor: 'Enemy-hero-conditioned item evidence for matchup-aware candidate scoring.',
+      expectedSignals: ['counter-item WPA', 'lane matchup signal', 'hero-conditioned impact'],
+      endpoint: '/api/info/vs-hero-wpa-data',
+      method: 'GET',
+      access: 'AUTH_401',
     },
     {
       id: 'win-chance',
       title: 'Win Chance Timeline',
-      priority: 'MEDIUM',
+      priority: 'HIGH',
       sourcePage: '/vision/win-chance',
       usefulFor: 'Independent state-model benchmark and calibration/disagreement diagnostics.',
-      expectedSignals: [
-        'match timestamp',
-        'team win probability',
-        'model output timeline',
-      ],
+      expectedSignals: ['match timestamp', 'team win probability', 'winRateIntervals'],
+      endpoint: '/api/match/{matchId}/win-rate',
+      method: 'GET',
+      access: 'NEEDS_INPUT',
+    },
+    {
+      id: 'player-wpa',
+      title: 'Player WPA / Vision',
+      priority: 'HIGH',
+      sourcePage: '/vision',
+      usefulFor: 'Player-specific contribution/WPA evidence from the Vision analysis flow.',
+      expectedSignals: ['player WPA', 'match-state attribution', 'Vision model output'],
+      endpoint: '/api/match/{matchId}/wpa/{accountId}',
+      method: 'GET',
+      access: 'NEEDS_INPUT',
+    },
+    {
+      id: 'build-context',
+      title: 'Build Context / Purchase Timeline',
+      priority: 'HIGH',
+      sourcePage: '/vision',
+      usefulFor: 'Purchase-history and meta-popularity context for timing and trajectory features.',
+      expectedSignals: ['purchase history', 'meta popularity', 'average buy minute', 'build trajectory'],
+      endpoint: '/api/match/build-context/{matchId}/{accountId}',
+      method: 'GET',
+      access: 'NEEDS_INPUT',
+    },
+    {
+      id: 'eternus-builds',
+      title: 'Eternus Derived Build Analytics',
+      priority: 'MEDIUM',
+      sourcePage: '/builds/eternus-builds/abrams',
+      usefulFor: 'High-rank build trajectory priors. Derived aggregates are interesting; raw purchases are already available elsewhere.',
+      expectedSignals: ['item pick rate by phase', 'WPA impact', 'buy timing', 'synergy'],
+      access: 'UNKNOWN',
     },
   ];
 
@@ -178,6 +283,11 @@ export class StatlockerProbeService {
   async discoverEndpoints(): Promise<StatlockerDiscoveryResult> {
     const scripts = new Set<string>();
     const errors: Array<{ source: string; error: string }> = [];
+    const endpoints = new Map<string, DiscoveredStatlockerEndpoint>();
+
+    for (const endpoint of this.knownModelEndpoints) {
+      endpoints.set(endpoint.path, endpoint);
+    }
 
     for (const pagePath of this.sourcePages) {
       const pageUrl = new URL(pagePath, this.baseUrl).toString();
@@ -201,7 +311,6 @@ export class StatlockerProbeService {
       }
     }
 
-    const endpoints = new Map<string, DiscoveredStatlockerEndpoint>();
     const scriptsToCheck = Array.from(scripts).slice(0, 20);
 
     for (const scriptUrl of scriptsToCheck) {
@@ -214,11 +323,17 @@ export class StatlockerProbeService {
         });
 
         for (const path of this.extractApiPaths(response.data)) {
+          if (endpoints.has(path)) {
+            continue;
+          }
+
           const classification = this.classifyEndpoint(path);
-          const key = `${path}|${scriptUrl}`;
-          endpoints.set(key, {
+          endpoints.set(path, {
             path,
             sourceAsset: scriptUrl,
+            confidence: 'DISCOVERED',
+            access: 'UNKNOWN',
+            methodHint: 'GET',
             ...classification,
           });
         }
@@ -228,6 +343,9 @@ export class StatlockerProbeService {
     }
 
     const sortedEndpoints = Array.from(endpoints.values()).sort((left, right) => {
+      if (left.confidence !== right.confidence) {
+        return left.confidence === 'FRONTEND_CONFIRMED' ? -1 : 1;
+      }
       if (left.likelyUseful !== right.likelyUseful) {
         return left.likelyUseful ? -1 : 1;
       }
@@ -255,6 +373,10 @@ export class StatlockerProbeService {
       throw new BadRequestException('Only GET and POST are supported');
     }
 
+    if (/[{}]/.test(input.path)) {
+      throw new BadRequestException('Replace all {pathParameters} before running the request');
+    }
+
     const url = this.resolveAllowedApiUrl(input.path);
     const startedAt = Date.now();
 
@@ -264,7 +386,7 @@ export class StatlockerProbeService {
       params: input.query,
       data: method === 'POST' ? input.body : undefined,
       timeout: 15_000,
-      maxContentLength: 2_000_000,
+      maxContentLength: 4_000_000,
       maxBodyLength: 2_000_000,
       validateStatus: () => true,
       headers: this.getProbeHeaders(),
@@ -377,7 +499,7 @@ export class StatlockerProbeService {
   private getProbeHeaders(): Record<string, string> {
     return {
       Accept: 'application/json,text/plain,*/*',
-      'User-Agent': 'deadlock-dynamo-statlocker-probe/0.1',
+      'User-Agent': 'deadlock-dynamo-statlocker-probe/0.2',
     };
   }
 
