@@ -8,6 +8,7 @@ const identity = {
 
 function createHarness() {
   let releaseCollector: (() => void) | undefined;
+  let publishSequence = 0;
   const block = { enabled: false };
   const collector = {
     collectBatch: jest.fn(async (targets: readonly any[]) => {
@@ -48,15 +49,17 @@ function createHarness() {
     normalizeProBuildAnalysis: jest.fn(() => ({ dataset: 'PRO_BUILD_ANALYSIS', scopeKey: 'hero:10:account:101', statlockerPatchId: '15-1', contentSha256: '5'.repeat(64), payload: { accountId: '101', heroId: 10, items: [] } })),
   };
   const active = new Map<string, any>();
-  const store = {
-    publish: jest.fn(async (input: any) => {
-      const key = [input.dataset, input.rulesetVersion, input.catalogSha256, input.statlockerPatchId, input.scopeKey].join('|');
-      const current = active.get(key);
-      if (current?.contentSha256 === input.contentSha256) return current;
-      const saved = { ...input, snapshotId: `snapshot-${store.publish.mock.calls.length}` };
-      active.set(key, saved);
-      return saved;
-    }),
+  const publish = jest.fn(async (input: any): Promise<any> => {
+    const key = [input.dataset, input.rulesetVersion, input.catalogSha256, input.statlockerPatchId, input.scopeKey].join('|');
+    const current = active.get(key);
+    if (current?.contentSha256 === input.contentSha256) return current;
+    publishSequence += 1;
+    const saved: any = { ...input, snapshotId: `snapshot-${publishSequence}` };
+    active.set(key, saved);
+    return saved;
+  });
+  const store: any = {
+    publish,
     getActive: jest.fn((lookup: any) => active.get([
       lookup.dataset,
       lookup.rulesetVersion,
@@ -65,7 +68,7 @@ function createHarness() {
       lookup.scopeKey,
     ].join('|'))),
   };
-  const service = new StatlockerRefreshService(collector as any, normalizer as any, store as any);
+  const service = new StatlockerRefreshService(collector as any, normalizer as any, store);
   service.observeGameIdentity(identity, 1_000);
 
   return { service, collector, normalizer, store, active, block, release: () => releaseCollector?.() };
