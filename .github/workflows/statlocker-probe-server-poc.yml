@@ -212,7 +212,6 @@ jobs:
           if [ -z "$server_name" ]; then
             server_name='127.0.0.1'
           fi
-          server_name="${server_name#*.}"
           echo "STATLOCKER_PROBE_HOST=$server_name" >> "$GITHUB_ENV"
 
           public_url=''
