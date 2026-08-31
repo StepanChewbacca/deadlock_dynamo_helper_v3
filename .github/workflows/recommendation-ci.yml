@@ -56,12 +56,19 @@ jobs:
       - name: Test API
         run: yarn workspace @deadlock-live-probe/api test
 
+      - name: Validate adaptive compose config
+        env:
+          DB_PASSWORD: ci-placeholder
+          DEADLOCK_API_KEY: ci-placeholder
+          DEADLOCK_API_IMAGE: deadlock-adaptive-v1
+        run: sudo docker compose -p aboba-telegramovich config >/dev/null
+
       - name: Build adaptive production image
-        run: docker build -t deadlock-adaptive-v1 .
+        run: sudo docker build -t deadlock-adaptive-v1 .
 
       - name: Verify adaptive runtime dependencies
         run: |
-          docker run --rm --entrypoint sh deadlock-adaptive-v1 -c \
+          sudo docker run --rm --entrypoint sh deadlock-adaptive-v1 -c \
             'test -x "$CHROMIUM_PATH" && node -e "require(\"puppeteer-core\"); require(\"@deadlock-live-probe/build-domain\")"'
 
       - name: Test canonical model manifest identity
