@@ -26,9 +26,10 @@ jobs:
 
           cat > "$work/Dockerfile" <<'DOCKERFILE'
           FROM node:20-alpine
-          RUN apk add --no-cache chromium nss freetype harfbuzz ca-certificates ttf-freefont \
-            && npm install puppeteer-core@24.16.0
           WORKDIR /app
+          RUN apk add --no-cache chromium nss freetype harfbuzz ca-certificates ttf-freefont \
+            && npm init -y >/dev/null 2>&1 \
+            && npm install puppeteer-core@24.16.0
           COPY recon.mjs ./recon.mjs
           CMD ["node", "recon.mjs"]
           DOCKERFILE
