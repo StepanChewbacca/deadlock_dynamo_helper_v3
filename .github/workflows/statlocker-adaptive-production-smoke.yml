@@ -82,6 +82,8 @@ jobs:
           cleanup_raw_event=false
           cleanup_decision=false
           refresh_attempt_observed=false
+          migration_verified=false
+          legacy_catalog_preserved=false
 
           api_container="$(sudo docker ps \
             --filter 'label=com.docker.compose.service=api' \
@@ -104,6 +106,10 @@ jobs:
           config_files="$(sudo docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$api_container")"
           previous_image_id="$(sudo docker inspect -f '{{.Image}}' "$api_container")"
           previous_image_ref="$(sudo docker inspect -f '{{.Config.Image}}' "$api_container")"
+          db_env="$(sudo docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$api_container")"
+          db_host="$(printf '%s\n' "$db_env" | sed -n 's/^DB_HOST=//p' | head -n 1)"
+          db_user="$(printf '%s\n' "$db_env" | sed -n 's/^DB_USER=//p' | head -n 1)"
+          db_name="$(printf '%s\n' "$db_env" | sed -n 's/^DB_NAME=//p' | head -n 1)"
 
           if [ -z "$project" ] || [ -z "$working_dir" ] || [ -z "$config_files" ] || [ -z "$previous_image_id" ]; then
             echo 'Production Compose rollback metadata is incomplete' >&2
@@ -113,6 +119,22 @@ jobs:
             echo "Production Compose working directory does not exist: $working_dir" >&2
             exit 1
           fi
+          if [ -z "$db_host" ] || [ -z "$db_user" ] || [ -z "$db_name" ]; then
+            echo 'Production database identity is incomplete' >&2
+            exit 1
+          fi
+          if ! sudo docker inspect "$db_host" >/dev/null 2>&1; then
+            echo "DB_HOST does not name a local Docker container: $db_host" >&2
+            exit 1
+          fi
+
+          legacy_catalog_counts() {
+            sudo docker exec "$db_host" psql -At -v ON_ERROR_STOP=1 \
+              -U "$db_user" -d "$db_name" \
+              -c "SELECT (SELECT COUNT(*) FROM item_catalog_versions)::text || '|' || (SELECT COUNT(*) FROM item_catalog_items)::text || '|' || (SELECT COUNT(*) FROM item_catalog_recipes)::text;"
+          }
+
+          legacy_counts_before="$(legacy_catalog_counts)"
 
           compose_args=(sudo docker compose --project-name "$project" --project-directory "$working_dir")
           IFS=',' read -ra compose_files <<< "$config_files"
@@ -144,6 +166,7 @@ jobs:
               image: ${candidate_image}
               environment:
                 CHROMIUM_PATH: /usr/bin/chromium-browser
+                DB_RUN_MIGRATIONS: 'true'
           EOF
 
           cat > "$rollback_override" <<EOF
@@ -169,27 +192,24 @@ jobs:
           }
 
           cleanup_smoke_data() {
-            local current_container postgres_container db_user db_name
+            local current_container
             current_container="$(current_api_container 2>/dev/null || true)"
             if [ -n "$current_container" ]; then
               if sudo docker exec "$current_container" \
                 rm -f "/app/apps/api/storage/deadlock-live/${smoke_match}.ndjson"; then
                 cleanup_raw_event=true
               fi
+            fi
 
-              db_user="$(sudo docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$current_container" \
-                | sed -n 's/^DB_USER=//p' | head -n 1)"
-              db_name="$(sudo docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$current_container" \
-                | sed -n 's/^DB_NAME=//p' | head -n 1)"
-              postgres_container="$(sudo docker ps --format '{{.Names}} {{.Image}}' \
-                | awk 'tolower($0) ~ /postgres/ {print $1; exit}')"
-              if [ -n "$postgres_container" ] && [ -n "$db_user" ] && [ -n "$db_name" ]; then
-                if sudo docker exec "$postgres_container" \
-                  psql -v ON_ERROR_STOP=1 -U "$db_user" -d "$db_name" \
-                  -c "DELETE FROM adaptive_recommendation_decisions_v1 WHERE match_id = '${smoke_match}';" \
-                  >/dev/null; then
-                  cleanup_decision=true
-                fi
+            if sudo docker exec "$db_host" psql -At -v ON_ERROR_STOP=1 \
+              -U "$db_user" -d "$db_name" \
+              -c "SELECT to_regclass('public.adaptive_recommendation_decisions_v1') IS NOT NULL;" \
+              | grep -qx 't'; then
+              if sudo docker exec "$db_host" psql -v ON_ERROR_STOP=1 \
+                -U "$db_user" -d "$db_name" \
+                -c "DELETE FROM adaptive_recommendation_decisions_v1 WHERE \"matchId\" = '${smoke_match}';" \
+                >/dev/null; then
+                cleanup_decision=true
               fi
             fi
           }
@@ -200,6 +220,9 @@ jobs:
             CLEANUP_RAW_EVENT="$cleanup_raw_event" \
             CLEANUP_DECISION="$cleanup_decision" \
             REFRESH_ATTEMPT_OBSERVED="$refresh_attempt_observed" \
+            MIGRATION_VERIFIED="$migration_verified" \
+            LEGACY_CATALOG_PRESERVED="$legacy_catalog_preserved" \
+            LEGACY_COUNTS_BEFORE="$legacy_counts_before" \
             PROJECT="$project" \
             PREVIOUS_IMAGE_ID="$previous_image_id" \
             PREVIOUS_IMAGE_REF="$previous_image_ref" \
@@ -215,7 +238,7 @@ jobs:
           from pathlib import Path
 
           payload = {
-              'schemaVersion': 'statlocker-adaptive-production-smoke-v1',
+              'schemaVersion': 'statlocker-adaptive-production-smoke-v2',
               'candidateCommit': os.environ['GITHUB_SHA_VALUE'],
               'composeProject': os.environ['PROJECT'],
               'previousImageId': os.environ['PREVIOUS_IMAGE_ID'],
@@ -229,6 +252,9 @@ jobs:
               'cleanupRawEvent': os.environ['CLEANUP_RAW_EVENT'] == 'true',
               'cleanupDecision': os.environ['CLEANUP_DECISION'] == 'true',
               'refreshAttemptObserved': os.environ['REFRESH_ATTEMPT_OBSERVED'] == 'true',
+              'migrationVerified': os.environ['MIGRATION_VERIFIED'] == 'true',
+              'legacyCatalogPreserved': os.environ['LEGACY_CATALOG_PRESERVED'] == 'true',
+              'legacyCatalogCountsBefore': os.environ['LEGACY_COUNTS_BEFORE'],
               'trainingPerformed': False,
               'valueTrainingPerformed': False,
               'futureTestEvaluated': False,
@@ -287,6 +313,47 @@ jobs:
             echo "Running image mismatch: expected $candidate_image_id got $running_image_id" >&2
             exit 1
           fi
+
+          migration_count="$(sudo docker exec "$db_host" psql -At -v ON_ERROR_STOP=1 \
+            -U "$db_user" -d "$db_name" \
+            -c "SELECT COUNT(*) FROM migrations WHERE name = 'CreateRecommendationRuntimeTables1788220800000';")"
+          if [ "$migration_count" != '1' ]; then
+            echo "Runtime migration was not recorded exactly once: $migration_count" >&2
+            exit 1
+          fi
+
+          missing_tables="$(sudo docker exec "$db_host" psql -At -v ON_ERROR_STOP=1 \
+            -U "$db_user" -d "$db_name" \
+            -c "SELECT string_agg(name, ',') FROM (VALUES
+              ('adaptive_recommendation_decisions_v1'),
+              ('model_bundle_registry_v1'),
+              ('recommendation_dataset_registry_v1'),
+              ('recommendation_decision_candidates_v8'),
+              ('recommendation_decisions_v8'),
+              ('recommendation_evidence_snapshots_v8'),
+              ('recommendation_exposure_acks_v8'),
+              ('recommendation_roadmap_evidence_v1'),
+              ('recommendation_telemetry_events'),
+              ('recommendation_telemetry_rejections_v8'),
+              ('recommendation_value_dataset_registry_v1'),
+              ('souls_affordability_evidence_v2'),
+              ('statlocker_evidence_snapshots_v1'),
+              ('recommendation_item_catalog_versions_v1'),
+              ('recommendation_item_catalog_items_v1'),
+              ('recommendation_item_catalog_recipes_v1')
+            ) AS required(name) WHERE to_regclass('public.' || name) IS NULL;")"
+          if [ -n "$missing_tables" ]; then
+            echo "Runtime migration is missing tables: $missing_tables" >&2
+            exit 1
+          fi
+          migration_verified=true
+
+          legacy_counts_after="$(legacy_catalog_counts)"
+          if [ "$legacy_counts_after" != "$legacy_counts_before" ]; then
+            echo "Legacy catalog row counts changed: before=$legacy_counts_before after=$legacy_counts_after" >&2
+            exit 1
+          fi
+          legacy_catalog_preserved=true
 
           curl -k --fail --silent --show-error --max-time 15 \
             --resolve "${domain}:443:127.0.0.1" \
