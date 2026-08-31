@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { DeadlockLiveModule } from './deadlock-live/deadlock-live.module';
+import { AdaptiveRecommendationDecisionV1Entity } from './deadlock-live/entities/adaptive-recommendation-decision-v1.entity';
 import { CrawlerRun } from './deadlock-live/entities/crawler-run.entity';
 import { CrawlerState } from './deadlock-live/entities/crawler-state.entity';
 import { Hero } from './deadlock-live/entities/hero.entity';
@@ -56,6 +57,7 @@ import { StatlockerProbeModule } from './statlocker-probe/statlocker-probe.modul
         RecommendationExposureAckV8,
         SoulsAffordabilityEvidenceV2Entity,
         StatlockerEvidenceSnapshotV1Entity,
+        AdaptiveRecommendationDecisionV1Entity,
         ModelBundleRegistryV1,
         RecommendationDatasetRegistryV1,
         RecommendationValueDatasetRegistryV1,
