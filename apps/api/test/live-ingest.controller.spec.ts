@@ -4,9 +4,11 @@ import { InventoryShadowReplayService } from '../src/deadlock-live/inventory-sha
 import { LiveMatchStateService } from '../src/deadlock-live/live-match-state.service';
 import { RawEventLogService } from '../src/deadlock-live/raw-event-log.service';
 import { RecentLiveEventsService } from '../src/deadlock-live/recent-live-events.service';
+import { RecommendationProspectiveCollectorV8Service } from '../src/deadlock-live/recommendation-prospective-collector-v8.service';
 
 describe('LiveIngestController', () => {
   it('ingests events and exposes state and recent events', async () => {
+    const observeBatch = jest.fn();
     const moduleRef = await Test.createTestingModule({
       controllers: [LiveIngestController],
       providers: [
@@ -24,6 +26,10 @@ describe('LiveIngestController', () => {
             getPlayerTimeline: jest.fn().mockReturnValue(undefined),
           },
         },
+        {
+          provide: RecommendationProspectiveCollectorV8Service,
+          useValue: { observeBatch },
+        },
       ],
     }).compile();
 
@@ -36,5 +42,6 @@ describe('LiveIngestController', () => {
 
     expect(controller.getStates()).toHaveLength(1);
     expect(controller.getRecentEvents()).toHaveLength(1);
+    expect(observeBatch).toHaveBeenCalledTimes(1);
   });
 });
