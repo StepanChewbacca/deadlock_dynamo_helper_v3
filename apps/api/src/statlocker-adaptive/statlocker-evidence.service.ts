@@ -86,10 +86,6 @@ export class StatlockerEvidenceService {
   getEvidence(input: StatlockerEvidenceRequestV1): StatlockerEvidenceBundleV1 {
     const bundle = this.getLocalEvidence(input);
     const nowMs = input.nowMs ?? Date.now();
-    this.refresh.observeGameIdentity({
-      rulesetVersion: input.rulesetVersion,
-      catalogSha256: input.catalogSha256,
-    }, nowMs);
     if (needsGlobalRefresh(bundle.byDataset)) {
       void this.refresh.refreshGlobalNow(false, nowMs).catch(() => undefined);
     }
@@ -102,6 +98,11 @@ export class StatlockerEvidenceService {
   getLocalEvidence(input: StatlockerEvidenceRequestV1): StatlockerEvidenceBundleV1 {
     validateRequest(input);
     const nowMs = input.nowMs ?? Date.now();
+    this.refresh.observeGameIdentity({
+      rulesetVersion: input.rulesetVersion,
+      catalogSha256: input.catalogSha256,
+    }, nowMs);
+    this.refresh.observeActiveHero(input.heroId, nowMs);
     const rows = this.store.listActive();
     const byDataset = {} as Record<AdaptiveScoringDatasetV1, StatlockerEvidenceFamilyV1>;
 
