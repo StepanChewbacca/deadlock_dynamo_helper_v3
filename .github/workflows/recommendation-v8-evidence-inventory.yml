@@ -1,0 +1,36 @@
+name: Recommendation V8 Evidence Inventory
+
+on:
+  push:
+    branches:
+      - agent/recommendation-v8-pretraining-implementation
+    paths:
+      - .github/workflows/recommendation-v8-evidence-inventory.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: self-hosted
+    steps:
+      - name: Inventory server-side evidence metadata only
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=/var/lib/docker/volumes/deadlock_dynamo_helper_deadlock-storage/_data
+          echo "storage_exists=$(test -d "$ROOT" && echo true || echo false)"
+          test -d "$ROOT" || exit 0
+
+          echo '--- top-level storage directories ---'
+          sudo find "$ROOT" -mindepth 1 -maxdepth 2 -type d -printf '%P\n' | sort | head -n 300
+
+          echo '--- evidence/diagnostic file metadata ---'
+          sudo find "$ROOT" -maxdepth 5 -type f \
+            \( -iname '*shop*' -o -iname '*evidence*' -o -iname '*diagnostic*' -o -iname '*capture*' -o -iname '*telemetry*' -o -iname '*recommendation*' \) \
+            -printf '%P\t%s bytes\t%TY-%Tm-%TdT%TH:%TM:%TSZ\n' 2>/dev/null | sort | head -n 500 || true
+
+          echo '--- raw event/log line counts only ---'
+          sudo find "$ROOT" -maxdepth 4 -type f \( -name '*.ndjson' -o -name '*.jsonl' \) -print0 2>/dev/null \
+            | xargs -0 -r -n1 sh -c 'printf "%s\t" "${1#'$ROOT'/}"; wc -l < "$1"' sh \
+            | sort | head -n 300 || true
