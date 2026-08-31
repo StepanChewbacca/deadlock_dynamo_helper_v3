@@ -1,0 +1,42 @@
+name: Recommendation V8 Heartbeat Integrity Fix
+
+on:
+  push:
+    branches:
+      - agent/recommendation-v8-pretraining-implementation
+    paths:
+      - .github/workflows/recommendation-v8-heartbeat-integrity-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Make runtime heartbeat fail closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('apps/api/src/deadlock-live/recommendation-prospective-collector-v8.service.ts')
+          text = path.read_text()
+          old = "        recommendationReady: true,\n"
+          new = "        recommendationReady: this.decisionReadyCount > 0 && this.lastDecisionBlockers.length === 0,\n"
+          if old not in text:
+              raise SystemExit('heartbeat readiness anchor missing')
+          path.write_text(text.replace(old, new, 1))
+          PY
+      - name: Commit integrity fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add apps/api/src/deadlock-live/recommendation-prospective-collector-v8.service.ts
+          git commit -m 'fix: fail closed prospective runtime heartbeat'
+          git push origin HEAD:agent/recommendation-v8-pretraining-implementation
