@@ -1,0 +1,57 @@
+name: Recommendation Training Host Capability Probe
+
+on:
+  push:
+    branches:
+      - agent/recommendation-v8-pretraining-execution
+    paths:
+      - .github/workflows/recommendation-training-host-capability-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - name: Inspect local training capabilities and existing job metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "arch=$(uname -m)"
+          echo "cpu=$(nproc)"
+          free -h || true
+          if command -v nvidia-smi >/dev/null 2>&1; then
+            echo '--- nvidia ---'
+            nvidia-smi || true
+          else
+            echo 'nvidia-smi=unavailable'
+          fi
+          echo '--- python ---'
+          python3 --version || true
+          echo '--- training job directories ---'
+          for d in /home/ubuntu/deadlock-training-jobs /home/ubuntu/deadlock-training-results /home/ubuntu/apps/deadlock_dynamo_helper-training /home/ubuntu/apps/deadlock_dynamo_helper-training-5000; do
+            echo "[$d]"
+            if test -d "$d"; then
+              find "$d" -maxdepth 2 -type f -printf '%p\t%s bytes\n' 2>/dev/null | sort | head -n 120 || true
+            else
+              echo missing
+            fi
+          done
+          echo '--- runner config labels (secrets redacted by omission) ---'
+          for cfg in /home/ubuntu/actions-runner/.runner /home/ubuntu/*runner*/.runner; do
+            test -f "$cfg" || continue
+            python3 - "$cfg" <<'PY'
+          import json, pathlib, sys
+          p=pathlib.Path(sys.argv[1])
+          try:
+              x=json.loads(p.read_text())
+          except Exception:
+              continue_flag=False
+          else:
+              keep={k:x.get(k) for k in ('agentName','poolId','poolName','serverUrl','gitHubUrl') if k in x}
+              print(p, json.dumps(keep, sort_keys=True))
+          PY
+          done
