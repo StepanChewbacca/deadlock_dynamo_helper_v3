@@ -4,7 +4,7 @@ import {
   StatlockerEvidenceFamilyV1,
   StatlockerNormalizedPayloadV1,
 } from './statlocker-adaptive.types';
-import { StatlockerRefreshService } from './statlocker-refresh.service';
+import { StatlockerRefreshService, StatlockerGameIdentityV1 } from './statlocker-refresh.service';
 import {
   StatlockerSnapshotStoreService,
   StatlockerStoredSnapshotV1,
@@ -37,6 +37,21 @@ export interface StatlockerEvidenceBundleV1 {
   byDataset: Record<AdaptiveScoringDatasetV1, StatlockerEvidenceFamilyV1>;
 }
 
+export interface StatlockerLocalStatusFamilyV1 {
+  dataset: string;
+  scopeKey: string;
+  snapshotId: string;
+  statlockerPatchId: string;
+  fetchedAt: string;
+  freshness: AdaptiveEvidenceFreshnessV1;
+}
+
+export interface StatlockerLocalEvidenceStatusV1 {
+  statlockerPatchId?: string;
+  activeSnapshotIds: readonly string[];
+  families: readonly StatlockerLocalStatusFamilyV1[];
+}
+
 interface FreshnessPolicyV1 {
   refreshAfterMs: number;
   maxStaleAgeMs: number;
@@ -51,6 +66,7 @@ const POLICIES: Record<AdaptiveScoringDatasetV1, FreshnessPolicyV1> = {
   CONSENSUS_SKELETON: { refreshAfterMs: 60 * MINUTE, maxStaleAgeMs: 12 * HOUR },
   WPA_FILTERED_ITEMS: { refreshAfterMs: 30 * MINUTE, maxStaleAgeMs: 4 * HOUR },
 };
+const PROFILE_POLICY: FreshnessPolicyV1 = { refreshAfterMs: HOUR, maxStaleAgeMs: 12 * HOUR };
 
 const DATASET_ORDER: readonly AdaptiveScoringDatasetV1[] = [
   'WPA_PATCH_DATA',
@@ -132,6 +148,31 @@ export class StatlockerEvidenceService {
       .sort(compareNewest)[0]?.statlockerPatchId;
   }
 
+  getLocalStatus(identity?: StatlockerGameIdentityV1, nowMs = Date.now()): StatlockerLocalEvidenceStatusV1 {
+    const rows = this.store.listActive()
+      .filter((row) => !identity || (
+        row.rulesetVersion === identity.rulesetVersion &&
+        row.catalogSha256.toLowerCase() === identity.catalogSha256.toLowerCase()
+      ))
+      .sort(compareNewest);
+    const families = rows.map((row) => ({
+      dataset: row.dataset,
+      scopeKey: row.scopeKey,
+      snapshotId: row.snapshotId,
+      statlockerPatchId: row.statlockerPatchId,
+      fetchedAt: row.fetchedAt.toISOString(),
+      freshness: classifyFreshness(
+        Math.max(0, nowMs - row.fetchedAt.getTime()),
+        policyForDataset(row.dataset),
+      ),
+    })).sort((a, b) => a.dataset.localeCompare(b.dataset) || a.scopeKey.localeCompare(b.scopeKey) || a.snapshotId.localeCompare(b.snapshotId));
+    return {
+      statlockerPatchId: rows[0]?.statlockerPatchId,
+      activeSnapshotIds: rows.map((row) => row.snapshotId).sort(),
+      families,
+    };
+  }
+
   private resolveFamily(
     dataset: AdaptiveScoringDatasetV1,
     scopeKey: string,
@@ -209,6 +250,13 @@ function freshnessConfidence(
   const width = Math.max(1, policy.maxStaleAgeMs - policy.refreshAfterMs);
   const remaining = clamp01((policy.maxStaleAgeMs - ageMs) / width);
   return 0.25 + 0.75 * remaining;
+}
+
+function policyForDataset(dataset: string): FreshnessPolicyV1 {
+  if (dataset === 'WPA_PATCH_DATA' || dataset === 'VS_HERO_WPA' || dataset === 'T4_CHAINS' || dataset === 'CONSENSUS_SKELETON' || dataset === 'WPA_FILTERED_ITEMS') {
+    return POLICIES[dataset];
+  }
+  return PROFILE_POLICY;
 }
 
 function scopeFor(dataset: AdaptiveScoringDatasetV1, input: StatlockerEvidenceRequestV1): string {
