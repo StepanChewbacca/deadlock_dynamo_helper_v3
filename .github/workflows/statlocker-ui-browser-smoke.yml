@@ -6,7 +6,6 @@ on:
       - agent/statlocker-model-probe-poc
     paths:
       - '.github/workflows/statlocker-ui-browser-smoke.yml'
-      - 'apps/api/src/statlocker-probe/statlocker-site-like.ui.ts'
       - 'apps/api/src/statlocker-probe/**'
   workflow_dispatch:
 
@@ -27,11 +26,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 90); do
+          for attempt in $(seq 1 120); do
             if sudo docker ps --format '{{.Names}}' | grep -qx 'deadlock-statlocker-probe'; then
               break
             fi
-            if [ "$attempt" -eq 90 ]; then
+            if [ "$attempt" -eq 120 ]; then
               echo 'deadlock-statlocker-probe is not running' >&2
               exit 1
             fi
@@ -39,7 +38,7 @@ jobs:
           done
           sudo docker ps --filter name=deadlock-statlocker-probe --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
 
-      - name: Exercise the public UI in Chromium
+      - name: Exercise public UI buttons and request in Chromium
         shell: bash
         run: |
           set -euo pipefail
@@ -57,29 +56,60 @@ jobs:
               headless: true,
               args: ['--no-sandbox', '--disable-dev-shm-usage', '--ignore-certificate-errors'],
             });
+
             const page = await browser.newPage();
             const pageErrors = [];
             const consoleErrors = [];
+            const browserRequests = [];
+
             page.on('pageerror', error => pageErrors.push(String(error && error.stack || error)));
             page.on('console', msg => {
               if (msg.type() === 'error') consoleErrors.push(msg.text());
             });
+            page.on('request', request => {
+              if (request.url().includes('/deadlock/tools/statlocker/browser-request')) {
+                browserRequests.push({method: request.method(), url: request.url(), postData: request.postData()});
+              }
+            });
 
             const url = 'https://aboba-telegramovich.duckdns.org/deadlock/tools/statlocker';
-            const response = await page.goto(url, {waitUntil: 'domcontentloaded', timeout: 30000});
+            const response = await page.goto(url, {waitUntil: 'networkidle0', timeout: 30000});
             await page.waitForSelector('#run', {timeout: 10000});
+            await page.waitForFunction(() => document.querySelector('#clientState')?.textContent === 'UI READY', {timeout: 10000});
 
             const initial = await page.evaluate(() => ({
               title: document.title,
               runText: document.querySelector('#run')?.textContent,
-              statusTitle: document.querySelector('#statusTitle')?.textContent,
-              statusText: document.querySelector('#statusText')?.textContent,
-              apiBase: location.pathname,
+              clientState: document.querySelector('#clientState')?.textContent,
+              statusModel: document.querySelector('#statusModel')?.textContent,
+              selectedCards: document.querySelectorAll('.card.selected').length,
             }));
             console.log('INITIAL', JSON.stringify(initial));
             console.log('PAGE_HTTP', response && response.status());
 
+            await page.click('[data-model="T4_BUILD_CHAINS"]');
+            await page.waitForFunction(() => document.querySelector('#statusModel')?.textContent === 'T4_BUILD_CHAINS', {timeout: 5000});
+
+            const selection = await page.evaluate(() => ({
+              statusModel: document.querySelector('#statusModel')?.textContent,
+              selectedModel: document.querySelector('.card.selected')?.getAttribute('data-model'),
+            }));
+            console.log('SELECTION', JSON.stringify(selection));
+
+            await page.click('[data-model="ITEM_META_WPA"]');
+            await page.waitForFunction(() => document.querySelector('#statusModel')?.textContent === 'ITEM_META_WPA', {timeout: 5000});
             await page.click('#run');
+
+            await page.waitForFunction(() => {
+              const text = document.querySelector('#statusText')?.textContent || '';
+              return text.includes('Request sent to') || text.includes('backend probe');
+            }, {timeout: 5000});
+
+            await new Promise(resolve => setTimeout(resolve, 400));
+            console.log('BROWSER_REQUESTS', JSON.stringify(browserRequests));
+            if (browserRequests.length !== 1) throw new Error('Run button did not send exactly one /browser-request POST');
+            if (browserRequests[0].method !== 'POST') throw new Error('Expected /browser-request POST');
+
             await page.waitForFunction(() => {
               const title = document.querySelector('#statusTitle')?.textContent || '';
               return title === 'Live model response captured' || title === 'Probe failed';
@@ -93,6 +123,7 @@ jobs:
               outputHint: document.querySelector('#outputHint')?.textContent,
               outputText: (document.querySelector('#output')?.textContent || '').slice(0, 1200),
               capturedText: (document.querySelector('#captured')?.textContent || '').slice(0, 1200),
+              runDisabled: document.querySelector('#run')?.disabled,
             }));
 
             console.log('FINAL', JSON.stringify(final));
@@ -102,9 +133,14 @@ jobs:
             await browser.close();
 
             if (pageErrors.length) process.exit(2);
-            if (final.statusTitle !== 'Live model response captured') process.exit(3);
-            if (!String(final.statusHttp || '').includes('200')) process.exit(4);
-            if (!String(final.outputText || '').trim()) process.exit(5);
+            if (consoleErrors.length) process.exit(3);
+            if (initial.clientState !== 'UI READY') process.exit(4);
+            if (selection.statusModel !== 'T4_BUILD_CHAINS' || selection.selectedModel !== 'T4_BUILD_CHAINS') process.exit(5);
+            if (browserRequests.length !== 1) process.exit(6);
+            if (final.statusTitle !== 'Live model response captured') process.exit(7);
+            if (!String(final.statusHttp || '').includes('200')) process.exit(8);
+            if (!String(final.outputText || '').trim()) process.exit(9);
+            if (final.runDisabled) process.exit(10);
           })().catch(error => {
             console.error(error && error.stack || error);
             process.exit(1);
