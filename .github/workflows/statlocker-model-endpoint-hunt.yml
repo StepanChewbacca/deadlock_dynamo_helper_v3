@@ -16,7 +16,7 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 10
     steps:
-      - name: Inspect Statlocker bundle lazy chunks and model strings
+      - name: Inspect model page lazy chunks for API calls
         shell: bash
         run: |
           set -euo pipefail
@@ -24,7 +24,6 @@ jobs:
           import html
           import re
           import urllib.request
-          from urllib.parse import urljoin
 
           BASE = 'https://statlocker.gg'
           MAIN = BASE + '/static/js/main.e4ee8cb5.js'
@@ -39,55 +38,94 @@ jobs:
                   data = res.read(max_bytes)
                   return data.decode(res.headers.get_content_charset() or 'utf-8', errors='replace')
 
-          source = fetch(MAIN)
-          normalized = html.unescape(source.replace('\\/', '/').replace('\\u0026', '&'))
-          lower = normalized.lower()
-          print('MAIN_BYTES=', len(normalized))
+          source = html.unescape(fetch(MAIN).replace('\\/', '/').replace('\\u0026', '&'))
 
-          print('=== STATIC JS CONTEXTS ===')
-          for token in ['static/js/', '.chunk.js', 'meta-model', '/vision/wpa', 'win-chance', 'wpa-analysis', 'eternus-builds', 'build-lab']:
-              print('--- TOKEN', token, '---')
-              pos = 0
-              count = 0
-              while count < 12:
-                  idx = lower.find(token.lower(), pos)
-                  if idx < 0:
-                      break
-                  snippet = re.sub(r'\s+', ' ', normalized[max(0, idx-900):min(len(normalized), idx+1800)])
-                  print(snippet)
-                  print()
-                  count += 1
-                  pos = idx + len(token)
+          chunk_hashes = {}
+          runtime = re.search(r'''n\.u=e=>"static/js/"\+e\+"\."\+\{([^}]+)\}\[e\]\+"\.chunk\.js"''', source)
+          if not runtime:
+              raise SystemExit('Could not parse webpack JS chunk map')
+          for chunk_id, digest in re.findall(r'''(\d+):"([0-9a-f]+)"''', runtime.group(1)):
+              chunk_hashes[int(chunk_id)] = digest
+          print('JS_CHUNK_MAP_SIZE=', len(chunk_hashes))
 
-          print('=== QUOTED MODEL/WPA STRINGS ===')
-          string_re = re.compile(r'''["']([^"'\\]{1,240})["']''')
-          strings = set()
-          for match in string_re.finditer(normalized):
-              value = match.group(1)
-              lv = value.lower()
-              if any(k in lv for k in ['wpa', 'win-chance', 'win chance', 'meta-model', 'eternus', 'build-lab', 'prediction', 'winprob', 'model']):
-                  strings.add(value)
-          for value in sorted(strings, key=lambda v: (len(v), v))[:500]:
-              print('STRING', value)
+          targets = {
+              'ITEM_META_MODEL': 'Xn=',
+              'WIN_CHANCE_MODEL': 'Jn=',
+              'BUILDS_ROUTE': 'wn=',
+          }
 
-          print('=== HASH MAP CANDIDATES ===')
-          # CRA/webpack runtime commonly contains numeric chunk-id -> content-hash maps.
-          for match in re.finditer(r'''\{(?:\d+:?["'][0-9a-f]{6,32}["'],?){3,}\}''', normalized):
-              print(match.group(0)[:12000])
+          selected_ids = set()
+          for label, token in targets.items():
+              idx = source.find(token)
+              print(f'=== {label} ASSIGNMENT ===')
+              if idx < 0:
+                  print('NOT_FOUND', token)
+                  continue
+              segment = source[idx:idx + 5000]
+              stop = segment.find('))),')
+              if stop > 0:
+                  segment = segment[:stop + 4]
+              print(segment[:5000])
+              ids = [int(value) for value in re.findall(r'''n\.e\((\d+)\)''', segment)]
+              module_ids = re.findall(r'''n\.bind\(n,(\d+)\)''', segment)
+              print('CHUNK_IDS=', ids)
+              print('MODULE_IDS=', module_ids)
+              selected_ids.update(ids)
 
-          print('=== CHUNK URL CANDIDATES ===')
-          urls = set()
-          for match in re.finditer(r'''(?:static/js/)?([0-9]{1,6})\.([0-9a-f]{6,32})\.chunk\.js''', normalized):
-              urls.add(urljoin(BASE + '/', 'static/js/' + match.group(1) + '.' + match.group(2) + '.chunk.js'))
-          print('LITERAL_CHUNKS=', len(urls))
-          for url in sorted(urls):
-              print('CHUNK', url)
+          print('=== FETCH SELECTED CHUNKS ===')
+          sources = {}
+          for chunk_id in sorted(selected_ids):
+              digest = chunk_hashes.get(chunk_id)
+              if not digest:
+                  print('MISSING_HASH', chunk_id)
+                  continue
+              url = f'{BASE}/static/js/{chunk_id}.{digest}.chunk.js'
+              try:
+                  text = html.unescape(fetch(url).replace('\\/', '/').replace('\\u0026', '&'))
+                  sources[url] = text
+                  print('FETCHED', url, 'bytes=', len(text))
+              except Exception as exc:
+                  print('ERROR', url, exc)
 
-          print('=== POSSIBLE CHUNK HASH PAIRS ===')
-          pairs = set()
-          for match in re.finditer(r'''(?:^|[,\{])(\d{1,6}):["']([0-9a-f]{6,32})["']''', normalized):
-              pairs.add((match.group(1), match.group(2)))
-          print('PAIR_COUNT=', len(pairs))
-          for chunk_id, digest in sorted(pairs, key=lambda p: int(p[0]))[:1000]:
-              print('PAIR', chunk_id, digest)
+          endpoint_re = re.compile(r'''/api/[A-Za-z0-9_./?=&:$%+\-{}\[\]]{1,500}''')
+          keywords = ['wpa','win chance','win-chance','win probability','win_probability','win-probability','prediction','predict','model','purchase','timing','comeback','win-more','chain','synergy','eternus','recommend','meta','graph']
+          endpoints = {}
+
+          print('=== API AND NETWORK CONTEXTS ===')
+          for url, text in sources.items():
+              lower = text.lower()
+              for match in endpoint_re.finditer(text):
+                  path = match.group(0).rstrip('),;\"\'`')
+                  context = re.sub(r'\s+', ' ', text[max(0, match.start()-700):min(len(text), match.end()+1200)])
+                  signals = sorted({k for k in keywords if k in context.lower() or k in path.lower()})
+                  endpoints.setdefault(path, {'sources': set(), 'signals': set(), 'contexts': []})
+                  endpoints[path]['sources'].add(url)
+                  endpoints[path]['signals'].update(signals)
+                  if len(endpoints[path]['contexts']) < 2:
+                      endpoints[path]['contexts'].append(context[:1900])
+
+              for keyword in keywords:
+                  pos = 0
+                  shown = 0
+                  while shown < 12:
+                      idx = lower.find(keyword, pos)
+                      if idx < 0:
+                          break
+                      context = re.sub(r'\s+', ' ', text[max(0, idx-900):min(len(text), idx+1900)])
+                      if any(token in context for token in ['/api/', 'fetch(', 'axios', '.get(', '.post(', 'graphql', 'trpc']):
+                          print('NETWORK_CONTEXT', keyword, url)
+                          print(context[:2800])
+                          shown += 1
+                      pos = idx + len(keyword)
+
+          print('=== ENDPOINTS ===')
+          ranked = sorted(endpoints.items(), key=lambda item: (-len(item[1]['signals']), item[0]))
+          for path, info in ranked:
+              print('ENDPOINT', path)
+              print('  SIGNALS', ','.join(sorted(info['signals'])) or '-')
+              print('  SOURCES', ','.join(sorted(info['sources'])))
+              for context in info['contexts']:
+                  print('  CONTEXT', context)
+
+          print('SUMMARY selectedChunks=', len(selected_ids), 'fetchedChunks=', len(sources), 'endpoints=', len(endpoints))
           PY
