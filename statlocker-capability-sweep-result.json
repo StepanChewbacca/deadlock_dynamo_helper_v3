@@ -1,0 +1,1560 @@
+{
+  "generatedAt": "2026-08-31T13:35:47.773Z",
+  "browserMode": true,
+  "apiKeyProvidedBySweep": false,
+  "sourcePage": "https://statlocker.gg/items/meta-model",
+  "frontendEndpointStrings": [
+    "/api/info/heroes-full?v=",
+    "/api/info/patches-with-ids"
+  ],
+  "context": {
+    "patchId": "patch_676255623445218601",
+    "matchId": "102626994",
+    "accountId": "281768392",
+    "heroId": "6"
+  },
+  "probes": [
+    {
+      "label": "ITEM_META_WPA",
+      "path": "/api/info/wpa-filtered-items?hero=Abrams&tier=all&rank=ranked&category=all&gameState=all&purchaseTime=all&teamComp=Average%20Comp&buildType=all&patch=all&minSampleSize=500&searchTerm=&sortBy=wpa",
+      "ok": true,
+      "status": 200,
+      "elapsedMs": 1141,
+      "body": {
+        "type": "object",
+        "keys": [
+          "items",
+          "tiers",
+          "availableHeroes",
+          "availableItems",
+          "availablePatches",
+          "availableRanks"
+        ],
+        "sample": {
+          "items": {
+            "type": "array",
+            "length": 104,
+            "sample": {
+              "type": "object",
+              "keys": [
+                "item",
+                "heroName",
+                "category",
+                "cost",
+                "wpaValue",
+                "sampleSize",
+                "costRelativeWpa",
+                "mean_purchase_time_min",
+                "mean_prob_before",
+                "aheadWpa",
+                "behindWpa",
+                "aheadBehindDiff",
+                "best_purchase_time",
+                "mean_net_worth_before"
+              ],
+              "sample": {
+                "item": "Frenzy",
+                "heroName": "Abrams",
+                "category": "Damage",
+                "cost": 6400,
+                "wpaValue": 0.053441350710900476,
+                "sampleSize": 844,
+                "costRelativeWpa": 0.053441350710900476,
+                "mean_purchase_time_min": 35.66876777251185,
+                "mean_prob_before": 0.6079252369668247,
+                "aheadWpa": 0.03248709677419355,
+                "behindWpa": 0.08431102040816325,
+                "aheadBehindDiff": -0.051823923633969704,
+                "best_purchase_time": {
+                  "type": "object",
+                  "keys": [
+                    "time_min"
+                  ]
+                },
+                "mean_net_worth_before": 38283.31161469194
+              }
+            }
+          },
+          "tiers": {
+            "type": "object",
+            "keys": [
+              "S",
+              "A",
+              "B",
+              "C",
+              "D",
+              "F",
+              "_thresholds"
+            ],
+            "sample": {
+              "S": {
+                "type": "array",
+                "length": 24,
+                "sample": {
+                  "type": "object",
+                  "keys": [
+                    "item",
+                    "heroName",
+                    "category",
+                    "cost",
+                    "wpaValue",
+                    "sampleSize",
+                    "costRelativeWpa",
+                    "mean_purchase_time_min",
+                    "mean_prob_before",
+                    "aheadWpa",
+                    "behindWpa",
+                    "aheadBehindDiff",
+                    "best_purchase_time",
+                    "mean_net_worth_before"
+                  ]
+                }
+              },
+              "A": {
+                "type": "array",
+                "length": 12,
+                "sample": {
+                  "type": "object",
+                  "keys": [
+                    "item",
+                    "heroName",
+                    "category",
+                    "cost",
+                    "wpaValue",
+                    "sampleSize",
+                    "costRelativeWpa",
+                    "mean_purchase_time_min",
+                    "mean_prob_before",
+                    "aheadWpa",
+                    "behindWpa",
+                    "aheadBehindDiff",
+                    "best_purchase_time",
+                    "mean_net_worth_before"
+                  ]
+                }
+              },
+              "B": {
+                "type": "array",
+                "length": 29,
+                "sample": {
+                  "type": "object",
+                  "keys": [
+                    "item",
+                    "heroName",
+                    "category",
+                    "cost",
+                    "wpaValue",
+                    "sampleSize",
+                    "costRelativeWpa",
+                    "mean_purchase_time_min",
+                    "mean_prob_before",
+                    "aheadWpa",
+                    "behindWpa",
+                    "aheadBehindDiff",
+                    "best_purchase_time",
+                    "mean_net_worth_before"
+                  ]
+                }
+              },
+              "C": {
+                "type": "array",
+                "length": 31,
+                "sample": {
+                  "type": "object",
+                  "keys": [
+                    "item",
+                    "heroName",
+                    "category",
+                    "cost",
+                    "wpaValue",
+                    "sampleSize",
+                    "costRelativeWpa",
+                    "mean_purchase_time_min",
+                    "mean_prob_before",
+                    "aheadWpa",
+                    "behindWpa",
+                    "aheadBehindDiff",
+                    "best_purchase_time",
+                    "mean_net_worth_before"
+                  ]
+                }
+              },
+              "D": {
+                "type": "array",
+                "length": 6,
+                "sample": {
+                  "type": "object",
+                  "keys": [
+                    "item",
+                    "heroName",
+                    "category",
+                    "cost",
+                    "wpaValue",
+                    "sampleSize",
+                    "costRelativeWpa",
+                    "mean_purchase_time_min",
+                    "mean_prob_before",
+                    "aheadWpa",
+                    "behindWpa",
+                    "aheadBehindDiff",
+                    "best_purchase_time",
+                    "mean_net_worth_before"
+                  ]
+                }
+              },
+              "F": {
+                "type": "array",
+                "length": 2,
+                "sample": {
+                  "type": "object",
+                  "keys": [
+                    "item",
+                    "heroName",
+                    "category",
+                    "cost",
+                    "wpaValue",
+                    "sampleSize",
+                    "costRelativeWpa",
+                    "mean_purchase_time_min",
+                    "mean_prob_before",
+                    "aheadWpa",
+                    "behindWpa",
+                    "aheadBehindDiff",
+                    "best_purchase_time",
+                    "mean_net_worth_before"
+                  ]
+                }
+              },
+              "_thresholds": {
+                "type": "object",
+                "keys": [
+                  "S",
+                  "A",
+                  "B",
+                  "C",
+                  "D",
+                  "F"
+                ],
+                "sample": {
+                  "S": 0.03,
+                  "A": 0.015,
+                  "B": 0.005,
+                  "C": -0.0025,
+                  "D": -0.015,
+                  "F": -0.015
+                }
+              }
+            }
+          },
+          "availableHeroes": {
+            "type": "array",
+            "length": 38,
+            "sample": "Abrams"
+          },
+          "availableItems": {
+            "type": "array",
+            "length": 156,
+            "sample": "Active Reload"
+          },
+          "availablePatches": {
+            "type": "array",
+            "length": 4,
+            "sample": "patch_676255623445218601"
+          },
+          "availableRanks": {
+            "type": "array",
+            "length": 6,
+            "sample": "rank_7"
+          }
+        }
+      },
+      "extracted": {
+        "availablePatches": [
+          "patch_676255623445218601",
+          "patch_146261_presplit",
+          "patch_146261",
+          "patch_135477"
+        ],
+        "itemCount": 104
+      }
+    },
+    {
+      "label": "T4_BUILD_CHAINS",
+      "path": "/api/info/t4-chains-data",
+      "ok": true,
+      "status": 200,
+      "elapsedMs": 168,
+      "body": {
+        "type": "object",
+        "keys": [
+          "metadata",
+          "by_hero"
+        ],
+        "sample": {
+          "metadata": {
+            "type": "object",
+            "keys": [
+              "total_chains_analyzed",
+              "min_chain_samples",
+              "top_n_chains_per_hero",
+              "unique_heroes_with_chains",
+              "wpa_coverage_pct",
+              "timestamp"
+            ],
+            "sample": {
+              "total_chains_analyzed": 25578111,
+              "min_chain_samples": 3,
+              "top_n_chains_per_hero": 20,
+              "unique_heroes_with_chains": 38,
+              "wpa_coverage_pct": 99.9,
+              "timestamp": "2026-08-30T04:14:55.119999"
+            }
+          },
+          "by_hero": {
+            "type": "object",
+            "keys": [
+              "Billy",
+              "Calico",
+              "Lash",
+              "Holliday",
+              "Warden",
+              "Paradox",
+              "Rem",
+              "Haze",
+              "Ivy",
+              "Shiv",
+              "Mina",
+              "Viscous",
+              "Bebop",
+              "Paige",
+              "Pocket",
+              "Seven",
+              "Wraith",
+              "Abrams",
+              "Mo_and_Krill",
+              "Infernus",
+              "Drifter",
+              "Vindicta",
+              "Kelvin",
+              "Sinclair",
+              "Victor",
+              "Lady_Geist",
+              "Grey_Talon",
+              "Dynamo",
+              "The_Doorman",
+              "Yamato",
+              "Vyper",
+              "Mirage",
+              "McGinnis",
+              "Graves",
+              "Silver",
+              "Venator",
+              "Celeste",
+              "Apollo"
+            ],
+            "sample": {
+              "Billy": {
+                "type": "object",
+                "keys": [
+                  "total_t4_chains",
+                  "two_item_chains",
+                  "three_item_chains"
+                ],
+                "sample": {
+                  "total_t4_chains": 40,
+                  "two_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  },
+                  "three_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  }
+                }
+              },
+              "Calico": {
+                "type": "object",
+                "keys": [
+                  "total_t4_chains",
+                  "two_item_chains",
+                  "three_item_chains"
+                ],
+                "sample": {
+                  "total_t4_chains": 40,
+                  "two_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  },
+                  "three_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  }
+                }
+              },
+              "Lash": {
+                "type": "object",
+                "keys": [
+                  "total_t4_chains",
+                  "two_item_chains",
+                  "three_item_chains"
+                ],
+                "sample": {
+                  "total_t4_chains": 40,
+                  "two_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  },
+                  "three_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  }
+                }
+              },
+              "Holliday": {
+                "type": "object",
+                "keys": [
+                  "total_t4_chains",
+                  "two_item_chains",
+                  "three_item_chains"
+                ],
+                "sample": {
+                  "total_t4_chains": 40,
+                  "two_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  },
+                  "three_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  }
+                }
+              },
+              "Warden": {
+                "type": "object",
+                "keys": [
+                  "total_t4_chains",
+                  "two_item_chains",
+                  "three_item_chains"
+                ],
+                "sample": {
+                  "total_t4_chains": 40,
+                  "two_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  },
+                  "three_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  }
+                }
+              },
+              "Paradox": {
+                "type": "object",
+                "keys": [
+                  "total_t4_chains",
+                  "two_item_chains",
+                  "three_item_chains"
+                ],
+                "sample": {
+                  "total_t4_chains": 40,
+                  "two_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  },
+                  "three_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  }
+                }
+              },
+              "Rem": {
+                "type": "object",
+                "keys": [
+                  "total_t4_chains",
+                  "two_item_chains",
+                  "three_item_chains"
+                ],
+                "sample": {
+                  "total_t4_chains": 40,
+                  "two_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  },
+                  "three_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  }
+                }
+              },
+              "Haze": {
+                "type": "object",
+                "keys": [
+                  "total_t4_chains",
+                  "two_item_chains",
+                  "three_item_chains"
+                ],
+                "sample": {
+                  "total_t4_chains": 40,
+                  "two_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  },
+                  "three_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  }
+                }
+              },
+              "Ivy": {
+                "type": "object",
+                "keys": [
+                  "total_t4_chains",
+                  "two_item_chains",
+                  "three_item_chains"
+                ],
+                "sample": {
+                  "total_t4_chains": 40,
+                  "two_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  },
+                  "three_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  }
+                }
+              },
+              "Shiv": {
+                "type": "object",
+                "keys": [
+                  "total_t4_chains",
+                  "two_item_chains",
+                  "three_item_chains"
+                ],
+                "sample": {
+                  "total_t4_chains": 40,
+                  "two_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  },
+                  "three_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  }
+                }
+              },
+              "Mina": {
+                "type": "object",
+                "keys": [
+                  "total_t4_chains",
+                  "two_item_chains",
+                  "three_item_chains"
+                ],
+                "sample": {
+                  "total_t4_chains": 40,
+                  "two_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  },
+                  "three_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  }
+                }
+              },
+              "Viscous": {
+                "type": "object",
+                "keys": [
+                  "total_t4_chains",
+                  "two_item_chains",
+                  "three_item_chains"
+                ],
+                "sample": {
+                  "total_t4_chains": 40,
+                  "two_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  },
+                  "three_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  }
+                }
+              },
+              "Bebop": {
+                "type": "object",
+                "keys": [
+                  "total_t4_chains",
+                  "two_item_chains",
+                  "three_item_chains"
+                ],
+                "sample": {
+                  "total_t4_chains": 40,
+                  "two_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  },
+                  "three_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  }
+                }
+              },
+              "Paige": {
+                "type": "object",
+                "keys": [
+                  "total_t4_chains",
+                  "two_item_chains",
+                  "three_item_chains"
+                ],
+                "sample": {
+                  "total_t4_chains": 40,
+                  "two_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  },
+                  "three_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  }
+                }
+              },
+              "Pocket": {
+                "type": "object",
+                "keys": [
+                  "total_t4_chains",
+                  "two_item_chains",
+                  "three_item_chains"
+                ],
+                "sample": {
+                  "total_t4_chains": 40,
+                  "two_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  },
+                  "three_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  }
+                }
+              },
+              "Seven": {
+                "type": "object",
+                "keys": [
+                  "total_t4_chains",
+                  "two_item_chains",
+                  "three_item_chains"
+                ],
+                "sample": {
+                  "total_t4_chains": 40,
+                  "two_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  },
+                  "three_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  }
+                }
+              },
+              "Wraith": {
+                "type": "object",
+                "keys": [
+                  "total_t4_chains",
+                  "two_item_chains",
+                  "three_item_chains"
+                ],
+                "sample": {
+                  "total_t4_chains": 40,
+                  "two_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  },
+                  "three_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  }
+                }
+              },
+              "Abrams": {
+                "type": "object",
+                "keys": [
+                  "total_t4_chains",
+                  "two_item_chains",
+                  "three_item_chains"
+                ],
+                "sample": {
+                  "total_t4_chains": 40,
+                  "two_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  },
+                  "three_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  }
+                }
+              },
+              "Mo_and_Krill": {
+                "type": "object",
+                "keys": [
+                  "total_t4_chains",
+                  "two_item_chains",
+                  "three_item_chains"
+                ],
+                "sample": {
+                  "total_t4_chains": 40,
+                  "two_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  },
+                  "three_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  }
+                }
+              },
+              "Infernus": {
+                "type": "object",
+                "keys": [
+                  "total_t4_chains",
+                  "two_item_chains",
+                  "three_item_chains"
+                ],
+                "sample": {
+                  "total_t4_chains": 40,
+                  "two_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  },
+                  "three_item_chains": {
+                    "type": "array",
+                    "length": 20
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "extracted": null
+    },
+    {
+      "label": "VS_HERO_WPA",
+      "path": "/api/info/vs-hero-wpa-data",
+      "ok": false,
+      "status": 0,
+      "elapsedMs": 15001,
+      "error": "The user aborted a request.",
+      "body": null,
+      "extracted": null
+    },
+    {
+      "label": "WPA_PATCHES",
+      "path": "/api/info/wpa-patches",
+      "ok": true,
+      "status": 200,
+      "elapsedMs": 507,
+      "body": {
+        "type": "array",
+        "length": 10,
+        "sample": {
+          "type": "object",
+          "keys": [
+            "minorPatchId",
+            "majorPatchDate",
+            "metadataSummary",
+            "createdAt"
+          ],
+          "sample": {
+            "minorPatchId": "676255623445218601",
+            "majorPatchDate": "2026-03-11",
+            "metadataSummary": "{\"method\": {\"process\": [\"1. Get top 999 items by sample_size (DESC)\", \"2. Sort those 999 items by mean_wpa (DESC)\"], \"ranking\": \"top_n_sample_size_then_sort_by_wpa\", \"description\": \"Top 999 highest sample size items, ranked by mean WPA (DES",
+            "createdAt": "2026-08-27 15:05:24"
+          }
+        }
+      },
+      "extracted": null
+    },
+    {
+      "label": "PRO_BUILD_ANALYSIS",
+      "path": "/api/info/player-build-analysis/281768392/6",
+      "ok": true,
+      "status": 200,
+      "elapsedMs": 1021,
+      "body": {
+        "type": "object",
+        "keys": [
+          "accountId",
+          "heroId",
+          "totalMatches",
+          "winRate",
+          "avgKills",
+          "avgDeaths",
+          "avgAssists",
+          "avgMvpScore",
+          "avgMvpPlacement",
+          "avgRankBadge",
+          "items",
+          "mostCommonAbilityOrder",
+          "itemRelationships"
+        ],
+        "sample": {
+          "accountId": 281768392,
+          "heroId": 6,
+          "totalMatches": 189,
+          "winRate": 0.582010582010582,
+          "avgKills": 8.164021164021165,
+          "avgDeaths": 8.470899470899472,
+          "avgAssists": 16.32804232804233,
+          "avgMvpScore": 58.14683908562801,
+          "avgMvpPlacement": 2.9894179894179893,
+          "avgRankBadge": 109.65,
+          "items": {
+            "type": "array",
+            "length": 36,
+            "sample": {
+              "type": "object",
+              "keys": [
+                "itemId",
+                "name",
+                "className",
+                "slotType",
+                "tier",
+                "purchaseRate",
+                "winRate",
+                "avgBuyTimeS",
+                "medianBuyTimeS",
+                "purchaseCount",
+                "totalMatches",
+                "frequencyTier",
+                "phase"
+              ],
+              "sample": {
+                "itemId": 26002154,
+                "name": "Melee Charge",
+                "className": "upgrade_melee_charge",
+                "slotType": "weapon",
+                "tier": 2,
+                "purchaseRate": 0.783068783068783,
+                "winRate": 0.6013513513513513,
+                "avgBuyTimeS": 439.6554054054054,
+                "medianBuyTimeS": 398.5,
+                "purchaseCount": 148,
+                "totalMatches": 189,
+                "frequencyTier": "core",
+                "phase": "early"
+              }
+            }
+          },
+          "mostCommonAbilityOrder": {
+            "type": "array",
+            "length": 16,
+            "sample": 3
+          },
+          "itemRelationships": {
+            "type": "array",
+            "length": 57,
+            "sample": {
+              "type": "object",
+              "keys": [
+                "itemIdA",
+                "itemIdB",
+                "type",
+                "coOccurrenceRate",
+                "conditionalBGivenA",
+                "conditionalAGivenB"
+              ],
+              "sample": {
+                "itemIdA": 26002154,
+                "itemIdB": 1342610602,
+                "type": "and",
+                "coOccurrenceRate": 0.7195767195767195,
+                "conditionalBGivenA": 0.918918918918919,
+                "conditionalAGivenB": 0.9855072463768116
+              }
+            }
+          }
+        }
+      },
+      "extracted": null
+    },
+    {
+      "label": "HERO_LEADERBOARD",
+      "path": "/api/leaderboard/get-valve-leaderboard?region=Europe&heroId=6&page=1&pageSize=10&version=2",
+      "ok": true,
+      "status": 200,
+      "elapsedMs": 72,
+      "body": {
+        "type": "object",
+        "keys": [
+          "data",
+          "totalCount",
+          "page",
+          "pageSize",
+          "totalPages",
+          "rankThresholds"
+        ],
+        "sample": {
+          "data": {
+            "type": "array",
+            "length": 10,
+            "sample": {
+              "type": "object",
+              "keys": [
+                "account_name",
+                "badge_level",
+                "rank",
+                "ranked_rank",
+                "ranked_subrank",
+                "top_hero_ids",
+                "steamProfile",
+                "heroPerformanceRank",
+                "derivedBadgeLevel"
+              ],
+              "sample": {
+                "account_name": "PSYCHEDELIC MONGOL WARRIOR",
+                "badge_level": null,
+                "rank": 1,
+                "ranked_rank": null,
+                "ranked_subrank": null,
+                "top_hero_ids": {
+                  "type": "array",
+                  "length": 0
+                },
+                "steamProfile": {
+                  "type": "object",
+                  "keys": [
+                    "accountId",
+                    "name",
+                    "avatarUrl",
+                    "performanceRankMessage",
+                    "lastUpdated",
+                    "calibrationMatches",
+                    "twitchUsername",
+                    "youtubeChannelUrl",
+                    "region",
+                    "calibrationMatchId",
+                    "calibrationResetMatchId",
+                    "fontId",
+                    "glowStyleId",
+                    "glowColorId",
+                    "outlineId",
+                    "animationId",
+                    "avatarShapeId",
+                    "avatarEffectId",
+                    "avatarEffectColorId",
+                    "titleId",
+                    "valveRankNumber",
+                    "valveFlatProgress",
+                    "valveCalibrationGamesLeft",
+                    "updatedWithinLast1Minutes",
+                    "localisedLastUpdated",
+                    "estimatedRankNumber",
+                    "ppScore",
+                    "selectedWidgets"
+                  ]
+                },
+                "heroPerformanceRank": "Elite",
+                "derivedBadgeLevel": 111
+              }
+            }
+          },
+          "totalCount": 75,
+          "page": 1,
+          "pageSize": 10,
+          "totalPages": 8,
+          "rankThresholds": {
+            "type": "array",
+            "length": 0
+          }
+        }
+      },
+      "extracted": null
+    },
+    {
+      "label": "ACCOUNT_IDS_WITH_HERO_MATCHES",
+      "path": "/api/profile/account-ids-with-hero-matches?heroId=6&accountIds=281768392",
+      "ok": true,
+      "status": 200,
+      "elapsedMs": 523,
+      "body": {
+        "type": "array",
+        "length": 1,
+        "sample": 281768392
+      },
+      "extracted": null
+    },
+    {
+      "label": "PLAYER_PERFORMANCE",
+      "path": "/api/profile/get-performance-analysis/281768392/6",
+      "ok": true,
+      "status": 200,
+      "elapsedMs": 2703,
+      "body": {
+        "type": "object",
+        "keys": [
+          "profileAggregateStats",
+          "matchHistory",
+          "playerPerformance",
+          "playerPerformanceLast100",
+          "heroPerformances",
+          "recent200newPerformanceRank",
+          "newHeroPerformances",
+          "allMatchPerformanceNew",
+          "calibrationMatches",
+          "storedPPScore",
+          "totalMatches",
+          "rollupStats",
+          "v3PpScore",
+          "v3CalibrationMatches",
+          "v3RankNumber",
+          "standardPpScore",
+          "standardCalibrationMatches"
+        ],
+        "sample": {
+          "profileAggregateStats": null,
+          "matchHistory": {
+            "type": "array",
+            "length": 923,
+            "sample": {
+              "type": "object",
+              "keys": [
+                "match_id",
+                "account_id",
+                "abandoned_time_s",
+                "denies",
+                "game_mode",
+                "hero_id",
+                "hero_level",
+                "last_hits",
+                "match_duration_s",
+                "match_mode",
+                "match_result",
+                "net_worth",
+                "objectives_mask_team0",
+                "objectives_mask_team1",
+                "player_assists",
+                "player_deaths",
+                "player_kills",
+                "player_team",
+                "start_time",
+                "team_abandoned",
+                "average_rank",
+                "expectedPlacement",
+                "actualPlacement",
+                "globalRankDelta",
+                "subrankImpact",
+                "ppImpactMultiplier",
+                "ppImpact",
+                "calibrationMultiplier",
+                "expectedMvpScore",
+                "performedAsPPScore",
+                "performedAsRankNumber",
+                "hiddenKingScore",
+                "archmotherScore",
+                "hiddenKingAvgPpScore",
+                "archmotherAvgPpScore",
+                "streetBrawlPpImpact",
+                "lobbyAveragePp",
+                "heroPpImpact",
+                "lowPriPool",
+                "rankedDisplayRank",
+                "rankedFlatProgressInitial",
+                "rankedFlatProgressFinal",
+                "rankedCalibrationGamesLeft",
+                "rankedDemotionProtectionGames",
+                "rankedWinStreak",
+                "derivedAverageRank",
+                "valveDerivedAverageRank",
+                "prePatch",
+                "formattedStartTime",
+                "player_slot",
+                "team",
+                "player_damage",
+                "total_souls",
+                "team_category_scores_json",
+                "overallNormalizedRank",
+                "globalRank",
+                "kdRatio",
+                "kdaRatio",
+                "damagePerLife",
+                "damageTakenPerLife",
+                "accuracy",
+                "headshotAccuracy",
+                "otherPlayerHealingPerMinute",
+                "otherPlayerTotalHealing",
+                "soulsPerMinute",
+                "damagePerMinute",
+                "playerToCreepDamageRatio",
+                "killParticipation",
+                "kpPerCS",
+                "earlyImpactIndex",
+                "carryIndex",
+                "damageDealtTakenRatio",
+                "damageTakenDealtRatio",
+                "totalDamageTaken",
+                "totalDamageAbsorbed",
+                "totalDamage",
+                "totalCS",
+                "damageTakenPerMinute",
+                "damageAbsorbedPerMinute",
+                "kaRatio"
+              ],
+              "sample": {
+                "match_id": 102626994,
+                "account_id": 281768392,
+                "abandoned_time_s": 0,
+                "denies": 0,
+                "game_mode": 1,
+                "hero_id": 6,
+                "hero_level": 0,
+                "last_hits": 65,
+                "match_duration_s": 1834,
+                "match_mode": 4,
+                "match_result": 0,
+                "net_worth": 42513,
+                "objectives_mask_team0": 0,
+                "objectives_mask_team1": 0,
+                "player_assists": 19,
+                "player_deaths": 8,
+                "player_kills": 12,
+                "player_team": 0,
+                "start_time": 1788097831000,
+                "team_abandoned": null
+              }
+            }
+          },
+          "playerPerformance": {
+            "type": "object",
+            "keys": [
+              "totalMatches",
+              "filteredMatches",
+              "rankGroups",
+              "performanceRank",
+              "heroPerformanceMap",
+              "earliestMatchTimestamp",
+              "latestMatchTimestamp"
+            ],
+            "sample": {
+              "totalMatches": 923,
+              "filteredMatches": 823,
+              "rankGroups": {
+                "type": "array",
+                "length": 8,
+                "sample": {
+                  "type": "object",
+                  "keys": [
+                    "tier",
+                    "subgroup",
+                    "representativeRank",
+                    "displayName",
+                    "customLabel",
+                    "matches",
+                    "totalMatches",
+                    "totalGlobalRank",
+                    "meanGlobalRank",
+                    "performanceStatus"
+                  ]
+                }
+              },
+              "performanceRank": {
+                "type": "object",
+                "keys": [
+                  "hasEnoughData",
+                  "highEternusTier",
+                  "bestGroup",
+                  "singleRank",
+                  "lowerBound",
+                  "upperBound",
+                  "message",
+                  "tier",
+                  "rankNumber",
+                  "worstGroup",
+                  "midTier",
+                  "aboveAllTiers",
+                  "belowAllTiers"
+                ],
+                "sample": {
+                  "hasEnoughData": true,
+                  "highEternusTier": "ELITE",
+                  "bestGroup": {
+                    "type": "object",
+                    "keys": [
+                      "tier",
+                      "subgroup",
+                      "representativeRank",
+                      "displayName",
+                      "customLabel",
+                      "matches",
+                      "totalMatches",
+                      "totalGlobalRank",
+                      "meanGlobalRank",
+                      "performanceStatus"
+                    ]
+                  },
+                  "singleRank": null,
+                  "lowerBound": null,
+                  "upperBound": null,
+                  "message": "Elite",
+                  "tier": 11,
+                  "rankNumber": 116,
+                  "worstGroup": null,
+                  "midTier": false,
+                  "aboveAllTiers": true,
+                  "belowAllTiers": false
+                }
+              },
+              "heroPerformanceMap": {
+                "type": "object",
+                "keys": [],
+                "sample": {}
+              },
+              "earliestMatchTimestamp": "2024-11-23T10:36:11.000+00:00",
+              "latestMatchTimestamp": "2026-08-30T13:50:31.000+00:00"
+            }
+          },
+          "playerPerformanceLast100": {
+            "type": "object",
+            "keys": [
+              "totalMatches",
+              "filteredMatches",
+              "rankGroups",
+              "performanceRank",
+              "heroPerformanceMap",
+              "earliestMatchTimestamp",
+              "latestMatchTimestamp"
+            ],
+            "sample": {
+              "totalMatches": 200,
+              "filteredMatches": 200,
+              "rankGroups": {
+                "type": "array",
+                "length": 6,
+                "sample": {
+                  "type": "object",
+                  "keys": [
+                    "tier",
+                    "subgroup",
+                    "representativeRank",
+                    "displayName",
+                    "customLabel",
+                    "matches",
+                    "totalMatches",
+                    "totalGlobalRank",
+                    "meanGlobalRank",
+                    "performanceStatus"
+                  ]
+                }
+              },
+              "performanceRank": {
+                "type": "object",
+                "keys": [
+                  "hasEnoughData",
+                  "highEternusTier",
+                  "bestGroup",
+                  "singleRank",
+                  "lowerBound",
+                  "upperBound",
+                  "message",
+                  "tier",
+                  "rankNumber",
+                  "worstGroup",
+                  "midTier",
+                  "aboveAllTiers",
+                  "belowAllTiers"
+                ],
+                "sample": {
+                  "hasEnoughData": true,
+                  "highEternusTier": "ELITE",
+                  "bestGroup": {
+                    "type": "object",
+                    "keys": [
+                      "tier",
+                      "subgroup",
+                      "representativeRank",
+                      "displayName",
+                      "customLabel",
+                      "matches",
+                      "totalMatches",
+                      "totalGlobalRank",
+                      "meanGlobalRank",
+                      "performanceStatus"
+                    ]
+                  },
+                  "singleRank": null,
+                  "lowerBound": null,
+                  "upperBound": null,
+                  "message": "Elite",
+                  "tier": 11,
+                  "rankNumber": 116,
+                  "worstGroup": null,
+                  "midTier": false,
+                  "aboveAllTiers": true,
+                  "belowAllTiers": false
+                }
+              },
+              "heroPerformanceMap": {
+                "type": "object",
+                "keys": [],
+                "sample": {}
+              },
+              "earliestMatchTimestamp": "2026-04-26T19:02:12.000+00:00",
+              "latestMatchTimestamp": "2026-08-30T13:50:31.000+00:00"
+            }
+          },
+          "heroPerformances": null,
+          "recent200newPerformanceRank": {
+            "type": "object",
+            "keys": [
+              "estimatedRank",
+              "estimatedRankName",
+              "subRankProgress",
+              "confidenceScore",
+              "matchPerformanceDetails",
+              "totalPPScore",
+              "calibrationMatches",
+              "calibrationBaseline",
+              "cumulativePPChange",
+              "calibrationMatchId",
+              "calibrating"
+            ],
+            "sample": {
+              "estimatedRank": 116,
+              "estimatedRankName": "Eternus 6",
+              "subRankProgress": 0.13,
+              "confidenceScore": 2154.2122480515627,
+              "matchPerformanceDetails": {
+                "type": "array",
+                "length": 135,
+                "sample": {
+                  "type": "object",
+                  "keys": [
+                    "match",
+                    "rankDifferenceInSubRanks",
+                    "expectedPlacement",
+                    "actualPlacement",
+                    "performanceDelta",
+                    "subRankImpact",
+                    "currentPPScore",
+                    "impactMultiplier",
+                    "rankBasedExpectedPlacement",
+                    "expectedMvpScore",
+                    "performedAsPPScore",
+                    "performedAsRankNumber"
+                  ]
+                }
+              },
+              "totalPPScore": 7013,
+              "calibrationMatches": 147,
+              "calibrationBaseline": 6943,
+              "cumulativePPChange": 70,
+              "calibrationMatchId": 79605285,
+              "calibrating": false
+            }
+          },
+          "newHeroPerformances": null,
+          "allMatchPerformanceNew": {
+            "type": "object",
+            "keys": [
+              "estimatedRank",
+              "estimatedRankName",
+              "subRankProgress",
+              "confidenceScore",
+              "matchPerformanceDetails",
+              "totalPPScore",
+              "calibrationMatches",
+              "calibrationBaseline",
+              "cumulativePPChange",
+              "calibrationMatchId",
+              "calibrating"
+            ],
+            "sample": {
+              "estimatedRank": 116,
+              "estimatedRankName": "Eternus 6",
+              "subRankProgress": 0.15,
+              "confidenceScore": 4278.670999991269,
+              "matchPerformanceDetails": {
+                "type": "array",
+                "length": 225,
+                "sample": {
+                  "type": "object",
+                  "keys": [
+                    "match",
+                    "rankDifferenceInSubRanks",
+                    "expectedPlacement",
+                    "actualPlacement",
+                    "performanceDelta",
+                    "subRankImpact",
+                    "currentPPScore",
+                    "impactMultiplier",
+                    "rankBasedExpectedPlacement",
+                    "expectedMvpScore",
+                    "performedAsPPScore",
+                    "performedAsRankNumber"
+                  ]
+                }
+              },
+              "totalPPScore": 7014,
+              "calibrationMatches": 241,
+              "calibrationBaseline": 7119,
+              "cumulativePPChange": -104,
+              "calibrationMatchId": 66301757,
+              "calibrating": false
+            }
+          },
+          "calibrationMatches": 241,
+          "storedPPScore": null,
+          "totalMatches": null,
+          "rollupStats": {
+            "type": "object",
+            "keys": [
+              "kda",
+              "kdRatio",
+              "avgKills",
+              "avgDeaths",
+              "avgAssists",
+              "damagePerMin",
+              "soulsPerMin",
+              "avgMvp",
+              "avgMvpScore",
+              "avgKP",
+              "avgAccuracy",
+              "avgHeadshot",
+              "avgTowerDmg",
+              "avgAbsorbed",
+              "avgSelfHeal",
+              "avgHeal",
+              "avgMatchRank",
+              "bulletKills",
+              "meleeKills",
+              "abilityKills",
+              "playstyleScores",
+              "matches",
+              "wins",
+              "winRate"
+            ],
+            "sample": {
+              "kda": "2.67",
+              "kdRatio": "1.03",
+              "avgKills": "8.1",
+              "avgDeaths": "7.8",
+              "avgAssists": "12.8",
+              "damagePerMin": 1009,
+              "soulsPerMin": 1140,
+              "avgMvp": 4.8,
+              "avgMvpScore": 59.90537471215002,
+              "avgKP": 50,
+              "avgAccuracy": 60.3,
+              "avgHeadshot": 25.6,
+              "avgTowerDmg": 316.2,
+              "avgAbsorbed": 1778,
+              "avgSelfHeal": 479.9,
+              "avgHeal": 2.6,
+              "avgMatchRank": 114,
+              "bulletKills": 958,
+              "meleeKills": 816,
+              "abilityKills": 624
+            }
+          },
+          "v3PpScore": null,
+          "v3CalibrationMatches": null,
+          "v3RankNumber": null,
+          "standardPpScore": null,
+          "standardCalibrationMatches": null
+        }
+      },
+      "extracted": {
+        "matchId": "102626994"
+      }
+    },
+    {
+      "label": "WPA_PATCH_DATA",
+      "path": "/api/info/wpa-patch-data/patch_676255623445218601",
+      "ok": false,
+      "status": 404,
+      "elapsedMs": 510,
+      "body": {
+        "type": "object",
+        "keys": [
+          "error"
+        ],
+        "sample": {
+          "error": "Patch data not found for: patch_676255623445218601"
+        }
+      },
+      "extracted": null
+    },
+    {
+      "label": "WIN_CHANCE",
+      "path": "/api/match/102626994/win-rate",
+      "ok": true,
+      "status": 200,
+      "elapsedMs": 3037,
+      "body": {
+        "type": "object",
+        "keys": [
+          "classification",
+          "winRateIntervals"
+        ],
+        "sample": {
+          "classification": {
+            "type": "array",
+            "length": 1,
+            "sample": "Amber Hand Comeback"
+          },
+          "winRateIntervals": {
+            "type": "array",
+            "length": 122,
+            "sample": {
+              "type": "object",
+              "keys": [
+                "time_stamp_s",
+                "pr_team1_win"
+              ],
+              "sample": {
+                "time_stamp_s": 0,
+                "pr_team1_win": 0.5
+              }
+            }
+          }
+        }
+      },
+      "extracted": null
+    },
+    {
+      "label": "PLAYER_WPA",
+      "path": "/api/match/102626994/wpa/281768392",
+      "ok": false,
+      "status": 401,
+      "elapsedMs": 154,
+      "body": {
+        "type": "object",
+        "keys": [
+          "error"
+        ],
+        "sample": {
+          "error": "Not authenticated"
+        }
+      },
+      "extracted": null
+    },
+    {
+      "label": "BUILD_CONTEXT",
+      "path": "/api/match/build-context/102626994/281768392",
+      "ok": false,
+      "status": 401,
+      "elapsedMs": 512,
+      "body": {
+        "type": "object",
+        "keys": [
+          "error"
+        ],
+        "sample": {
+          "error": "Not authenticated"
+        }
+      },
+      "extracted": null
+    }
+  ]
+}
