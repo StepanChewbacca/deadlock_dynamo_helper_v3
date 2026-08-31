@@ -1,0 +1,42 @@
+name: Recommendation V8 Pretraining Server Inventory
+
+on:
+  push:
+    branches:
+      - agent/recommendation-v8-pretraining-execution
+    paths:
+      - .github/workflows/recommendation-pretraining-server-inventory.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: self-hosted
+    timeout-minutes: 15
+    steps:
+      - name: Capture runner and server inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "runner.name=${RUNNER_NAME:-unknown}"
+          echo "runner.os=${RUNNER_OS:-unknown}"
+          echo "runner.arch=${RUNNER_ARCH:-unknown}"
+          echo "hostname=$(hostname)"
+          echo "kernel=$(uname -a)"
+          echo "--- disk ---"
+          df -h
+          echo "--- memory ---"
+          free -h || true
+          echo "--- docker ---"
+          if command -v docker >/dev/null 2>&1; then
+            sudo docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}' || true
+            sudo docker system df || true
+          else
+            echo "docker=unavailable"
+          fi
+          echo "--- runner services ---"
+          systemctl list-units --type=service --all 'actions.runner*' --no-pager || true
+          echo "--- relevant directories ---"
+          find /home /opt /srv -maxdepth 5 -type d \( -iname '*deadlock*' -o -iname '*recommendation*' -o -iname '*training*' \) 2>/dev/null | sort | head -n 300 || true
