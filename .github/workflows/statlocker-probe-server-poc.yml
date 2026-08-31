@@ -1,0 +1,268 @@
+name: Statlocker Probe Server POC
+
+on:
+  push:
+    branches:
+      - agent/statlocker-model-probe-poc
+    paths:
+      - '.github/workflows/statlocker-probe-server-poc.yml'
+      - 'apps/api/src/statlocker-probe-main.ts'
+      - 'apps/api/src/statlocker-probe/**'
+      - 'ops/nginx/statlocker-probe.location.conf'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: statlocker-probe-server-poc
+  cancel-in-progress: false
+
+jobs:
+  deploy-probe:
+    if: github.repository == 'StepanChewbacca/deadlock_dynamo_helper_v2' && github.actor == 'StepanChewbacca'
+    runs-on: self-hosted
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact probe commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Build isolated Statlocker probe image
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/Dockerfile.statlocker-probe" <<'DOCKERFILE'
+          FROM node:20-alpine
+          WORKDIR /app
+          COPY package.json yarn.lock tsconfig.base.json ./
+          COPY packages/shared/package.json ./packages/shared/
+          COPY packages/deadlock-build-domain/package.json ./packages/deadlock-build-domain/
+          COPY apps/api/package.json ./apps/api/
+          RUN yarn install --frozen-lockfile --ignore-engines
+          COPY packages/shared ./packages/shared
+          COPY packages/deadlock-build-domain ./packages/deadlock-build-domain
+          COPY apps/api ./apps/api
+          RUN yarn workspace @deadlock-live-probe/shared build \
+            && yarn workspace @deadlock-live-probe/build-domain build \
+            && yarn workspace @deadlock-live-probe/api build
+          WORKDIR /app/apps/api
+          EXPOSE 3000
+          CMD ["node", "dist/src/statlocker-probe-main.js"]
+          DOCKERFILE
+
+          image="deadlock-statlocker-probe:${GITHUB_SHA}"
+          sudo docker build \
+            -f "$RUNNER_TEMP/Dockerfile.statlocker-probe" \
+            -t "$image" \
+            .
+          echo "STATLOCKER_PROBE_IMAGE=$image" >> "$GITHUB_ENV"
+
+      - name: Start isolated probe on loopback port 3001
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo docker rm -f deadlock-statlocker-probe >/dev/null 2>&1 || true
+          sudo docker run -d \
+            --name deadlock-statlocker-probe \
+            --restart unless-stopped \
+            -p 127.0.0.1:3001:3000 \
+            "$STATLOCKER_PROBE_IMAGE" >/dev/null
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error \
+              http://127.0.0.1:3001/deadlock/tools/statlocker/presets \
+              -o "$RUNNER_TEMP/statlocker-presets.json"; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              sudo docker logs --tail 200 deadlock-statlocker-probe || true
+              exit 1
+            fi
+            sleep 1
+          done
+
+          echo 'Standalone probe is healthy on 127.0.0.1:3001'
+
+      - name: Install Nginx route with rollback
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          mapfile -t nginx_files < <(
+            sudo grep -RIlE 'proxy_pass[[:space:]]+http://(127\.0\.0\.1|localhost):3000' \
+              /etc/nginx/sites-enabled /etc/nginx/conf.d 2>/dev/null \
+              | while IFS= read -r file; do readlink -f "$file"; done \
+              | sort -u
+          )
+
+          if [ "${#nginx_files[@]}" -ne 1 ]; then
+            echo "Expected exactly one Nginx config containing the production :3000 proxy, found ${#nginx_files[@]}" >&2
+            printf '%s\n' "${nginx_files[@]:-}" >&2
+            exit 1
+          fi
+
+          nginx_file="${nginx_files[0]}"
+          backup="$RUNNER_TEMP/nginx-site.backup"
+          sudo cp "$nginx_file" "$backup"
+          echo "NGINX_TARGET_FILE=$nginx_file" >> "$GITHUB_ENV"
+
+          rollback() {
+            echo 'Rolling back Nginx probe route' >&2
+            sudo cp "$backup" "$nginx_file" || true
+            sudo nginx -t || true
+            sudo systemctl reload nginx || true
+          }
+
+          trap 'status=$?; if [ "$status" -ne 0 ]; then rollback; fi; exit "$status"' EXIT
+
+          export NGINX_TARGET_FILE="$nginx_file"
+          export NGINX_EDIT_FILE="$RUNNER_TEMP/nginx-site.edited"
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          source_path = Path(os.environ['NGINX_TARGET_FILE'])
+          output_path = Path(os.environ['NGINX_EDIT_FILE'])
+          text = source_path.read_text(encoding='utf-8')
+
+          marker = '# BEGIN STATLOCKER_PROBE_POC'
+          if marker in text:
+              output_path.write_text(text, encoding='utf-8')
+              raise SystemExit(0)
+
+          proxy_re = re.compile(r'proxy_pass\s+http://(?:127\.0\.0\.1|localhost):3000\b')
+          server_re = re.compile(r'\bserver\s*\{')
+
+          def matching_brace(data: str, open_index: int) -> int:
+              depth = 0
+              quote = None
+              escaped = False
+              comment = False
+              for index in range(open_index, len(data)):
+                  char = data[index]
+                  if comment:
+                      if char == '\n':
+                          comment = False
+                      continue
+                  if quote is not None:
+                      if escaped:
+                          escaped = False
+                      elif char == '\\':
+                          escaped = True
+                      elif char == quote:
+                          quote = None
+                      continue
+                  if char == '#':
+                      comment = True
+                      continue
+                  if char in ('\"', "'"):
+                      quote = char
+                      continue
+                  if char == '{':
+                      depth += 1
+                  elif char == '}':
+                      depth -= 1
+                      if depth == 0:
+                          return index
+              raise RuntimeError('Unbalanced Nginx server block')
+
+          spans = []
+          for match in server_re.finditer(text):
+              open_index = text.find('{', match.start())
+              close_index = matching_brace(text, open_index)
+              block = text[match.start():close_index + 1]
+              if proxy_re.search(block):
+                  spans.append((match.start(), close_index))
+
+          if not spans:
+              raise SystemExit('No server block containing the production :3000 proxy was found')
+
+          snippet = '''\n    # BEGIN STATLOCKER_PROBE_POC\n    location ^~ /deadlock/tools/statlocker {\n        proxy_pass http://127.0.0.1:3001;\n        proxy_http_version 1.1;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_connect_timeout 5s;\n        proxy_read_timeout 30s;\n        proxy_send_timeout 30s;\n    }\n    # END STATLOCKER_PROBE_POC\n'''
+
+          for _, close_index in reversed(spans):
+              text = text[:close_index] + snippet + text[close_index:]
+
+          output_path.write_text(text, encoding='utf-8')
+          PY
+
+          sudo cp "$RUNNER_TEMP/nginx-site.edited" "$nginx_file"
+          sudo nginx -t
+          sudo systemctl reload nginx
+
+          server_name="$(sudo sed -nE 's/^[[:space:]]*server_name[[:space:]]+([^ ;]+).*/\1/p' "$nginx_file" | grep -v '^_$' | head -n 1 || true)"
+          if [ -z "$server_name" ]; then
+            server_name='127.0.0.1'
+          fi
+          server_name="${server_name#*.}"
+          echo "STATLOCKER_PROBE_HOST=$server_name" >> "$GITHUB_ENV"
+
+          public_url=''
+          if [ "$server_name" != '127.0.0.1' ] && curl -k --fail --silent --show-error \
+            --resolve "$server_name:443:127.0.0.1" \
+            "https://$server_name/deadlock/tools/statlocker" \
+            -o "$RUNNER_TEMP/statlocker-nginx-ui.html"; then
+            public_url="https://$server_name/deadlock/tools/statlocker"
+          elif curl --fail --silent --show-error \
+            -H "Host: $server_name" \
+            http://127.0.0.1/deadlock/tools/statlocker \
+            -o "$RUNNER_TEMP/statlocker-nginx-ui.html"; then
+            public_url="http://$server_name/deadlock/tools/statlocker"
+          else
+            echo 'Nginx route did not return the probe UI' >&2
+            exit 1
+          fi
+
+          test -s "$RUNNER_TEMP/statlocker-nginx-ui.html"
+          echo "STATLOCKER_PROBE_PUBLIC_URL=$public_url" >> "$GITHUB_ENV"
+          trap - EXIT
+          echo "Probe UI: $public_url"
+
+      - name: Exercise Statlocker discovery through Nginx
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          base_url="$STATLOCKER_PROBE_PUBLIC_URL"
+          if [[ "$base_url" == https://* ]]; then
+            curl_args=(-k --resolve "$STATLOCKER_PROBE_HOST:443:127.0.0.1")
+          else
+            curl_args=(-H "Host: $STATLOCKER_PROBE_HOST")
+          fi
+
+          curl "${curl_args[@]}" --fail --silent --show-error \
+            "$base_url/presets" \
+            -o "$RUNNER_TEMP/statlocker-presets-via-nginx.json"
+
+          curl "${curl_args[@]}" --fail --silent --show-error \
+            "$base_url/discover" \
+            -o "$RUNNER_TEMP/statlocker-discovery.json"
+
+          node - "$RUNNER_TEMP/statlocker-discovery.json" <<'NODE'
+          const fs = require('node:fs');
+          const path = process.argv[2];
+          const data = JSON.parse(fs.readFileSync(path, 'utf8'));
+          const endpoints = Array.isArray(data.endpoints) ? data.endpoints : [];
+          const useful = endpoints.filter((entry) => entry && entry.likelyUseful && !entry.rawDeadlockDuplicate);
+          console.log(JSON.stringify({
+            pagesChecked: Array.isArray(data.pagesChecked) ? data.pagesChecked.length : 0,
+            scriptsChecked: Array.isArray(data.scriptsChecked) ? data.scriptsChecked.length : 0,
+            endpointsFound: endpoints.length,
+            usefulEndpointsFound: useful.length,
+            errors: Array.isArray(data.errors) ? data.errors.length : 0,
+            usefulEndpoints: useful.slice(0, 30).map((entry) => ({
+              path: entry.path,
+              signals: entry.signals,
+              sourceAsset: entry.sourceAsset,
+            })),
+          }, null, 2));
+          NODE
+
+          echo "Open in browser: $STATLOCKER_PROBE_PUBLIC_URL"
+
+      - name: Show probe container state
+        if: always()
+        shell: bash
+        run: |
+          sudo docker ps --filter name=deadlock-statlocker-probe --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' || true
