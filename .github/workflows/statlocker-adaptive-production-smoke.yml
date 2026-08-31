@@ -54,7 +54,8 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/statlocker-adaptive-image"
           sudo docker save deadlock-adaptive-v1:${GITHUB_SHA} | gzip -1 > "$RUNNER_TEMP/statlocker-adaptive-image/image.tar.gz"
-          sha256sum "$RUNNER_TEMP/statlocker-adaptive-image/image.tar.gz" > "$RUNNER_TEMP/statlocker-adaptive-image/image.tar.gz.sha256"
+          cd "$RUNNER_TEMP/statlocker-adaptive-image"
+          sha256sum image.tar.gz > image.tar.gz.sha256
 
       - name: Upload verified production image
         uses: actions/upload-artifact@v4
