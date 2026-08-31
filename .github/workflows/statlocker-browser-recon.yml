@@ -17,12 +17,11 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 15
     steps:
-      - name: Checkout exact recon commit
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: Capture Statlocker Pro Builds and vs-hero model requests in Chromium
+      - name: Inspect Statlocker build and hero evidence payloads
         shell: bash
         run: |
           set -euo pipefail
@@ -44,38 +43,11 @@ jobs:
           import puppeteer from 'puppeteer-core';
 
           const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-          function summarize(value, depth = 0) {
-            if (value === null) return null;
-            if (Array.isArray(value)) {
-              return {
-                type: 'array',
-                length: value.length,
-                sample: value.length && depth < 2 ? summarize(value[0], depth + 1) : undefined,
-              };
-            }
-            if (typeof value === 'object') {
-              const keys = Object.keys(value);
-              const result = { type: 'object', keys: keys.slice(0, 40) };
-              if (depth < 2) {
-                const sample = {};
-                for (const key of keys.slice(0, 12)) {
-                  sample[key] = summarize(value[key], depth + 1);
-                }
-                result.sample = sample;
-              }
-              return result;
-            }
-            if (typeof value === 'string') return value.slice(0, 180);
-            return value;
-          }
-
           const browser = await puppeteer.launch({
             executablePath: '/usr/bin/chromium-browser',
             headless: true,
             args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
           });
-
           const page = await browser.newPage();
           await page.setViewport({ width: 1440, height: 1100 });
           await page.setUserAgent(
@@ -83,158 +55,123 @@ jobs:
             '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
           );
 
-          let phase = 'BOOT';
-          const entries = [];
-          const bodyPromises = new Set();
+          let selectedPlayerBuild = null;
+          let leaderboardSamples = [];
+          let allHeroWpa = null;
+          const pending = new Set();
 
           page.on('response', (response) => {
             const task = (async () => {
               const url = response.url();
-              if (!/^https:\/\/(www\.)?statlocker\.gg\/api\//.test(url)) return;
-
+              if (!url.startsWith('https://statlocker.gg/api/')) return;
+              if (response.status() !== 200) return;
               const parsed = new URL(url);
-              const request = response.request();
-              const entry = {
-                phase,
-                url,
-                path: parsed.pathname,
-                search: parsed.search,
-                status: response.status(),
-                method: request.method(),
-                resourceType: request.resourceType(),
-              };
+              const contentType = response.headers()['content-type'] || '';
+              if (!contentType.includes('application/json')) return;
 
               try {
-                const contentType = response.headers()['content-type'] || '';
-                if (contentType.includes('application/json')) {
-                  const data = await Promise.race([
-                    response.json(),
-                    sleep(10000).then(() => { throw new Error('body timeout'); }),
-                  ]);
-                  entry.body = summarize(data);
+                if (parsed.pathname === '/api/leaderboard/get-valve-leaderboard') {
+                  const data = await response.json();
+                  leaderboardSamples.push({
+                    region: parsed.searchParams.get('region'),
+                    heroId: parsed.searchParams.get('heroId'),
+                    players: (data?.data || []).slice(0, 10).map((p) => ({
+                      accountName: p.account_name,
+                      accountId: p.steamProfile?.account_id ?? p.account_id ?? p.steam_id3,
+                      rank: p.rank,
+                      rankedRank: p.ranked_rank,
+                      heroPerformanceRank: p.heroPerformanceRank,
+                    })),
+                  });
+                }
+
+                if (parsed.pathname.startsWith('/api/info/player-build-analysis/')) {
+                  const data = await response.json();
+                  selectedPlayerBuild = {
+                    path: parsed.pathname,
+                    accountId: data.accountId,
+                    heroId: data.heroId,
+                    totalMatches: data.totalMatches,
+                    winRate: data.winRate,
+                    items: (data.items || [])
+                      .slice()
+                      .sort((a, b) => (a.medianBuyTimeS ?? a.avgBuyTimeS ?? 0) - (b.medianBuyTimeS ?? b.avgBuyTimeS ?? 0))
+                      .map((item) => ({
+                        itemId: item.itemId,
+                        name: item.name,
+                        tier: item.tier,
+                        slotType: item.slotType,
+                        purchaseRate: item.purchaseRate,
+                        winRate: item.winRate,
+                        avgBuyTimeS: item.avgBuyTimeS,
+                        medianBuyTimeS: item.medianBuyTimeS,
+                        purchaseCount: item.purchaseCount,
+                        frequencyTier: item.frequencyTier,
+                        phase: item.phase,
+                      })),
+                    itemRelationshipsCount: (data.itemRelationships || []).length,
+                  };
+                }
+
+                if (parsed.pathname === '/api/info/wpa-filtered-items' && parsed.searchParams.get('hero') === 'all') {
+                  const data = await response.json();
+                  allHeroWpa = data;
                 }
               } catch (error) {
-                entry.bodyError = error instanceof Error ? error.message : String(error);
+                console.log('CAPTURE_ERROR=' + JSON.stringify({ url, message: error instanceof Error ? error.message : String(error) }));
               }
-
-              entries.push(entry);
-              console.log('STATLOCKER_API=' + JSON.stringify(entry));
             })();
-            bodyPromises.add(task);
-            task.finally(() => bodyPromises.delete(task));
+            pending.add(task);
+            task.finally(() => pending.delete(task));
           });
 
-          page.on('pageerror', (error) => console.log('PAGE_ERROR=' + error.message));
-
-          async function visibleTexts() {
-            return page.evaluate(() => ({
-              buttons: Array.from(document.querySelectorAll('button'))
-                .map((el) => (el.textContent || '').trim())
-                .filter(Boolean)
-                .slice(0, 100),
-              selects: Array.from(document.querySelectorAll('select')).map((el) => ({
-                name: el.getAttribute('name'),
-                id: el.id,
-                value: el.value,
-                options: Array.from(el.options).map((o) => ({ text: o.text, value: o.value })).slice(0, 30),
-              })),
-              links: Array.from(document.querySelectorAll('a'))
-                .map((el) => ({ text: (el.textContent || '').trim(), href: el.href }))
-                .filter((x) => x.text)
-                .slice(0, 100),
-            }));
-          }
-
-          async function clickByText(regex) {
-            return page.evaluate((source) => {
-              const re = new RegExp(source, 'i');
-              const candidates = Array.from(document.querySelectorAll('button, a, [role="button"], [role="tab"]'));
-              const element = candidates.find((el) => re.test((el.textContent || '').trim()));
-              if (!element) return null;
-              const text = (element.textContent || '').trim();
-              element.click();
-              return { tag: element.tagName, text };
-            }, regex.source);
-          }
-
-          phase = 'PRO_BUILDS_LOAD';
-          const proUrl = 'https://statlocker.gg/builds/eternus-builds/abrams';
-          console.log('OPEN=' + proUrl);
-          await page.goto(proUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-          await sleep(10000);
-          console.log('PRO_INITIAL_UI=' + JSON.stringify(await visibleTexts()));
-
-          phase = 'PRO_BUILDS_TAB';
-          const proClick = await clickByText(/Pro Builds/);
-          console.log('PRO_BUILDS_CLICK=' + JSON.stringify(proClick));
-          await sleep(10000);
-          console.log('PRO_AFTER_TAB_UI=' + JSON.stringify(await visibleTexts()));
-
-          phase = 'PRO_BUILDS_PLAYER';
-          const playerResult = await page.evaluate(() => {
-            const nativeSelects = Array.from(document.querySelectorAll('select'));
-            const playerSelect = nativeSelects.find((el) =>
-              /player/i.test(`${el.name} ${el.id} ${el.getAttribute('aria-label') || ''}`),
-            );
-            if (playerSelect && playerSelect.options.length > 1) {
-              const option = Array.from(playerSelect.options).find((o) => o.value && !/choose/i.test(o.text));
-              if (option) {
-                playerSelect.value = option.value;
-                playerSelect.dispatchEvent(new Event('change', { bubbles: true }));
-                return { mode: 'native-select', text: option.text, value: option.value };
-              }
-            }
-
-            const triggers = Array.from(document.querySelectorAll('button, [role="combobox"], [aria-haspopup="listbox"]'));
-            const trigger = triggers.find((el) => /choose player|player/i.test((el.textContent || '').trim()));
-            if (trigger) {
-              trigger.click();
-              return { mode: 'custom-trigger', text: (trigger.textContent || '').trim() };
-            }
-            return null;
+          console.log('OPEN_PRO=https://statlocker.gg/builds/eternus-builds/abrams');
+          await page.goto('https://statlocker.gg/builds/eternus-builds/abrams', {
+            waitUntil: 'domcontentloaded',
+            timeout: 60000,
           });
-          console.log('PRO_PLAYER_TRIGGER=' + JSON.stringify(playerResult));
-          await sleep(1500);
+          await sleep(14000);
 
-          if (playerResult?.mode === 'custom-trigger') {
-            const option = await page.evaluate(() => {
-              const candidates = Array.from(document.querySelectorAll('[role="option"], li, [data-value]'));
-              const el = candidates.find((node) => {
-                const text = (node.textContent || '').trim();
-                return text && !/choose player/i.test(text) && text.length < 160;
-              });
-              if (!el) return null;
-              const text = (el.textContent || '').trim();
-              el.click();
-              return text;
-            });
-            console.log('PRO_PLAYER_OPTION=' + JSON.stringify(option));
+          console.log('OPEN_META=https://statlocker.gg/items/meta-model?hero=all&min=500');
+          await page.goto('https://statlocker.gg/items/meta-model?hero=all&min=500', {
+            waitUntil: 'domcontentloaded',
+            timeout: 60000,
+          });
+          await sleep(14000);
+          await Promise.allSettled([...pending]);
+
+          if (!selectedPlayerBuild) {
+            console.log('PRO_BUILD_RESULT=null');
+          } else {
+            console.log('PRO_BUILD_RESULT=' + JSON.stringify(selectedPlayerBuild, null, 2));
           }
-          await sleep(12000);
 
-          phase = 'VS_HERO_LOAD';
-          const vsUrl = 'https://statlocker.gg/vision/wpa?graph=t4-chains&hero=Abrams&min=500&mode=items-heroes';
-          console.log('OPEN=' + vsUrl);
-          await page.goto(vsUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-          await sleep(12000);
-          console.log('VS_HERO_UI=' + JSON.stringify(await visibleTexts()));
+          console.log('LEADERBOARD_RESULT=' + JSON.stringify(leaderboardSamples, null, 2));
 
-          phase = 'VS_HERO_CLICK';
-          const itemsHeroesClick = await clickByText(/Items\s*to\s*Heroes/);
-          console.log('ITEMS_TO_HEROES_CLICK=' + JSON.stringify(itemsHeroesClick));
-          await sleep(12000);
-
-          await Promise.allSettled([...bodyPromises]);
-
-          const relevant = entries.filter((entry) =>
-            /player|build|wpa|hero|leaderboard|item/i.test(entry.path),
-          );
-
-          console.log('FINAL_SUMMARY=' + JSON.stringify({
-            totalRequests: entries.length,
-            relevantCount: relevant.length,
-            relevant,
-          }, null, 2));
+          if (!allHeroWpa) {
+            console.log('ALL_HERO_WPA_RESULT=null');
+          } else {
+            const items = allHeroWpa.items || [];
+            const withHeroData = items.filter((item) => item && item.heroData && typeof item.heroData === 'object');
+            const knockdown = items.find((item) => String(item.item || '').toLowerCase() === 'knockdown');
+            const sample = knockdown || withHeroData[0] || items[0];
+            console.log('ALL_HERO_WPA_RESULT=' + JSON.stringify({
+              itemCount: items.length,
+              availableHeroes: allHeroWpa.availableHeroes,
+              heroDataItemCount: withHeroData.length,
+              sampleItem: sample ? {
+                item: sample.item,
+                wpaValue: sample.wpaValue,
+                sampleSize: sample.sampleSize,
+                meanPurchaseTimeMin: sample.mean_purchase_time_min,
+                aheadWpa: sample.aheadWpa,
+                behindWpa: sample.behindWpa,
+                bestPurchaseTime: sample.best_purchase_time,
+                heroDataType: Array.isArray(sample.heroData) ? 'array' : typeof sample.heroData,
+                heroData: sample.heroData,
+              } : null,
+            }, null, 2));
+          }
 
           await browser.close();
           NODE
@@ -251,7 +188,6 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add statlocker-browser-recon-result.log
           if git diff --cached --quiet; then
-            echo 'No recon result changes to persist'
             exit 0
           fi
           git commit -m 'test(statlocker): save browser recon result'
