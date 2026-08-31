@@ -247,11 +247,19 @@ jobs:
             curl_args=(-H "Host: $STATLOCKER_PROBE_HOST")
           fi
 
-          curl "${curl_args[@]}" --fail --silent --show-error \
+          # Nginx graceful reload can briefly leave a worker with the previous loopback port.
+          # Wait a moment and retry so the deploy validation tests the final active route.
+          sleep 3
+
+          curl "${curl_args[@]}" \
+            --retry 8 --retry-delay 1 --retry-all-errors \
+            --fail --silent --show-error \
             "$base_url/presets" \
             -o "$RUNNER_TEMP/statlocker-presets-via-nginx.json"
 
-          curl "${curl_args[@]}" --fail --silent --show-error \
+          curl "${curl_args[@]}" \
+            --retry 8 --retry-delay 1 --retry-all-errors \
+            --fail --silent --show-error \
             "$base_url/discover" \
             -o "$RUNNER_TEMP/statlocker-discovery.json"
 
