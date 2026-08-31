@@ -4,7 +4,7 @@
 
 **Goal:** Replace the primary live recommendation serving path with a deterministic Statlocker-driven adaptive build planner that returns a full current build plan plus an immediate legal action, while keeping ML8 source code in the repository but out of the serving flow.
 
-**Architecture:** Keep the existing deterministic build-domain candidate generator and legality rules authoritative. Add a separate `statlocker-adaptive` subsystem that collects public Statlocker datasets through background Chromium, normalizes and persists versioned snapshots, builds top-10 consensus skeletons, assembles live match context, scores legal actions, searches a short build trajectory, applies hysteresis and sell penalties, persists replayable decisions, and serves the result to the Overwolf client. The recommendation request never waits for Chromium.
+**Architecture:** Add a standalone `statlocker-adaptive` subsystem. It reads current match state directly from the existing live GEP state and catalog/ruleset storage, uses the existing build-domain candidate generator as the only authority for immediate transaction legality, reads versioned Statlocker evidence from local cache/PostgreSQL, builds top-10 consensus skeletons, scores contextual evidence, searches a short future target trajectory, applies hysteresis and strong sell penalties, persists replayable decisions, and serves one adaptive response to the Overwolf client. ML8 runtime services and V8 recommendation telemetry are not dependencies of this serving path. Chromium runs only in background refresh work and is never awaited by a recommendation request.
 
 **Tech Stack:** TypeScript 5.9, NestJS 11, TypeORM/PostgreSQL, `@nestjs/schedule`, Puppeteer Core + system Chromium, Jest/ts-jest, existing `@deadlock-live-probe/build-domain`, Overwolf GEP client, GitHub Actions.
 
@@ -12,18 +12,21 @@
 
 ## Global Constraints
 
-- ML8 Behavioral, Value, Policy, and model serving must not be called by the new primary recommendation endpoint.
+- ML8 Behavioral, Value, Policy, model serving, `RecommendationEngineV8Service`, and `RecommendationRealtimeCoordinatorV8Service` must not be called by the new primary recommendation endpoint.
 - Do not delete ML8 source files, training workflows, registries, or offline evaluation code in this implementation.
+- The adaptive serving path must not depend on V8 recommendation telemetry rows being present.
 - Statlocker is evidence only. It never changes affordability, recipe, slot, shop, ruleset, or transaction legality.
-- Chromium is background-only. A recommendation request must use local memory/PostgreSQL evidence and must not open a browser.
+- Chromium is background-only. A recommendation request uses memory/PostgreSQL evidence and never opens or waits for a browser.
 - Do not inspect, return, log, or persist browser cookies, request headers, local storage, API keys, tokens, or session material.
-- If Statlocker returns 401, 403, an authentication wall, CAPTCHA, or another access restriction, record collection failure and keep the previous valid snapshot. Do not attempt a bypass.
+- If Statlocker returns 401, 403, a login wall, CAPTCHA, or another access restriction, record collection failure and keep the previous valid snapshot. Do not attempt a bypass.
 - Current-match Statlocker endpoints are excluded from live V1.
-- Every score component is bounded before weighting. Raw WPA, samples, purchase seconds, and probabilities are never directly added together.
+- Every score component is bounded before weighting. Raw WPA, sample counts, purchase seconds, and probabilities are never directly added together.
 - Same live state + same previous plan + same evidence snapshot IDs + same config version must produce the same result.
 - Failed collection never replaces the last known good snapshot.
 - Patch-mismatched evidence never silently counts as current evidence.
-- Use existing project style: TypeScript, strict types, English code comments, no `| null` return-type additions.
+- Roster total souls are used for team-state classification only. They are not automatically treated as verified spendable wallet currency.
+- Immediate actions must come from the current deterministic `generateRecommendationCandidates()` result. Future build steps are target items, not claims that those items are currently affordable or immediately legal to buy.
+- Use existing project style: strict TypeScript, English code comments, no new `| null` return-type signatures.
 
 ---
 
@@ -31,73 +34,79 @@
 
 ### Shared contracts
 
-- Create `packages/shared/src/adaptive-recommendation-v1.ts` - public request/response, plan, score breakdown, freshness, action, and provenance contracts used by API and Overwolf.
+- Create `packages/shared/src/adaptive-recommendation-v1.ts` - public request/response, action, plan, score, freshness, and provenance contracts.
 - Modify `packages/shared/src/index.ts` - export the V1 contract.
-- Create `packages/shared/test/adaptive-recommendation-v1.test.js` - runtime contract smoke checks.
-- Modify `packages/shared/package.json` - add the contract test to the explicit shared test chain.
+- Create `packages/shared/test/adaptive-recommendation-v1.test.js` - runtime contract checks.
+- Modify `packages/shared/package.json` - append the contract test to the explicit shared test chain.
 
 ### API adaptive subsystem
 
-Create `apps/api/src/statlocker-adaptive/` with focused files:
+Create `apps/api/src/statlocker-adaptive/`:
 
-- `statlocker-adaptive.config.ts` - versioned defaults and environment overrides.
-- `statlocker-adaptive.types.ts` - internal normalized Statlocker evidence types.
-- `statlocker-normalizer.service.ts` - raw Statlocker response validation and normalization.
-- `statlocker-browser-collector.service.ts` - background browser collection only.
-- `statlocker-snapshot-store.service.ts` - append-only persistence + hot cache.
-- `statlocker-refresh.service.ts` - scheduling, TTL checks, single-flight, active-hero refresh queue.
-- `statlocker-evidence.service.ts` - patch-scoped evidence bundle assembly.
-- `build-skeleton.service.ts` - top-10 consensus skeleton derivation.
-- `adaptive-game-state.ts` - team-souls classification and smooth blending.
-- `adaptive-evidence-scorer-v1.service.ts` - bounded evidence scoring and confidence shrinkage.
-- `adaptive-build-planner-v1.service.ts` - candidate-pool construction, beam search, sell/replace, hysteresis.
-- `adaptive-realtime-context-v1.service.ts` - merge deterministic core state with live roster/team context and previous plan.
-- `adaptive-recommendation-v1.service.ts` - coordinator, final legality, persistence.
-- `adaptive-recommendation-v1.controller.ts` - primary serving/status endpoints.
-- `adaptive-replay-v1.service.ts` - deterministic replay from persisted decision inputs.
-- `statlocker-adaptive.module.ts` - module wiring.
+- `statlocker-adaptive.config.ts`
+- `statlocker-adaptive.types.ts`
+- `statlocker-normalizer.service.ts`
+- `statlocker-browser-collector.service.ts`
+- `statlocker-snapshot-store.service.ts`
+- `statlocker-refresh.service.ts`
+- `statlocker-evidence.service.ts`
+- `build-skeleton.service.ts`
+- `adaptive-game-state.ts`
+- `adaptive-decision-state-v1.service.ts`
+- `adaptive-evidence-scorer-v1.service.ts`
+- `adaptive-build-planner-v1.service.ts`
+- `adaptive-recommendation-v1.service.ts`
+- `adaptive-recommendation-v1.controller.ts`
+- `adaptive-replay-v1.service.ts`
+- `statlocker-adaptive.module.ts`
 
-### API persistence
+### Persistence
 
 - Create `apps/api/src/deadlock-live/entities/statlocker-evidence-snapshot-v1.entity.ts`.
 - Create `apps/api/src/deadlock-live/entities/adaptive-recommendation-decision-v1.entity.ts`.
-- Modify `apps/api/src/app.module.ts` - register entities and adaptive module.
+- Modify `apps/api/src/app.module.ts`.
 
-### ML-neutral deterministic state extraction
+### Existing services reused without ML8 serving dependencies
 
-- Create `apps/api/src/deadlock-live/recommendation-realtime-core-state.service.ts` - extract current non-ML state/catalog alignment logic.
-- Modify `apps/api/src/deadlock-live/recommendation-realtime-state-v8.service.ts` - delegate the non-ML portion to the core service, then assemble V8 feature state only for legacy/offline V8 callers.
-- Modify `apps/api/src/deadlock-live/deadlock-live.module.ts` - provide/export the core service while leaving ML8 providers available for non-primary use.
+- Reuse `apps/api/src/deadlock-live/live-match-state.service.ts` for hero/team/roster souls/game time/current inventory.
+- Reuse `apps/api/src/deadlock-live/catalog-content.service.ts` data tables for the strict current item graph/ruleset.
+- Reuse `apps/api/src/deadlock-live/souls-affordability-evidence-v2.service.ts` only as a scoped verification gate for whether raw local-player souls can be promoted to verified spendable currency.
+- Reuse `generateRecommendationCandidates()` from `@deadlock-live-probe/build-domain` directly.
+- Do not route the adaptive endpoint through `recommendation-realtime-state-v8.service.ts`, `recommendation-engine-v8.service.ts`, or the V8 coordinator.
 
-### Tests and fixtures
+### Tests
 
 Create under `apps/api/test/`:
 
 - `fixtures/statlocker-v1.ts`
+- `adaptive-config-v1.spec.ts`
 - `statlocker-normalizer-v1.spec.ts`
 - `statlocker-snapshot-store-v1.spec.ts`
+- `statlocker-browser-collector-v1.spec.ts`
 - `statlocker-refresh-v1.spec.ts`
+- `statlocker-evidence-v1.spec.ts`
 - `build-skeleton-v1.spec.ts`
 - `adaptive-game-state-v1.spec.ts`
+- `adaptive-decision-state-v1.spec.ts`
 - `adaptive-evidence-scorer-v1.spec.ts`
 - `adaptive-build-planner-v1.spec.ts`
-- `adaptive-realtime-context-v1.spec.ts`
 - `adaptive-recommendation-v1.spec.ts`
 - `adaptive-replay-v1.spec.ts`
+- `adaptive-policy-v1.integration.spec.ts`
 
 ### Overwolf client
 
-- Create `apps/overwolf-client/src/adaptive-recommendation-client.ts` - request scheduling, payload dedupe, response typing.
+- Create `apps/overwolf-client/src/adaptive-recommendation-client.ts`.
 - Create `apps/overwolf-client/src/adaptive-recommendation-client.spec.ts`.
-- Modify `apps/overwolf-client/src/index.ts` - stop the old baseline/situational pair from being the primary runtime and call the new endpoint.
-- Modify `apps/overwolf-client/src/ui.ts` - render the full adaptive plan and immediate action while retaining existing guide layout where practical.
+- Modify `apps/overwolf-client/src/index.ts`.
+- Modify `apps/overwolf-client/src/ui.ts`.
 
 ### Runtime packaging and CI
 
-- Modify `apps/api/package.json` and `yarn.lock` - add `puppeteer-core` production dependency.
-- Modify `Dockerfile` - build/copy `@deadlock-live-probe/build-domain`, install Chromium in runtime image, set `CHROMIUM_PATH`.
-- Modify `docker-compose.yml` - expose adaptive refresh/config environment values only when an override is needed.
-- Modify `.github/workflows/recommendation-ci.yml` - include this branch in push triggers and keep API/shared/build-domain/Overwolf tests mandatory.
+- Modify `apps/api/package.json` and `yarn.lock` - add `puppeteer-core` as a production dependency.
+- Modify `Dockerfile` - build/copy `@deadlock-live-probe/build-domain`, install Chromium, set `CHROMIUM_PATH`.
+- Modify `docker-compose.yml` only for optional adaptive config overrides.
+- Modify `.github/workflows/recommendation-ci.yml` - include the working branch and preserve all existing mandatory tests.
 
 ---
 
@@ -109,9 +118,7 @@ Create under `apps/api/test/`:
 - Create: `packages/shared/test/adaptive-recommendation-v1.test.js`
 - Modify: `packages/shared/package.json`
 
-- [ ] Write the failing shared contract test first. Assert that a representative result can express `BUY`, `UPGRADE`, `SELL`, `REPLACE`, `WAIT`, and `CONTINUE_CORE`, and that a plan contains `OWNED`, `NEXT`, and `PLANNED` items.
-
-Example contract shape to test:
+- [ ] Write the failing contract test first. Cover all public action types:
 
 ```ts
 export type AdaptiveActionTypeV1 =
@@ -120,20 +127,25 @@ export type AdaptiveActionTypeV1 =
   | 'SELL'
   | 'REPLACE'
   | 'WAIT'
+  | 'HOLD'
   | 'CONTINUE_CORE'
   | 'ABSTAIN';
+```
 
-export type AdaptiveEvidenceFreshnessV1 =
-  | 'FRESH'
-  | 'STALE_USABLE'
-  | 'UNAVAILABLE'
-  | 'PATCH_MISMATCH';
+Also cover plan statuses `OWNED | NEXT | PLANNED` and evidence freshness `FRESH | STALE_USABLE | UNAVAILABLE | PATCH_MISMATCH`.
 
+- [ ] Define a JSON-safe request:
+
+```ts
 export interface AdaptiveRecommendationRequestV1 {
   matchId: string;
   localSteamId?: string;
 }
+```
 
+- [ ] Define a JSON-safe result with at least:
+
+```ts
 export interface AdaptiveRecommendationResultV1 {
   ready: boolean;
   blockers: readonly string[];
@@ -152,70 +164,93 @@ export interface AdaptiveRecommendationResultV1 {
 }
 ```
 
-- [ ] Run `yarn workspace @deadlock-live-probe/shared test` and confirm the new test fails because the contract/export does not exist.
-- [ ] Implement the contract with JSON-safe values only. Do not put `Map`, `Set`, class instances, or build-domain internal types into the public response.
-- [ ] Export it from `packages/shared/src/index.ts` and add the JS test to the explicit shared `test` script chain.
-- [ ] Run `yarn workspace @deadlock-live-probe/shared test` and confirm all shared tests pass.
+- [ ] Run `yarn workspace @deadlock-live-probe/shared test`. Expected: fail because the new contract/export is missing.
+- [ ] Implement the contract. Do not expose `Map`, `Set`, TypeORM entities, or build-domain class instances.
+- [ ] Export the contract from `packages/shared/src/index.ts` and add the JS test to the explicit package test chain.
+- [ ] Run `yarn workspace @deadlock-live-probe/shared test`. Expected: pass.
 - [ ] Commit: `feat: add adaptive recommendation v1 contract`.
 
 ---
 
-## Task 2: Extract the ML-neutral deterministic realtime core state
+## Task 2: Add scoped spendable-souls verification for the adaptive state builder
 
 **Files:**
-- Create: `apps/api/src/deadlock-live/recommendation-realtime-core-state.service.ts`
-- Modify: `apps/api/src/deadlock-live/recommendation-realtime-state-v8.service.ts`
-- Modify: `apps/api/src/deadlock-live/deadlock-live.module.ts`
-- Create: `apps/api/test/recommendation-realtime-core-state.spec.ts`
-- Modify or extend: `apps/api/test/recommendation-realtime-coordinator-v8.spec.ts`
+- Modify: `apps/api/src/deadlock-live/souls-affordability-evidence-v2.service.ts`
+- Create: `apps/api/test/souls-affordability-scope-v2.spec.ts`
 
-The new core service owns only the logic currently needed before V8 feature assembly: aligned `PLAYER_STATE` + `INVENTORY_SNAPSHOT`, strict catalog loading/compilation, verified spendable souls, approved direct shop state, `RecommendationDecisionState`, item graph, state revision, versions, and quality.
+The existing controlled evidence report can prove whether raw souls mirror spendable wallet values, but adaptive serving must fail closed per current ruleset/catalog scope rather than trusting an unrelated historical PASS.
 
-- [ ] Write a failing test that builds a state from aligned telemetry and asserts it returns `state`, `itemGraph`, `stateRevision`, `rulesetVersion`, `catalogSha256`, `versions`, and `quality`, with no V8 feature state.
-- [ ] Add a failing test that unknown/unverified wallet state remains unknown and makes purchase candidates infeasible when passed to `generateRecommendationCandidates`.
+- [ ] Write a failing test for:
+
+```ts
+canVerifyScope(rulesetVersion: string, catalogSha256: string): Promise<boolean>
+```
+
+Test one passing scope and one different ruleset/catalog with no qualifying evidence.
+- [ ] Add a test that malformed/insufficient controlled observations return `false`.
 - [ ] Run:
 
 ```bash
-yarn workspace @deadlock-live-probe/api test --runTestsByPath test/recommendation-realtime-core-state.spec.ts
+yarn workspace @deadlock-live-probe/api test --runTestsByPath test/souls-affordability-scope-v2.spec.ts
 ```
 
-Expected: failure because the service does not exist.
-
-- [ ] Move the non-ML query/catalog/state construction from `RecommendationRealtimeStateV8Service` into the new service without changing validation semantics.
-- [ ] Keep a V8 wrapper flow equivalent to:
-
-```ts
-const core = await this.coreState.build(request);
-if (!core.ready || !core.state || !core.itemGraph) return core;
-
-const featureResult = assembleRecommendationFeatureStateV8({
-  // existing V8-only feature inputs
-});
-```
-
-- [ ] Register/export `RecommendationRealtimeCoreStateService` in `DeadlockLiveModule`.
-- [ ] Run the new test plus existing V8 coordinator/engine tests:
-
-```bash
-yarn workspace @deadlock-live-probe/api test --runTestsByPath \
-  test/recommendation-realtime-core-state.spec.ts \
-  test/recommendation-realtime-coordinator-v8.spec.ts \
-  test/recommendation-engine-v8.spec.ts
-```
-
-Expected: pass, proving the extraction did not alter existing deterministic/V8 behavior.
-- [ ] Commit: `refactor: extract recommendation realtime core state`.
+Expected: fail because the scoped method does not exist.
+- [ ] Implement the method by filtering persisted controlled observations to exact `rulesetVersion` + `catalogSha256`, evaluating only that subset with `evaluateSoulsAffordabilityEvidenceV2`, and requiring `canMarkSpendableSoulsVerified === true`.
+- [ ] Keep the existing global `report()` behavior unchanged.
+- [ ] Run the new test plus existing souls affordability tests. Expected: pass.
+- [ ] Commit: `feat: scope spendable souls verification`.
 
 ---
 
-## Task 3: Define normalized Statlocker evidence and scoring configuration
+## Task 3: Build an ML-neutral adaptive decision state directly from live state and catalog storage
+
+**Files:**
+- Create: `apps/api/src/statlocker-adaptive/adaptive-decision-state-v1.service.ts`
+- Create: `apps/api/test/adaptive-decision-state-v1.spec.ts`
+- Modify only if needed for a narrow accessor: `apps/api/src/deadlock-live/live-match-state.service.ts`
+
+The service creates the build-domain `RecommendationDecisionState` and strict `RecommendationItemGraph` without using V8 recommendation telemetry or V8 serving services.
+
+- [ ] Write a failing test with a `MinimalMatchState` containing a local player, team IDs, hero ID, total souls, items, and game time plus mocked current catalog rows.
+- [ ] Assert the result contains:
+  - local hero ID;
+  - current owned inventory;
+  - strict item graph and ruleset ID;
+  - catalog SHA;
+  - game time;
+  - sorted enemy hero IDs;
+  - our/enemy team total souls;
+  - stable state revision.
+- [ ] Add tests for these economy states:
+  - scoped affordability evidence PASS -> local roster souls may become `observedFact` spendable souls;
+  - scoped evidence missing/failing -> `unknownFact` spendable souls;
+  - shop opportunity unavailable/unknown -> never fabricate `AVAILABLE`.
+- [ ] Run `yarn workspace @deadlock-live-probe/api test --runTestsByPath test/adaptive-decision-state-v1.spec.ts`. Expected: fail.
+- [ ] Resolve the latest usable `ItemCatalogVersion` deterministically by `importedAt DESC`, load its `ItemCatalogItem` and `ItemCatalogRecipe` rows, then call existing `buildRecommendationRulesetCatalogV1` + `compileStrictRecommendationCatalogV1`.
+- [ ] Use `buildInventoryInstancesForRecommendation()` for the local player's current items.
+- [ ] Compute team totals only when all roster players used in each team total have finite souls. Missing totals produce contextual `UNKNOWN`, never a guessed number.
+- [ ] Do not treat `MinimalPlayerState.souls` as spendable unless Task 2 verifies the exact current ruleset/catalog scope.
+- [ ] If no trustworthy direct shop signal exists in current live state, keep shop opportunity unknown. Immediate candidate legality will therefore favor `WAIT`/`HOLD`, while the full target build can still be planned.
+- [ ] Compute a deterministic state revision from match ID, local player, sorted roster/item state, game time, ruleset, and catalog SHA.
+- [ ] Run the test. Expected: pass.
+- [ ] Commit: `feat: build adaptive decision state from live data`.
+
+---
+
+## Task 4: Define normalized Statlocker evidence and the versioned scoring config
 
 **Files:**
 - Create: `apps/api/src/statlocker-adaptive/statlocker-adaptive.types.ts`
 - Create: `apps/api/src/statlocker-adaptive/statlocker-adaptive.config.ts`
 - Create: `apps/api/test/adaptive-config-v1.spec.ts`
 
-Use one explicit versioned config object. Initial V1 defaults are implementation defaults, not claims that they are optimal:
+- [ ] Write a failing config test asserting these approved V1 invariants:
+  - game-state threshold `0.08`;
+  - exact-enemy aggregation max `3`;
+  - planning depth `3`;
+  - beam width `8`;
+  - sell/core replacement threshold stronger than ordinary plan-switch hysteresis.
+- [ ] Start with versioned defaults:
 
 ```ts
 export const ADAPTIVE_POLICY_V1_CONFIG = {
@@ -256,43 +291,45 @@ export const ADAPTIVE_POLICY_V1_CONFIG = {
 } as const;
 ```
 
-- [ ] Write a failing test asserting the approved invariants are represented in config: threshold `0.08`, max exact enemies `3`, depth `3`, width `8`, and sell/core-replace thresholds greater than the ordinary plan-switch threshold.
-- [ ] Run `yarn workspace @deadlock-live-probe/api test --runTestsByPath test/adaptive-config-v1.spec.ts`; expected failure.
-- [ ] Implement internal normalized evidence types for patch item WPA, conditional WPA, exact enemy deltas, T4 chains, leaderboard entries, pro player item analysis, skeleton item support, and evidence freshness metadata.
-- [ ] Implement config parsing so numeric environment overrides must be finite and inside explicit safe ranges; invalid overrides fall back to the versioned default and are reported in status metadata.
-- [ ] Run the test and API build; expected pass.
-- [ ] Commit: `feat: define adaptive policy v1 config and evidence types`.
+These are initial tunable values, not claims of optimal calibration.
+- [ ] Define internal normalized types for `WPA_PATCH_DATA`, `VS_HERO_WPA`, `T4_CHAINS`, `HERO_LEADERBOARD`, `PRO_BUILD_ANALYSIS`, optional `WPA_FILTERED_ITEMS`, and internal `CONSENSUS_SKELETON`.
+- [ ] Keep `/api/info/wpa-patches` as collector control metadata used to resolve Statlocker's current minor patch, not as a scoring family.
+- [ ] Implement safe environment overrides with explicit numeric ranges; invalid values fall back to defaults and appear in status diagnostics.
+- [ ] Run config test and API build. Expected: pass.
+- [ ] Commit: `feat: define adaptive policy config and evidence types`.
 
 ---
 
-## Task 4: Normalize all required Statlocker datasets from deterministic fixtures
+## Task 5: Normalize all required Statlocker datasets from deterministic fixtures
 
 **Files:**
 - Create: `apps/api/test/fixtures/statlocker-v1.ts`
 - Create: `apps/api/src/statlocker-adaptive/statlocker-normalizer.service.ts`
 - Create: `apps/api/test/statlocker-normalizer-v1.spec.ts`
 
-Fixtures must cover the observed response families:
+Fixtures cover:
 
-- current patch index from `/api/info/wpa-patches` as collector control metadata;
-- `/api/info/wpa-patch-data/{minorPatchId}`;
-- `/api/info/vs-hero-wpa-data`;
-- `/api/info/t4-chains-data`;
-- `/api/leaderboard/get-valve-leaderboard`;
-- `/api/info/player-build-analysis/{accountId}/{heroId}`;
-- optional `/api/info/wpa-filtered-items`.
+```text
+/api/info/wpa-patches
+/api/info/wpa-patch-data/{minorPatchId}
+/api/info/vs-hero-wpa-data
+/api/info/t4-chains-data
+/api/leaderboard/get-valve-leaderboard
+/api/info/player-build-analysis/{accountId}/{heroId}
+/api/info/wpa-filtered-items   optional
+```
 
-- [ ] Write failing tests that normalize representative fields including `mean_wpa`, `sample_size`, `wpa_confidence`, `conditional_wpa`, composition/build breakdowns, purchase timing, lane breakdowns, exact enemy `{delta_wpa,count}`, T4 2/3-item chains, and pro `purchaseRate`, `medianBuyTimeS`, `frequencyTier`, `phase`.
-- [ ] Add rejection tests for `200` responses with missing primary sections, non-finite numeric fields, an empty exact-enemy map, and an incompatible pro-build structure.
-- [ ] Run the test; expected failure because the normalizer does not exist.
-- [ ] Implement normalization as pure deterministic parsing behind service methods. Unknown optional fields are ignored; required structural failures throw a typed `StatlockerDatasetValidationError`.
-- [ ] Compute content SHA-256 from stable normalized JSON, not raw object property insertion order.
-- [ ] Run the normalizer test; expected pass.
+- [ ] Write failing tests that normalize representative observed fields: `mean_wpa`, `sample_size`, `wpa_confidence`, ahead/even/behind WPA, composition/build breakdowns, purchase timing, lane/post-lane breakdowns, exact-enemy `{delta_wpa,count}`, T4 2/3-item chains, and pro `purchaseRate`, `medianBuyTimeS`, `frequencyTier`, `phase`, relationships.
+- [ ] Add rejection tests for structurally incomplete `200` responses, non-finite required numeric values, empty primary exact-enemy data, and incompatible pro-build shape.
+- [ ] Run normalizer tests. Expected: fail.
+- [ ] Implement deterministic pure parsing behind service methods. Unknown optional fields are ignored; required structural failures throw `StatlockerDatasetValidationError`.
+- [ ] Compute content SHA-256 from stable normalized JSON, not raw object key order.
+- [ ] Run normalizer tests. Expected: pass.
 - [ ] Commit: `feat: normalize Statlocker adaptive evidence`.
 
 ---
 
-## Task 5: Add append-only snapshot persistence and hot-cache recovery
+## Task 6: Add append-only snapshot persistence and hot-cache recovery
 
 **Files:**
 - Create: `apps/api/src/deadlock-live/entities/statlocker-evidence-snapshot-v1.entity.ts`
@@ -300,53 +337,30 @@ Fixtures must cover the observed response families:
 - Modify: `apps/api/src/app.module.ts`
 - Create: `apps/api/test/statlocker-snapshot-store-v1.spec.ts`
 
-Entity shape:
+Use snapshot metadata that records both game-side and Statlocker-side identity:
 
 ```ts
-@Entity('statlocker_evidence_snapshots_v1')
-export class StatlockerEvidenceSnapshotV1 {
-  @PrimaryColumn({ type: 'char', length: 64 })
-  snapshotId!: string;
-
-  @Index('idx_statlocker_snapshot_lookup')
-  @Column({ type: 'varchar', length: 48 })
-  dataset!: string;
-
-  @Column({ type: 'varchar', length: 128 })
-  rulesetVersion!: string;
-
-  @Column({ type: 'varchar', length: 128 })
-  statlockerPatchId!: string;
-
-  @Column({ type: 'varchar', length: 192 })
-  scopeKey!: string;
-
-  @Column({ type: 'timestamptz' })
-  fetchedAt!: Date;
-
-  @Column({ type: 'char', length: 64 })
-  contentSha256!: string;
-
-  @Column({ type: 'jsonb' })
-  payload!: unknown;
-
-  @Column({ type: 'jsonb' })
-  metadata!: unknown;
+interface StatlockerSnapshotIdentityV1 {
+  dataset: string;
+  rulesetVersion: string;
+  catalogSha256: string;
+  statlockerPatchId: string;
+  scopeKey: string;
+  contentSha256: string;
 }
 ```
 
-- [ ] Write failing store tests using a mocked repository: publish a valid snapshot, read it from hot cache, restore cache on bootstrap, and keep the existing cache entry when a later write is rejected.
-- [ ] Add a test that identical dataset/ruleset/scope/content hash does not append a duplicate row and does not change the active snapshot ID.
-- [ ] Implement snapshot IDs deterministically from dataset + ruleset + Statlocker patch + scope + content SHA.
-- [ ] Persist first, then atomically replace the in-memory entry. Never update memory before persistence succeeds.
-- [ ] Implement `onModuleInit()` recovery that loads the newest valid snapshot for each lookup key.
-- [ ] Register the entity in `AppModule` and the adaptive module TypeORM feature list. The repository currently uses `synchronize: true`; do not add an unrelated migration system in this change.
-- [ ] Run store tests and API build; expected pass.
+- [ ] Write failing tests for publish/read, bootstrap recovery, failed persistence leaving the active cache unchanged, and identical content deduplication.
+- [ ] Create an append-only TypeORM entity keyed by deterministic `snapshotId`, with dataset, ruleset, catalog SHA, Statlocker patch ID, scope, fetched time, schema/collector/normalizer versions, content SHA, payload, and metadata.
+- [ ] Persist first, then atomically replace the in-memory active entry. Never mutate active cache before persistence succeeds.
+- [ ] Implement `onModuleInit()` recovery of the newest valid snapshot per lookup key.
+- [ ] Register the entity in `AppModule`. The project currently uses TypeORM `synchronize: true`; do not introduce an unrelated migration framework in this task.
+- [ ] Run store tests and API build. Expected: pass.
 - [ ] Commit: `feat: persist Statlocker evidence snapshots`.
 
 ---
 
-## Task 6: Implement the production browser collector with one session per batch
+## Task 7: Implement the production background Chromium collector
 
 **Files:**
 - Create: `apps/api/src/statlocker-adaptive/statlocker-browser-collector.service.ts`
@@ -354,96 +368,61 @@ export class StatlockerEvidenceSnapshotV1 {
 - Modify: `apps/api/package.json`
 - Modify: `yarn.lock`
 
-The production collector is separate from `apps/api/src/statlocker-probe/`. Reuse its safe launch behavior, not its POC model abstraction.
+The production collector is separate from `apps/api/src/statlocker-probe/`; reuse safe launch patterns, not the POC model abstraction.
 
-- [ ] Write a failing collector unit test against a fake Puppeteer adapter. Verify one browser launch can collect multiple endpoint bodies and closes the browser exactly once.
-- [ ] Add a test that HTTP 401/403 is returned as a collection failure and no attempt to inspect browser secrets is made.
+- [ ] Write a failing collector test against an injected fake Puppeteer launcher. Assert one browser launch serves a multi-dataset batch and browser close happens exactly once.
+- [ ] Add tests that 401/403 are collection failures and that collector result types contain no cookies, headers, local storage, token, or API-key fields.
 - [ ] Add `puppeteer-core` as a production dependency:
 
 ```bash
 yarn workspace @deadlock-live-probe/api add puppeteer-core@^24.0.0
 ```
 
-- [ ] Implement a small injectable browser-launch adapter so unit tests do not require Chromium.
-- [ ] Open `https://statlocker.gg/items/meta-model` as the public origin, then issue allowed same-origin page-context fetches for the approved aggregate datasets.
-- [ ] Explicitly exclude Win Chance, player WPA, and build-context from the collector API.
-- [ ] Use bounded response-body timeouts and bounded parallelism inside one browser session. Do not return request headers/cookies/storage in result types.
-- [ ] Run collector unit test and API build; expected pass.
+- [ ] Implement one public-page browser session, using normal same-origin page-context requests only for approved aggregate datasets.
+- [ ] Fetch `/api/info/wpa-patches`, select the current raw minor patch ID, then fetch `/api/info/wpa-patch-data/{minorPatchId}` without a `patch_` prefix.
+- [ ] Explicitly exclude Win Chance, player WPA, and build-context APIs.
+- [ ] Use bounded body timeouts and bounded concurrency. Do not inspect or persist request headers/cookies/storage.
+- [ ] Run collector test and API build. Expected: pass.
 - [ ] Commit: `feat: add Statlocker background browser collector`.
 
 ---
 
-## Task 7: Add scheduled refresh, TTL, single-flight, and active-hero collection
+## Task 8: Add scheduled refresh, TTL, single-flight, and active-hero collection
 
 **Files:**
 - Create: `apps/api/src/statlocker-adaptive/statlocker-refresh.service.ts`
 - Create: `apps/api/test/statlocker-refresh-v1.spec.ts`
-- Modify later wiring in `statlocker-adaptive.module.ts`
 
 Refresh defaults:
 
 ```text
-WPA_PATCH_DATA       30 minutes
-VS_HERO_WPA          30 minutes
-T4_CHAINS            30 minutes
-HERO_LEADERBOARD     60 minutes per active hero
-PRO_BUILD_ANALYSIS   60 minutes per active hero/player profile
+WPA_PATCH_DATA      30 minutes
+VS_HERO_WPA         30 minutes
+T4_CHAINS           30 minutes
+HERO_LEADERBOARD    60 minutes per active hero
+PRO_BUILD_ANALYSIS  60 minutes per active hero/player
+CONSENSUS_SKELETON  rebuild after relevant profile inputs change
 ```
 
-Do not scrape all hero/player profiles every hour. Maintain an active-hero set populated by recommendation requests and refresh those hero scopes in background.
-
-- [ ] Write failing tests for TTL gating, a second concurrent refresh joining the existing in-flight promise, failed refresh preserving the previous valid snapshot, and an active hero enqueue that returns immediately.
-- [ ] Implement a one-minute scheduler tick that checks TTLs instead of blindly fetching every minute.
-- [ ] First refresh collector control metadata from `/api/info/wpa-patches`, resolve the latest Statlocker minor patch ID, and persist the association with the current local `rulesetVersion` in snapshot metadata.
-- [ ] For unchanged normalized content SHA, update refresh status metrics without writing a duplicate snapshot.
-- [ ] Make `enqueueHeroRefresh(heroId)` fire-and-forget from runtime perspective.
-- [ ] Run refresh tests; expected pass.
+- [ ] Write failing tests for TTL gating, single-flight, failed refresh preserving active snapshot, active-hero enqueue returning immediately, and unchanged normalized SHA avoiding duplicate persistence.
+- [ ] Implement a scheduler tick every minute that checks TTLs. The minute tick does not imply a Statlocker fetch every minute.
+- [ ] Refresh global datasets on their TTL and leaderboard/profile data only for hero IDs observed in recent recommendation requests.
+- [ ] Keep active-hero state bounded by a configurable inactivity TTL so the process does not accumulate every hero forever.
+- [ ] `enqueueHeroRefresh(heroId)` must be fire-and-forget from recommendation latency perspective.
+- [ ] On a new game ruleset/catalog identity, prioritize collecting a new compatible evidence set but keep the previous set as historical fallback, marked `PATCH_MISMATCH` for current scoring until compatible data exists.
+- [ ] Run refresh tests. Expected: pass.
 - [ ] Commit: `feat: schedule Statlocker evidence refresh`.
 
 ---
 
-## Task 8: Build the Statlocker evidence bundle and freshness semantics
-
-**Files:**
-- Create: `apps/api/src/statlocker-adaptive/statlocker-evidence.service.ts`
-- Create: `apps/api/test/statlocker-evidence-v1.spec.ts`
-
-The service must return evidence plus provenance and per-family freshness:
-
-```ts
-interface AdaptiveEvidenceBundleV1 {
-  rulesetVersion: string;
-  statlockerPatchId?: string;
-  itemEvidence: ReadonlyMap<number, NormalizedItemEvidenceV1>;
-  exactEnemyEvidence: ReadonlyMap<number, readonly NormalizedEnemyItemEvidenceV1[]>;
-  t4Chains: NormalizedT4ChainsV1;
-  skeleton?: ConsensusBuildSkeletonV1;
-  freshness: Record<string, AdaptiveEvidenceFreshnessV1>;
-  snapshotIds: readonly string[];
-  confidenceMultiplier: number;
-}
-```
-
-- [ ] Write failing tests for all four freshness states: `FRESH`, `STALE_USABLE`, `UNAVAILABLE`, `PATCH_MISMATCH`.
-- [ ] Add a test where WPA and enemy data are present but T4 is unavailable: the bundle remains usable and only chain evidence is disabled.
-- [ ] Add a test where runtime ruleset differs from the snapshot ruleset: contextual WPA is excluded and marked `PATCH_MISMATCH`.
-- [ ] Implement configurable `refreshAfter` and `maxStaleAge` per family. Freshness age reduces confidence smoothly; it never increases an effect.
-- [ ] Return deterministic sorted snapshot IDs for replay identity.
-- [ ] Run tests; expected pass.
-- [ ] Commit: `feat: assemble Statlocker evidence bundles`.
-
----
-
-## Task 9: Build top-10 consensus skeletons
+## Task 9: Build top-10 consensus skeleton snapshots
 
 **Files:**
 - Create: `apps/api/src/statlocker-adaptive/build-skeleton.service.ts`
 - Create: `apps/api/test/build-skeleton-v1.spec.ts`
 
-Use up to top 10 leaderboard players with valid hero profile analysis. Initial publication minimum is 6 valid profiles; if a refresh yields fewer than 6, keep the previous skeleton. This threshold is configurable.
-
-- [ ] Write failing tests with ten synthetic player profiles. Assert items shared by 8-10 players become high-strength core, less common items become frequent/flex, and median buy time controls deterministic order within phase.
-- [ ] Add a test where only 5 profiles are valid and confirm the new skeleton is not published over an existing valid one.
+- [ ] Write failing tests with ten synthetic pro profiles. Assert high-coverage stable items become high-strength core, medium coverage becomes frequent, low coverage remains flex, and median buy time gives deterministic order.
+- [ ] Add a test where fewer than the configurable minimum valid profiles are available. Initial default: 6. Do not publish a weak replacement over an existing valid skeleton.
 - [ ] Score skeleton support from bounded components:
 
 ```text
@@ -454,115 +433,124 @@ orderConsistency  0..1
 relationship      0..1
 ```
 
-Use weighted average, not raw sum. Store the exact component breakdown on each skeleton item.
-
-- [ ] Derive phase from robust aggregate pro phase/timing and order the final skeleton deterministically by phase, median time, then item ID.
-- [ ] Persist the consensus skeleton itself as a normalized snapshot scope `hero:{heroId}:consensus` so runtime does not recompute top-10 aggregation on every decision.
-- [ ] Run skeleton tests; expected pass.
+Use a weighted average and retain the component breakdown.
+- [ ] Build the consensus from up to the top 10 relevant leaderboard profiles for the hero.
+- [ ] Persist the normalized result through the snapshot store as internal dataset `CONSENSUS_SKELETON`, scope `hero:{heroId}:consensus`.
+- [ ] Run skeleton tests. Expected: pass.
 - [ ] Commit: `feat: derive Statlocker consensus build skeletons`.
 
 ---
 
-## Task 10: Assemble live adaptive context and team-souls game state
+## Task 10: Assemble evidence bundles and freshness semantics
+
+**Files:**
+- Create: `apps/api/src/statlocker-adaptive/statlocker-evidence.service.ts`
+- Create: `apps/api/test/statlocker-evidence-v1.spec.ts`
+
+- [ ] Write failing tests for `FRESH`, `STALE_USABLE`, `UNAVAILABLE`, and `PATCH_MISMATCH`.
+- [ ] Add partial failure coverage: WPA and exact-enemy available, T4 unavailable, skeleton available -> recommendation evidence remains usable with only chain component disabled.
+- [ ] Add a ruleset/catalog mismatch test. Mismatched contextual WPA must be excluded rather than treated as merely old.
+- [ ] Implement per-family `refreshAfter` and `maxStaleAge`; aging can only lower confidence.
+- [ ] Return deterministic sorted snapshot IDs and metadata including local ruleset/catalog and Statlocker minor patch.
+- [ ] Enqueue active-hero refresh when a required hero scope is missing/stale, but do not await it.
+- [ ] Run evidence tests. Expected: pass.
+- [ ] Commit: `feat: assemble Statlocker evidence bundles`.
+
+---
+
+## Task 11: Implement team-souls state and smooth boundary blending
 
 **Files:**
 - Create: `apps/api/src/statlocker-adaptive/adaptive-game-state.ts`
-- Create: `apps/api/src/statlocker-adaptive/adaptive-realtime-context-v1.service.ts`
 - Create: `apps/api/test/adaptive-game-state-v1.spec.ts`
-- Create: `apps/api/test/adaptive-realtime-context-v1.spec.ts`
-- Modify only if required for an exposed accessor: `apps/api/src/deadlock-live/live-match-state.service.ts`
 
-Use two existing state sources for different purposes:
-
-1. `RecommendationRealtimeCoreStateService` supplies the strict catalog, deterministic candidate state, verified spendable wallet, shop observability, versions, and state revision.
-2. `LiveMatchStateService` supplies roster hero IDs, team IDs, each player's total souls, and game time for contextual team totals.
-
-- [ ] Write pure game-state tests:
+- [ ] Write failing classification tests:
 
 ```text
 108000 vs 100000 => AHEAD
 92000 vs 100000  => BEHIND
 104000 vs 100000 => EVEN
-missing enemy total => UNKNOWN
+missing total    => UNKNOWN
 ```
 
-- [ ] Add blend tests proving a tiny movement around 8% changes weights smoothly rather than discontinuously.
-- [ ] Write a failing context test with a local player, five allies, six enemies, known souls and hero IDs. Assert `ourTeamSouls`, `enemyTeamSouls`, sorted `enemyHeroIds`, game state, inventory, hero ID, and game time are assembled.
-- [ ] Do not use roster `souls` as spendable currency. Affordability continues to use `state.economy.spendableSouls` from the deterministic core state.
-- [ ] If roster team totals are incomplete, set contextual game state `UNKNOWN`; do not fabricate missing player souls.
-- [ ] If enemy composition or own-build archetype cannot be reliably classified from available metadata, set that optional context to `UNKNOWN` and make its scorer component zero. Exact enemy, team-state, skeleton, and T4 remain the mandatory V1 contextual families when their evidence is available.
-- [ ] Run both tests; expected pass.
-- [ ] Commit: `feat: assemble adaptive live match context`.
+- [ ] Add tests around 8% proving evidence weights transition smoothly over `gameStateBlendWidth` rather than jump discontinuously.
+- [ ] Implement:
+
+```text
+soulDelta = (ourTeamSouls - enemyTeamSouls) / enemyTeamSouls
+AHEAD  >= +0.08
+BEHIND <= -0.08
+EVEN   otherwise
+```
+
+- [ ] Treat zero/invalid enemy total as `UNKNOWN` to avoid division artifacts.
+- [ ] Run test. Expected: pass.
+- [ ] Commit: `feat: classify adaptive team soul state`.
 
 ---
 
-## Task 11: Implement bounded scoring and confidence shrinkage
+## Task 12: Implement bounded evidence scoring and confidence shrinkage
 
 **Files:**
 - Create: `apps/api/src/statlocker-adaptive/adaptive-evidence-scorer-v1.service.ts`
 - Create: `apps/api/test/adaptive-evidence-scorer-v1.spec.ts`
 
-- [ ] Write failing unit tests for `n / (n + k)` shrinkage, bounded normalization, and sample confidence monotonicity.
-- [ ] Write the exact-enemy tests from the spec: six enemy slices, only top three confidence-adjusted contributions used, weighted mean rather than sum, low sample unable to dominate core by itself.
-- [ ] Add tests for game-state conditional WPA, timing falloff, stale confidence reduction, T4 chain contribution, skeleton deviation, and transaction/churn penalties.
-- [ ] Implement each component as a named function returning `{ raw, normalized, confidence, weighted }` so score breakdown is explainable.
-- [ ] Clamp normalized component values to `[-1, 1]` before multiplying by configured weight.
-- [ ] Implement exact-enemy aggregation in this order:
+- [ ] Write failing tests for `n / (n + k)` shrinkage, monotonic confidence, and component clamping to `[-1, 1]`.
+- [ ] Write exact-enemy tests using six enemy slices. Assert only the top three confidence-adjusted contributions are aggregated, by weighted mean rather than sum.
+- [ ] Add a low-sample test proving a large raw enemy delta with tiny `count` cannot independently beat a strong core prior.
+- [ ] Add tests for base WPA, ahead/even/behind fit, timing falloff, stale confidence reduction, T4 chain fit, skeleton deviation, transaction penalty, churn penalty, optional composition fit, and optional own-build fit.
+- [ ] Implement every score component as an explainable record:
 
 ```ts
-const adjusted = enemyEvidence
-  .map(shrinkEnemyEffect)
-  .sort(byAbsoluteConfidenceAdjustedEffectDesc)
-  .slice(0, config.exactEnemyMaxMatchups);
-
-const fit = clamp(weightedMean(adjusted), -1, 1);
+interface AdaptiveScoreComponentV1 {
+  raw: number;
+  normalized: number;
+  confidence: number;
+  weight: number;
+  weighted: number;
+}
 ```
 
-- [ ] Ensure contradictory evidence lowers aggregate recommendation confidence rather than silently choosing only positive signals.
-- [ ] Run scorer tests; expected pass.
+- [ ] If enemy composition or own-build archetype cannot be classified reliably from available inputs, return zero contribution and lower evidence completeness instead of guessing.
+- [ ] Make disagreement among strong signals reduce overall recommendation confidence.
+- [ ] Run scorer tests. Expected: pass.
 - [ ] Commit: `feat: score adaptive Statlocker evidence`.
 
 ---
 
-## Task 12: Implement the full-build planner with beam search, WAIT, SELL, and hysteresis
+## Task 13: Implement full-build planning with future target beam search
 
 **Files:**
 - Create: `apps/api/src/statlocker-adaptive/adaptive-build-planner-v1.service.ts`
 - Create: `apps/api/test/adaptive-build-planner-v1.spec.ts`
 
-The planner receives only deterministic candidates produced by `generateRecommendationCandidates` plus the evidence bundle and previous plan.
+The planner has two deliberately different layers:
 
-- [ ] Write failing scenario tests:
-  - strong core + weak contextual evidence => `CONTINUE_CORE`;
-  - flex slot + high-confidence exact enemy counter + valid timing => insert counter item, preserve core;
-  - full inventory + weak owned flex + strong replacement => `REPLACE`;
-  - same replacement but exact-enemy sample `11` => no sell/replace;
-  - unaffordable strong target => `WAIT` for target instead of a weak filler buy;
-  - tiny score change against previous plan => keep previous plan;
-  - recently bought item => protected from immediate sale;
-  - recently sold item => rebuy penalty active.
-- [ ] Add an invariant test that filters all `candidate.feasible === false` before scoring or search and can never output one as `nextAction`.
-- [ ] Build the planning pool from skeleton core/frequent/flex, strong contextual items, T4 continuations, and owned items. Deduplicate and sort deterministically.
-- [ ] Implement beam state as plain immutable data:
+1. **Immediate action layer:** may select only from current `generateRecommendationCandidates()` output. This is where affordability/shop/slot/recipe/transaction legality applies.
+2. **Future target layer:** searches a compact ordered sequence of desired future items. These steps are planning targets and may be currently unaffordable. They are not represented as currently feasible transaction candidates.
 
-```ts
-interface BeamPlanStateV1 {
-  itemIds: readonly number[];
-  steps: readonly PlannedTransitionV1[];
-  score: number;
-  immediateScore: number;
-}
-```
-
-- [ ] Expand at most `planningDepth=3`, keep at most `beamWidth=8` each layer, discount future item scores by `futureDiscount ** depth`.
-- [ ] Apply `minPlanSwitchImprovement`, stronger `sellMinImprovement`, and stronger `coreReplaceMinImprovement` against the previous published plan.
-- [ ] Return full ordered `recommendedBuild`, diff `changes`, ranked immediate candidates, total score, and confidence.
-- [ ] Run planner tests; expected pass.
+- [ ] Write failing scenarios:
+  - strong core + weak contextual evidence -> `CONTINUE_CORE`;
+  - flex slot + high-confidence exact enemy counter -> insert counter, preserve core;
+  - full inventory + weak owned flex + strong replacement -> `REPLACE` only if currently legal;
+  - same replacement with exact-enemy sample `11` -> no replacement;
+  - strong future core currently unaffordable -> immediate `WAIT`, full plan still targets core;
+  - unknown shop opportunity -> no illegal `BUY`; full target plan still returned;
+  - tiny score change from previous plan -> `HOLD`/preserve previous plan;
+  - recent purchase -> protected against immediate sell;
+  - recent sell -> rebuy penalty active.
+- [ ] Add invariant test: any current candidate with `feasible === false` is removed before immediate-action ranking and can never become `nextAction`.
+- [ ] Build a compact future planning pool from consensus core/frequent/flex, high-confidence exact-enemy items, game-state items, optional composition items, T4 continuations, and currently owned items.
+- [ ] Search future target sequences to depth `3`, beam width `8`, deterministic tie-break by item/action ID. Apply future discount by depth.
+- [ ] Score future target coherence with skeleton/T4/context evidence, but do not call current affordability checks for depth > 0 targets.
+- [ ] Compare the best proposed full plan against the previous published plan using hysteresis. Require stronger improvement for SELL and still stronger improvement for replacing protected core.
+- [ ] Return full ordered `recommendedBuild`, `changes`, current ranked actions, plan score, and confidence.
+- [ ] Run planner tests. Expected: pass.
 - [ ] Commit: `feat: plan adaptive full builds`.
 
 ---
 
-## Task 13: Persist decisions and implement deterministic replay
+## Task 14: Persist decisions and deterministic replay
 
 **Files:**
 - Create: `apps/api/src/deadlock-live/entities/adaptive-recommendation-decision-v1.entity.ts`
@@ -570,46 +558,18 @@ interface BeamPlanStateV1 {
 - Modify: `apps/api/src/app.module.ts`
 - Create: `apps/api/test/adaptive-replay-v1.spec.ts`
 
-Decision entity stores immutable JSON-safe request/input/result/provenance rather than duplicating every nested score into columns:
-
-```ts
-@Entity('adaptive_recommendation_decisions_v1')
-export class AdaptiveRecommendationDecisionV1 {
-  @PrimaryColumn({ type: 'varchar', length: 128 })
-  decisionId!: string;
-
-  @Index()
-  @Column({ type: 'varchar', length: 64 })
-  matchId!: string;
-
-  @Column({ type: 'varchar', length: 128 })
-  playerKey!: string;
-
-  @Column({ type: 'varchar', length: 128 })
-  stateRevision!: string;
-
-  @Column({ type: 'jsonb' })
-  replayInput!: unknown;
-
-  @Column({ type: 'jsonb' })
-  result!: unknown;
-
-  @CreateDateColumn({ type: 'timestamptz' })
-  recordedAt!: Date;
-}
-```
-
-- [ ] Write a failing replay test that persists a decision fixture and feeds its stored state/evidence/config/previous-plan identity back through scorer/planner.
-- [ ] Assert the replay result has the same selected action, ordered build, candidate scores, confidence, and evidence snapshot IDs.
-- [ ] Store score breakdown, ruleset/catalog versions, live context, previous plan, config/scorer/planner versions, and sorted snapshot IDs inside `replayInput`/`result`.
-- [ ] Add `getPreviousPlan(matchId, playerKey)` using the latest successfully published decision.
+- [ ] Write a failing replay test that persists one complete decision input/result and reruns it with the same config and snapshot identities.
+- [ ] Assert replay reproduces selected action, ordered build, ranked candidate scores, confidence, and snapshot IDs.
+- [ ] Create a decision entity with indexed `decisionId`, `matchId`, `playerKey`, `stateRevision`, JSON-safe `replayInput`, JSON-safe `result`, and timestamp.
+- [ ] Persist enough information to replay without Chromium or mutable current DB evidence: live context snapshot, deterministic candidate data, previous plan, normalized evidence payload or immutable snapshot references, config/scorer/planner versions, ruleset/catalog identity, sorted snapshot IDs.
+- [ ] Implement `getPreviousPlan(matchId, playerKey)` from the latest successfully published adaptive decision.
 - [ ] Register the entity in TypeORM.
-- [ ] Run replay tests; expected pass.
+- [ ] Run replay tests. Expected: pass.
 - [ ] Commit: `feat: persist and replay adaptive decisions`.
 
 ---
 
-## Task 14: Add the primary adaptive recommendation coordinator and final legality pass
+## Task 15: Coordinate recommendations and run final deterministic legality
 
 **Files:**
 - Create: `apps/api/src/statlocker-adaptive/adaptive-recommendation-v1.service.ts`
@@ -618,29 +578,33 @@ export class AdaptiveRecommendationDecisionV1 {
 Coordinator flow:
 
 ```text
-build core deterministic state
-+ merge live roster/team context
-+ read previous plan
-+ read local Statlocker evidence
-+ generate deterministic candidates
-+ score/plan
-+ regenerate or validate immediate candidate against latest state
-+ persist
-+ return
+AdaptiveDecisionStateV1Service
+  -> generateRecommendationCandidates(current state)
+  -> previous adaptive plan
+  -> local Statlocker evidence bundle
+  -> scorer/planner
+  -> rebuild freshest adaptive state
+  -> regenerate deterministic candidates
+  -> confirm selected immediate action is still feasible
+  -> otherwise select next ranked feasible action or WAIT/HOLD
+  -> persist decision
+  -> return result
 ```
 
-- [ ] Write a failing service test proving `StatlockerBrowserCollectorService` is not a dependency and is never called during `recommend()`.
-- [ ] Write a test where the planner selects a buy, then final legality state changes to make that buy unavailable; service must choose the next ranked legal action or `WAIT`, never publish the stale illegal buy.
-- [ ] Write a test where Statlocker is unavailable but a previous valid plan exists; service returns the preserved plan with lower confidence and conservative next action.
-- [ ] Write a test where no usable Statlocker evidence and no prior plan exist; service returns a safe deterministic `WAIT`/`CONTINUE_CORE`/`ABSTAIN` result according to candidate availability, never inventing a contextual item.
-- [ ] Call `generateRecommendationCandidates({ state, itemGraph })` directly or through a tiny adaptive candidate adapter. Do not call `RecommendationEngineV8Service`, Behavioral serving, Value, or Policy.
-- [ ] Persist only after final legality succeeds.
-- [ ] Run service tests; expected pass.
+- [ ] Write a failing test proving `StatlockerBrowserCollectorService` is not a constructor dependency and no browser call occurs during `recommend()`.
+- [ ] Write a failing test proving no V8 runtime service is a dependency of the coordinator.
+- [ ] Write a stale-state race test: planner chooses a buy, final refreshed state makes it infeasible, service returns next feasible current action or `WAIT/HOLD`, never the illegal buy.
+- [ ] Write fallback tests:
+  - Statlocker unavailable + previous valid plan -> preserve plan, lower confidence, conservative action;
+  - no usable Statlocker + no previous plan -> safe deterministic `WAIT`, `HOLD`, `CONTINUE_CORE`, or `ABSTAIN`, never an invented contextual buy.
+- [ ] Generate current candidates directly with `generateRecommendationCandidates({ state, itemGraph })`.
+- [ ] Persist only the final published action/plan after the second legality check.
+- [ ] Run coordinator tests. Expected: pass.
 - [ ] Commit: `feat: coordinate Statlocker adaptive recommendations`.
 
 ---
 
-## Task 15: Expose the adaptive API and evidence status
+## Task 16: Expose the adaptive API and background refresh module
 
 **Files:**
 - Create: `apps/api/src/statlocker-adaptive/adaptive-recommendation-v1.controller.ts`
@@ -652,7 +616,7 @@ Primary endpoint:
 
 ```text
 POST /deadlock/adaptive/v1/recommend
-body: { matchId, localSteamId? }
+{ "matchId": "...", "localSteamId": "..." }
 ```
 
 Status endpoint:
@@ -661,19 +625,17 @@ Status endpoint:
 GET /deadlock/adaptive/v1/status
 ```
 
-Status returns collector last-attempt/last-success times, in-flight flags, active hero scopes, per-family freshness, current local ruleset, Statlocker patch ID, and active snapshot IDs. It must not include browser/session material.
-
-- [ ] Write failing controller tests for request validation and a typed successful response.
-- [ ] Build `StatlockerAdaptiveModule` with `ScheduleModule.forRoot()`, TypeORM feature entities, collector, normalizer, store, refresh, evidence, skeleton, scorer, planner, context, coordinator, replay, and controller.
-- [ ] Import `DeadlockLiveModule` for the exported ML-neutral core state and `LiveMatchStateService`.
-- [ ] Import the new module into `AppModule` while leaving `StatlockerProbeModule` isolated and unchanged.
-- [ ] Verify no adaptive provider constructor takes `RecommendationBehavioralServingV1Service`, `RecommendationEngineV8Service`, `RecommendationPolicyBuildV1Service`, or `RecommendationRealtimeCoordinatorV8Service`.
-- [ ] Run controller tests and API build; expected pass.
+- [ ] Write failing controller tests for invalid request, successful typed response, and status response.
+- [ ] Build `StatlockerAdaptiveModule` with `ScheduleModule.forRoot()`, TypeORM feature entities, decision state, collector, normalizer, snapshot store, refresh, evidence, skeleton, game state/scorer, planner, replay, coordinator, and controller.
+- [ ] Import existing `DeadlockLiveModule` only for non-ML services needed by the adaptive subsystem, or export those narrow services if not currently exported. Do not inject V8 runtime services into adaptive providers.
+- [ ] Status returns last collector attempt/success, in-flight refreshes, active hero scopes, per-family freshness, ruleset/catalog identity, Statlocker minor patch ID, and active snapshot IDs. No browser/session material.
+- [ ] Keep `StatlockerProbeModule` isolated and unchanged.
+- [ ] Run controller tests and API build. Expected: pass.
 - [ ] Commit: `feat: expose adaptive recommendation v1 api`.
 
 ---
 
-## Task 16: Make the Overwolf runtime use one adaptive recommendation path
+## Task 17: Switch the Overwolf primary live path to one adaptive response
 
 **Files:**
 - Create: `apps/overwolf-client/src/adaptive-recommendation-client.ts`
@@ -681,20 +643,15 @@ Status returns collector last-attempt/last-success times, in-flight flags, activ
 - Modify: `apps/overwolf-client/src/index.ts`
 - Modify: `apps/overwolf-client/src/ui.ts`
 
-The old `/deadlock/analysis/recommend` and `/deadlock/analysis/situational/recommend` code can remain for manual/debug compatibility, but the live background controller must stop using that pair as its primary recommendation loop.
+The old analysis/situational endpoints may stay for debug/manual compatibility. They stop being the primary live recommendation loop.
 
-- [ ] Write a failing client test proving meaningful state-change requests are debounced/deduplicated and that two identical `{matchId, localSteamId}` requests do not overlap.
-- [ ] Add a typed fetch client for `POST /deadlock/adaptive/v1/recommend`.
-- [ ] In `index.ts`, track the local Steam ID from roster state and schedule the adaptive request after buffered live events have had time to reach the backend.
-- [ ] Trigger on the already available meaningful events: inventory changes, roster/enemy composition changes, local souls/context changes, match changes, and manual refresh. Keep the existing debounce rather than requesting on every roster packet.
-- [ ] Replace `latestSituational` as the live primary concept with `latestAdaptiveRecommendation`; one response now contains both the immediate action and full plan.
-- [ ] Add `showAdaptiveRecommendation()` in `ui.ts`. Render:
-  - immediate action and target item;
-  - ordered next build items;
-  - owned/planned status;
-  - concise reasons from score components/plan changes;
-  - confidence/freshness indicator.
-- [ ] Do not expose raw 1.1 MB Statlocker evidence payloads to the client; response carries only score/provenance summaries.
+- [ ] Write a failing client test for debounce, payload dedupe, and no overlapping identical adaptive request.
+- [ ] Implement typed `POST /deadlock/adaptive/v1/recommend` client.
+- [ ] Track local Steam ID from roster state and schedule adaptive refresh after the live-event buffer has had time to reach the backend.
+- [ ] Trigger on meaningful existing live signals: inventory changes, roster/enemy changes, local souls/context changes, match changes, and manual refresh. Do not request on every raw roster packet.
+- [ ] Replace `latestSituational` as the primary live recommendation state with one `latestAdaptiveRecommendation` response containing both immediate action and full plan.
+- [ ] Add `showAdaptiveRecommendation()` to render immediate action, target item, ordered remaining build, owned/next/planned status, concise reasons, confidence, and evidence freshness.
+- [ ] Keep raw Statlocker payloads server-side. Client receives summaries/provenance only.
 - [ ] Run:
 
 ```bash
@@ -707,35 +664,26 @@ Expected: pass.
 
 ---
 
-## Task 17: Package Chromium and build-domain for the production API image
+## Task 18: Package Chromium and build-domain for production
 
 **Files:**
 - Modify: `Dockerfile`
 - Modify: `docker-compose.yml`
-- Potential lockfile already changed in Task 6.
 
-The current Dockerfile copies only shared + API artifacts. The adaptive runtime directly relies on `@deadlock-live-probe/build-domain`, so production image packaging must include it explicitly.
+The current Dockerfile builds/copies shared + API only. Adaptive serving uses build-domain at runtime and background collection needs Chromium.
 
-- [ ] Add `packages/deadlock-build-domain/package.json` to builder dependency metadata and copy/build the package before API build.
-- [ ] Copy build-domain package metadata and `dist` into the runtime stage.
-- [ ] Install Chromium in the Alpine runtime image and set an explicit executable path, for example:
-
-```dockerfile
-RUN apk add --no-cache chromium
-ENV CHROMIUM_PATH=/usr/bin/chromium-browser
-```
-
-If the installed Alpine package exposes `/usr/bin/chromium` instead, use that actual path in the image and test it with `test -x` during image build.
-
-- [ ] Add optional compose environment overrides for refresh intervals/config version only if operators need them; defaults must run without extra secrets.
-- [ ] Build locally/CI:
+- [ ] Add `packages/deadlock-build-domain/package.json` to dependency metadata copied before install.
+- [ ] Copy/build `packages/deadlock-build-domain` before API build and copy its runtime package metadata + `dist` into the final image.
+- [ ] Install Chromium in the Alpine runtime image and set the actual executable path. Verify during image build with `test -x`.
+- [ ] Keep collector configuration secret-free. Optional TTL/weight environment overrides can be added to compose only when needed; defaults must run without them.
+- [ ] Build:
 
 ```bash
 docker build -t deadlock-adaptive-v1 .
 ```
 
-Expected: image builds successfully.
-- [ ] Verify inside the image:
+Expected: success.
+- [ ] Verify runtime dependencies:
 
 ```bash
 docker run --rm --entrypoint sh deadlock-adaptive-v1 -c \
@@ -747,25 +695,27 @@ Expected: exit code 0.
 
 ---
 
-## Task 18: Add end-to-end invariants, CI coverage, and operational smoke
+## Task 19: Add end-to-end invariants, CI, and VPS smoke verification
 
 **Files:**
 - Create: `apps/api/test/adaptive-policy-v1.integration.spec.ts`
 - Modify: `.github/workflows/recommendation-ci.yml`
-- Optionally create a focused self-hosted smoke workflow only if the existing deploy workflow cannot execute the checks cleanly.
+- Create a focused self-hosted smoke workflow only if the existing deployment workflow cannot cleanly perform the checks.
 
-- [ ] Write an integration test with a deterministic item graph, live context, snapshot bundle, previous plan, scorer, planner, and coordinator. Assert the full approved invariant set:
-  - illegal candidate is never selected;
-  - Statlocker cannot override legality;
+- [ ] Write one deterministic integration fixture covering item graph, live roster, scoped spendable-souls verification, snapshots, skeleton, previous plan, scorer, planner, and coordinator.
+- [ ] Assert all hard invariants:
+  - infeasible immediate candidate is never selected;
+  - Statlocker can never override legality;
   - low-sample enemy evidence cannot dominate core by itself;
-  - SELL requires stronger evidence than insertion/buy;
-  - tiny score changes do not flip the plan;
+  - SELL needs stronger improvement than insertion/buy;
+  - tiny score changes do not flip plans;
   - stale evidence lowers confidence;
-  - patch mismatch disables contextual WPA;
-  - identical inputs and versions reproduce the same plan.
-- [ ] Run the targeted integration test first; expected pass after Tasks 1-17.
-- [ ] Add `agent/statlocker-model-probe-poc` to Recommendation CI push branches while retaining pull-request coverage.
-- [ ] Run full repository verification:
+  - patch mismatch disables affected contextual WPA;
+  - identical inputs and versions reproduce identical plan/result hash;
+  - recommendation path does not launch Chromium;
+  - recommendation path has no ML8 runtime dependency.
+- [ ] Add `agent/statlocker-model-probe-poc` to Recommendation CI push branches while preserving pull-request coverage.
+- [ ] Run full verification:
 
 ```bash
 yarn workspace @deadlock-live-probe/shared test
@@ -774,11 +724,12 @@ yarn workspace @deadlock-live-probe/api test
 yarn workspace @deadlock-live-probe/overwolf-client test
 yarn workspace @deadlock-live-probe/overwolf-client build:bundle
 yarn workspace @deadlock-live-probe/api build
+docker build -t deadlock-adaptive-v1 .
 ```
 
 Expected: all pass.
-- [ ] Build the production image and verify Chromium/build-domain as in Task 17.
-- [ ] On the self-hosted VPS, use the repository's GitHub Actions deployment mechanism, not ad-hoc host edits. After deploy, validate with retries because Nginx graceful reload can briefly leave an old worker:
+- [ ] Deploy/verify the VPS through repository GitHub Actions, not ad-hoc host edits.
+- [ ] Validate status with retry because Nginx graceful reload may briefly leave an old worker:
 
 ```bash
 for i in 1 2 3 4 5; do
@@ -787,82 +738,91 @@ for i in 1 2 3 4 5; do
 done
 ```
 
-Expected: JSON status with no secrets and evidence freshness fields.
-- [ ] Validate that a recommendation request returns quickly from local evidence even while a collector refresh is in progress. The request must not wait for Chromium completion.
-- [ ] Simulate collector failure or temporarily disable collection in the smoke environment and confirm the endpoint continues with last-known-good evidence/fallback behavior.
-- [ ] Confirm runtime logs show no Behavioral/Value/Policy model invocation for adaptive requests.
+Expected: JSON status with freshness/provenance and no secrets.
+- [ ] Start a collector refresh and confirm a simultaneous recommendation responds from local evidence without waiting for Chromium.
+- [ ] Simulate collector failure and confirm last-known-good evidence/fallback remains usable.
+- [ ] Confirm logs show no Behavioral/Value/Policy model invocation for `/deadlock/adaptive/v1/recommend`.
 - [ ] Commit: `test: verify Statlocker adaptive policy v1 runtime`.
 
 ---
 
-## Task 19: Final regression and serving-path audit
+## Task 20: Final serving-path audit
 
 **Files:**
-- Modify only files needed to fix failures found in the audit.
+- Modify only files needed to fix audit failures.
 
-- [ ] Search the new adaptive subsystem for forbidden ML serving dependencies:
+- [ ] Search adaptive runtime for forbidden ML serving dependencies:
 
 ```bash
-grep -R "RecommendationBehavioral\|RecommendationValue\|RecommendationPolicy\|RecommendationRealtimeCoordinatorV8\|RecommendationEngineV8" \
+grep -R "RecommendationBehavioral\|RecommendationValue\|RecommendationPolicy\|RecommendationRealtimeCoordinatorV8\|RecommendationEngineV8\|RecommendationRealtimeStateV8" \
   apps/api/src/statlocker-adaptive || true
 ```
 
 Expected: no runtime dependency matches.
-- [ ] Search for forbidden browser-state handling:
+- [ ] Search adaptive collector for forbidden browser-state handling:
 
 ```bash
-grep -R "cookie\|localStorage\|authorization\|X-API-Key" \
+grep -R "cookies()\|localStorage\|X-API-Key\|authorization" \
   apps/api/src/statlocker-adaptive || true
 ```
 
-Expected: no secret extraction/persistence implementation. A literal security assertion in a test is acceptable only if it does not read browser state.
-- [ ] Run the full test/build suite again.
-- [ ] Replay at least one persisted integration fixture and compare serialized result hashes.
-- [ ] Inspect the primary Overwolf fetch path and confirm it targets `/deadlock/adaptive/v1/recommend`.
-- [ ] Confirm old ML8 files still exist but are not called by the primary live adaptive endpoint.
-- [ ] Commit any audit fixes with a focused message, otherwise leave the previous verified commit as the implementation head.
+Expected: no secret extraction/persistence implementation.
+- [ ] Inspect the Overwolf primary fetch path and confirm `/deadlock/adaptive/v1/recommend` is the live recommendation endpoint.
+- [ ] Confirm old ML8 source files still exist in the repository but are not invoked by the adaptive controller/service graph.
+- [ ] Replay the deterministic integration decision and compare serialized result hash.
+- [ ] Run the full verification suite from Task 19 one final time.
+- [ ] Commit only if audit fixes were necessary.
 
 ---
 
 ## Implementation Notes
 
-### Why keep the deterministic candidate generator unchanged
+### Deterministic legality stays authoritative
 
-`generateRecommendationCandidates` already emits `WAIT_SAVE`, `BUY_ITEM`, `UPGRADE_ITEM`, `SELL_ITEM`, and `REPLACE_ITEM` candidates and enforces item availability, wallet observability, affordability, slot limits, active-item limits, upgrade components, shop observability, and sell transaction knowledge. Adaptive V1 should rank only feasible candidates from this layer rather than reimplementing shop rules.
+`generateRecommendationCandidates()` already emits `WAIT_SAVE`, `BUY_ITEM`, `UPGRADE_ITEM`, `SELL_ITEM`, and `REPLACE_ITEM` while enforcing ruleset availability, wallet observability, affordability, slot limits, active limits, upgrade components, shop observability, and sell transaction knowledge. Adaptive V1 ranks only currently feasible immediate candidates from this layer.
 
-### Why split live context from affordability
+`HOLD` and `CONTINUE_CORE` are planner-level semantic outcomes. When mapped to a concrete immediate transaction, they correspond to taking no transaction now, normally backed by a feasible `WAIT_SAVE` candidate.
 
-Roster `souls` are appropriate for the approved team total comparison, but they are not assumed to equal verified spendable wallet currency. Team `AHEAD/EVEN/BEHIND` therefore comes from `LiveMatchStateService`, while purchase legality continues to rely on the existing verified `spendableSouls` fact in the ML-neutral recommendation core state.
+### Team souls and spendable souls are deliberately separate
 
-### Evidence freshness behavior
+`LiveMatchStateService` roster souls are the approved input for total-team `AHEAD/EVEN/BEHIND`. They are not automatically spendable currency. The adaptive state builder marks local souls as verified spendable only when controlled affordability evidence passes for the exact current ruleset/catalog scope. Otherwise purchase affordability remains unknown and the deterministic candidate generator blocks immediate buys.
 
-A dataset can be stale but usable. Staleness reduces confidence and therefore makes aggressive deviations, especially SELL/core replacement, harder. `PATCH_MISMATCH` is different: affected contextual terms are disabled, not merely discounted.
+### Future build planning is not current transaction simulation
 
-### Active-hero refresh behavior
+The complete `recommendedBuild` may contain items that are not affordable now. Only `nextAction` must map to a currently feasible deterministic candidate. Future beam-search steps are target sequence choices scored for skeleton/context/T4 coherence.
 
-Global patch, exact-enemy, and T4 datasets refresh on their own TTL. Top-10 leaderboard/profile work is scoped to heroes that are currently requested or were recently active. A recommendation request may enqueue a missing hero refresh, but it proceeds immediately using existing evidence or conservative fallback.
+### Patch identity
+
+`/api/info/wpa-patches` supplies Statlocker's current minor patch ID as collector control metadata. Every scoring snapshot also records our current ruleset + catalog SHA. Compatibility is explicit; mismatched evidence is `PATCH_MISMATCH` and affected contextual components are disabled.
+
+### Active-hero collection
+
+Global WPA/exact-enemy/T4 data refresh by TTL. Leaderboard and pro profile collection is demand scoped to recently active heroes. A recommendation request may enqueue missing hero evidence but never waits for it.
 
 ### Primary runtime cutover
 
-The implementation does not delete old analysis endpoints or ML8 code. The cutover is defined by the Overwolf live client and the new adaptive controller using the new coordinator. ML8 remains available for offline/admin work but is not a fallback for V1.
+The change does not delete old analysis endpoints or ML8 code. Cutover is defined by the Overwolf live client and `/deadlock/adaptive/v1/recommend`. ML8 remains available only for existing offline/admin uses.
 
 ## Completion Criteria
 
-Implementation is complete only when all of the following are true:
+Implementation is complete only when all are true:
 
-1. The primary Overwolf runtime calls the adaptive V1 endpoint.
-2. No adaptive recommendation request waits for Chromium.
-3. Statlocker snapshots persist and recover after API restart.
-4. Top-10 consensus skeletons are available for active heroes and remain soft-protected.
-5. Team state uses total team souls with the approved ±8% threshold.
-6. Exact enemy evidence uses confidence shrinkage, top-three aggregation, and a bounded contribution.
-7. T4 chain evidence influences trajectory scoring.
-8. Planner returns a full ordered build plus immediate action and supports guarded SELL/REPLACE.
-9. Final deterministic legality runs after planning.
-10. Failed refresh keeps the last valid snapshot.
-11. Patch mismatch disables mismatched contextual evidence.
-12. Decisions store sufficient data for deterministic replay.
-13. Scenario/invariant tests pass.
-14. Full shared/build-domain/API/Overwolf test and build commands pass.
-15. Production Docker image contains Chromium, Puppeteer Core, and build-domain runtime artifacts.
-16. ML8 source remains in the repository but is absent from the primary adaptive serving flow.
+1. The primary Overwolf live loop calls `/deadlock/adaptive/v1/recommend`.
+2. The adaptive endpoint does not depend on V8 recommendation telemetry or ML8 runtime services.
+3. No adaptive recommendation request waits for Chromium.
+4. Statlocker snapshots persist and recover after API restart.
+5. Active heroes receive top-10 consensus skeletons with soft core protection.
+6. Team state uses total team souls and the approved ±8% threshold.
+7. Spendable souls remain fail-closed unless exact ruleset/catalog affordability evidence verifies them.
+8. Exact enemy evidence uses confidence shrinkage, top-three aggregation, and bounded contribution.
+9. T4 chain evidence affects future trajectory scoring.
+10. Planner returns full ordered build plus immediate action and supports guarded SELL/REPLACE.
+11. Only the immediate action must be a currently feasible deterministic candidate; future plan items are targets.
+12. Final deterministic legality runs after planning and before persistence/response.
+13. Failed collector refresh preserves the last valid snapshot.
+14. Patch mismatch disables affected contextual evidence.
+15. Decisions can be deterministically replayed from persisted inputs/versions.
+16. Scenario/invariant tests pass.
+17. Shared/build-domain/API/Overwolf tests and builds pass.
+18. Production image contains Chromium, Puppeteer Core, and build-domain runtime artifacts.
+19. ML8 source remains in the repository but is absent from the primary adaptive serving graph.
