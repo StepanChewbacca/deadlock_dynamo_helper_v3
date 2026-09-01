@@ -1,11 +1,15 @@
 import { Injectable, Optional } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { ItemCatalogVersion } from '../deadlock-live/entities/item-catalog-version.entity';
 import {
   StatlockerBrowserCollectorService,
   StatlockerCollectedDatasetV1,
   StatlockerCollectionTargetV1,
 } from './statlocker-browser-collector.service';
 import { BuildSkeletonService } from './build-skeleton.service';
+import { STATLOCKER_HERO_IDS_V1 } from './statlocker-hero-pool';
 import { StatlockerNormalizerService } from './statlocker-normalizer.service';
 import {
   StatlockerNormalizedDatasetV1,
@@ -27,9 +31,11 @@ export interface StatlockerRefreshStatusV1 {
   identity?: StatlockerGameIdentityV1;
 }
 
-const GLOBAL_REFRESH_TTL_MS = 30 * 60_000;
-const HERO_REFRESH_TTL_MS = 60 * 60_000;
-const DEFAULT_ACTIVE_HERO_TTL_MS = 30 * 60_000;
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const GLOBAL_REFRESH_TTL_MS = 30 * MINUTE;
+const HERO_REFRESH_TTL_MS = 36 * HOUR;
+const DEFAULT_ACTIVE_HERO_TTL_MS = 30 * MINUTE;
 const MAX_PROFILES_PER_HERO = 10;
 const SNAPSHOT_SCHEMA_VERSION = 'statlocker-evidence-v1';
 const COLLECTOR_VERSION = 'statlocker-browser-collector-v1';
@@ -44,9 +50,10 @@ export class StatlockerRefreshService {
   private readonly activeHeroTtlMs = readBoundedMs(
     process.env.STATLOCKER_ACTIVE_HERO_TTL_MS,
     DEFAULT_ACTIVE_HERO_TTL_MS,
-    60_000,
-    24 * 60 * 60_000,
+    MINUTE,
+    24 * HOUR,
   );
+  private poolCursor = 0;
   private lastAttemptAt?: string;
   private lastSuccessAt?: string;
   private lastError?: string;
@@ -56,6 +63,9 @@ export class StatlockerRefreshService {
     private readonly normalizer: StatlockerNormalizerService,
     private readonly store: StatlockerSnapshotStoreService,
     @Optional() private readonly skeleton?: BuildSkeletonService,
+    @Optional()
+    @InjectRepository(ItemCatalogVersion)
+    private readonly catalogVersionRepo?: Repository<ItemCatalogVersion>,
   ) {}
 
   observeGameIdentity(identity: StatlockerGameIdentityV1, _nowMs = Date.now()): void {
@@ -68,10 +78,8 @@ export class StatlockerRefreshService {
       catalogSha256: identity.catalogSha256.toLowerCase(),
     };
     if (changed) {
-      this.lastSuccessByKey.delete(this.globalRefreshKey(this.identity));
-      for (const heroId of this.activeHeroes.keys()) {
-        this.lastSuccessByKey.delete(this.heroRefreshKey(this.identity, heroId));
-      }
+      this.lastSuccessByKey.clear();
+      this.poolCursor = 0;
     }
   }
 
@@ -102,7 +110,7 @@ export class StatlockerRefreshService {
         ]);
         for (const dataset of result.datasets) {
           const normalized = this.normalizeCollected(dataset, result.statlockerPatchId);
-          await this.publishIfChanged(normalized, identity, dataset);
+          await this.publishObservation(normalized, identity, dataset);
         }
         this.lastSuccessByKey.set(key, nowMs);
         this.markSuccess(nowMs);
@@ -117,7 +125,7 @@ export class StatlockerRefreshService {
     if (!Number.isInteger(heroId) || heroId <= 0) return;
     const identity = this.requireIdentity();
     const key = this.heroRefreshKey(identity, heroId);
-    if (!force && !this.isDue(key, HERO_REFRESH_TTL_MS, nowMs)) return;
+    if (!force && !this.isHeroDue(identity, heroId, nowMs)) return;
     return this.singleFlight(key, async () => {
       this.markAttempt(nowMs);
       try {
@@ -131,7 +139,7 @@ export class StatlockerRefreshService {
           leaderboardResult.statlockerPatchId,
           heroId,
         );
-        await this.publishIfChanged(leaderboard, identity, leaderboardRaw);
+        await this.publishObservation(leaderboard, identity, leaderboardRaw);
 
         const profiles = leaderboard.payload.profiles.slice(0, MAX_PROFILES_PER_HERO);
         if (profiles.length > 0) {
@@ -150,7 +158,7 @@ export class StatlockerRefreshService {
               accountId,
               heroId,
             );
-            await this.publishIfChanged(normalized, identity, dataset);
+            await this.publishObservation(normalized, identity, dataset);
           }
         }
 
@@ -170,19 +178,24 @@ export class StatlockerRefreshService {
   }
 
   @Cron('* * * * *')
-  async scheduledTick(): Promise<void> {
-    const nowMs = Date.now();
+  async scheduledTick(nowMs = Date.now()): Promise<void> {
     this.pruneInactiveHeroes(nowMs);
+    if (!this.identity) {
+      await this.bootstrapIdentity().catch((error) => {
+        this.lastError = describeError(error);
+      });
+    }
     if (!this.identity) return;
 
     await this.refreshGlobalNow(false, nowMs).catch((error) => {
       this.lastError = describeError(error);
     });
-    for (const heroId of [...this.activeHeroes.keys()].sort((a, b) => a - b)) {
-      await this.refreshHeroNow(heroId, false, nowMs).catch((error) => {
-        this.lastError = describeError(error);
-      });
-    }
+
+    const heroId = this.takeNextDuePoolHero(this.identity, nowMs);
+    if (heroId === undefined) return;
+    await this.refreshHeroNow(heroId, false, nowMs).catch((error) => {
+      this.lastError = describeError(error);
+    });
   }
 
   getStatus(): StatlockerRefreshStatusV1 {
@@ -194,6 +207,53 @@ export class StatlockerRefreshService {
       lastError: this.lastError,
       identity: this.identity ? { ...this.identity } : undefined,
     };
+  }
+
+  private async bootstrapIdentity(): Promise<void> {
+    if (this.identity || !this.catalogVersionRepo) return;
+    const version = await this.catalogVersionRepo.findOne({
+      order: { importedAt: 'DESC', catalogVersionId: 'DESC' },
+    });
+    if (!version) return;
+    this.observeGameIdentity({
+      rulesetVersion: version.rulesetKey,
+      catalogSha256: version.payloadSha256,
+    });
+  }
+
+  private takeNextDuePoolHero(identity: StatlockerGameIdentityV1, nowMs: number): number | undefined {
+    if (STATLOCKER_HERO_IDS_V1.length === 0) return undefined;
+    for (let offset = 0; offset < STATLOCKER_HERO_IDS_V1.length; offset += 1) {
+      const index = (this.poolCursor + offset) % STATLOCKER_HERO_IDS_V1.length;
+      const heroId = STATLOCKER_HERO_IDS_V1[index];
+      if (!this.isHeroDue(identity, heroId, nowMs)) continue;
+      this.poolCursor = (index + 1) % STATLOCKER_HERO_IDS_V1.length;
+      return heroId;
+    }
+    return undefined;
+  }
+
+  private isHeroDue(identity: StatlockerGameIdentityV1, heroId: number, nowMs: number): boolean {
+    const key = this.heroRefreshKey(identity, heroId);
+    const inMemorySuccess = this.lastSuccessByKey.get(key);
+    if (inMemorySuccess !== undefined) return nowMs - inMemorySuccess >= HERO_REFRESH_TTL_MS;
+
+    const rows = this.store.listActive().filter((row) =>
+      row.rulesetVersion === identity.rulesetVersion &&
+      row.catalogSha256.toLowerCase() === identity.catalogSha256.toLowerCase(),
+    );
+    const currentPatchId = rows
+      .filter((row) => row.dataset === 'WPA_PATCH_DATA' || row.dataset === 'VS_HERO_WPA' || row.dataset === 'T4_CHAINS')
+      .sort((a, b) => b.fetchedAt.getTime() - a.fetchedAt.getTime())[0]?.statlockerPatchId;
+    const latestHeroSnapshot = rows
+      .filter((row) =>
+        row.dataset === 'HERO_LEADERBOARD' &&
+        row.scopeKey === `hero:${heroId}` &&
+        (!currentPatchId || row.statlockerPatchId === currentPatchId),
+      )
+      .sort((a, b) => b.fetchedAt.getTime() - a.fetchedAt.getTime())[0];
+
+    return !latestHeroSnapshot || nowMs - latestHeroSnapshot.fetchedAt.getTime() >= HERO_REFRESH_TTL_MS;
   }
 
   private normalizeCollected(
@@ -218,23 +278,17 @@ export class StatlockerRefreshService {
     throw new Error(`Unsupported collected dataset ${String(dataset.dataset)}`);
   }
 
-  private async publishIfChanged(
+  private async publishObservation(
     normalized: StatlockerNormalizedDatasetV1<StatlockerNormalizedPayloadV1>,
     identity: StatlockerGameIdentityV1,
     source: StatlockerCollectedDatasetV1,
   ): Promise<void> {
-    const lookup = {
+    await this.store.publish({
       dataset: normalized.dataset,
       rulesetVersion: identity.rulesetVersion,
       catalogSha256: identity.catalogSha256,
       statlockerPatchId: normalized.statlockerPatchId,
       scopeKey: normalized.scopeKey,
-    };
-    const active = this.store.getActive(lookup);
-    if (active?.contentSha256 === normalized.contentSha256) return;
-
-    await this.store.publish({
-      ...lookup,
       contentSha256: normalized.contentSha256,
       fetchedAt: new Date(source.fetchedAt),
       schemaVersion: SNAPSHOT_SCHEMA_VERSION,
