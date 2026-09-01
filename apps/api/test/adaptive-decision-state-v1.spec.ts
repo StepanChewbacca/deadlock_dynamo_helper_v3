@@ -82,7 +82,7 @@ const items = [
 function createService(scopeVerified: boolean, state: MinimalMatchState = matchState) {
   const liveState = { getState: jest.fn().mockReturnValue(state) } as any;
   const soulsEvidence = { canVerifyScope: jest.fn().mockResolvedValue(scopeVerified) } as any;
-  const versionRepo = { findOne: jest.fn().mockResolvedValue(version) } as any;
+  const versionRepo = { find: jest.fn().mockResolvedValue([version]) } as any;
   const itemRepo = { find: jest.fn().mockResolvedValue(items) } as any;
   const recipeRepo = { find: jest.fn().mockResolvedValue([]) } as any;
   return {
@@ -97,7 +97,10 @@ describe('AdaptiveDecisionStateV1Service', () => {
     const first = await service.build('match-1');
     const second = await service.build('match-1');
 
-    expect(versionRepo.findOne).toHaveBeenCalledWith({ order: { importedAt: 'DESC', catalogVersionId: 'DESC' } });
+    expect(versionRepo.find).toHaveBeenCalledWith({
+      order: { importedAt: 'DESC', catalogVersionId: 'DESC' },
+      take: 1,
+    });
     expect(first.localSteamId).toBe('local');
     expect(first.state.heroId).toBe(10);
     expect([...first.state.inventory.heldByItemId.keys()]).toEqual([1]);

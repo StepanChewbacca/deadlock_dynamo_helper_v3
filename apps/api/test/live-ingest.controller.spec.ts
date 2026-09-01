@@ -9,6 +9,12 @@ import { RecentLiveEventsService } from '../src/deadlock-live/recent-live-events
 
 describe('LiveIngestController', () => {
   it('ingests events and exposes state and recent events', async () => {
+    const traversalService = {
+      observeState: jest.fn(),
+      getMatchSnapshot: jest.fn(),
+      getStatus: jest.fn(),
+      getAllSnapshots: jest.fn(),
+    };
     const moduleRef = await Test.createTestingModule({
       controllers: [LiveIngestController],
       providers: [
@@ -29,12 +35,7 @@ describe('LiveIngestController', () => {
         },
         {
           provide: LiveBuildRecommendationTraversalService,
-          useValue: {
-            observeState: jest.fn(),
-            getMatchSnapshot: jest.fn(),
-            getStatus: jest.fn(),
-            getAllSnapshots: jest.fn(),
-          },
+          useValue: traversalService,
         },
       ],
     }).compile();
@@ -48,5 +49,6 @@ describe('LiveIngestController', () => {
 
     expect(controller.getStates()).toHaveLength(1);
     expect(controller.getRecentEvents()).toHaveLength(1);
+    expect(traversalService.observeState).not.toHaveBeenCalled();
   });
 });

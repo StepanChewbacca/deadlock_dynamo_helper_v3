@@ -189,7 +189,7 @@ async function createFixture() {
     payloadSha256: catalogSha256,
     importedAt: new Date('2026-08-31T12:00:00.000Z'),
   };
-  const versionRepo = { findOne: jest.fn().mockResolvedValue(version) } as any;
+  const versionRepo = { find: jest.fn().mockResolvedValue([version]) } as any;
   const itemRepo = { find: jest.fn().mockResolvedValue(catalogItems()) } as any;
   const recipeRepo = { find: jest.fn().mockResolvedValue([]) } as any;
   const decisionState = new AdaptiveDecisionStateV1Service(

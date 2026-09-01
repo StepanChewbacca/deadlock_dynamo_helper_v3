@@ -28,7 +28,6 @@ export class LiveIngestController {
     const stateBatch = canonicalizeLiveBatchForStateV2(normalizedBatch);
     const state = this.liveMatchStateService.applyBatch(stateBatch);
     this.inventoryShadowReplayService.applyBatch(normalizedBatch, state?.matchId);
-    this.liveBuildRecommendationTraversalService.observeState(state);
     await this.rawEventLogService.appendEvents(batch.events);
     return { ok: true };
   }

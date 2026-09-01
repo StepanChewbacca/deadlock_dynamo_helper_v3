@@ -54,8 +54,9 @@ export class AdaptiveDecisionStateV1Service {
       throw new Error(`Local player identity incomplete: ${localSteamId}`);
     }
 
-    const version = await this.versionRepo.findOne({
+    const [version] = await this.versionRepo.find({
       order: { importedAt: 'DESC', catalogVersionId: 'DESC' },
+      take: 1,
     });
     if (!version) throw new Error('No item catalog version is available');
 
