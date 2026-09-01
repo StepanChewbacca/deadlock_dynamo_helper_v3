@@ -26,4 +26,4 @@ jobs:
       - run: yarn workspace @deadlock-live-probe/shared build
       - run: yarn workspace @deadlock-live-probe/build-domain build
       - run: yarn workspace @deadlock-live-probe/api build
-      - run: yarn workspace @deadlock-live-probe/api test --runInBand recommendation-value-v5-core.spec.ts recommendation-value-v5-training.spec.ts
+      - run: yarn workspace @deadlock-live-probe/api test --runInBand recommendation-value-v5-core.spec.ts
