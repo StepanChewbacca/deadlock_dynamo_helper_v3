@@ -18,6 +18,9 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 30
     env:
+      ADAPTIVE_PRODUCTION_IMAGE: deadlock-adaptive-production:${{ github.sha }}
+      DB_RUN_MIGRATIONS: 'true'
+      CHROMIUM_PATH: /usr/bin/chromium-browser
       PUBLIC_API_BASE_URL: ${{ vars.PUBLIC_API_BASE_URL || 'https://aboba-telegramovich.duckdns.org' }}
       DUCKDNS_TOKEN: ${{ secrets.DUCKDNS_TOKEN }}
 
@@ -43,9 +46,19 @@ jobs:
         run: |
           set -euo pipefail
           cd /home/ubuntu/apps/deadlock_dynamo_helper
-          sudo docker compose build api
-          sudo docker compose run --rm api node run-migrations.js
-          sudo docker compose up -d api
+          sudo docker build --platform linux/arm64 \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            -t "$ADAPTIVE_PRODUCTION_IMAGE" .
+          sudo env \
+            DEADLOCK_API_IMAGE="$ADAPTIVE_PRODUCTION_IMAGE" \
+            DB_RUN_MIGRATIONS="$DB_RUN_MIGRATIONS" \
+            CHROMIUM_PATH="$CHROMIUM_PATH" \
+            docker compose run --rm --no-deps api node run-migrations.js
+          sudo env \
+            DEADLOCK_API_IMAGE="$ADAPTIVE_PRODUCTION_IMAGE" \
+            DB_RUN_MIGRATIONS="$DB_RUN_MIGRATIONS" \
+            CHROMIUM_PATH="$CHROMIUM_PATH" \
+            docker compose up -d --no-build --no-deps api
 
       - name: Wait for healthy API container
         shell: bash
@@ -278,6 +291,9 @@ jobs:
           set -euo pipefail
           cd /home/ubuntu/apps/deadlock_dynamo_helper
           sudo env DEADLOCK_RECOMMENDATION_VALUE_V6_LIVE_MODE=DISABLED \
+            DEADLOCK_API_IMAGE="$ADAPTIVE_PRODUCTION_IMAGE" \
+            DB_RUN_MIGRATIONS="$DB_RUN_MIGRATIONS" \
+            CHROMIUM_PATH="$CHROMIUM_PATH" \
             docker compose up -d --force-recreate --no-deps api
 
       - name: Show API logs on failure

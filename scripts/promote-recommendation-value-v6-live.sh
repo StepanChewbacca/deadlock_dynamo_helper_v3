@@ -13,10 +13,6 @@ VOLUME_ROOT="$(sudo docker volume inspect \
 SOURCE_DIR="$VOLUME_ROOT/$SOURCE_RELATIVE_DIR"
 TARGET_DIR="$VOLUME_ROOT/$TARGET_RELATIVE_DIR"
 
-for file_name in model.json manifest.json audit.json evaluation.json; do
-  sudo test -f "$SOURCE_DIR/$file_name"
-done
-
 if sudo test -e "$TARGET_DIR"; then
   for file_name in model.json manifest.json audit.json evaluation.json promotion.json; do
     sudo test -f "$TARGET_DIR/$file_name"
@@ -29,6 +25,10 @@ if sudo test -e "$TARGET_DIR"; then
   echo "Recommendation Value V6 artifact is already promoted at $TARGET_DIR"
   exit 0
 fi
+
+for file_name in model.json manifest.json audit.json evaluation.json; do
+  sudo test -f "$SOURCE_DIR/$file_name"
+done
 
 sudo mkdir -p "$TARGET_DIR"
 sudo cp "$SOURCE_DIR/model.json" "$TARGET_DIR/model.json"
