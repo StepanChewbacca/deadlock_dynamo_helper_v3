@@ -9,17 +9,14 @@ const apiBaseUrl = 'https://aboba-telegramovich.duckdns.org';
 
 const ow = (window as any).overwolf;
 
-// Check which window we are currently running in
 ow.windows.getCurrentWindow(async (windowResult: any) => {
   const currentWindowName = windowResult.window.name;
 
   if (currentWindowName === 'in_game') {
-    // In-game transparent HUD overlay logic
     ui.logConsole('In-game HUD Overlay window loaded.');
     const mainWindow = ow.windows.getMainWindow() as any;
     const windowId = windowResult.window.id;
 
-    // Window management utilities (loaded externally to bypass CSP)
     const ensureOverlayHeight = () => {
       const hud = document.querySelector('.hud-container') as HTMLElement;
       if (!hud) return;
@@ -45,7 +42,6 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
 
       const isCompact = hud.classList.toggle('compact');
       btn.textContent = isCompact ? '🗖' : '🗕';
-
       ensureOverlayHeight();
     };
     (window as any).toggleHudMode = toggleHudMode;
@@ -63,7 +59,6 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
       const container = document.querySelector('.hud-container');
       if (container) {
         container.addEventListener('mousedown', (e: any) => {
-          // Prevent dragging when clicking interactive elements
           if (
             e.target.tagName === 'SELECT' ||
             e.target.tagName === 'OPTION' ||
@@ -86,20 +81,6 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
       setupInGameDrag();
     }
 
-    mainWindow.inGameUIUpdate = (data: any, heroName: string) => {
-      ui.showHeroGuide(data, heroName);
-      ensureOverlayHeight();
-    };
-
-    mainWindow.inGameSituationalUpdate = (data: any) => {
-      if (data && (data.decision === 'BUY_SITUATIONAL_ITEM' || data.decision === 'DELAY_CURRENT_CORE_ITEM')) {
-        ui.showSituationalPanel(data);
-      } else {
-        ui.hideSituationalPanel();
-      }
-      ensureOverlayHeight();
-    };
-
     mainWindow.inGameAdaptiveUpdate = (data: any) => {
       if (data) {
         ui.showAdaptiveRecommendation(data);
@@ -110,27 +91,17 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
     };
 
     mainWindow.inGameHide = () => {
-      ui.hideHeroGuide();
       ui.hideSituationalPanel();
     };
 
-    if (mainWindow.latestRecommendation) {
-      ui.showHeroGuide(mainWindow.latestRecommendation, mainWindow.heroName);
-    }
     if (mainWindow.latestAdaptiveRecommendation) {
       mainWindow.inGameAdaptiveUpdate(mainWindow.latestAdaptiveRecommendation);
-    } else if (mainWindow.latestSituational) {
-      mainWindow.inGameSituationalUpdate(mainWindow.latestSituational);
     }
-
   } else {
-    // Desktop / Background Controller Window logic
     ui.logConsole(`Initializing Background Controller for clientId: ${clientId}`);
 
     const mainWindow = ow.windows.getMainWindow() as any;
-    mainWindow.latestRecommendation = null;
     mainWindow.latestAdaptiveRecommendation = null;
-    mainWindow.heroName = '';
     mainWindow.heroNamesMap = mainWindow.heroNamesMap || {};
     mainWindow.warningActive = false;
     mainWindow.overlayMenuActive = false;
@@ -139,7 +110,11 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
     ow.windows.obtainDeclaredWindow('dynamo_warning', (result: any) => {
       if (result.success) {
         dynamoWarningWindowId = result.window.id;
-        ow.windows.restore(dynamoWarningWindowId, (r: any) => {
+        ow.windows.restore(dynamoWarningWindowId, (restoreResult: any) => {
+          if (!restoreResult?.success) {
+            ui.logConsole(`Failed to restore dynamo_warning window: ${restoreResult?.error || 'unknown error'}`);
+            return;
+          }
           ui.logConsole('dynamo_warning window pre-loaded and restored on startup.');
           if (mainWindow.updateWarningUI) {
             mainWindow.updateWarningUI();
@@ -197,18 +172,12 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
     const buffer = new LiveEventBuffer(clientId, apiBaseUrl, customFetch, 1000);
     const adaptiveClient = new AdaptiveRecommendationClient(apiBaseUrl, customFetch, 1500);
 
-    let guideLoaded = false;
     let currentHeroId: number | null = null;
-    let currentHeroName = '';
     const matchRoster: Record<string, { heroId: number; teamId: number; isLocal: boolean; level?: number; deaths?: number }> = {};
-    let lastRecommendationPayload = '';
     let currentMatchId = '';
     let currentLocalSteamId = '';
     let localPlayerDeathTimestamps: number[] = [];
     let lastWarningTriggeredAt = 0;
-    let warningActive = false;
-    let overlayMenuActive = false;
-    let situationalTimerId: number | undefined;
 
     const scheduleAdaptiveRecommendation = (force = false) => {
       if (!currentHeroId || !currentMatchId) {
@@ -233,6 +202,10 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
             }
           },
           onError: (error) => {
+            mainWindow.latestAdaptiveRecommendation = null;
+            if (mainWindow.inGameAdaptiveUpdate) {
+              mainWindow.inGameAdaptiveUpdate(null);
+            }
             ui.logConsole(`Failed to fetch adaptive recommendation: ${error.message}`);
           },
         },
@@ -240,56 +213,14 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
       );
     };
 
-    const triggerSituationalRecommendation = () => {
-      if (!currentHeroId || !currentMatchId) {
-        if (mainWindow.inGameSituationalUpdate) {
-          mainWindow.inGameSituationalUpdate(null);
-        }
-        mainWindow.latestSituational = null;
-        return;
-      }
-
-      const payloadStr = JSON.stringify({ matchId: currentMatchId });
-
-      fetch(`${apiBaseUrl}/deadlock/analysis/situational/recommend`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: payloadStr,
-      })
-        .then((r) => r.json())
-        .then((data) => {
-          mainWindow.latestSituational = data;
-          if (mainWindow.inGameSituationalUpdate) {
-            mainWindow.inGameSituationalUpdate(data);
-          }
-        })
-        .catch((err) => {
-          ui.logConsole(`Failed to fetch situational recommendations: ${err.message}`);
-        });
-    };
-
-    const scheduleSituationalRecommendation = (delayMs = 1500) => {
-      if (situationalTimerId !== undefined) {
-        window.clearTimeout(situationalTimerId);
-      }
-      situationalTimerId = window.setTimeout(() => {
-        situationalTimerId = undefined;
-        triggerSituationalRecommendation();
-      }, delayMs);
-    };
-
     const triggerRecommendation = () => {
       if (!currentHeroId) {
         adaptiveClient.cancel();
         mainWindow.latestAdaptiveRecommendation = null;
-        mainWindow.latestRecommendation = null;
-        mainWindow.heroName = '';
-        ui.hideHeroGuide();
         ui.hideSituationalPanel();
         if (mainWindow.inGameHide) {
           mainWindow.inGameHide();
         }
-        guideLoaded = false;
         return;
       }
 
@@ -298,19 +229,27 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
 
     const toggleInGameWindow = () => {
       ow.windows.obtainDeclaredWindow('in_game', (result: any) => {
-        if (result.success) {
-          const windowId = result.window.id;
-          ow.windows.getWindowState(windowId, (stateResult: any) => {
-            if (stateResult.success) {
-              const state = stateResult.window_state;
-              if (state === 'minimized' || state === 'closed') {
-                ow.windows.restore(windowId);
-              } else {
-                ow.windows.minimize(windowId);
+        if (!result.success) return;
+
+        const windowId = result.window.id;
+        ow.windows.getWindowState(windowId, (stateResult: any) => {
+          if (!stateResult.success) return;
+
+          const state = stateResult.window_state;
+          if (state === 'minimized' || state === 'closed') {
+            ow.windows.restore(windowId, (restoreResult: any) => {
+              if (!restoreResult?.success) {
+                ui.logConsole(`Failed to restore in-game HUD overlay: ${restoreResult?.error || 'unknown error'}`);
               }
-            }
-          });
-        }
+            });
+          } else {
+            ow.windows.minimize(windowId, (minimizeResult: any) => {
+              if (!minimizeResult?.success) {
+                ui.logConsole(`Failed to minimize in-game HUD overlay: ${minimizeResult?.error || 'unknown error'}`);
+              }
+            });
+          }
+        });
       });
     };
 
@@ -331,6 +270,20 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
         toggleInGameWindow();
       }
     });
+
+    const resetRecommendationState = () => {
+      for (const key of Object.keys(matchRoster)) {
+        delete matchRoster[key];
+      }
+      mainWindow.heroNamesMap = {};
+      currentHeroId = null;
+      currentLocalSteamId = '';
+      adaptiveClient.cancel();
+      mainWindow.latestAdaptiveRecommendation = null;
+      if (mainWindow.inGameHide) {
+        mainWindow.inGameHide();
+      }
+    };
 
     const tryRegister = async () => {
       try {
@@ -371,7 +324,6 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
                     }
                     if (isLocal) {
                       currentHeroId = Number(heroId);
-                      currentHeroName = payload.hero_name || currentHeroName;
                       if (steamId !== '0') currentLocalSteamId = String(steamId);
                     }
                   }
@@ -393,47 +345,16 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
             const matchId = event.payload;
             if (matchId !== currentMatchId) {
               currentMatchId = matchId;
-              ui.logConsole(`New match detected: ${matchId}. Resetting match roster and recommendations.`);
-
-              for (const key of Object.keys(matchRoster)) {
-                delete matchRoster[key];
-              }
-              mainWindow.heroNamesMap = {};
-              currentHeroId = null;
-              currentHeroName = '';
-              currentLocalSteamId = '';
-              adaptiveClient.cancel();
-              mainWindow.latestAdaptiveRecommendation = null;
-              lastRecommendationPayload = '';
-              ui.hideHeroGuide();
-              mainWindow.latestRecommendation = null;
-              mainWindow.heroName = '';
-              if (mainWindow.inGameHide) {
-                mainWindow.inGameHide();
-              }
-              guideLoaded = false;
+              ui.logConsole(`New match detected: ${matchId}. Resetting match roster and adaptive recommendation.`);
+              resetRecommendationState();
+              currentMatchId = matchId;
             }
           }
 
           if (event.key === 'match_state' && event.payload === 'ended') {
-            ui.logConsole('Match ended. Resetting match roster.');
-            for (const key of Object.keys(matchRoster)) {
-              delete matchRoster[key];
-            }
-            mainWindow.heroNamesMap = {};
-            currentHeroId = null;
-            currentHeroName = '';
-            currentLocalSteamId = '';
-            adaptiveClient.cancel();
-            mainWindow.latestAdaptiveRecommendation = null;
-            lastRecommendationPayload = '';
-            ui.hideHeroGuide();
-            mainWindow.latestRecommendation = null;
-            mainWindow.heroName = '';
-            if (mainWindow.inGameHide) {
-              mainWindow.inGameHide();
-            }
-            guideLoaded = false;
+            ui.logConsole('Match ended. Resetting match roster and adaptive recommendation.');
+            resetRecommendationState();
+            currentMatchId = '';
           }
 
           if (event.category === 'roster' || (event.key && event.key.startsWith('roster_'))) {
@@ -446,52 +367,54 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
             if (steamId) {
               const rosterKey = (steamId !== '0') ? steamId : (heroId ? `hero_${heroId}` : null);
               if (rosterKey && matchRoster[rosterKey]) {
-                const p = matchRoster[rosterKey];
+                const player = matchRoster[rosterKey];
                 let localContextChanged = false;
+
                 if (payload.level !== undefined) {
-                  p.level = Number(payload.level);
-                  if (p.isLocal) {
+                  player.level = Number(payload.level);
+                  if (player.isLocal) {
                     localContextChanged = true;
                     mainWindow.localPlayerLevel = Number(payload.level);
-                    if (mainWindow.latestRecommendation && mainWindow.inGameUIUpdate) {
-                      mainWindow.inGameUIUpdate(mainWindow.latestRecommendation, mainWindow.heroName);
-                    }
                   }
                 }
 
-                if (p.isLocal && payload.deaths !== undefined) {
+                if (player.isLocal && payload.deaths !== undefined) {
                   const currentDeaths = Number(payload.deaths);
-                  const isFirstCheck = p.deaths === undefined;
-                  const previousDeaths = p.deaths || 0;
-                  p.deaths = currentDeaths;
+                  const isFirstCheck = player.deaths === undefined;
+                  const previousDeaths = player.deaths || 0;
+                  player.deaths = currentDeaths;
                   localContextChanged = true;
 
                   if (!isFirstCheck && currentDeaths > previousDeaths) {
                     ui.logConsole(`Local player died! Current deaths: ${currentDeaths}, Previous: ${previousDeaths}`);
                     const now = Date.now();
                     localPlayerDeathTimestamps.push(now);
-
-                    const twoMinutesAgo = now - 120000;
-                    localPlayerDeathTimestamps = localPlayerDeathTimestamps.filter(t => t > twoMinutesAgo);
+                    localPlayerDeathTimestamps = localPlayerDeathTimestamps.filter((timestamp) => timestamp > now - 120000);
 
                     if (localPlayerDeathTimestamps.length >= 2) {
                       localPlayerDeathTimestamps.length = 0;
-
                       if (now - lastWarningTriggeredAt >= 600000) {
-                        ui.logConsole(`Warning triggered: local player died 2 times in 2 minutes! Sending warning event.`);
+                        ui.logConsole('Warning triggered: local player died 2 times in 2 minutes! Sending warning event.');
                         lastWarningTriggeredAt = now;
                         if (mainWindow.inGameShowWarning) {
                           mainWindow.inGameShowWarning();
                         }
                       } else {
-                        ui.logConsole(`Warning skipped due to 10-minute warning cooldown.`);
+                        ui.logConsole('Warning skipped due to 10-minute warning cooldown.');
                       }
                     }
                   }
                 }
-                if (p.isLocal && (payload.health !== undefined || payload.souls !== undefined || payload.hero_damage !== undefined || payload.heroDamage !== undefined)) {
+
+                if (player.isLocal && (
+                  payload.health !== undefined ||
+                  payload.souls !== undefined ||
+                  payload.hero_damage !== undefined ||
+                  payload.heroDamage !== undefined
+                )) {
                   localContextChanged = true;
                 }
+
                 if (localContextChanged) {
                   scheduleAdaptiveRecommendation();
                 }
@@ -506,10 +429,10 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
                     isLocal: isLocal !== undefined ? !!isLocal : false,
                   };
                 } else {
-                  const p = matchRoster[finalKey];
-                  p.heroId = Number(heroId);
-                  if (teamId !== undefined) p.teamId = Number(teamId);
-                  if (isLocal !== undefined) p.isLocal = !!isLocal;
+                  const player = matchRoster[finalKey];
+                  player.heroId = Number(heroId);
+                  if (teamId !== undefined) player.teamId = Number(teamId);
+                  if (isLocal !== undefined) player.isLocal = !!isLocal;
                 }
 
                 if (payload.hero_name) {
@@ -517,7 +440,6 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
                 }
                 if (isLocal) {
                   currentHeroId = Number(heroId);
-                  currentHeroName = payload.hero_name || currentHeroName;
                   if (steamId !== '0') currentLocalSteamId = String(steamId);
                   if (payload.level !== undefined) {
                     mainWindow.localPlayerLevel = Number(payload.level);
@@ -533,9 +455,9 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
             const eventSteamId = payload.steam_id || payload.steamId;
 
             let localSteamId: string | null = null;
-            for (const [sId, player] of Object.entries(matchRoster)) {
+            for (const [steamId, player] of Object.entries(matchRoster)) {
               if (player.isLocal) {
-                localSteamId = sId;
+                localSteamId = steamId;
                 break;
               }
             }
@@ -548,10 +470,6 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
 
               mainWindow.localPurchasedItemIds = new Set(boughtIds);
               scheduleAdaptiveRecommendation();
-
-              if (mainWindow.latestRecommendation && mainWindow.inGameUIUpdate) {
-                mainWindow.inGameUIUpdate(mainWindow.latestRecommendation, mainWindow.heroName);
-              }
             }
           }
 
