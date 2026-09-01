@@ -39,14 +39,20 @@ function createHarness() {
     normalizeWpaPatchData: jest.fn(() => ({ dataset: 'WPA_PATCH_DATA', scopeKey: 'patch:15-1', statlockerPatchId: '15-1', contentSha256: '1'.repeat(64), payload: { patchId: '15-1', items: [] } })),
     normalizeVsHeroWpa: jest.fn(() => ({ dataset: 'VS_HERO_WPA', scopeKey: 'global', statlockerPatchId: '15-1', contentSha256: '2'.repeat(64), payload: { slices: [] } })),
     normalizeT4Chains: jest.fn(() => ({ dataset: 'T4_CHAINS', scopeKey: 'global', statlockerPatchId: '15-1', contentSha256: '3'.repeat(64), payload: { chains: [] } })),
-    normalizeHeroLeaderboard: jest.fn(() => ({
+    normalizeHeroLeaderboard: jest.fn((_: unknown, __: string, heroId: number) => ({
       dataset: 'HERO_LEADERBOARD',
-      scopeKey: 'hero:10',
+      scopeKey: `hero:${heroId}`,
       statlockerPatchId: '15-1',
-      contentSha256: '4'.repeat(64),
-      payload: { heroId: 10, profiles: [{ accountId: '101', heroId: 10, rank: 1 }] },
+      contentSha256: `${heroId}`.padStart(64, '0').slice(-64),
+      payload: { heroId, profiles: [{ accountId: '101', heroId, rank: 1 }] },
     })),
-    normalizeProBuildAnalysis: jest.fn(() => ({ dataset: 'PRO_BUILD_ANALYSIS', scopeKey: 'hero:10:account:101', statlockerPatchId: '15-1', contentSha256: '5'.repeat(64), payload: { accountId: '101', heroId: 10, items: [] } })),
+    normalizeProBuildAnalysis: jest.fn((_: unknown, __: string, accountId: string, heroId: number) => ({
+      dataset: 'PRO_BUILD_ANALYSIS',
+      scopeKey: `hero:${heroId}:account:${accountId}`,
+      statlockerPatchId: '15-1',
+      contentSha256: `${heroId}${accountId}`.padStart(64, '0').slice(-64),
+      payload: { accountId, heroId, items: [] },
+    })),
   };
   const active = new Map<string, any>();
   const publish = jest.fn(async (input: any): Promise<any> => {
@@ -67,6 +73,7 @@ function createHarness() {
       lookup.statlockerPatchId,
       lookup.scopeKey,
     ].join('|'))),
+    listActive: jest.fn(() => [...active.values()]),
   };
   const service = new StatlockerRefreshService(collector as any, normalizer as any, store);
   service.observeGameIdentity(identity, 1_000);
@@ -116,5 +123,50 @@ describe('StatlockerRefreshService', () => {
     const publishesAfterFirst = h.store.publish.mock.calls.length;
     await h.service.refreshGlobalNow(true, 2_000);
     expect(h.store.publish.mock.calls.length).toBe(publishesAfterFirst);
+  });
+
+  it('maintains the configured Statlocker hero pool without active-player observations', async () => {
+    const h = createHarness();
+
+    await h.service.scheduledTick();
+
+    const leaderboardHeroIds = h.collector.collectBatch.mock.calls
+      .flatMap(([targets]) => targets)
+      .filter((target: any) => target.dataset === 'HERO_LEADERBOARD')
+      .map((target: any) => target.heroId);
+
+    expect(leaderboardHeroIds).toEqual(expect.arrayContaining([6, 72, 80]));
+    expect(leaderboardHeroIds.length).toBeGreaterThan(3);
+  });
+
+  it('treats hero snapshots newer than two days as fresh enough to skip recollection', async () => {
+    const h = createHarness();
+    const nowMs = Date.parse('2026-09-02T12:00:00.000Z');
+    const freshFetchedAt = new Date(nowMs - (47 * 60 * 60_000)).toISOString();
+
+    h.active.set([
+      'HERO_LEADERBOARD',
+      identity.rulesetVersion,
+      identity.catalogSha256,
+      '15-1',
+      'hero:6',
+    ].join('|'), {
+      dataset: 'HERO_LEADERBOARD',
+      rulesetVersion: identity.rulesetVersion,
+      catalogSha256: identity.catalogSha256,
+      statlockerPatchId: '15-1',
+      scopeKey: 'hero:6',
+      fetchedAt: freshFetchedAt,
+      contentSha256: '6'.repeat(64),
+    });
+
+    await h.service.scheduledTick(nowMs);
+
+    const collectedHeroIds = h.collector.collectBatch.mock.calls
+      .flatMap(([targets]) => targets)
+      .filter((target: any) => target.dataset === 'HERO_LEADERBOARD')
+      .map((target: any) => target.heroId);
+
+    expect(collectedHeroIds).not.toContain(6);
   });
 });
