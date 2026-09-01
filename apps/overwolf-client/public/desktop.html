@@ -2,471 +2,132 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Deadlock Live Probe Client</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <title>Deadlock Statlocker Adaptive</title>
     <style>
       :root {
-        --bg-main: #0b0b0e;
-        --bg-card: #14141a;
-        --border: #23232f;
-        --text-primary: #f3f4f6;
-        --text-secondary: #9ca3af;
-        --accent: #ff6b4a; /* Deadlock themed orange/rust */
-        --accent-glow: rgba(255, 107, 74, 0.2);
+        --bg: #0b0b0e;
+        --card: #14141a;
+        --border: #272733;
+        --text: #f3f4f6;
+        --muted: #9ca3af;
+        --accent: #ff6b4a;
         --success: #10b981;
-        --danger: #ef4444;
       }
 
-      * {
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
-      }
-
+      * { box-sizing: border-box; }
+      html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
       body {
-        font-family: 'Outfit', sans-serif;
-        background-color: var(--bg-main);
-        color: var(--text-primary);
-        width: 100vw;
-        height: 100vh;
-        padding: 1.5rem;
+        font-family: Arial, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        padding: 20px;
         display: flex;
         flex-direction: column;
-        gap: 1rem;
-        overflow: hidden;
+        gap: 14px;
       }
 
       header {
         display: flex;
+        align-items: center;
         justify-content: space-between;
-        align-items: center;
         border-bottom: 1px solid var(--border);
-        padding-bottom: 0.75rem;
+        padding-bottom: 12px;
       }
 
-      .logo-container {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-      }
+      h1 { margin: 0; font-size: 18px; color: var(--accent); }
+      #status { color: var(--muted); font-size: 12px; }
+      #status.connected { color: var(--success); }
+      #status.error { color: #ef4444; }
 
-      .logo-icon {
-        width: 8px;
-        height: 20px;
-        background-color: var(--accent);
-        border-radius: 2px;
-        box-shadow: 0 0 8px var(--accent);
-      }
-
-      h1 {
-        font-size: 1.125rem;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        background: linear-gradient(135deg, var(--text-primary) 30%, var(--accent) 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-      }
-
-      .version-tag {
-        font-size: 0.65rem;
-        color: var(--text-secondary);
-        background-color: var(--border);
-        padding: 0.125rem 0.375rem;
-        border-radius: 4px;
-        font-family: 'JetBrains Mono', monospace;
-      }
-
-      /* App layout */
-      .app-layout {
-        display: flex;
-        flex: 1;
-        overflow: hidden;
-        width: 100%;
-      }
-
-      /* Guide layout */
-      .right-col {
-        background-color: var(--bg-card);
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        padding: 1.5rem;
-        display: flex;
-        flex-direction: column;
-        gap: 1rem;
-        height: 100%;
-        overflow-y: auto;
-        flex: 1;
-      }
-
-      .item-adjustment-badge {
-        font-size: 0.62rem;
-        font-weight: 600;
-        padding: 0.15rem 0.4rem;
-        border-radius: 4px;
-        white-space: nowrap;
-      }
-      .item-adjustment-badge.counter {
-        background-color: rgba(239, 68, 68, 0.18);
-        border: 1px solid rgba(239, 68, 68, 0.4);
-        color: #f87171;
-      }
-      .item-adjustment-badge.synergy {
-        background-color: rgba(16, 185, 129, 0.18);
-        border: 1px solid rgba(16, 185, 129, 0.4);
-        color: #34d399;
-      }
-      .guide-item-row.adjustment-injected {
-        background-color: rgba(255, 107, 74, 0.08) !important;
-        border: 1px dashed rgba(255, 107, 74, 0.3) !important;
-      }
-      .skill-badge {
-        font-size: 0.65rem;
-        font-weight: 700;
-        padding: 0.15rem 0.4rem;
-        border-radius: 4px;
-        white-space: nowrap;
-      }
-      .skill-badge.active-1 {
-        background-color: rgba(245, 158, 11, 0.25);
-        border: 1px solid #f59e0b;
-        color: #f59e0b;
-      }
-      .skill-badge.active-2 {
-        background-color: rgba(16, 185, 129, 0.25);
-        border: 1px solid #10b981;
-        color: #10b981;
-      }
-      .skill-badge.active-3 {
-        background-color: rgba(59, 130, 246, 0.25);
-        border: 1px solid #3b82f6;
-        color: #3b82f6;
-      }
-      .skill-badge.active-4 {
-        background-color: rgba(168, 85, 247, 0.25);
-        border: 1px solid #a855f7;
-        color: #a855f7;
-      }
-
-      .empty-state {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        text-align: center;
-        gap: 0.75rem;
-        height: 100%;
-        color: var(--text-secondary);
-      }
-
-      .empty-state-icon {
-        font-size: 2.5rem;
-        color: var(--border);
-      }
-
-      .guide-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        border-bottom: 1px solid var(--border);
-        padding-bottom: 0.75rem;
-      }
-
-      .guide-title {
-        font-size: 1.125rem;
-        font-weight: 700;
-        color: var(--accent);
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-      }
-
-      .build-selector {
-        background: #1b1b22;
-        border: 1px solid var(--border);
-        color: var(--text-primary);
-        font-family: inherit;
-        font-size: 0.8rem;
-        padding: 0.375rem 0.75rem;
-        border-radius: 4px;
-        cursor: pointer;
-        outline: none;
-      }
-
-      .build-desc {
-        font-size: 0.8rem;
-        color: var(--text-secondary);
-        line-height: 1.4;
-      }
-
-      .phases-grid {
+      .status-row {
         display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 1rem;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .status-card, .adaptive-card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 12px;
+      }
+
+      .status-label { color: var(--muted); font-size: 10px; text-transform: uppercase; }
+      .status-value { margin-top: 5px; font-size: 12px; overflow-wrap: anywhere; }
+      #indicator-dot.active { color: var(--success); }
+
+      #guide-empty {
         flex: 1;
-        overflow: hidden;
         min-height: 240px;
-      }
-
-      .phase-col {
         display: flex;
         flex-direction: column;
-        gap: 0.5rem;
-        background-color: rgba(0, 0, 0, 0.15);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 0.875rem;
-        overflow-y: auto;
-      }
-
-      .phase-col-title {
-        font-size: 0.7rem;
-        font-weight: 700;
-        text-transform: uppercase;
-        color: var(--text-secondary);
-        letter-spacing: 0.05em;
-        border-bottom: 1px solid var(--border);
-        padding-bottom: 0.375rem;
-        margin-bottom: 0.25rem;
-      }
-
-      .guide-item-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        background-color: #1b1b22;
-        border: 1px solid var(--border);
-        padding: 0.5rem 0.75rem;
-        border-radius: 6px;
-        font-size: 0.75rem;
-      }
-
-      .adjustment-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        background-color: #1b1b22;
-        border: 1px solid var(--border);
-        padding: 0.4rem 0.6rem;
-        border-radius: 6px;
-        font-size: 0.72rem;
-      }
-
-      .adjustment-row.counter {
-        border-left: 3px solid var(--danger);
-      }
-
-      .adjustment-row.synergy {
-        border-left: 3px solid var(--success);
-      }
-
-      .adjustment-info {
-        display: flex;
-        flex-direction: column;
-        gap: 0.1rem;
-      }
-
-      .adjustment-reason {
-        font-size: 0.65rem;
-        color: var(--text-secondary);
-      }
-
-      .adjustment-advantage {
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.65rem;
-        font-weight: 700;
-        color: var(--success);
-      }
-
-      .guide-item-row.weapon {
-        border-left: 3px solid #f59e0b;
-      }
-
-      .guide-item-row.vitality {
-        border-left: 3px solid #10b981;
-      }
-
-      .guide-item-row.spirit {
-        border-left: 3px solid #a855f7;
-      }
-
-      .item-popularity {
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.65rem;
-        font-weight: 600;
-        color: var(--text-secondary);
-      }
-
-      /* Skill Grid Layout */
-      .skill-grid-container {
-        display: flex;
-        flex-direction: column;
-        gap: 0.4rem;
-        background-color: rgba(0, 0, 0, 0.25);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 0.875rem;
-      }
-
-      .skill-row {
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-      }
-
-      .skill-label {
-        width: 150px;
-        font-size: 0.72rem;
-        font-weight: 600;
-        color: var(--text-secondary);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-
-      .skill-cells {
-        display: flex;
-        gap: 3px;
-        flex: 1;
-      }
-
-      .skill-cell {
-        flex: 1;
-        aspect-ratio: 1;
-        max-width: 20px;
-        min-width: 14px;
-        border: 1px solid var(--border);
-        border-radius: 3px;
-        display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 0.6rem;
-        font-family: 'JetBrains Mono', monospace;
-        font-weight: 700;
-        color: rgba(255, 255, 255, 0.05);
-        background-color: rgba(0, 0, 0, 0.15);
-      }
-
-      .skill-cell.active-1 {
-        background-color: rgba(245, 158, 11, 0.25);
-        border-color: #f59e0b;
-        color: #f59e0b;
-        box-shadow: 0 0 5px rgba(245, 158, 11, 0.15);
-      }
-
-      .skill-cell.active-2 {
-        background-color: rgba(16, 185, 129, 0.25);
-        border-color: #10b981;
-        color: #10b981;
-        box-shadow: 0 0 5px rgba(16, 185, 129, 0.15);
-      }
-
-      .skill-cell.active-3 {
-        background-color: rgba(59, 130, 246, 0.25);
-        border-color: #3b82f6;
-        color: #3b82f6;
-        box-shadow: 0 0 5px rgba(59, 130, 246, 0.15);
-      }
-
-      .skill-cell.active-4 {
-        background-color: rgba(168, 85, 247, 0.25);
-        border-color: #a855f7;
-        color: #a855f7;
-        box-shadow: 0 0 5px rgba(168, 85, 247, 0.15);
-      }
-
-      .skill-grid-header {
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-      }
-
-      .skill-header-label {
-        width: 150px;
-      }
-
-      .skill-header-cells {
-        display: flex;
-        gap: 3px;
-        flex: 1;
-      }
-
-      .skill-header-cell {
-        flex: 1;
-        max-width: 20px;
-        min-width: 14px;
+        gap: 10px;
         text-align: center;
-        font-size: 0.6rem;
-        font-family: 'JetBrains Mono', monospace;
-        color: var(--text-secondary);
-        font-weight: 500;
+        color: var(--muted);
       }
 
-      /* Scrollbars */
-      ::-webkit-scrollbar {
-        width: 4px;
+      #guide-active {
+        display: none;
+        flex: 1;
+        flex-direction: column;
       }
-      ::-webkit-scrollbar-track {
-        background: transparent;
+
+      #situational-recommendation-panel {
+        display: none;
+        flex-direction: column;
+        gap: 10px;
+        border-left: 3px solid var(--accent);
       }
-      ::-webkit-scrollbar-thumb {
-        background: var(--border);
-        border-radius: 2px;
+
+      #rec-decision-title {
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
       }
+
+      #rec-item-name { font-size: 22px; font-weight: 700; }
+      #rec-reason { color: var(--muted); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+      #console { display: none; }
     </style>
   </head>
   <body>
     <header>
-      <div class="logo-container">
-        <div class="logo-icon"></div>
-        <h1>Deadlock Live Probe</h1>
-      </div>
-      <span class="version-tag">v0.0.1</span>
+      <h1>Statlocker Adaptive</h1>
+      <div id="status">INITIALIZING...</div>
     </header>
 
-    <div class="app-layout">
-      <!-- Build Guide -->
-      <div class="right-col">
-         <!-- Default Empty State -->
-         <div class="empty-state" id="guide-empty">
-           <div class="empty-state-icon">🛡️</div>
-           <div style="font-size: 1rem; font-weight: 600; color: var(--text-primary);">Deadlock In-Game Guide</div>
-           <div style="font-size: 0.8rem; line-height: 1.4; max-width: 320px;">Waiting for a match. The high-rank builds, item priorities, and stage timings will automatically load here when you select your hero in-game.</div>
-         </div>
-
-        <!-- Active Guide State -->
-        <div id="guide-active" style="display: none; flex-direction: column; gap: 1rem; height: 100%;">
-          <div class="guide-header">
-            <h2 class="guide-title" id="guide-title">Deadlock Build Guide</h2>
-            <select class="build-selector" id="build-select" onchange="switchActiveBuild()">
-              <!-- Options populated dynamically -->
-            </select>
-          </div>
-          
-          <p class="build-desc" id="guide-build-desc">Loading build description...</p>
-
-          <div class="phases-grid">
-            <div class="phase-col">
-              <span class="phase-col-title">Early Game (0-10m)</span>
-              <div class="phase-items" id="phase-early"></div>
-            </div>
-            <div class="phase-col">
-              <span class="phase-col-title">Mid Game (10-20m)</span>
-              <div class="phase-items" id="phase-mid"></div>
-            </div>
-            <div class="phase-col">
-              <span class="phase-col-title">Late Game (20m+)</span>
-              <div class="phase-items" id="phase-late"></div>
-            </div>
-          </div>
-
-          <!-- Skill Level-up Path -->
-          <div id="guide-skills"></div>
-        </div>
+    <section class="status-row">
+      <div class="status-card">
+        <div class="status-label">Connection</div>
+        <div class="status-value"><span id="indicator-dot">●</span> <span id="indicator-text">Waiting</span></div>
       </div>
-    </div>
+      <div class="status-card">
+        <div class="status-label">Last event</div>
+        <div class="status-value" id="last-event">None</div>
+      </div>
+      <div class="status-card">
+        <div class="status-label">API sends</div>
+        <div class="status-value" id="last-send">0</div>
+      </div>
+    </section>
 
+    <section id="guide-empty" class="adaptive-card">
+      <strong>Waiting for Statlocker recommendation</strong>
+      <span>Only /deadlock/adaptive/v1/recommend is used. Legacy build and pro-build fallback paths are disabled.</span>
+    </section>
+
+    <section id="guide-active">
+      <div id="situational-recommendation-panel" class="adaptive-card">
+        <div id="rec-decision-title">Statlocker Adaptive</div>
+        <div id="rec-item-name">Waiting...</div>
+        <div id="rec-reason"></div>
+      </div>
+    </section>
+
+    <pre id="console"></pre>
     <script src="dist/index.js"></script>
   </body>
 </html>
