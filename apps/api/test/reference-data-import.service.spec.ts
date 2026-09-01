@@ -1,6 +1,24 @@
+import axios from 'axios';
 import { ReferenceDataImportService } from '../src/deadlock-live/reference-data-import.service';
 
 describe('ReferenceDataImportService', () => {
+  let previousDeadlockApiKey: string | undefined;
+
+  beforeEach(() => {
+    previousDeadlockApiKey = process.env.DEADLOCK_API_KEY;
+    delete process.env.DEADLOCK_API_KEY;
+    jest.spyOn(axios, 'get').mockResolvedValue({ data: [] });
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+    if (previousDeadlockApiKey === undefined) {
+      delete process.env.DEADLOCK_API_KEY;
+    } else {
+      process.env.DEADLOCK_API_KEY = previousDeadlockApiKey;
+    }
+  });
+
   function createService() {
     const heroRepo = {
       count: jest.fn().mockResolvedValue(0),
@@ -51,5 +69,16 @@ describe('ReferenceDataImportService', () => {
 
     expect(heroRepo.save).toHaveBeenCalled();
     expect(itemRepo.save).toHaveBeenCalled();
+  });
+
+  it('attempts the assets catalog bootstrap when DEADLOCK_API_KEY is not configured', async () => {
+    const { service } = createService();
+
+    await service.importIfNeeded();
+
+    expect(axios.get).toHaveBeenCalledWith(
+      'https://api.deadlock-api.com/v1/assets/items',
+      {},
+    );
   });
 });
