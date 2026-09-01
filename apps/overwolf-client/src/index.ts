@@ -240,15 +240,26 @@ function initializeBackgroundWindow(): void {
   void register();
 }
 
-function restoreInGameOverlayWindow(): void {
+function restoreInGameOverlayWindow(
+  onComplete: (success: boolean) => void,
+): void {
   ow.windows.obtainDeclaredWindow('in_game', (result: any) => {
     if (!isSuccessfulOverwolfResult(result) || !result.window?.id) {
       ui.logConsole('Failed to obtain the in_game overlay window.');
+      onComplete(false);
       return;
     }
 
-    ow.windows.restore(result.window.id, () => {
+    ow.windows.restore(result.window.id, (restoreResult: any) => {
+      if (!isSuccessfulOverwolfResult(restoreResult)) {
+        const error = restoreResult?.error || restoreResult?.status || 'unknown error';
+        ui.logConsole(`Failed to restore the in_game overlay window: ${error}`);
+        onComplete(false);
+        return;
+      }
+
       ui.logConsole('In-game HUD overlay activated for live match.');
+      onComplete(true);
     });
   });
 }
