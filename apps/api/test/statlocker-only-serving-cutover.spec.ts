@@ -13,6 +13,24 @@ describe('Statlocker-only recommendation serving cutover', () => {
     expect(controllersBlock).not.toContain('HeroBuildRecommendationController');
     expect(controllersBlock).not.toContain('HeroBuildContextualV3LiveController');
     expect(controllersBlock).not.toContain('SkillBuildAnalysisController');
+    expect(controllersBlock).not.toContain('HeroBuildTransitionAggregationController');
+    expect(controllersBlock).not.toContain('RecommendationPolicyBuildV1Controller');
+  });
+
+  test('live ingest exposes telemetry and diagnostics but no legacy build snapshots', () => {
+    const source = readRepoFile('api/src/deadlock-live/live-ingest.controller.ts');
+
+    expect(source).not.toContain("@Get('matches/:matchId/build-recommendation')");
+    expect(source).not.toContain("@Get('build-recommendations/status')");
+    expect(source).not.toContain("@Get('build-recommendations')");
+    expect(source).not.toContain('LiveBuildRecommendationTraversalService');
+  });
+
+  test('Recommendation Value V6 live controller is not mounted', () => {
+    const source = readRepoFile('api/src/deadlock-live/recommendation-value-v6.module.ts');
+    const controllersBlock = source.match(/controllers:\s*\[([\s\S]*?)\],\s*providers:/)?.[1] || '';
+
+    expect(controllersBlock).not.toContain('RecommendationValueV6LiveController');
   });
 
   test('Overwolf bundle contains only the adaptive recommendation runtime', () => {
