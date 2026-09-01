@@ -6,7 +6,12 @@ const identity = {
   catalogSha256: 'a'.repeat(64),
 };
 
-function createHarness() {
+const EXPECTED_STATLOCKER_HERO_POOL = [
+  1, 2, 3, 4, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+  25, 27, 31, 35, 50, 52, 58, 60, 63, 64, 65, 66, 67, 69, 72, 76, 77, 79, 80, 81,
+] as const;
+
+function createHarness(options: { observeIdentity?: boolean } = {}) {
   let releaseCollector: (() => void) | undefined;
   let publishSequence = 0;
   const block = { enabled: false };
@@ -58,7 +63,10 @@ function createHarness() {
   const publish = jest.fn(async (input: any): Promise<any> => {
     const key = [input.dataset, input.rulesetVersion, input.catalogSha256, input.statlockerPatchId, input.scopeKey].join('|');
     const current = active.get(key);
-    if (current?.contentSha256 === input.contentSha256) return current;
+    if (current?.contentSha256 === input.contentSha256) {
+      current.fetchedAt = input.fetchedAt;
+      return current;
+    }
     publishSequence += 1;
     const saved: any = { ...input, snapshotId: `snapshot-${publishSequence}` };
     active.set(key, saved);
@@ -75,10 +83,24 @@ function createHarness() {
     ].join('|'))),
     listActive: jest.fn(() => [...active.values()]),
   };
-  const service = new StatlockerRefreshService(collector as any, normalizer as any, store);
-  service.observeGameIdentity(identity, 1_000);
+  const versionRepo = {
+    findOne: jest.fn().mockResolvedValue({
+      rulesetKey: identity.rulesetVersion,
+      payloadSha256: identity.catalogSha256,
+      importedAt: new Date('2026-09-01T00:00:00.000Z'),
+      catalogVersionId: 'catalog-a',
+    }),
+  };
+  const service = new (StatlockerRefreshService as any)(
+    collector,
+    normalizer,
+    store,
+    undefined,
+    versionRepo,
+  ) as StatlockerRefreshService;
+  if (options.observeIdentity !== false) service.observeGameIdentity(identity, 1_000);
 
-  return { service, collector, normalizer, store, active, block, release: () => releaseCollector?.() };
+  return { service, collector, normalizer, store, active, versionRepo, block, release: () => releaseCollector?.() };
 }
 
 describe('StatlockerRefreshService', () => {
@@ -125,30 +147,46 @@ describe('StatlockerRefreshService', () => {
     expect(h.store.publish.mock.calls.length).toBe(publishesAfterFirst);
   });
 
-  it('maintains the configured Statlocker hero pool without active-player observations', async () => {
+  it('walks the complete current Statlocker hero pool without active-player observations', async () => {
     const h = createHarness();
+    const startMs = Date.parse('2026-09-01T00:00:00.000Z');
 
-    await h.service.scheduledTick();
+    for (let index = 0; index < EXPECTED_STATLOCKER_HERO_POOL.length; index += 1) {
+      await h.service.scheduledTick(startMs + index * 60_000);
+    }
 
     const leaderboardHeroIds = h.collector.collectBatch.mock.calls
       .flatMap(([targets]) => targets)
       .filter((target: any) => target.dataset === 'HERO_LEADERBOARD')
       .map((target: any) => target.heroId);
 
-    expect(leaderboardHeroIds).toEqual(expect.arrayContaining([6, 72, 80]));
-    expect(leaderboardHeroIds.length).toBeGreaterThan(3);
+    expect(leaderboardHeroIds).toEqual(EXPECTED_STATLOCKER_HERO_POOL);
   });
 
-  it('uses a two-day hero refresh TTL', async () => {
+  it('refreshes hero data before the two-day freshness deadline', async () => {
     const h = createHarness();
     const startMs = Date.parse('2026-09-01T00:00:00.000Z');
     await h.service.refreshHeroNow(6, false, startMs);
     h.collector.collectBatch.mockClear();
 
-    await h.service.refreshHeroNow(6, false, startMs + (47 * 60 * 60_000));
+    await h.service.refreshHeroNow(6, false, startMs + (35 * 60 * 60_000));
     expect(h.collector.collectBatch).not.toHaveBeenCalled();
 
-    await h.service.refreshHeroNow(6, false, startMs + (49 * 60 * 60_000));
+    await h.service.refreshHeroNow(6, false, startMs + (37 * 60 * 60_000));
     expect(h.collector.collectBatch).toHaveBeenCalled();
+  });
+
+  it('bootstraps collection identity from the latest catalog when no recommendation was served', async () => {
+    const h = createHarness({ observeIdentity: false });
+    const nowMs = Date.parse('2026-09-01T00:00:00.000Z');
+
+    await h.service.scheduledTick(nowMs);
+
+    expect(h.versionRepo.findOne).toHaveBeenCalled();
+    expect(h.service.getStatus().identity).toEqual(identity);
+    const leaderboardTargets = h.collector.collectBatch.mock.calls
+      .flatMap(([targets]) => targets)
+      .filter((target: any) => target.dataset === 'HERO_LEADERBOARD');
+    expect(leaderboardTargets).toHaveLength(1);
   });
 });
