@@ -1,0 +1,37 @@
+name: Adaptive Production Debug
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/adaptive-production-debug.yml
+
+permissions:
+  contents: read
+
+jobs:
+  debug:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - name: Capture adaptive production evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /home/ubuntu/apps/deadlock_dynamo_helper
+
+          echo '=== API container ==='
+          container_id="$(sudo docker compose ps -q api)"
+          echo "container_id=$container_id"
+          sudo docker inspect --format='image={{.Image}} name={{.Name}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$container_id"
+          sudo docker image inspect "$(sudo docker inspect --format='{{.Image}}' "$container_id")" --format='revision={{index .Config.Labels "org.opencontainers.image.revision"}}' || true
+
+          echo '=== Adaptive status ==='
+          curl --fail-with-body --show-error --silent http://127.0.0.1:3000/deadlock/adaptive/v1/status || true
+          echo
+
+          echo '=== Recent adaptive/API errors ==='
+          sudo docker compose logs --since=20m --tail=1000 api 2>&1 \
+            | grep -E -B8 -A25 'adaptive|Adaptive|recommend|Recommendation|ERROR|Error|500|catalog|Catalog|No item catalog|QueryFailed|TypeError' \
+            || true
