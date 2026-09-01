@@ -16,8 +16,7 @@ if (ow?.windows) {
       return;
     }
 
-    const currentWindowName = windowResult.window.name;
-    if (currentWindowName === 'in_game') {
+    if (windowResult.window.name === 'in_game') {
       initializeInGameWindow(windowResult.window.id);
       return;
     }
@@ -27,7 +26,7 @@ if (ow?.windows) {
 }
 
 function initializeInGameWindow(windowId: string): void {
-  ui.logConsole('In-game live build overlay loaded.');
+  ui.logConsole('In-game Statlocker adaptive overlay loaded.');
 
   const mainWindow = ow.windows.getMainWindow() as any;
 
@@ -38,7 +37,7 @@ function initializeInGameWindow(windowId: string): void {
     }
 
     requestAnimationFrame(() => {
-      const minimumHeight = 260;
+      const minimumHeight = 240;
       const maximumHeight = 700;
       const contentHeight = Math.ceil(hud.scrollHeight + 24);
       const targetHeight = Math.max(
@@ -57,12 +56,13 @@ function initializeInGameWindow(windowId: string): void {
     }
 
     const isCompact = hud.classList.toggle('compact');
-    button.textContent = isCompact ? '🗖' : '🗕';
+    button.textContent = isCompact ? 'Expand' : 'Compact';
     ensureOverlayHeight();
   };
 
   (window as any).ensureOverlayHeight = ensureOverlayHeight;
   (window as any).toggleHudMode = toggleHudMode;
+
   mainWindow.inGameAdaptiveUpdate = (data: any): void => {
     if (data) {
       ui.showAdaptiveRecommendation(data);
@@ -71,6 +71,7 @@ function initializeInGameWindow(windowId: string): void {
     }
     ensureOverlayHeight();
   };
+
   if (mainWindow.latestAdaptiveRecommendation) {
     mainWindow.inGameAdaptiveUpdate(mainWindow.latestAdaptiveRecommendation);
   }
@@ -83,13 +84,8 @@ function initializeInGameWindow(windowId: string): void {
 
     container.addEventListener('mousedown', (event: any) => {
       if (
-        event.target?.tagName === 'SELECT' ||
-        event.target?.tagName === 'OPTION' ||
         event.target?.tagName === 'BUTTON' ||
-        event.target?.closest?.('button') ||
-        event.target?.closest?.('.guide-item-row') ||
-        event.target?.closest?.('.skill-badge') ||
-        event.target?.closest?.('.phase-col')
+        event.target?.closest?.('button')
       ) {
         return;
       }
@@ -110,13 +106,10 @@ function initializeBackgroundWindow(): void {
   ui.logConsole(`Initializing background controller for clientId: ${clientId}`);
 
   const mainWindow = ow.windows.getMainWindow() as any;
-  mainWindow.heroNamesMap = mainWindow.heroNamesMap || {};
-  mainWindow.overlayMenuActive = false;
   mainWindow.latestAdaptiveRecommendation = mainWindow.latestAdaptiveRecommendation || null;
 
   restoreInGameOverlayWindow();
   registerWindowHotkeys(mainWindow);
-  preloadDynamoWarningWindow(mainWindow);
 
   const customFetch = async (
     url: string,
@@ -145,6 +138,13 @@ function initializeBackgroundWindow(): void {
 
   const publishAdaptiveRecommendation = (data: any): void => {
     mainWindow.latestAdaptiveRecommendation = data;
+
+    if (data) {
+      ui.showAdaptiveRecommendation(data);
+    } else {
+      ui.hideSituationalPanel();
+    }
+
     mainWindow.inGameAdaptiveUpdate?.(data);
   };
 
@@ -162,7 +162,10 @@ function initializeBackgroundWindow(): void {
       },
       {
         onResult: publishAdaptiveRecommendation,
-        onError: (error) => ui.logConsole(`Failed to fetch adaptive recommendation: ${error.message}`),
+        onError: (error) => {
+          ui.logConsole(`Failed to fetch adaptive recommendation: ${error.message}`);
+          publishAdaptiveRecommendation(null);
+        },
       },
       force,
     );
@@ -187,19 +190,23 @@ function initializeBackgroundWindow(): void {
       ui.updateStatus('REGISTERED', 'connected');
       ui.logConsole('Successfully registered GEP required features: game_info, match_info');
 
-      restoreHeroNamesFromGep(mainWindow);
       listenOverwolfEvents((event) => {
         const eventDetails = `Source: ${event.source} | Key: ${event.key || 'n/a'} | Cat: ${event.category || 'n/a'}`;
         ui.updateLastEvent(eventDetails);
-        captureHeroName(event, mainWindow);
+
         const previousMatchId = currentMatchId;
         const context = extractAdaptiveContext(event);
+
         if (context.matchId) {
           currentMatchId = context.matchId;
           mainWindow.__deadlockLiveMatchId = currentMatchId;
           (globalThis as any).__deadlockLiveMatchId = currentMatchId;
         }
-        if (context.localSteamId) currentLocalSteamId = context.localSteamId;
+
+        if (context.localSteamId) {
+          currentLocalSteamId = context.localSteamId;
+        }
+
         if (context.matchEnded) {
           currentMatchId = '';
           currentLocalSteamId = '';
@@ -208,13 +215,13 @@ function initializeBackgroundWindow(): void {
           adaptiveClient.cancel();
           publishAdaptiveRecommendation(null);
         }
+
         buffer.push(event);
+
         if (!context.matchEnded && currentMatchId) {
           scheduleAdaptiveRecommendation(previousMatchId === currentMatchId);
         }
       });
-
-      registerOverlayConfigurationListener(mainWindow);
     } catch (error: any) {
       ui.updateStatus('FAILED', 'error');
       ui.logConsole(
@@ -274,12 +281,14 @@ function showDesktopBuildWindow(
 
   ow.windows.obtainDeclaredWindow('desktop', (result: any) => {
     if (!isSuccessfulOverwolfResult(result) || !result.window?.id) {
-      ui.logConsole('Failed to obtain the desktop build window.');
+      ui.logConsole('Failed to obtain the desktop adaptive window.');
       return;
     }
 
     ow.windows.restore(result.window.id, () => {
-      ow.windows.bringToFront?.(result.window.id);
+      if (typeof ow.windows.bringToFront === 'function') {
+        ow.windows.bringToFront(result.window.id, true, () => {});
+      }
     });
   });
 }
@@ -300,94 +309,12 @@ function toggleInGameOverlayWindow(): void {
 
       const state = stateResult.window_state ?? stateResult.windowState;
       if (state === 'minimized' || state === 'closed' || state === 'hidden') {
-        ow.windows.restore(windowId);
+        ow.windows.restore(windowId, () => {});
         return;
       }
 
-      ow.windows.minimize(windowId);
+      ow.windows.minimize(windowId, () => {});
     });
-  });
-}
-
-function preloadDynamoWarningWindow(mainWindow: any): void {
-  ow.windows.obtainDeclaredWindow('dynamo_warning', (result: any) => {
-    if (!isSuccessfulOverwolfResult(result) || !result.window?.id) {
-      return;
-    }
-
-    ow.windows.restore(result.window.id, () => {
-      ui.logConsole('dynamo_warning window loaded for situational item alerts.');
-      mainWindow.updateWarningUI?.();
-    });
-  });
-}
-
-function restoreHeroNamesFromGep(mainWindow: any): void {
-  ow.games.events.getInfo((result: any) => {
-    if (!isSuccessfulOverwolfResult(result) || !result.res?.roster) {
-      return;
-    }
-
-    for (const rawValue of Object.values(result.res.roster)) {
-      const payload = parsePayload(rawValue);
-      storeHeroName(payload, mainWindow);
-    }
-  });
-}
-
-function captureHeroName(event: any, mainWindow: any): void {
-  if (
-    event?.category !== 'roster' &&
-    !(typeof event?.key === 'string' && event.key.startsWith('roster_'))
-  ) {
-    return;
-  }
-
-  storeHeroName(parsePayload(event.payload), mainWindow);
-}
-
-function storeHeroName(payload: any, mainWindow: any): void {
-  const heroId = Number(payload?.hero_id ?? payload?.heroId);
-  const heroName = normalizeHeroName(payload?.hero_name ?? payload?.heroName);
-  if (!Number.isSafeInteger(heroId) || heroId <= 0 || !heroName) {
-    return;
-  }
-
-  mainWindow.heroNamesMap[heroId] = heroName;
-  if (mainWindow.situationalItemWarning?.enemyHeroId === heroId) {
-    mainWindow.situationalItemWarning.enemyHeroName = heroName;
-    mainWindow.updateWarningUI?.();
-  }
-}
-
-function parsePayload(value: unknown): any {
-  if (typeof value !== 'string') {
-    return value || {};
-  }
-
-  try {
-    return JSON.parse(value);
-  } catch {
-    return {};
-  }
-}
-
-function normalizeHeroName(value: unknown): string {
-  if (typeof value !== 'string') {
-    return '';
-  }
-
-  return value
-    .trim()
-    .replace(/^hero_/i, '')
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (character) => character.toUpperCase());
-}
-
-function registerOverlayConfigurationListener(mainWindow: any): void {
-  ow.overlay?.onGameInputExclusiveModeChanged?.addListener((event: any) => {
-    mainWindow.overlayMenuActive = Boolean(event?.enabled);
-    mainWindow.updateWarningUI?.();
   });
 }
 
@@ -407,6 +334,7 @@ function extractAdaptiveContext(event: any): {
     : '';
   const matchEnded = ['match_end', 'match_outcome'].includes(key)
     || (key === 'match_state' && ['ended', 'complete', 'completed'].includes(readString(payload).toLowerCase()));
+
   return {
     matchId: matchId || undefined,
     localSteamId: localSteamId || undefined,
@@ -414,28 +342,60 @@ function extractAdaptiveContext(event: any): {
   };
 }
 
+function parsePayload(value: unknown): any {
+  if (typeof value !== 'string') {
+    return value || {};
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
 function findString(value: unknown, keys: readonly string[], depth = 0): string {
-  if (!value || typeof value !== 'object' || depth > 6) return '';
+  if (!value || typeof value !== 'object' || depth > 6) {
+    return '';
+  }
+
   const record = value as Record<string, unknown>;
   for (const key of keys) {
     const found = readString(record[key]);
-    if (found) return found;
+    if (found) {
+      return found;
+    }
   }
+
   for (const nested of Object.values(record)) {
     const found = findString(nested, keys, depth + 1);
-    if (found) return found;
+    if (found) {
+      return found;
+    }
   }
+
   return '';
 }
 
 function readString(value: unknown): string {
-  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
-  if (typeof value !== 'string') return '';
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value);
+  }
+
+  if (typeof value !== 'string') {
+    return '';
+  }
+
   const trimmed = value.trim();
-  if (!trimmed) return '';
+  if (!trimmed) {
+    return '';
+  }
+
   try {
     const parsed = JSON.parse(trimmed);
-    return typeof parsed === 'string' || typeof parsed === 'number' ? String(parsed) : '';
+    return typeof parsed === 'string' || typeof parsed === 'number'
+      ? String(parsed)
+      : '';
   } catch {
     return trimmed;
   }
