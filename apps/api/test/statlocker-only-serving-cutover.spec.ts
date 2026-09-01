@@ -15,6 +15,16 @@ describe('Statlocker-only recommendation serving cutover', () => {
     expect(controllersBlock).not.toContain('SkillBuildAnalysisController');
   });
 
+  test('Overwolf bundle contains only the adaptive recommendation runtime', () => {
+    const webpackSource = readRepoFile('overwolf-client/webpack.config.js');
+
+    expect(webpackSource).not.toContain('skill-build-automatic-entry');
+    expect(webpackSource).not.toContain('desktop-version');
+    expect(webpackSource).not.toContain('live-build-hud-entry');
+    expect(webpackSource).not.toContain('live-build-overlay-recovery');
+    expect(webpackSource).toContain("'./src/index.ts'");
+  });
+
   test('Overwolf runtime has no legacy recommendation acquisition path', () => {
     const indexSource = readRepoFile('overwolf-client/src/index.ts');
     const uiSource = readRepoFile('overwolf-client/src/ui.ts');
@@ -41,6 +51,8 @@ describe('Statlocker-only recommendation serving cutover', () => {
       expect(html).not.toContain('phase-mid');
       expect(html).not.toContain('phase-late');
       expect(html).not.toContain('guide-skills');
+      expect(html).not.toContain('PRO FALLBACK');
+      expect(html).not.toContain('MODEL V6');
     }
 
     expect(inGameHtml).toContain('Statlocker Adaptive');
