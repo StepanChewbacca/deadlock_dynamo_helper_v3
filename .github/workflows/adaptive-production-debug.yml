@@ -1,6 +1,7 @@
 name: Adaptive Production Debug
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -32,6 +33,6 @@ jobs:
           echo
 
           echo '=== Recent adaptive/API errors ==='
-          sudo docker compose logs --since=20m --tail=1000 api 2>&1 \
-            | grep -E -B8 -A25 'adaptive|Adaptive|recommend|Recommendation|ERROR|Error|500|catalog|Catalog|No item catalog|QueryFailed|TypeError' \
+          sudo docker compose logs --since=60m --tail=2000 api 2>&1 \
+            | grep -E -B8 -A25 'adaptive|Adaptive|recommend|Recommendation|ERROR|Error|500|catalog|Catalog|No item catalog|QueryFailed|TypeError|local player|Local player' \
             || true
