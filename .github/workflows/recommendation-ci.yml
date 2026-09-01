@@ -3,6 +3,7 @@ name: Recommendation CI
 on:
   push:
     branches:
+      - main
       - agent/add-inventory-simulator
       - agent/statlocker-model-probe-poc
       - agent/recommendation-roadmap-v8-runtime-finalization
