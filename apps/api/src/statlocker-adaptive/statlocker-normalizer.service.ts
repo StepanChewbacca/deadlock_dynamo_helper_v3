@@ -173,7 +173,7 @@ export class StatlockerNormalizerService {
     heroId: number,
   ): StatlockerNormalizedDatasetV1<StatlockerProBuildAnalysisV1> {
     const root = requireRecord(raw, 'PRO_BUILD_ANALYSIS', 'root');
-    const responseAccount = requireString(root.account_id ?? root.accountId, 'PRO_BUILD_ANALYSIS', 'account id');
+    const responseAccount = requireIdentifierString(root.account_id ?? root.accountId, 'PRO_BUILD_ANALYSIS', 'account id');
     const responseHero = parsePositiveInt(root.hero_id ?? root.heroId, 'PRO_BUILD_ANALYSIS', 'hero id');
     if (responseAccount !== accountId || responseHero !== heroId) {
       throw new StatlockerDatasetValidationError('PRO_BUILD_ANALYSIS', 'profile scope mismatch');

@@ -159,6 +159,23 @@ describe('StatlockerNormalizerService', () => {
       rank: 1,
       playerName: 'Player One',
     }]);
+
+    const pro = service.normalizeProBuildAnalysis({
+      accountId: 1893890487,
+      heroId: 6,
+      items: [{
+        itemId: 754480263,
+        purchaseRate: 0.9,
+        medianBuyTimeS: 630,
+        frequencyTier: 'core',
+        phase: 'mid',
+      }],
+    }, patchId, '1893890487', 6);
+    expect(pro.payload).toMatchObject({
+      accountId: '1893890487',
+      heroId: 6,
+      items: [{ itemId: 754480263, frequencyTier: 'CORE' }],
+    });
   });
 
   it('rejects structurally incomplete or non-finite primary evidence', () => {
