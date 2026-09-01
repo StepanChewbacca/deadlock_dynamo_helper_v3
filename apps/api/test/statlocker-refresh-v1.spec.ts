@@ -138,4 +138,17 @@ describe('StatlockerRefreshService', () => {
     expect(leaderboardHeroIds).toEqual(expect.arrayContaining([6, 72, 80]));
     expect(leaderboardHeroIds.length).toBeGreaterThan(3);
   });
+
+  it('uses a two-day hero refresh TTL', async () => {
+    const h = createHarness();
+    const startMs = Date.parse('2026-09-01T00:00:00.000Z');
+    await h.service.refreshHeroNow(6, false, startMs);
+    h.collector.collectBatch.mockClear();
+
+    await h.service.refreshHeroNow(6, false, startMs + (47 * 60 * 60_000));
+    expect(h.collector.collectBatch).not.toHaveBeenCalled();
+
+    await h.service.refreshHeroNow(6, false, startMs + (49 * 60 * 60_000));
+    expect(h.collector.collectBatch).toHaveBeenCalled();
+  });
 });
