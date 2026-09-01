@@ -80,11 +80,14 @@ describe('Statlocker-only recommendation serving cutover', () => {
 
   test('production deploy never promotes or verifies legacy V6 serving', () => {
     const deployWorkflow = readRepoFile('../.github/workflows/deploy.yml');
+    const composeSource = readRepoFile('../docker-compose.yml');
 
     expect(deployWorkflow).not.toContain('promote-recommendation-value-v6-live.sh');
     expect(deployWorkflow).not.toContain('recommendation-value-v6-live/status');
     expect(deployWorkflow).not.toContain('deadlock/live/build-recommendations/status');
     expect(deployWorkflow).toContain('/deadlock/adaptive/v1/status');
+    expect(composeSource).not.toContain('recommendation-value-v6-live/status');
+    expect(composeSource).toContain('/deadlock/adaptive/v1/status');
   });
 
   test('adaptive client remains pinned to the only recommendation endpoint', () => {

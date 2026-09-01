@@ -6,7 +6,9 @@ type InventoryFlushCallback = (batch: OverwolfLiveBatchDto) => void;
 
 export class LiveEventBuffer {
   private readonly events: OverwolfLiveEventDto[] = [];
+  private readonly pendingBatches: OverwolfLiveEventDto[][] = [];
   private timerId?: ReturnType<typeof setTimeout>;
+  private flushing = false;
 
   constructor(
     private readonly clientId: string,
@@ -48,10 +50,19 @@ export class LiveEventBuffer {
   }
 
   private async flush(): Promise<void> {
-    const events = this.events.splice(0);
     this.timerId = undefined;
 
-    if (events.length === 0) {
+    const queuedEvents = this.events.splice(0);
+    if (queuedEvents.length > 0) {
+      this.pendingBatches.push(queuedEvents);
+    }
+
+    if (this.flushing) {
+      return;
+    }
+
+    const events = this.pendingBatches[0];
+    if (!events) {
       return;
     }
 
@@ -60,18 +71,41 @@ export class LiveEventBuffer {
       events,
     };
 
+    this.flushing = true;
+    let accepted = false;
     try {
-      const response = await this.fetchImpl(`${this.apiBaseUrl}/deadlock/live/events`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-
-      if (response.ok && events.some(isInventoryEvent)) {
-        this.onInventoryFlushSuccess(body);
+      let response: Response;
+      try {
+        response = await this.fetchImpl(`${this.apiBaseUrl}/deadlock/live/events`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      } catch (err) {
+        console.error('Failed to flush event batch:', err);
+        return;
       }
-    } catch (err) {
-      console.error('Failed to flush event batch:', err);
+
+      if (!response.ok) {
+        return;
+      }
+
+      this.pendingBatches.shift();
+      accepted = true;
+      if (events.some(isInventoryEvent)) {
+        try {
+          this.onInventoryFlushSuccess(body);
+        } catch (error) {
+          console.warn('Failed to refresh recommendation after inventory ingest:', error);
+        }
+      }
+    } finally {
+      this.flushing = false;
+      if (this.pendingBatches.length > 0) {
+        this.scheduleFlush(accepted ? 0 : this.flushDelayMs, true);
+      } else if (this.events.length > 0 && this.timerId === undefined) {
+        this.scheduleFlush(this.flushDelayMs, false);
+      }
     }
   }
 }

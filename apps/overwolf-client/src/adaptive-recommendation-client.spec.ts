@@ -132,4 +132,150 @@ describe('AdaptiveRecommendationClient', () => {
 
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
+
+  it('retries the latest request after a transient server failure', async () => {
+    const fetcher = jest.fn()
+      .mockResolvedValueOnce({ ok: false, status: 502 } as Response)
+      .mockResolvedValueOnce(response());
+    const onResult = jest.fn();
+    const onError = jest.fn();
+    const client = new AdaptiveRecommendationClient(
+      'https://api.example',
+      fetcher,
+      50,
+      200,
+    );
+
+    client.schedule(
+      { matchId: 'match-a', localSteamId: 'steam-a' },
+      { onResult, onError },
+    );
+    jest.advanceTimersByTime(50);
+    await flush();
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Adaptive recommendation HTTP 502' }),
+    );
+
+    jest.advanceTimersByTime(199);
+    await flush();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    jest.advanceTimersByTime(1);
+    await flush();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(onResult).toHaveBeenCalledWith(result);
+  });
+
+  it('does not retry a rejected client request', async () => {
+    const fetcher = jest.fn().mockResolvedValue({ ok: false, status: 400 } as Response);
+    const client = new AdaptiveRecommendationClient(
+      'https://api.example',
+      fetcher,
+      50,
+      200,
+    );
+
+    client.schedule(
+      { matchId: 'match-a', localSteamId: 'steam-a' },
+      { onResult: jest.fn(), onError: jest.fn() },
+    );
+    jest.advanceTimersByTime(50);
+    await flush();
+    jest.advanceTimersByTime(1000);
+    await flush();
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it('still retries when the error observer throws', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const fetcher = jest.fn()
+      .mockResolvedValueOnce({ ok: false, status: 502 } as Response)
+      .mockResolvedValueOnce(response());
+    const onResult = jest.fn();
+    const client = new AdaptiveRecommendationClient(
+      'https://api.example',
+      fetcher,
+      50,
+      200,
+    );
+
+    client.schedule(
+      { matchId: 'match-a', localSteamId: 'steam-a' },
+      {
+        onResult,
+        onError: () => {
+          throw new Error('observer failed');
+        },
+      },
+    );
+    jest.advanceTimersByTime(50);
+    await flush();
+    jest.advanceTimersByTime(200);
+    await flush();
+
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(onResult).toHaveBeenCalledWith(result);
+    warn.mockRestore();
+  });
+
+  it('does not retry an in-flight request after the match is cancelled', async () => {
+    let rejectFetch: ((error: Error) => void) | undefined;
+    const onError = jest.fn();
+    const fetcher = jest.fn(() => new Promise<Response>((_resolve, reject) => {
+      rejectFetch = reject;
+    }));
+    const client = new AdaptiveRecommendationClient(
+      'https://api.example',
+      fetcher,
+      50,
+      200,
+    );
+
+    client.schedule(
+      { matchId: 'match-a', localSteamId: 'steam-a' },
+      { onResult: jest.fn(), onError },
+    );
+    jest.advanceTimersByTime(50);
+    await flush();
+    client.cancel();
+    rejectFetch?.(new Error('offline'));
+    await flush();
+    jest.advanceTimersByTime(1000);
+    await flush();
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('does not publish an in-flight success after the match is cancelled', async () => {
+    let resolveFetch: ((value: Response) => void) | undefined;
+    const fetcher = jest.fn(() => new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    }));
+    const onResult = jest.fn();
+    const client = new AdaptiveRecommendationClient(
+      'https://api.example',
+      fetcher,
+      50,
+      200,
+    );
+    const request = { matchId: 'match-a', localSteamId: 'steam-a' };
+
+    client.schedule(request, { onResult, onError: jest.fn() });
+    jest.advanceTimersByTime(50);
+    await flush();
+    client.cancel();
+    resolveFetch?.(response());
+    await flush();
+
+    expect(onResult).not.toHaveBeenCalled();
+
+    client.schedule(request, { onResult, onError: jest.fn() });
+    jest.advanceTimersByTime(50);
+    await flush();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
 });

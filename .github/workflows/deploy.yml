@@ -16,7 +16,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: self-hosted
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       ADAPTIVE_PRODUCTION_IMAGE: deadlock-adaptive-production:${{ github.sha }}
       DB_RUN_MIGRATIONS: 'true'
@@ -52,7 +52,7 @@ jobs:
             DEADLOCK_API_IMAGE="$ADAPTIVE_PRODUCTION_IMAGE" \
             DB_RUN_MIGRATIONS="$DB_RUN_MIGRATIONS" \
             CHROMIUM_PATH="$CHROMIUM_PATH" \
-            docker compose up -d --no-build --no-deps api
+            docker compose up -d --force-recreate --no-build --no-deps api
 
       - name: Wait for healthy API container
         shell: bash
@@ -64,6 +64,11 @@ jobs:
             echo 'API container was not created.' >&2
             exit 1
           fi
+
+          sudo bash scripts/verify-deployed-api-image.sh \
+            "$GITHUB_SHA" \
+            "$container_id" \
+            "$ADAPTIVE_PRODUCTION_IMAGE"
 
           for attempt in $(seq 1 40); do
             status="$(sudo docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$container_id")"
