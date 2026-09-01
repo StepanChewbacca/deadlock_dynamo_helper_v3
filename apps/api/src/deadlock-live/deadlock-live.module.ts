@@ -42,7 +42,6 @@ import { RecommendationValueModelTrainingLaunchV8Service } from './recommendatio
 import { RecommendationValueTrainingDatasetV8Service } from './recommendation-value-training-dataset-v8.service';
 import { RecommendationValueTrainingLaunchV8Controller } from './recommendation-value-training-launch-v8.controller';
 import { RecommendationValueTrainingLaunchV8Service } from './recommendation-value-training-launch-v8.service';
-import { RecommendationPolicyBuildV1Controller } from './recommendation-policy-build-v1.controller';
 import { RecommendationPolicyBuildV1Service } from './recommendation-policy-build-v1.service';
 import { RecommendationEvidenceMaterializerV8Service } from './recommendation-evidence-materializer-v8.service';
 import { RecommendationRoadmapEvidenceController } from './recommendation-roadmap-evidence.controller';
@@ -95,7 +94,6 @@ import { HeroBuildOfflineEvaluationService } from './hero-build-offline-evaluati
 import { HeroBuildRecommendationOwnershipFilterService } from './hero-build-recommendation-ownership-filter.service';
 import { HeroBuildRecommendationPresentationService } from './hero-build-recommendation-presentation.service';
 import { HeroBuildRecommendationService } from './hero-build-recommendation.service';
-import { HeroBuildTransitionAggregationController } from './hero-build-transition-aggregation.controller';
 import { HeroBuildTransitionAggregationService } from './hero-build-transition-aggregation.service';
 import { HistoricalCatalogBackfillService } from './historical-catalog-backfill.service';
 import { HistoricalMatchReplayService } from './historical-match-replay.service';
@@ -204,7 +202,6 @@ import { VersionedRecipeGraphService } from './versioned-recipe-graph.service';
     AnalysisOperationsController,
     RecentMatchesWindowController,
     MatchTimelineNormalizationController,
-    HeroBuildTransitionAggregationController,
     HeroBuildOfflineEvaluationController,
     HeroBuildOfflineEvaluationV2Controller,
     HeroBuildDecisionDatasetV3Controller,
@@ -229,7 +226,6 @@ import { VersionedRecipeGraphService } from './versioned-recipe-graph.service';
     RecommendationTrainingLaunchV8Controller,
     RecommendationValueTrainingLaunchV8Controller,
     RecommendationValueModelTrainingLaunchV8Controller,
-    RecommendationPolicyBuildV1Controller,
     ModelBundleRegistryController,
     RecommendationRoadmapEvidenceController,
     RecommendationAdvancedEvidenceV8Controller,
