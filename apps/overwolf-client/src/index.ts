@@ -2,6 +2,7 @@ import { LiveEventBuffer } from './overwolf/live-event-buffer';
 import { listenOverwolfEvents } from './overwolf/listen-overwolf-events';
 import { setRequiredFeatures } from './overwolf/set-required-features';
 import { isSuccessfulOverwolfResult } from './overwolf/window-result';
+import { InGameOverlayLifecycle } from './overwolf/in-game-overlay-lifecycle';
 import * as ui from './ui';
 import { AdaptiveRecommendationClient } from './adaptive-recommendation-client';
 
@@ -108,7 +109,6 @@ function initializeBackgroundWindow(): void {
   const mainWindow = ow.windows.getMainWindow() as any;
   mainWindow.latestAdaptiveRecommendation = mainWindow.latestAdaptiveRecommendation || null;
 
-  restoreInGameOverlayWindow();
   registerWindowHotkeys(mainWindow);
 
   const customFetch = async (
@@ -135,6 +135,8 @@ function initializeBackgroundWindow(): void {
   const adaptiveClient = new AdaptiveRecommendationClient(apiBaseUrl, customFetch, 1500);
   let currentMatchId = readString((globalThis as any).__deadlockLiveMatchId);
   let currentLocalSteamId = '';
+  const inGameOverlayLifecycle = new InGameOverlayLifecycle(restoreInGameOverlayWindow);
+  inGameOverlayLifecycle.sync(currentMatchId);
 
   const publishAdaptiveRecommendation = (data: any): void => {
     mainWindow.latestAdaptiveRecommendation = data;
@@ -201,6 +203,7 @@ function initializeBackgroundWindow(): void {
           currentMatchId = context.matchId;
           mainWindow.__deadlockLiveMatchId = currentMatchId;
           (globalThis as any).__deadlockLiveMatchId = currentMatchId;
+          inGameOverlayLifecycle.sync(currentMatchId);
         }
 
         if (context.localSteamId) {
@@ -212,6 +215,7 @@ function initializeBackgroundWindow(): void {
           currentLocalSteamId = '';
           mainWindow.__deadlockLiveMatchId = undefined;
           (globalThis as any).__deadlockLiveMatchId = undefined;
+          inGameOverlayLifecycle.sync('');
           adaptiveClient.cancel();
           publishAdaptiveRecommendation(null);
         }
@@ -244,7 +248,7 @@ function restoreInGameOverlayWindow(): void {
     }
 
     ow.windows.restore(result.window.id, () => {
-      ui.logConsole('In-game HUD overlay auto-launched.');
+      ui.logConsole('In-game HUD overlay activated for live match.');
     });
   });
 }
