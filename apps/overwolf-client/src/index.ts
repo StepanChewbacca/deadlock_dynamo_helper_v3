@@ -63,7 +63,7 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
       const container = document.querySelector('.hud-container');
       if (container) {
         container.addEventListener('mousedown', (e: any) => {
-          // Prevent dragging when clicking interactive elements (dropdown, options, buttons, item rows, skills)
+          // Prevent dragging when clicking interactive elements
           if (
             e.target.tagName === 'SELECT' ||
             e.target.tagName === 'OPTION' ||
@@ -86,7 +86,6 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
       setupInGameDrag();
     }
 
-    // Register UI update callback to be called from the background desktop window
     mainWindow.inGameUIUpdate = (data: any, heroName: string) => {
       ui.showHeroGuide(data, heroName);
       ensureOverlayHeight();
@@ -115,7 +114,6 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
       ui.hideSituationalPanel();
     };
 
-    // If data is already cached in background window, render it immediately on startup
     if (mainWindow.latestRecommendation) {
       ui.showHeroGuide(mainWindow.latestRecommendation, mainWindow.heroName);
     }
@@ -137,7 +135,6 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
     mainWindow.warningActive = false;
     mainWindow.overlayMenuActive = false;
 
-    // Pre-load and restore dynamo_warning window immediately on startup so it stays open
     let dynamoWarningWindowId: string | null = null;
     ow.windows.obtainDeclaredWindow('dynamo_warning', (result: any) => {
       if (result.success) {
@@ -299,7 +296,6 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
       scheduleAdaptiveRecommendation();
     };
 
-    // Toggle overlay visibility helper
     const toggleInGameWindow = () => {
       ow.windows.obtainDeclaredWindow('in_game', (result: any) => {
         if (result.success) {
@@ -318,15 +314,17 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
       });
     };
 
-    // Auto-launch transparent in-game overlay
     ow.windows.obtainDeclaredWindow('in_game', (result: any) => {
       if (result.success) {
-        ow.windows.restore(result.window.id);
+        ow.windows.restore(result.window.id, (restoreResult: any) => {
+          if (!restoreResult?.success) {
+            ui.logConsole(`Failed to restore in-game HUD overlay: ${restoreResult?.error || 'unknown error'}`);
+          }
+        });
         ui.logConsole('In-game HUD overlay auto-launched.');
       }
     });
 
-    // Register toggle hotkey listener
     ow.settings.hotkeys.onPressed.addListener((info: any) => {
       if (info.name === 'toggle_overlay') {
         ui.logConsole('Hotkey toggle_overlay pressed. Toggling HUD window.');
@@ -341,7 +339,6 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
         ui.updateStatus('REGISTERED', 'connected');
         ui.logConsole('Successfully registered GEP required features: game_info, match_info');
 
-        // Query current state to support middle-of-match restarts
         ow.games.events.getInfo((infoResult: any) => {
           if (infoResult && infoResult.success && infoResult.res) {
             const res = infoResult.res;
@@ -388,11 +385,9 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
         });
 
         listenOverwolfEvents((event) => {
-          // Extract details for last-event preview
           const eventDetails = `Source: ${event.source} | Key: ${event.key || 'n/a'} | Cat: ${event.category || 'n/a'}`;
           ui.updateLastEvent(eventDetails);
 
-          // Detect new match or match end to clear old rosters
           const isMatchIdKey = event.key === 'match_id' || (event.category === 'match_info' && event.key === 'match_id');
           if (isMatchIdKey && typeof event.payload === 'string' && event.payload.length > 0) {
             const matchId = event.payload;
@@ -441,7 +436,6 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
             guideLoaded = false;
           }
 
-          // Intercept roster updates to display/hide hero build guide
           if (event.category === 'roster' || (event.key && event.key.startsWith('roster_'))) {
             const payload: any = event.payload || {};
             const steamId = payload.steam_id || payload.steamId;
@@ -459,14 +453,12 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
                   if (p.isLocal) {
                     localContextChanged = true;
                     mainWindow.localPlayerLevel = Number(payload.level);
-                    // Redraw overlay
                     if (mainWindow.latestRecommendation && mainWindow.inGameUIUpdate) {
                       mainWindow.inGameUIUpdate(mainWindow.latestRecommendation, mainWindow.heroName);
                     }
                   }
                 }
 
-                // Track deaths count for local player warning popup (2 deaths in 2 minutes)
                 if (p.isLocal && payload.deaths !== undefined) {
                   const currentDeaths = Number(payload.deaths);
                   const isFirstCheck = p.deaths === undefined;
@@ -479,15 +471,12 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
                     const now = Date.now();
                     localPlayerDeathTimestamps.push(now);
 
-                    // Filter to deaths within the last 120 seconds
                     const twoMinutesAgo = now - 120000;
                     localPlayerDeathTimestamps = localPlayerDeathTimestamps.filter(t => t > twoMinutesAgo);
 
                     if (localPlayerDeathTimestamps.length >= 2) {
-                      // Reset death tracking array to start counting fresh
                       localPlayerDeathTimestamps.length = 0;
 
-                      // 10-minute warning cooldown (600,000 ms)
                       if (now - lastWarningTriggeredAt >= 600000) {
                         ui.logConsole(`Warning triggered: local player died 2 times in 2 minutes! Sending warning event.`);
                         lastWarningTriggeredAt = now;
@@ -508,8 +497,6 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
                 }
               }
 
-              // Roster updates occur constantly for stats like souls or health.
-              // We should ONLY update hero allocation if heroId is explicitly provided.
               if (heroId !== undefined && heroId !== null && heroId !== 0) {
                 const finalKey = (steamId !== '0') ? steamId : `hero_${heroId}`;
                 if (!matchRoster[finalKey]) {
@@ -541,12 +528,10 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
             }
           }
 
-          // Intercept item updates for the local player
           if (event.category === 'items' || (event.key && event.key.startsWith('items_'))) {
             const payload: any = event.payload || {};
             const eventSteamId = payload.steam_id || payload.steamId;
 
-            // Find local steamId
             let localSteamId: string | null = null;
             for (const [sId, player] of Object.entries(matchRoster)) {
               if (player.isLocal) {
@@ -555,27 +540,24 @@ ow.windows.getCurrentWindow(async (windowResult: any) => {
               }
             }
 
-              if (eventSteamId && eventSteamId === localSteamId) {
-                const rawItems = payload.items || [];
-                const boughtIds = rawItems
-                  .map((item: any) => Number(item.id ?? item.itemId ?? item.item_id))
-                  .filter((id: number) => Number.isFinite(id) && id > 0);
+            if (eventSteamId && eventSteamId === localSteamId) {
+              const rawItems = payload.items || [];
+              const boughtIds = rawItems
+                .map((item: any) => Number(item.id ?? item.itemId ?? item.item_id))
+                .filter((id: number) => Number.isFinite(id) && id > 0);
 
-                mainWindow.localPurchasedItemIds = new Set(boughtIds);
-                scheduleAdaptiveRecommendation();
+              mainWindow.localPurchasedItemIds = new Set(boughtIds);
+              scheduleAdaptiveRecommendation();
 
-                // Redraw overlay
-                if (mainWindow.latestRecommendation && mainWindow.inGameUIUpdate) {
-                  mainWindow.inGameUIUpdate(mainWindow.latestRecommendation, mainWindow.heroName);
+              if (mainWindow.latestRecommendation && mainWindow.inGameUIUpdate) {
+                mainWindow.inGameUIUpdate(mainWindow.latestRecommendation, mainWindow.heroName);
               }
             }
           }
 
-          // Push to buffering queue
           buffer.push(event);
         });
 
-        // Listen to game exclusive mode to update dynamo_warning window state
         if (ow && ow.overlay) {
           ow.overlay.onGameInputExclusiveModeChanged.addListener((event: any) => {
             mainWindow.overlayMenuActive = !!event.enabled;
