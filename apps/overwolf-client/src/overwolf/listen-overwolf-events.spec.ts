@@ -8,7 +8,7 @@ jest.mock('../diagnostics/diagnostic-capture', () => ({
 import { listenOverwolfEvents } from './listen-overwolf-events';
 
 describe('listenOverwolfEvents', () => {
-  it('reconciles the full live state immediately and every three seconds', () => {
+  it('reconciles the full live state with the restored match id immediately and every three seconds', () => {
     jest.useFakeTimers();
     const onEvent = jest.fn();
     const getInfo = jest.fn((callback: (result: unknown) => void) => {
@@ -64,6 +64,7 @@ describe('listenOverwolfEvents', () => {
       'items',
     ]);
     expect(onEvent).toHaveBeenCalledWith({
+      matchId: '93946399',
       receivedAt: expect.any(Number),
       source: 'onInfoUpdates2',
       feature: 'state_safety_poll',
@@ -75,6 +76,7 @@ describe('listenOverwolfEvents', () => {
         team_id: 2,
       },
     });
+    expect(onEvent.mock.calls.every(([event]) => event.matchId === '93946399')).toBe(true);
 
     jest.advanceTimersByTime(3_000);
 
