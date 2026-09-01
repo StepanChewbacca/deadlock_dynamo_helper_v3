@@ -156,11 +156,21 @@ export class AdaptiveDecisionStateV1Service {
 
 function resolveLocalSteamId(match: MinimalMatchState, requested?: string): string {
   if (requested && match.playersBySteamId[requested]) return requested;
-  const local = Object.values(match.playersBySteamId)
+
+  const markedLocal = Object.values(match.playersBySteamId)
     .filter((player) => player.isLocal)
     .sort((a, b) => a.steamId.localeCompare(b.steamId));
-  if (local.length !== 1) throw new Error(`Unable to resolve exactly one local player for match ${match.matchId}`);
-  return local[0].steamId;
+  if (markedLocal.length === 1) return markedLocal[0].steamId;
+  if (markedLocal.length > 1) {
+    throw new Error(`Unable to resolve exactly one local player for match ${match.matchId}`);
+  }
+
+  const realPlayers = Object.values(match.playersBySteamId)
+    .filter((player) => player.steamId !== '0' && !player.steamId.startsWith('bot:'))
+    .sort((a, b) => a.steamId.localeCompare(b.steamId));
+  if (realPlayers.length === 1) return realPlayers[0].steamId;
+
+  throw new Error(`Unable to resolve exactly one local player for match ${match.matchId}`);
 }
 
 function calculateTeamSoulTotals(
