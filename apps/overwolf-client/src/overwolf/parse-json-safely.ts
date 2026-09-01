@@ -3,8 +3,13 @@ export function parseJsonSafely(value: unknown): unknown {
     return value;
   }
 
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+    return value;
+  }
+
   try {
-    return JSON.parse(value);
+    return JSON.parse(trimmed);
   } catch {
     return value;
   }
