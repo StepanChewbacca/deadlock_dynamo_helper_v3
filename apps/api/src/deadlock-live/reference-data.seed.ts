@@ -29,14 +29,14 @@ export const HERO_REFERENCE_SEED = [
   { "hero_id": 67, "name": "Paige" },
   { "hero_id": 72, "name": "Billy" },
   { "hero_id": 77, "name": "Apollo" },
-  { "hero_id": 64, "name": "Seven" },
-  { "hero_id": 65, "name": "Ivy" },
-  { "hero_id": 66, "name": "Yamato" },
-  { "hero_id": 69, "name": "McGinnis" },
-  { "hero_id": 76, "name": "Kelvin" },
-  { "hero_id": 79, "name": "Grey Talon" },
-  { "hero_id": 80, "name": "Bebop" },
-  { "hero_id": 81, "name": "Shiv" }
+  { "hero_id": 64, "name": "Drifter" },
+  { "hero_id": 65, "name": "Venator" },
+  { "hero_id": 66, "name": "Victor" },
+  { "hero_id": 69, "name": "The Doorman" },
+  { "hero_id": 76, "name": "Graves" },
+  { "hero_id": 79, "name": "Rem" },
+  { "hero_id": 80, "name": "Silver" },
+  { "hero_id": 81, "name": "Celeste" }
 ] as const;
 
 export const ITEM_REFERENCE_SEED = [

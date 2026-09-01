@@ -65,7 +65,7 @@ export class StatlockerCollectionAccessError extends StatlockerCollectionError {
 export class StatlockerBrowserCollectorService {
   private readonly baseUrl = 'https://statlocker.gg';
   private readonly pageTimeoutMs = 45_000;
-  private readonly bodyTimeoutMs = 15_000;
+  private readonly bodyTimeoutMs = 60_000;
   private readonly maxConcurrency = 3;
 
   constructor(
@@ -102,7 +102,7 @@ export class StatlockerBrowserCollectorService {
         const chunk = targets.slice(index, index + this.maxConcurrency);
         const chunkResults = await Promise.all(chunk.map(async (target) => {
           const path = buildDatasetPath(target, statlockerPatchId);
-          const response = await this.fetchFromPage(page, path);
+          const response = await this.fetchFromPage(page, path, statlockerPatchId);
           this.assertSuccessfulResponse(path, response);
           return {
             dataset: target.dataset,
@@ -127,8 +127,16 @@ export class StatlockerBrowserCollectorService {
     }
   }
 
-  private async fetchFromPage(page: StatlockerPageV1, path: string): Promise<BrowserFetchResultV1> {
-    return page.evaluate<BrowserFetchResultV1>(async (input: { path: string; timeoutMs: number }) => {
+  private async fetchFromPage(
+    page: StatlockerPageV1,
+    path: string,
+    statlockerPatchId?: string,
+  ): Promise<BrowserFetchResultV1> {
+    return page.evaluate<BrowserFetchResultV1>(async (input: {
+      path: string;
+      timeoutMs: number;
+      statlockerPatchId?: string;
+    }) => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), input.timeoutMs);
       try {
@@ -146,6 +154,25 @@ export class StatlockerBrowserCollectorService {
             data = body;
           }
         }
+        if (
+          input.path === '/api/info/vs-hero-wpa-data' &&
+          input.statlockerPatchId &&
+          data !== null &&
+          typeof data === 'object' &&
+          !Array.isArray(data)
+        ) {
+          const root = data as Record<string, unknown>;
+          const byPatch = root.by_patch;
+          if (byPatch !== null && typeof byPatch === 'object' && !Array.isArray(byPatch)) {
+            const patchKey = `patch_${input.statlockerPatchId}`;
+            data = {
+              metadata: root.metadata,
+              by_patch: {
+                [patchKey]: (byPatch as Record<string, unknown>)[patchKey],
+              },
+            };
+          }
+        }
         return {
           status: response.status,
           data,
@@ -153,7 +180,7 @@ export class StatlockerBrowserCollectorService {
       } finally {
         clearTimeout(timer);
       }
-    }, { path, timeoutMs: this.bodyTimeoutMs });
+    }, { path, timeoutMs: this.bodyTimeoutMs, statlockerPatchId });
   }
 
   private assertSuccessfulResponse(path: string, response: BrowserFetchResultV1): void {
@@ -183,7 +210,7 @@ function buildDatasetPath(target: StatlockerCollectionTargetV1, statlockerPatchI
   if (target.dataset === 'T4_CHAINS') return '/api/info/t4-chains-data';
   if (target.dataset === 'HERO_LEADERBOARD') {
     const heroId = requirePositiveInteger(target.heroId, target.dataset, 'heroId');
-    return `/api/leaderboard/get-valve-leaderboard?hero_id=${heroId}`;
+    return `/api/leaderboard/get-statlocker-leaderboard/${heroId}`;
   }
   if (target.dataset === 'PRO_BUILD_ANALYSIS') {
     const heroId = requirePositiveInteger(target.heroId, target.dataset, 'heroId');
@@ -198,6 +225,15 @@ function buildDatasetPath(target: StatlockerCollectionTargetV1, statlockerPatchI
 }
 
 function resolveMinorPatchId(value: unknown): string {
+  if (Array.isArray(value)) {
+    const current = value[0];
+    if (isRecord(current)) {
+      const patchId = cleanPatchId(current.minorPatchId);
+      if (patchId) return patchId;
+    }
+    throw new StatlockerCollectionError('Statlocker current minor patch ID is unavailable');
+  }
+
   if (!isRecord(value)) {
     throw new StatlockerCollectionError('Statlocker patch control response is structurally invalid');
   }

@@ -55,6 +55,112 @@ describe('StatlockerNormalizerService', () => {
       .toBe(wpa.contentSha256);
   });
 
+  it('normalizes the live nested Statlocker aggregate contracts', () => {
+    const patchId = '676255623445218601';
+
+    const patches = service.normalizePatches([
+      { minorPatchId: patchId, majorPatchDate: '2026-03-11' },
+      { minorPatchId: '146261', majorPatchDate: '2026-03-11' },
+    ]);
+    expect(patches).toEqual({
+      currentMinorPatchId: patchId,
+      availableMinorPatchIds: ['146261', patchId],
+    });
+
+    const wpa = service.normalizeWpaPatchData({
+      metadata: { minor_patches: { patches_included: [patchId] } },
+      by_patch: {
+        [`patch_${patchId}`]: {
+          by_rank: {
+            rank_8: {
+              by_tier: {
+                tier_1: {
+                  top_by_hero: {
+                    Victor: [{
+                      item: 'Mystic Expansion',
+                      sample_size: 125,
+                      mean_wpa: 0.0125,
+                      std_wpa: 0.1,
+                    }],
+                  },
+                  tier_stats: { total_heroes: 1, total_items_in_tier: 1 },
+                },
+              },
+            },
+          },
+        },
+      },
+    }, patchId);
+    expect(wpa.payload).toEqual({
+      patchId,
+      items: [{
+        heroId: 66,
+        itemId: 754480263,
+        meanWpa: 0.0125,
+        sampleSize: 125,
+        gameState: {},
+        purchaseTiming: {},
+      }],
+    });
+
+    const vs = service.normalizeVsHeroWpa({
+      metadata: { minor_patches: { patches_included: [patchId] } },
+      by_patch: {
+        [`patch_${patchId}`]: {
+          by_rank: {
+            rank_8: {
+              by_hero: {
+                Abrams: {
+                  'Arcane Surge': {
+                    _baseline: { mean_wpa: -0.00237, count: 915 },
+                    Apollo: { mean_wpa: -0.001782, count: 100, delta_wpa: 0.000588 },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    }, patchId);
+    expect(vs.payload.slices).toEqual([{
+      heroId: 6,
+      enemyHeroId: 77,
+      items: [{ itemId: 1150006784, deltaWpa: 0.000588, count: 100 }],
+    }]);
+
+    const chains = service.normalizeT4Chains({
+      metadata: { unique_heroes_with_chains: 1 },
+      by_hero: {
+        Billy: {
+          total_t4_chains: 1,
+          two_item_chains: [{
+            chain: 'Mystic Expansion -> Close Quarters',
+            items: ['Mystic Expansion', 'Close Quarters'],
+            sample_size: 42,
+            wpa_metrics: { chain_total: { mean_wpa: 0.12 } },
+          }],
+          three_item_chains: [],
+        },
+      },
+    }, patchId);
+    expect(chains.payload.chains).toEqual([{
+      heroId: 72,
+      itemIds: [754480263, 1342610602],
+      sampleSize: 42,
+      meanWpa: 0.12,
+    }]);
+
+    const leaderboard = service.normalizeHeroLeaderboard({
+      data: [{ accountId: 1893890487, heroId: 6, rank: 1, steamProfile: { name: 'Player One' } }],
+    }, patchId, 6);
+    expect(leaderboard.payload.profiles).toEqual([{
+      accountId: '1893890487',
+      heroId: 6,
+      rank: 1,
+      playerName: 'Player One',
+    }]);
+  });
+
   it('rejects structurally incomplete or non-finite primary evidence', () => {
     expect(() => service.normalizeWpaPatchData({ patch: '15-1', items: [] }, '15-1'))
       .toThrow(StatlockerDatasetValidationError);
@@ -66,5 +172,26 @@ describe('StatlockerNormalizerService', () => {
       .toThrow(StatlockerDatasetValidationError);
     expect(() => service.normalizeProBuildAnalysis({ account_id: '101', hero_id: 10, items: [{}] }, '15-1', '101', 10))
       .toThrow(StatlockerDatasetValidationError);
+  });
+
+  it('rejects live leaderboard rows whose hero scope is inconsistent', () => {
+    expect(() => service.normalizeHeroLeaderboard({
+      data: [{ accountId: 101, heroId: 13, rank: 1 }],
+    }, '676255623445218601', 6)).toThrow(StatlockerDatasetValidationError);
+  });
+
+  it('rejects live T4 chains whose family cardinality is inconsistent', () => {
+    expect(() => service.normalizeT4Chains({
+      by_hero: {
+        Abrams: {
+          two_item_chains: [{
+            items: ['Mystic Expansion', 'Close Quarters', 'Arcane Surge'],
+            sample_size: 42,
+            wpa_metrics: { chain_total: { mean_wpa: 0.12 } },
+          }],
+          three_item_chains: [],
+        },
+      },
+    }, '676255623445218601')).toThrow(StatlockerDatasetValidationError);
   });
 });
