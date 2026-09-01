@@ -70,11 +70,6 @@ export class ReferenceDataImportService implements OnModuleInit {
   }
 
   private async syncItemsFromAssets() {
-    const apiKey = process.env.DEADLOCK_API_KEY?.trim();
-    if (!apiKey) {
-      return;
-    }
-
     try {
       const res = await axios.get('https://api.deadlock-api.com/v1/assets/items', getDeadlockApiRequestConfig());
       const assets = Array.isArray(res.data) ? res.data : [];
