@@ -1,0 +1,74 @@
+name: Statlocker Cutover Main Patch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/statlocker-cutover-main-patch.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Remove legacy recommendation serving surfaces
+        shell: python
+        run: |
+          from pathlib import Path
+
+          module = Path('apps/api/src/deadlock-live/deadlock-live.module.ts')
+          text = module.read_text()
+          for needle in [
+              "import { HeroBuildTransitionAggregationController } from './hero-build-transition-aggregation.controller';\n",
+              "import { RecommendationPolicyBuildV1Controller } from './recommendation-policy-build-v1.controller';\n",
+              '    HeroBuildTransitionAggregationController,\n',
+              '    RecommendationPolicyBuildV1Controller,\n',
+          ]:
+              if needle not in text:
+                  raise SystemExit(f'Expected DeadlockLiveModule fragment missing: {needle!r}')
+              text = text.replace(needle, '', 1)
+          module.write_text(text)
+
+          v6 = Path('apps/api/src/deadlock-live/recommendation-value-v6.module.ts')
+          text = v6.read_text()
+          for needle in [
+              "import { RecommendationValueV6LiveController } from './recommendation-value-v6-live.controller';\n",
+              '    RecommendationValueV6LiveController,\n',
+          ]:
+              if needle not in text:
+                  raise SystemExit(f'Expected V6 fragment missing: {needle!r}')
+              text = text.replace(needle, '', 1)
+          v6.write_text(text)
+
+          ingest = Path('apps/api/src/deadlock-live/live-ingest.controller.ts')
+          text = ingest.read_text()
+          fragments = [
+              "import { LiveBuildRecommendationTraversalService } from './live-build-recommendation-traversal.service';\n",
+              "    private readonly liveBuildRecommendationTraversalService:\n      LiveBuildRecommendationTraversalService,\n",
+              "  @Get('matches/:matchId/build-recommendation')\n  getLiveBuildRecommendation(@Param('matchId') matchId: string) {\n    return this.liveBuildRecommendationTraversalService.getMatchSnapshot(matchId);\n  }\n\n",
+              "  @Get('build-recommendations/status')\n  getLiveBuildRecommendationStatus() {\n    return this.liveBuildRecommendationTraversalService.getStatus();\n  }\n\n",
+              "  @Get('build-recommendations')\n  getLiveBuildRecommendations() {\n    return this.liveBuildRecommendationTraversalService.getAllSnapshots();\n  }\n\n",
+          ]
+          for needle in fragments:
+              if needle not in text:
+                  raise SystemExit(f'Expected LiveIngest fragment missing: {needle!r}')
+              text = text.replace(needle, '', 1)
+          ingest.write_text(text)
+
+      - name: Commit cutover
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add apps/api/src/deadlock-live/deadlock-live.module.ts \
+                  apps/api/src/deadlock-live/recommendation-value-v6.module.ts \
+                  apps/api/src/deadlock-live/live-ingest.controller.ts
+          git diff --cached --check
+          git commit -m "fix(api): enforce statlocker-only recommendation serving"
+          git push origin HEAD:main
