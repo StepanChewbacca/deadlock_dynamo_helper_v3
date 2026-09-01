@@ -34,6 +34,7 @@ describe('Statlocker-only recommendation serving cutover', () => {
     expect(indexSource).not.toContain('latestSituational');
     expect(indexSource).not.toContain('inGameSituationalUpdate');
     expect(indexSource).not.toContain('inGameUIUpdate');
+    expect(indexSource).not.toContain('dynamo_warning');
 
     expect(uiSource).not.toContain('showHeroGuide');
     expect(uiSource).not.toContain('showSituationalPanel');
@@ -57,6 +58,15 @@ describe('Statlocker-only recommendation serving cutover', () => {
 
     expect(inGameHtml).toContain('Statlocker Adaptive');
     expect(desktopHtml).toContain('Statlocker Adaptive');
+  });
+
+  test('production deploy never promotes or verifies legacy V6 serving', () => {
+    const deployWorkflow = readRepoFile('../.github/workflows/deploy.yml');
+
+    expect(deployWorkflow).not.toContain('promote-recommendation-value-v6-live.sh');
+    expect(deployWorkflow).not.toContain('recommendation-value-v6-live/status');
+    expect(deployWorkflow).not.toContain('deadlock/live/build-recommendations/status');
+    expect(deployWorkflow).toContain('/deadlock/adaptive/v1/status');
   });
 
   test('adaptive client remains pinned to the only recommendation endpoint', () => {
