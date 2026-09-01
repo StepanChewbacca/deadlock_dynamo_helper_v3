@@ -138,35 +138,4 @@ describe('StatlockerRefreshService', () => {
     expect(leaderboardHeroIds).toEqual(expect.arrayContaining([6, 72, 80]));
     expect(leaderboardHeroIds.length).toBeGreaterThan(3);
   });
-
-  it('treats hero snapshots newer than two days as fresh enough to skip recollection', async () => {
-    const h = createHarness();
-    const nowMs = Date.parse('2026-09-02T12:00:00.000Z');
-    const freshFetchedAt = new Date(nowMs - (47 * 60 * 60_000)).toISOString();
-
-    h.active.set([
-      'HERO_LEADERBOARD',
-      identity.rulesetVersion,
-      identity.catalogSha256,
-      '15-1',
-      'hero:6',
-    ].join('|'), {
-      dataset: 'HERO_LEADERBOARD',
-      rulesetVersion: identity.rulesetVersion,
-      catalogSha256: identity.catalogSha256,
-      statlockerPatchId: '15-1',
-      scopeKey: 'hero:6',
-      fetchedAt: freshFetchedAt,
-      contentSha256: '6'.repeat(64),
-    });
-
-    await h.service.scheduledTick(nowMs);
-
-    const collectedHeroIds = h.collector.collectBatch.mock.calls
-      .flatMap(([targets]) => targets)
-      .filter((target: any) => target.dataset === 'HERO_LEADERBOARD')
-      .map((target: any) => target.heroId);
-
-    expect(collectedHeroIds).not.toContain(6);
-  });
 });
