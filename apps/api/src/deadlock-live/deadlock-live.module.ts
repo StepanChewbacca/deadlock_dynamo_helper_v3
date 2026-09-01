@@ -77,7 +77,6 @@ import { HeroBuildContextualV3CandidateEvaluationController } from './hero-build
 import { HeroBuildContextualV3CandidateEvaluationService } from './hero-build-contextual-v3-candidate-evaluation.service';
 import { HeroBuildContextualV3FinalTestController } from './hero-build-contextual-v3-final-test.controller';
 import { HeroBuildContextualV3FinalTestService } from './hero-build-contextual-v3-final-test.service';
-import { HeroBuildContextualV3LiveController } from './hero-build-contextual-v3-live.controller';
 import { HeroBuildContextualV3LiveService } from './hero-build-contextual-v3-live.service';
 import { HeroBuildContextualV3TrainingController } from './hero-build-contextual-v3-training.controller';
 import { HeroBuildContextualV3TrainingCoordinatorService } from './hero-build-contextual-v3-training-coordinator.service';
@@ -93,7 +92,6 @@ import { HeroBuildOfflineEvaluationV2ResilientService } from './hero-build-offli
 import { HeroBuildOfflineEvaluationController } from './hero-build-offline-evaluation.controller';
 import { HeroBuildOfflineEvaluationResilientService } from './hero-build-offline-evaluation-resilient.service';
 import { HeroBuildOfflineEvaluationService } from './hero-build-offline-evaluation.service';
-import { HeroBuildRecommendationController } from './hero-build-recommendation.controller';
 import { HeroBuildRecommendationOwnershipFilterService } from './hero-build-recommendation-ownership-filter.service';
 import { HeroBuildRecommendationPresentationService } from './hero-build-recommendation-presentation.service';
 import { HeroBuildRecommendationService } from './hero-build-recommendation.service';
@@ -163,7 +161,6 @@ import { RulesetResolutionRefreshService } from './ruleset-resolution-refresh.se
 import { RulesetResolverService } from './ruleset-resolver.service';
 import { RulesetWindowManifestService } from './ruleset-window-manifest.service';
 import { SituationalRecommendationDiagnosticsService } from './situational-recommendation-diagnostics.service';
-import { SkillBuildAnalysisController } from './skill-build-analysis.controller';
 import { SkillBuildAnalysisService } from './skill-build-analysis.service';
 import { StoredMatchReprocessingService } from './stored-match-reprocessing.service';
 import { VersionedRecipeGraphService } from './versioned-recipe-graph.service';
@@ -208,21 +205,18 @@ import { VersionedRecipeGraphService } from './versioned-recipe-graph.service';
     RecentMatchesWindowController,
     MatchTimelineNormalizationController,
     HeroBuildTransitionAggregationController,
-    HeroBuildRecommendationController,
     HeroBuildOfflineEvaluationController,
     HeroBuildOfflineEvaluationV2Controller,
     HeroBuildDecisionDatasetV3Controller,
     HeroBuildContextualV3TrainingController,
     HeroBuildContextualV3CandidateEvaluationController,
     HeroBuildContextualV3FinalTestController,
-    HeroBuildContextualV3LiveController,
     RecommendationBehavioralV4TrainingController,
     RecommendationPolicyV4EvaluationController,
     RecommendationValueV4TrainingController,
     RecommendationDecisionDatasetV4HistoricalBootstrapController,
     RecommendationDecisionDatasetV4Controller,
     RecommendationDecisionTelemetryController,
-    SkillBuildAnalysisController,
     ReferenceDataController,
     IngestStatusController,
     RecommendationTelemetryController,
