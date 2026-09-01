@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: deploy-api-production
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   deploy:
@@ -36,13 +36,7 @@ jobs:
             --exclude 'storage' \
             ./ /home/ubuntu/apps/deadlock_dynamo_helper/
 
-      - name: Promote Recommendation Value V6 candidate
-        run: |
-          set -euo pipefail
-          cd /home/ubuntu/apps/deadlock_dynamo_helper
-          sudo bash scripts/promote-recommendation-value-v6-live.sh
-
-      - name: Rebuild and restart API
+      - name: Rebuild and restart adaptive API
         run: |
           set -euo pipefail
           cd /home/ubuntu/apps/deadlock_dynamo_helper
@@ -88,12 +82,12 @@ jobs:
           echo 'API did not become healthy in time.' >&2
           exit 1
 
-      - name: Verify exclusive Recommendation Value V6 locally
+      - name: Verify Statlocker adaptive serving locally
         run: |
           set -euo pipefail
           cd /home/ubuntu/apps/deadlock_dynamo_helper
-          sudo docker compose exec -T api node -e "const expectedSha = '799803f4882ca2ece436ab1087c41641713377f8a33f9bab0f0f4636a381938e'; fetch('http://127.0.0.1:3000/deadlock/analysis/recommendation-value-v6-live/status').then(async (response) => { const status = await response.json(); console.log(JSON.stringify(status)); if (!response.ok || status.mode !== 'CANARY' || status.rolloutScope !== 'ALL_USERS' || status.allowlistCount !== 0 || status.model?.state !== 'READY' || status.model?.modelSha256 !== expectedSha) process.exit(1); }).catch((error) => { console.error(error); process.exit(1); });"
-          sudo docker compose exec -T api node -e "fetch('http://127.0.0.1:3000/deadlock/live/build-recommendations/status').then(async (response) => { const status = await response.json(); console.log(JSON.stringify(status)); if (!response.ok || typeof status.trackedMatchCount !== 'number') process.exit(1); }).catch((error) => { console.error(error); process.exit(1); });"
+          sudo docker compose exec -T api node -e "fetch('http://127.0.0.1:3000/deadlock/adaptive/v1/status').then(async (response) => { const body = await response.text(); console.log(body); if (!response.ok) process.exit(1); }).catch((error) => { console.error(error); process.exit(1); });"
+          sudo docker compose exec -T api node -e "Promise.all([fetch('http://127.0.0.1:3000/deadlock/analysis/build-recommendation',{method:'POST',headers:{'content-type':'application/json'},body:'{}'}),fetch('http://127.0.0.1:3000/deadlock/analysis/contextual-v3-live',{method:'POST',headers:{'content-type':'application/json'},body:'{}'}),fetch('http://127.0.0.1:3000/deadlock/analysis/heroes/1/skill-build')]).then(async (responses) => { const codes = responses.map((response) => response.status); console.log(JSON.stringify(codes)); if (codes.some((code) => code !== 404)) process.exit(1); }).catch((error) => { console.error(error); process.exit(1); });"
 
       - name: Restore DuckDNS record when needed
         shell: bash
@@ -131,7 +125,6 @@ jobs:
 
           if [ -z "$duckdns_token" ]; then
             echo 'DuckDNS does not resolve and DUCKDNS_TOKEN is unavailable.' >&2
-            echo 'Add the repository secret DUCKDNS_TOKEN or DUCKDNS_TOKEN to the deployment .env.' >&2
             exit 1
           fi
 
@@ -198,10 +191,7 @@ jobs:
           )
 
           if marker_start in source and marker_end in source:
-              pattern = re.compile(
-                  re.escape(marker_start) + r'.*?' + re.escape(marker_end),
-                  re.DOTALL,
-              )
+              pattern = re.compile(re.escape(marker_start) + r'.*?' + re.escape(marker_end), re.DOTALL)
               updated = pattern.sub(location_block, source, count=1)
           else:
               server_pattern = re.compile(r'\bserver\s*\{')
@@ -222,13 +212,7 @@ jobs:
                   if close_brace is None:
                       continue
                   server_block = source[match.start():close_brace + 1]
-                  if (
-                      re.search(rf'\bserver_name\s+{re.escape(host)}\s*;', server_block)
-                      and (
-                          re.search(r'\blisten\s+443\b', server_block)
-                          or 'ssl_certificate' in server_block
-                      )
-                  ):
+                  if re.search(rf'\bserver_name\s+{re.escape(host)}\s*;', server_block) and (re.search(r'\blisten\s+443\b', server_block) or 'ssl_certificate' in server_block):
                       updated = source[:close_brace] + '\n' + location_block + source[close_brace:]
                       break
               if updated is None:
@@ -249,52 +233,39 @@ jobs:
           sudo nginx -t
           sudo systemctl reload nginx
 
-      - name: Verify exclusive Recommendation Value V6 through local HTTPS
+      - name: Verify Statlocker adaptive through local HTTPS
         shell: bash
         run: |
           set -euo pipefail
           public_host="${PUBLIC_API_BASE_URL#https://}"
           public_host="${public_host%%/*}"
           public_host="${public_host%%:*}"
-          status="$(curl --fail --show-error --silent \
+          curl --fail --show-error --silent \
             --retry 10 \
             --retry-delay 1 \
             --retry-all-errors \
             --resolve "$public_host:443:127.0.0.1" \
-            "$PUBLIC_API_BASE_URL/deadlock/analysis/recommendation-value-v6-live/status")"
-          echo "$status"
-          echo "$status" | grep -q '"mode":"CANARY"'
-          echo "$status" | grep -q '"rolloutScope":"ALL_USERS"'
-          echo "$status" | grep -q '"allowlistCount":0'
-          echo "$status" | grep -q '"state":"READY"'
-          echo "$status" | grep -q '"modelSha256":"799803f4882ca2ece436ab1087c41641713377f8a33f9bab0f0f4636a381938e"'
+            "$PUBLIC_API_BASE_URL/deadlock/adaptive/v1/status"
 
-      - name: Verify exclusive Recommendation Value V6 public route
+      - name: Verify Statlocker adaptive public route
         shell: bash
         run: |
           set -euo pipefail
-          status="$(curl --fail --show-error --silent \
+          curl --fail --show-error --silent \
             --retry 10 \
             --retry-delay 3 \
             --retry-all-errors \
-            "$PUBLIC_API_BASE_URL/deadlock/analysis/recommendation-value-v6-live/status")"
-          echo "$status"
-          echo "$status" | grep -q '"mode":"CANARY"'
-          echo "$status" | grep -q '"rolloutScope":"ALL_USERS"'
-          echo "$status" | grep -q '"allowlistCount":0'
-          echo "$status" | grep -q '"state":"READY"'
-          echo "$status" | grep -q '"modelSha256":"799803f4882ca2ece436ab1087c41641713377f8a33f9bab0f0f4636a381938e"'
+            "$PUBLIC_API_BASE_URL/deadlock/adaptive/v1/status"
 
-      - name: Disable Recommendation Value V6 after deployment failure
-        if: failure()
-        run: |
-          set -euo pipefail
-          cd /home/ubuntu/apps/deadlock_dynamo_helper
-          sudo env DEADLOCK_RECOMMENDATION_VALUE_V6_LIVE_MODE=DISABLED \
-            DEADLOCK_API_IMAGE="$ADAPTIVE_PRODUCTION_IMAGE" \
-            DB_RUN_MIGRATIONS="$DB_RUN_MIGRATIONS" \
-            CHROMIUM_PATH="$CHROMIUM_PATH" \
-            docker compose up -d --force-recreate --no-deps api
+          legacy_status="$(curl --show-error --silent --output /dev/null --write-out '%{http_code}' \
+            -X POST \
+            -H 'content-type: application/json' \
+            --data '{}' \
+            "$PUBLIC_API_BASE_URL/deadlock/analysis/build-recommendation")"
+          if [ "$legacy_status" != '404' ]; then
+            echo "Legacy build recommendation route is still enabled: HTTP $legacy_status" >&2
+            exit 1
+          fi
 
       - name: Show API logs on failure
         if: failure()
