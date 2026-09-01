@@ -7,11 +7,9 @@ import { RecentLiveEventsService } from './recent-live-events.service';
 import { LiveIngestController } from './live-ingest.controller';
 import { DebugPageController } from './debug-page.controller';
 import { HeroAnalysisService } from './hero-analysis.service';
-import { HeroAnalysisController } from './hero-analysis.controller';
 import { IngestStatusController } from './ingest-status.controller';
 import { IngestStatusService } from './ingest-status.service';
 import { AllHeroesAnalysisService } from './all-heroes-analysis.service';
-import { AllHeroesAnalysisController } from './all-heroes-analysis.controller';
 import { SituationalRecommendationService } from './situational-recommendation.service';
 import { CatalogContentService } from './catalog-content.service';
 import { ModelBundleRegistryController } from './model-bundle-registry.controller';
@@ -125,8 +123,6 @@ import { ShadowModeDecision } from './entities/shadow-mode-decision.entity';
   controllers: [
     LiveIngestController,
     DebugPageController,
-    HeroAnalysisController,
-    AllHeroesAnalysisController,
     IngestStatusController,
     RecommendationTelemetryController,
     RecommendationObservabilityController,
