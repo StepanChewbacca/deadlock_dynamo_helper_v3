@@ -6,6 +6,18 @@ export type EventCallback = (event: OverwolfLiveEventDto) => void;
 
 let diagnosticCapture: DiagnosticCapture | undefined;
 
+function matchIdFromValue(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim().length > 0) {
+    return value.trim();
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value);
+  }
+
+  return undefined;
+}
+
 export function listenOverwolfEvents(onEvent: EventCallback): void {
   if (typeof overwolf === 'undefined' || !overwolf.games || !overwolf.games.events) {
     console.warn('Overwolf API is not available; events listener registration skipped.');
@@ -15,6 +27,14 @@ export function listenOverwolfEvents(onEvent: EventCallback): void {
   diagnosticCapture ??= new DiagnosticCapture(`capture-${Math.random().toString(36).slice(2, 10)}`);
   const capture = diagnosticCapture;
   capture.initialize(overwolf);
+
+  let currentMatchId: string | undefined;
+  overwolf.games.events.getInfo?.((infoResult: any) => {
+    currentMatchId =
+      matchIdFromValue(infoResult?.res?.match_info?.match_id) ??
+      matchIdFromValue(infoResult?.match_info?.match_id) ??
+      currentMatchId;
+  });
 
   overwolf.games.events.onInfoUpdates2.addListener((infoUpdate: any) => {
     try {
@@ -41,8 +61,12 @@ export function listenOverwolfEvents(onEvent: EventCallback): void {
             rawPayload: rawValue,
           });
           const parsedValue = parseJsonSafely(rawValue);
+          if (key === 'match_id') {
+            currentMatchId = matchIdFromValue(parsedValue) ?? currentMatchId;
+          }
 
           onEvent({
+            matchId: currentMatchId,
             receivedAt,
             source: 'onInfoUpdates2',
             feature,
@@ -78,8 +102,12 @@ export function listenOverwolfEvents(onEvent: EventCallback): void {
           rawPayload: e.data,
         });
         const parsedData = parseJsonSafely(e.data);
+        if (e.name === 'match_id') {
+          currentMatchId = matchIdFromValue(parsedData) ?? currentMatchId;
+        }
 
         onEvent({
+          matchId: currentMatchId,
           receivedAt,
           source: 'onNewEvents',
           feature,
