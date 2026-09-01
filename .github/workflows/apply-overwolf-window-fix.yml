@@ -19,8 +19,10 @@ jobs:
         with:
           ref: agent/statlocker-model-probe-poc
       - name: Apply callback signatures
-        shell: python
+        shell: bash
         run: |
+          set -Eeuo pipefail
+          python3 <<'PY'
           from pathlib import Path
 
           path = Path('apps/overwolf-client/src/index.ts')
@@ -48,6 +50,7 @@ jobs:
           if source.count(old) != 1:
               raise SystemExit(f'Expected exactly one window toggle block, found {source.count(old)}')
           path.write_text(source.replace(old, new))
+          PY
       - name: Commit fix
         shell: bash
         run: |
