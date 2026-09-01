@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM node:18-alpine AS builder
+FROM node:20-alpine AS builder
 WORKDIR /app
 
 # Copy monorepo configurations
@@ -22,8 +22,14 @@ RUN yarn workspace @deadlock-live-probe/build-domain build
 RUN yarn workspace @deadlock-live-probe/api build
 
 # Stage 2: Production runtime
-FROM node:18-alpine
+FROM node:20-alpine
 WORKDIR /app
+
+ENV CHROMIUM_PATH=/usr/bin/chromium-browser
+
+# Install the browser used only by the background Statlocker collector.
+RUN apk add --no-cache chromium \
+  && test -x "$CHROMIUM_PATH"
 
 # Copy built artifacts and configurations from the builder stage
 COPY --from=builder /app/package.json /app/yarn.lock ./

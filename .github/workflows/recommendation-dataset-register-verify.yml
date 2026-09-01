@@ -1,0 +1,191 @@
+name: Recommendation Dataset Register Verify
+
+on:
+  workflow_dispatch:
+    inputs:
+      dataset_dir:
+        description: Pre-staged immutable Dataset V8 directory on the protected runner
+        required: true
+        type: string
+      object_base_uri:
+        description: Approved immutable remote object-store URI containing the exact dataset directory
+        required: true
+        type: string
+      verifier:
+        description: Immutable artifact verifier identity
+        required: true
+        default: recommendation-protected-runner-v1
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-dataset-register-verify
+  cancel-in-progress: false
+
+jobs:
+  register-verify:
+    environment: recommendation-artifact-registry
+    runs-on: [self-hosted, linux, x64, recommendation-artifact-registry]
+    timeout-minutes: 30
+    env:
+      DATASET_DIR_INPUT: ${{ inputs.dataset_dir }}
+      OBJECT_BASE_URI: ${{ inputs.object_base_uri }}
+      VERIFIER: ${{ inputs.verifier }}
+      REGISTRY_API_BASE_URL: ${{ vars.RECOMMENDATION_ARTIFACT_API_BASE_URL }}
+      ARTIFACT_TOKEN: ${{ secrets.RECOMMENDATION_ARTIFACT_REGISTRY_TOKEN }}
+    steps:
+      - name: Checkout frozen dataset registry handoff code
+        uses: actions/checkout@v4
+
+      - name: Validate immutable local dataset and build registry requests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${RECOMMENDATION_DATASET_STAGING_ROOT:-}" || { echo "RECOMMENDATION_DATASET_STAGING_ROOT is required" >&2; exit 1; }
+          test -n "$REGISTRY_API_BASE_URL" || { echo "RECOMMENDATION_ARTIFACT_API_BASE_URL is required" >&2; exit 1; }
+          test -n "$ARTIFACT_TOKEN" || { echo "RECOMMENDATION_ARTIFACT_REGISTRY_TOKEN is required" >&2; exit 1; }
+          case "$REGISTRY_API_BASE_URL" in https://*|http://127.0.0.1:*|http://localhost:*) ;; *) echo "Registry API must use HTTPS or loopback HTTP" >&2; exit 1;; esac
+          case "$OBJECT_BASE_URI" in s3://*|gs://*|az://*|https://*) ;; *) echo "object_base_uri must use s3, gs, az, or https" >&2; exit 1;; esac
+          [[ "$OBJECT_BASE_URI" != *".."* ]] || { echo "object_base_uri contains parent traversal" >&2; exit 1; }
+          [[ "$VERIFIER" =~ ^[A-Za-z0-9._:-]{1,128}$ ]] || { echo "verifier identity is invalid" >&2; exit 1; }
+          STAGING_ROOT="$(realpath -e "$RECOMMENDATION_DATASET_STAGING_ROOT")"
+          DATASET_DIR="$(realpath -e "$DATASET_DIR_INPUT")"
+          case "$DATASET_DIR" in "$STAGING_ROOT"/*) ;; *) echo "dataset_dir must be inside dataset staging root" >&2; exit 1;; esac
+          test -f "$DATASET_DIR/manifest.json" || { echo "manifest.json is missing" >&2; exit 1; }
+          REQUEST_DIR="$(mktemp -d "$RUNNER_TEMP/recommendation-dataset-registry-XXXXXX")"
+          python3 - "$DATASET_DIR" "$REQUEST_DIR" <<'PY'
+          import gzip, hashlib, json, os, pathlib, re, sys
+
+          root = pathlib.Path(sys.argv[1])
+          request_root = pathlib.Path(sys.argv[2])
+          manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+
+          def canonical(value):
+              if value is None or isinstance(value, (bool, int, float, str)):
+                  return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+              if isinstance(value, list):
+                  return "[" + ",".join(canonical(item) for item in value) + "]"
+              if isinstance(value, dict):
+                  return "{" + ",".join(json.dumps(key, ensure_ascii=False) + ":" + canonical(value[key]) for key in sorted(value)) + "}"
+              raise SystemExit("Unsupported manifest value")
+
+          def sha256_file(path):
+              digest = hashlib.sha256()
+              with path.open("rb") as handle:
+                  for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                      digest.update(chunk)
+              return digest.hexdigest()
+
+          dataset_id = manifest.get("datasetId")
+          if not isinstance(dataset_id, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", dataset_id):
+              raise SystemExit("Dataset manifest datasetId is invalid")
+          dataset_sha = manifest.get("datasetSha256")
+          if not isinstance(dataset_sha, str) or not re.fullmatch(r"[a-fA-F0-9]{64}", dataset_sha):
+              raise SystemExit("Dataset manifest datasetSha256 is invalid")
+          manifest_without_dataset_sha = dict(manifest)
+          del manifest_without_dataset_sha["datasetSha256"]
+          calculated_dataset_sha = hashlib.sha256(canonical(manifest_without_dataset_sha).encode()).hexdigest()
+          if calculated_dataset_sha.lower() != dataset_sha.lower():
+              raise SystemExit("Dataset content identity SHA does not match manifest")
+
+          files = manifest.get("files")
+          if not isinstance(files, list) or not files:
+              raise SystemExit("Dataset manifest files are missing")
+          verified = []
+          for descriptor in files:
+              relative = descriptor.get("path")
+              if not isinstance(relative, str) or not relative or relative.startswith("/") or ".." in pathlib.PurePosixPath(relative).parts:
+                  raise SystemExit("Unsafe dataset artifact path")
+              path = root / relative
+              if not path.is_file():
+                  raise SystemExit(f"Dataset artifact is missing: {relative}")
+              file_sha = sha256_file(path)
+              size_bytes = path.stat().st_size
+              if file_sha.lower() != str(descriptor.get("sha256", "")).lower():
+                  raise SystemExit(f"Dataset artifact SHA mismatch: {relative}")
+              if size_bytes != descriptor.get("sizeBytes"):
+                  raise SystemExit(f"Dataset artifact size mismatch: {relative}")
+              if relative.endswith(".gz"):
+                  with gzip.open(path, "rt", encoding="utf-8") as handle:
+                      row_count = sum(1 for line in handle if line.strip())
+              else:
+                  with path.open("rt", encoding="utf-8") as handle:
+                      row_count = sum(1 for line in handle if line.strip())
+              if row_count != descriptor.get("rowCount"):
+                  raise SystemExit(f"Dataset artifact rowCount mismatch: {relative}")
+              verified.append({
+                  "path": relative,
+                  "sha256": file_sha,
+                  "sizeBytes": size_bytes,
+                  "rowCount": row_count,
+              })
+
+          manifest_sha = hashlib.sha256(canonical(manifest).encode()).hexdigest()
+          register = {"manifest": manifest, "objectBaseUri": os.environ["OBJECT_BASE_URI"]}
+          verify = {
+              "datasetId": dataset_id,
+              "verifier": os.environ["VERIFIER"],
+              "manifestSha256": manifest_sha,
+              "files": verified,
+              "attestationRef": f"protected-runner://github/{os.environ['GITHUB_RUN_ID']}/{os.environ['GITHUB_RUN_ATTEMPT']}",
+          }
+          (request_root / "register.json").write_text(json.dumps(register, separators=(",", ":")) + "\n", encoding="utf-8")
+          (request_root / "verify.json").write_text(json.dumps(verify, separators=(",", ":")) + "\n", encoding="utf-8")
+          (request_root / "local-identity.json").write_text(json.dumps({
+              "datasetId": dataset_id,
+              "datasetSha256": dataset_sha.lower(),
+              "manifestSha256": manifest_sha,
+          }, separators=(",", ":")) + "\n", encoding="utf-8")
+          PY
+          echo "DATASET_DIR=$DATASET_DIR" >> "$GITHUB_ENV"
+          echo "REQUEST_DIR=$REQUEST_DIR" >> "$GITHUB_ENV"
+
+      - name: Register immutable Dataset V8
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            -H "content-type: application/json" \
+            -H "x-recommendation-artifact-token: $ARTIFACT_TOKEN" \
+            --data-binary "@$REQUEST_DIR/register.json" \
+            "$REGISTRY_API_BASE_URL/deadlock-live/recommendation-datasets/v1/register" \
+            > "$REQUEST_DIR/register-response.json"
+          python3 - "$REQUEST_DIR/local-identity.json" "$REQUEST_DIR/register-response.json" <<'PY'
+          import json, sys
+          local = json.load(open(sys.argv[1], encoding="utf-8"))
+          response = json.load(open(sys.argv[2], encoding="utf-8"))
+          for key in ["datasetId", "datasetSha256", "manifestSha256"]:
+              if str(response.get(key, "")).lower() != str(local.get(key, "")).lower():
+                  raise SystemExit(f"Dataset registry register response identity mismatch: {key}")
+          if response.get("status") not in ["REGISTERED", "DUPLICATE"]:
+              raise SystemExit("Dataset registry returned invalid register status")
+          PY
+
+      - name: Independently verify exact Dataset V8 descriptors
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error \
+            -H "content-type: application/json" \
+            -H "x-recommendation-artifact-token: $ARTIFACT_TOKEN" \
+            --data-binary "@$REQUEST_DIR/verify.json" \
+            "$REGISTRY_API_BASE_URL/deadlock-live/recommendation-datasets/v1/verify" \
+            > "$REQUEST_DIR/verify-response.json"
+          python3 - "$REQUEST_DIR/local-identity.json" "$REQUEST_DIR/verify-response.json" <<'PY'
+          import json, sys
+          local = json.load(open(sys.argv[1], encoding="utf-8"))
+          response = json.load(open(sys.argv[2], encoding="utf-8"))
+          if response.get("status") != "VERIFIED":
+              raise SystemExit("Dataset registry did not return VERIFIED")
+          for key in ["datasetId", "datasetSha256", "manifestSha256"]:
+              if str(response.get(key, "")).lower() != str(local.get(key, "")).lower():
+                  raise SystemExit(f"Dataset registry verify response identity mismatch: {key}")
+          print(json.dumps({
+              "status": "VERIFIED_READY_FOR_PRETRAINING_READINESS",
+              "datasetId": response.get("datasetId"),
+              "datasetSha256": response.get("datasetSha256"),
+              "manifestSha256": response.get("manifestSha256"),
+          }, sort_keys=True))
+          PY

@@ -21,11 +21,20 @@ describe('LiveIngestController', () => {
         },
         {
           provide: InventoryShadowReplayService,
-          useValue: { applyBatch: jest.fn() },
+          useValue: {
+            applyBatch: jest.fn(),
+            getMatchTimelines: jest.fn().mockReturnValue([]),
+            getPlayerTimeline: jest.fn().mockReturnValue(undefined),
+          },
         },
         {
           provide: LiveBuildRecommendationTraversalService,
-          useValue: { observeState: jest.fn() },
+          useValue: {
+            observeState: jest.fn(),
+            getMatchSnapshot: jest.fn(),
+            getStatus: jest.fn(),
+            getAllSnapshots: jest.fn(),
+          },
         },
       ],
     }).compile();

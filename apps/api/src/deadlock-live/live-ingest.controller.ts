@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import { OverwolfLiveBatchDto } from '@deadlock-live-probe/shared';
+import { canonicalizeLiveBatchForStateV2 } from './canonical-live-batch';
 import { InventoryShadowReplayService } from './inventory-shadow-replay.service';
 import { LiveBuildRecommendationTraversalService } from './live-build-recommendation-traversal.service';
 import { LiveInventoryEventNormalizerService } from './live-inventory-event-normalizer.service';
@@ -24,7 +25,8 @@ export class LiveIngestController {
   async ingestEvents(@Body() batch: OverwolfLiveBatchDto): Promise<{ ok: true }> {
     this.recentLiveEventsService.append(batch.events);
     const normalizedBatch = this.liveInventoryEventNormalizerService.normalizeBatch(batch);
-    const state = this.liveMatchStateService.applyBatch(normalizedBatch);
+    const stateBatch = canonicalizeLiveBatchForStateV2(normalizedBatch);
+    const state = this.liveMatchStateService.applyBatch(stateBatch);
     this.inventoryShadowReplayService.applyBatch(normalizedBatch, state?.matchId);
     this.liveBuildRecommendationTraversalService.observeState(state);
     await this.rawEventLogService.appendEvents(batch.events);

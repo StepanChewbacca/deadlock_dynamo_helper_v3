@@ -16,6 +16,7 @@ export const databaseOptions: DataSourceOptions = {
   database: process.env.DB_NAME || 'deadlock_builds',
   entities: DATABASE_ENTITIES,
   migrations: [`${__dirname}/migrations/*{.ts,.js}`],
+  migrationsTransactionMode: 'all',
   synchronize: false,
   logging: process.env.DB_LOGGING === 'true',
   connectTimeoutMS: readPositiveIntegerEnvironmentValue(

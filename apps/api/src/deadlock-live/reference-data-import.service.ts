@@ -2,6 +2,7 @@ import axios from 'axios';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { RecommendationCatalogContentV1Service } from './recommendation-catalog-content-v1.service';
 import { Hero } from './entities/hero.entity';
 import { ItemComponent } from './entities/item-component.entity';
 import { Item } from './entities/item.entity';
@@ -19,6 +20,7 @@ export class ReferenceDataImportService implements OnModuleInit {
     private readonly itemRepo: Repository<Item>,
     @InjectRepository(ItemComponent)
     private readonly itemComponentRepo: Repository<ItemComponent>,
+    private readonly recommendationCatalogContentService: RecommendationCatalogContentV1Service,
   ) {}
 
   async onModuleInit() {
@@ -76,6 +78,21 @@ export class ReferenceDataImportService implements OnModuleInit {
     try {
       const res = await axios.get('https://api.deadlock-api.com/v1/assets/items', getDeadlockApiRequestConfig());
       const assets = Array.isArray(res.data) ? res.data : [];
+      if (assets.length === 0) {
+        return;
+      }
+
+      const catalog = await this.recommendationCatalogContentService.importAssetsSnapshot({
+        assets,
+        clientVersion: process.env.DEADLOCK_CLIENT_VERSION,
+        contentCatalogVersionId: process.env.DEADLOCK_CONTENT_CATALOG_VERSION,
+        rulesetKey: process.env.DEADLOCK_RULESET_KEY,
+      });
+      this.logger.log(
+        `${catalog.created ? 'Created' : 'Reused'} immutable item catalog ${catalog.catalogVersionId} `
+        + `with ${catalog.itemCount} items and ${catalog.recipeCount} recipe links`,
+      );
+
       const shopItems = assets
         .filter(
           (item) =>

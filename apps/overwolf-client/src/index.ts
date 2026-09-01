@@ -3,6 +3,7 @@ import { listenOverwolfEvents } from './overwolf/listen-overwolf-events';
 import { setRequiredFeatures } from './overwolf/set-required-features';
 import { isSuccessfulOverwolfResult } from './overwolf/window-result';
 import * as ui from './ui';
+import { AdaptiveRecommendationClient } from './adaptive-recommendation-client';
 
 const clientId = `client-${Math.random().toString(36).substring(2, 8)}`;
 const apiBaseUrl = 'https://aboba-telegramovich.duckdns.org';
@@ -27,6 +28,8 @@ if (ow?.windows) {
 
 function initializeInGameWindow(windowId: string): void {
   ui.logConsole('In-game live build overlay loaded.');
+
+  const mainWindow = ow.windows.getMainWindow() as any;
 
   const ensureOverlayHeight = (): void => {
     const hud = document.querySelector('.hud-container') as HTMLElement | null;
@@ -60,6 +63,17 @@ function initializeInGameWindow(windowId: string): void {
 
   (window as any).ensureOverlayHeight = ensureOverlayHeight;
   (window as any).toggleHudMode = toggleHudMode;
+  mainWindow.inGameAdaptiveUpdate = (data: any): void => {
+    if (data) {
+      ui.showAdaptiveRecommendation(data);
+    } else {
+      ui.hideSituationalPanel();
+    }
+    ensureOverlayHeight();
+  };
+  if (mainWindow.latestAdaptiveRecommendation) {
+    mainWindow.inGameAdaptiveUpdate(mainWindow.latestAdaptiveRecommendation);
+  }
 
   const setupDrag = (): void => {
     const container = document.querySelector('.hud-container');
@@ -98,6 +112,7 @@ function initializeBackgroundWindow(): void {
   const mainWindow = ow.windows.getMainWindow() as any;
   mainWindow.heroNamesMap = mainWindow.heroNamesMap || {};
   mainWindow.overlayMenuActive = false;
+  mainWindow.latestAdaptiveRecommendation = mainWindow.latestAdaptiveRecommendation || null;
 
   restoreInGameOverlayWindow();
   registerWindowHotkeys(mainWindow);
@@ -124,7 +139,46 @@ function initializeBackgroundWindow(): void {
     }
   };
 
-  const buffer = new LiveEventBuffer(clientId, apiBaseUrl, customFetch, 1000);
+  const adaptiveClient = new AdaptiveRecommendationClient(apiBaseUrl, customFetch, 1500);
+  let currentMatchId = readString((globalThis as any).__deadlockLiveMatchId);
+  let currentLocalSteamId = '';
+
+  const publishAdaptiveRecommendation = (data: any): void => {
+    mainWindow.latestAdaptiveRecommendation = data;
+    mainWindow.inGameAdaptiveUpdate?.(data);
+  };
+
+  const scheduleAdaptiveRecommendation = (force = false): void => {
+    if (!currentMatchId) {
+      adaptiveClient.cancel();
+      publishAdaptiveRecommendation(null);
+      return;
+    }
+
+    adaptiveClient.schedule(
+      {
+        matchId: currentMatchId,
+        localSteamId: currentLocalSteamId || undefined,
+      },
+      {
+        onResult: publishAdaptiveRecommendation,
+        onError: (error) => ui.logConsole(`Failed to fetch adaptive recommendation: ${error.message}`),
+      },
+      force,
+    );
+  };
+
+  mainWindow.refreshBuild = (): void => scheduleAdaptiveRecommendation(true);
+  mainWindow.forceLiveBuildRecommendationRefresh = (): void => scheduleAdaptiveRecommendation(true);
+
+  const buffer = new LiveEventBuffer(
+    clientId,
+    apiBaseUrl,
+    customFetch,
+    1000,
+    () => currentMatchId || undefined,
+    () => scheduleAdaptiveRecommendation(true),
+  );
 
   const register = async (): Promise<void> => {
     try {
@@ -138,7 +192,26 @@ function initializeBackgroundWindow(): void {
         const eventDetails = `Source: ${event.source} | Key: ${event.key || 'n/a'} | Cat: ${event.category || 'n/a'}`;
         ui.updateLastEvent(eventDetails);
         captureHeroName(event, mainWindow);
+        const previousMatchId = currentMatchId;
+        const context = extractAdaptiveContext(event);
+        if (context.matchId) {
+          currentMatchId = context.matchId;
+          mainWindow.__deadlockLiveMatchId = currentMatchId;
+          (globalThis as any).__deadlockLiveMatchId = currentMatchId;
+        }
+        if (context.localSteamId) currentLocalSteamId = context.localSteamId;
+        if (context.matchEnded) {
+          currentMatchId = '';
+          currentLocalSteamId = '';
+          mainWindow.__deadlockLiveMatchId = undefined;
+          (globalThis as any).__deadlockLiveMatchId = undefined;
+          adaptiveClient.cancel();
+          publishAdaptiveRecommendation(null);
+        }
         buffer.push(event);
+        if (!context.matchEnded && currentMatchId) {
+          scheduleAdaptiveRecommendation(previousMatchId === currentMatchId);
+        }
       });
 
       registerOverlayConfigurationListener(mainWindow);
@@ -316,4 +389,54 @@ function registerOverlayConfigurationListener(mainWindow: any): void {
     mainWindow.overlayMenuActive = Boolean(event?.enabled);
     mainWindow.updateWarningUI?.();
   });
+}
+
+function extractAdaptiveContext(event: any): {
+  matchId?: string;
+  localSteamId?: string;
+  matchEnded: boolean;
+} {
+  const key = readString(event?.key).toLowerCase();
+  const payload = parsePayload(event?.payload);
+  const matchId = readString(event?.matchId)
+    || (key === 'match_id' ? readString(payload) : '')
+    || findString(payload, ['match_id', 'matchId']);
+  const isLocal = Boolean(payload?.is_local ?? payload?.isLocal ?? payload?.local);
+  const localSteamId = isLocal
+    ? findString(payload, ['steam_id', 'steamId', 'player_steam_id', 'playerSteamId'])
+    : '';
+  const matchEnded = ['match_end', 'match_outcome'].includes(key)
+    || (key === 'match_state' && ['ended', 'complete', 'completed'].includes(readString(payload).toLowerCase()));
+  return {
+    matchId: matchId || undefined,
+    localSteamId: localSteamId || undefined,
+    matchEnded,
+  };
+}
+
+function findString(value: unknown, keys: readonly string[], depth = 0): string {
+  if (!value || typeof value !== 'object' || depth > 6) return '';
+  const record = value as Record<string, unknown>;
+  for (const key of keys) {
+    const found = readString(record[key]);
+    if (found) return found;
+  }
+  for (const nested of Object.values(record)) {
+    const found = findString(nested, keys, depth + 1);
+    if (found) return found;
+  }
+  return '';
+}
+
+function readString(value: unknown): string {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  try {
+    const parsed = JSON.parse(trimmed);
+    return typeof parsed === 'string' || typeof parsed === 'number' ? String(parsed) : '';
+  } catch {
+    return trimmed;
+  }
 }

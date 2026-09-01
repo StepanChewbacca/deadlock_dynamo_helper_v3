@@ -8,6 +8,7 @@ services:
       - '3000'
 
   api:
+    image: ${DEADLOCK_API_IMAGE:-aboba-telegramovich-api}
     build:
       context: .
       dockerfile: Dockerfile
@@ -18,11 +19,11 @@ services:
     volumes:
       - deadlock-storage:/app/apps/api/storage
     environment:
-      - DB_HOST=aboba-telegramovich-postgres-1
-      - DB_PORT=5432
-      - DB_USER=postgres
+      - DB_HOST=${DB_HOST:-aboba-telegramovich-postgres-1}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_USER=${DB_USER:-postgres}
       - DB_PASSWORD=${DB_PASSWORD}
-      - DB_NAME=deadlock_builds
+      - DB_NAME=${DB_NAME:-deadlock_builds}
       - DB_CONNECT_TIMEOUT_MS=${DB_CONNECT_TIMEOUT_MS:-10000}
       - DB_POOL_SIZE=${DB_POOL_SIZE:-10}
       - DB_KEEP_ALIVE_INITIAL_DELAY_MS=${DB_KEEP_ALIVE_INITIAL_DELAY_MS:-10000}
@@ -80,6 +81,7 @@ services:
       - DEADLOCK_CONTEXTUAL_V3_LIVE_MODE=${DEADLOCK_CONTEXTUAL_V3_LIVE_MODE:-PRODUCTION}
       - DEADLOCK_CONTEXTUAL_V3_SHADOW_SAMPLE_RATE=${DEADLOCK_CONTEXTUAL_V3_SHADOW_SAMPLE_RATE:-1}
       - DEADLOCK_CONTEXTUAL_V3_SHADOW_MAX_IN_FLIGHT=${DEADLOCK_CONTEXTUAL_V3_SHADOW_MAX_IN_FLIGHT:-2}
+      - CHROMIUM_PATH=${CHROMIUM_PATH:-/usr/bin/chromium-browser}
       - NODE_OPTIONS=--max-old-space-size=4096
     healthcheck:
       test:

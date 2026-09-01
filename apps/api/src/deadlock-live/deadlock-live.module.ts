@@ -6,6 +6,59 @@ import { CatalogContentService } from './catalog-content.service';
 import { ContextualHeroBuildRecommendationV2Service } from './contextual-hero-build-recommendation-v2.service';
 import { ContextualHeroBuildRecommendationService } from './contextual-hero-build-recommendation.service';
 import { DebugPageController } from './debug-page.controller';
+import { ModelBundleRegistryController } from './model-bundle-registry.controller';
+import { ModelBundleRegistryService } from './model-bundle-registry.service';
+import { RecommendationModelPromotionV1Service } from './recommendation-model-promotion-v1.service';
+import { RecommendationAdvancedEvidenceV8Controller } from './recommendation-advanced-evidence-v8.controller';
+import { RecommendationAdvancedEvidenceV8Service } from './recommendation-advanced-evidence-v8.service';
+import { RecommendationBehavioralServingV1Service } from './recommendation-behavioral-serving-v1.service';
+import { RecommendationEngineV8Service } from './recommendation-engine-v8.service';
+import { RecommendationDecisionV8Service } from './recommendation-decision-v8.service';
+import { RecommendationRealtimeStateV8Service } from './recommendation-realtime-state-v8.service';
+import { RecommendationRealtimeCoordinatorV8Service } from './recommendation-realtime-coordinator-v8.service';
+import { RecommendationRuntimeTrustV8Service } from './recommendation-runtime-trust-v8.service';
+import { RecommendationRuntimeHealthV8Service } from './recommendation-runtime-health-v8.service';
+import { RecommendationReadinessV8Controller } from './recommendation-readiness-v8.controller';
+import { RecommendationReadinessV8Service } from './recommendation-readiness-v8.service';
+import { RecommendationObservabilityController } from './recommendation-observability.controller';
+import { RecommendationObservabilityReportService } from './recommendation-observability-report.service';
+import { RecommendationTelemetryController } from './recommendation-telemetry.controller';
+import { RecommendationTelemetryStoreService } from './recommendation-telemetry-store.service';
+import { RecommendationTelemetryIngestV8Service } from './recommendation-telemetry-ingest-v8.service';
+import { RecommendationFeatureStoreV8Controller } from './recommendation-feature-store-v8.controller';
+import { RecommendationFeatureStoreV8Service } from './recommendation-feature-store-v8.service';
+import { RecommendationDatasetV8Controller } from './recommendation-dataset-v8.controller';
+import { RecommendationDatasetV8ReportService } from './recommendation-dataset-v8-report.service';
+import { RecommendationDatasetRegistryController } from './recommendation-dataset-registry.controller';
+import { RecommendationDatasetRegistryService } from './recommendation-dataset-registry.service';
+import { RecommendationTrainingDatasetV8Service } from './recommendation-training-dataset-v8.service';
+import { RecommendationTrainingLaunchV8Controller } from './recommendation-training-launch-v8.controller';
+import { RecommendationTrainingLaunchV8Service } from './recommendation-training-launch-v8.service';
+import { RecommendationPretrainingFinalReadinessV8Service } from './recommendation-pretraining-final-readiness-v8.service';
+import { RecommendationValueDatasetRegistryController } from './recommendation-value-dataset-registry.controller';
+import { RecommendationValueDatasetRegistryService } from './recommendation-value-dataset-registry.service';
+import { RecommendationValueModelTrainingLaunchV8Controller } from './recommendation-value-model-training-launch-v8.controller';
+import { RecommendationValueModelTrainingLaunchV8Service } from './recommendation-value-model-training-launch-v8.service';
+import { RecommendationValueTrainingDatasetV8Service } from './recommendation-value-training-dataset-v8.service';
+import { RecommendationValueTrainingLaunchV8Controller } from './recommendation-value-training-launch-v8.controller';
+import { RecommendationValueTrainingLaunchV8Service } from './recommendation-value-training-launch-v8.service';
+import { RecommendationPolicyBuildV1Controller } from './recommendation-policy-build-v1.controller';
+import { RecommendationPolicyBuildV1Service } from './recommendation-policy-build-v1.service';
+import { RecommendationEvidenceMaterializerV8Service } from './recommendation-evidence-materializer-v8.service';
+import { RecommendationRoadmapEvidenceController } from './recommendation-roadmap-evidence.controller';
+import { RecommendationRoadmapEvidenceService } from './recommendation-roadmap-evidence.service';
+import { RecommendationFutureTestEvaluationV1Controller } from './recommendation-future-test-evaluation-v1.controller';
+import { RecommendationFutureTestEvaluationV1Service } from './recommendation-future-test-evaluation-v1.service';
+import { RecommendationSequentialRlEvidenceV1Controller } from './recommendation-sequential-rl-evidence-v1.controller';
+import { RecommendationSequentialRlEvidenceV1Service } from './recommendation-sequential-rl-evidence-v1.service';
+import { RecommendationShadowController } from './recommendation-shadow.controller';
+import { RecommendationShadowReportService } from './recommendation-shadow-report.service';
+import { RecommendationOpeController } from './recommendation-ope.controller';
+import { RecommendationOpeReportService } from './recommendation-ope-report.service';
+import { RecommendationAbController } from './recommendation-ab.controller';
+import { RecommendationAbReportService } from './recommendation-ab-report.service';
+import { SoulsAffordabilityEvidenceV2Controller } from './souls-affordability-evidence-v2.controller';
+import { SoulsAffordabilityEvidenceV2Service } from './souls-affordability-evidence-v2.service';
 import { CrawlerRun } from './entities/crawler-run.entity';
 import { CrawlerState } from './entities/crawler-state.entity';
 import { GameRuleset } from './entities/game-ruleset.entity';
@@ -90,6 +143,21 @@ import { RecommendationValueV4TrainingService } from './recommendation-value-v4-
 import { RecommendationValueV6TelemetryService } from './recommendation-value-v6-telemetry.service';
 import { RecipeAwareTimelineReconciliationService } from './recipe-aware-timeline-reconciliation.service';
 import { ReferenceDataController } from './reference-data.controller';
+import { ModelBundleRegistryV1 } from './entities/model-bundle-registry.entity';
+import { RecommendationDatasetRegistryV1 } from './entities/recommendation-dataset-registry.entity';
+import { RecommendationDecisionCandidateV8 } from './entities/recommendation-decision-candidate.entity';
+import { RecommendationDecisionV8 } from './entities/recommendation-decision.entity';
+import { RecommendationEvidenceSnapshotV8 } from './entities/recommendation-evidence-snapshot-v8.entity';
+import { RecommendationExposureAckV8 } from './entities/recommendation-exposure-ack.entity';
+import { RecommendationRoadmapEvidenceEntityV1 } from './entities/recommendation-roadmap-evidence.entity';
+import { RecommendationTelemetryEvent } from './entities/recommendation-telemetry-event.entity';
+import { RecommendationTelemetryRejectionV8 } from './entities/recommendation-telemetry-rejection.entity';
+import { RecommendationValueDatasetRegistryV1 } from './entities/recommendation-value-dataset-registry.entity';
+import { SoulsAffordabilityEvidenceV2Entity } from './entities/souls-affordability-evidence-v2.entity';
+import { RecommendationItemCatalogVersionV1 } from './entities/recommendation-item-catalog-version-v1.entity';
+import { RecommendationItemCatalogItemV1 } from './entities/recommendation-item-catalog-item-v1.entity';
+import { RecommendationItemCatalogRecipeV1 } from './entities/recommendation-item-catalog-recipe-v1.entity';
+import { RecommendationCatalogContentV1Service } from './recommendation-catalog-content-v1.service';
 import { ReferenceDataImportService } from './reference-data-import.service';
 import { RulesetResolutionRefreshService } from './ruleset-resolution-refresh.service';
 import { RulesetResolverService } from './ruleset-resolver.service';
@@ -110,13 +178,27 @@ import { VersionedRecipeGraphService } from './versioned-recipe-graph.service';
       Hero,
       Item,
       ItemComponent,
+      ItemCatalogVersion,
+      ItemCatalogItem,
+      ItemCatalogRecipe,
+      RecommendationItemCatalogVersionV1,
+      RecommendationItemCatalogItemV1,
+      RecommendationItemCatalogRecipeV1,
+      RecommendationTelemetryEvent,
+      RecommendationTelemetryRejectionV8,
+      RecommendationDecisionV8,
+      RecommendationDecisionCandidateV8,
+      RecommendationEvidenceSnapshotV8,
+      RecommendationExposureAckV8,
+      SoulsAffordabilityEvidenceV2Entity,
+      ModelBundleRegistryV1,
+      RecommendationDatasetRegistryV1,
+      RecommendationValueDatasetRegistryV1,
+      RecommendationRoadmapEvidenceEntityV1,
       CrawlerRun,
       CrawlerState,
       RawMatchMetadata,
       GameRuleset,
-      ItemCatalogVersion,
-      ItemCatalogItem,
-      ItemCatalogRecipe,
     ]),
   ],
   controllers: [
@@ -143,6 +225,26 @@ import { VersionedRecipeGraphService } from './versioned-recipe-graph.service';
     SkillBuildAnalysisController,
     ReferenceDataController,
     IngestStatusController,
+    RecommendationTelemetryController,
+    RecommendationObservabilityController,
+    RecommendationReadinessV8Controller,
+    RecommendationFeatureStoreV8Controller,
+    RecommendationDatasetV8Controller,
+    RecommendationDatasetRegistryController,
+    RecommendationValueDatasetRegistryController,
+    RecommendationTrainingLaunchV8Controller,
+    RecommendationValueTrainingLaunchV8Controller,
+    RecommendationValueModelTrainingLaunchV8Controller,
+    RecommendationPolicyBuildV1Controller,
+    ModelBundleRegistryController,
+    RecommendationRoadmapEvidenceController,
+    RecommendationAdvancedEvidenceV8Controller,
+    RecommendationFutureTestEvaluationV1Controller,
+    RecommendationSequentialRlEvidenceV1Controller,
+    RecommendationShadowController,
+    RecommendationOpeController,
+    RecommendationAbController,
+    SoulsAffordabilityEvidenceV2Controller,
   ],
   providers: [
     LiveMatchStateService,
@@ -225,6 +327,40 @@ import { VersionedRecipeGraphService } from './versioned-recipe-graph.service';
     HistoricalCatalogBackfillService,
     RulesetWindowManifestService,
     VersionedRecipeGraphService,
+    RecommendationCatalogContentV1Service,
+    ModelBundleRegistryService,
+    RecommendationModelPromotionV1Service,
+    RecommendationBehavioralServingV1Service,
+    RecommendationEngineV8Service,
+    RecommendationDecisionV8Service,
+    RecommendationRealtimeStateV8Service,
+    RecommendationRealtimeCoordinatorV8Service,
+    RecommendationRuntimeTrustV8Service,
+    RecommendationRuntimeHealthV8Service,
+    RecommendationReadinessV8Service,
+    RecommendationTelemetryStoreService,
+    RecommendationTelemetryIngestV8Service,
+    RecommendationObservabilityReportService,
+    RecommendationFeatureStoreV8Service,
+    RecommendationDatasetV8ReportService,
+    RecommendationDatasetRegistryService,
+    RecommendationValueDatasetRegistryService,
+    RecommendationTrainingDatasetV8Service,
+    RecommendationTrainingLaunchV8Service,
+    RecommendationPretrainingFinalReadinessV8Service,
+    RecommendationValueTrainingDatasetV8Service,
+    RecommendationValueTrainingLaunchV8Service,
+    RecommendationValueModelTrainingLaunchV8Service,
+    RecommendationPolicyBuildV1Service,
+    RecommendationEvidenceMaterializerV8Service,
+    RecommendationAdvancedEvidenceV8Service,
+    RecommendationRoadmapEvidenceService,
+    RecommendationFutureTestEvaluationV1Service,
+    RecommendationSequentialRlEvidenceV1Service,
+    RecommendationShadowReportService,
+    RecommendationOpeReportService,
+    RecommendationAbReportService,
+    SoulsAffordabilityEvidenceV2Service,
     ReferenceDataImportService,
     IngestStatusService,
   ],
@@ -275,6 +411,40 @@ import { VersionedRecipeGraphService } from './versioned-recipe-graph.service';
     HistoricalCatalogBackfillService,
     RulesetWindowManifestService,
     VersionedRecipeGraphService,
+    RecommendationCatalogContentV1Service,
+    ModelBundleRegistryService,
+    RecommendationModelPromotionV1Service,
+    RecommendationBehavioralServingV1Service,
+    RecommendationEngineV8Service,
+    RecommendationDecisionV8Service,
+    RecommendationRealtimeStateV8Service,
+    RecommendationRealtimeCoordinatorV8Service,
+    RecommendationRuntimeTrustV8Service,
+    RecommendationRuntimeHealthV8Service,
+    RecommendationReadinessV8Service,
+    RecommendationTelemetryStoreService,
+    RecommendationTelemetryIngestV8Service,
+    RecommendationObservabilityReportService,
+    RecommendationFeatureStoreV8Service,
+    RecommendationDatasetV8ReportService,
+    RecommendationDatasetRegistryService,
+    RecommendationValueDatasetRegistryService,
+    RecommendationTrainingDatasetV8Service,
+    RecommendationTrainingLaunchV8Service,
+    RecommendationPretrainingFinalReadinessV8Service,
+    RecommendationValueTrainingDatasetV8Service,
+    RecommendationValueTrainingLaunchV8Service,
+    RecommendationValueModelTrainingLaunchV8Service,
+    RecommendationPolicyBuildV1Service,
+    RecommendationEvidenceMaterializerV8Service,
+    RecommendationAdvancedEvidenceV8Service,
+    RecommendationRoadmapEvidenceService,
+    RecommendationFutureTestEvaluationV1Service,
+    RecommendationSequentialRlEvidenceV1Service,
+    RecommendationShadowReportService,
+    RecommendationOpeReportService,
+    RecommendationAbReportService,
+    SoulsAffordabilityEvidenceV2Service,
     ReferenceDataImportService,
     IngestStatusService,
   ],

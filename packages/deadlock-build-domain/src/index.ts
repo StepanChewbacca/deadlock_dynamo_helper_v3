@@ -6,3 +6,8 @@ export * from './skill-build';
 export * from './skill-build-path-search';
 export * from './diagnostic-match-parser';
 export * from './diagnostic-baseline-model';
+export * from './recommendation-action-domain';
+export * from './recommendation-item-graph';
+export * from './recommendation-candidate-generator';
+export * from './recommendation-ruleset-catalog';
+export * from './recommendation-dataset-v8';

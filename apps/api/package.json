@@ -13,7 +13,12 @@
     "migration:generate": "typeorm-ts-node-commonjs migration:generate -d src/database/data-source.ts",
     "migration:run": "typeorm-ts-node-commonjs migration:run -d src/database/data-source.ts",
     "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/database/data-source.ts",
-    "migration:show": "typeorm-ts-node-commonjs migration:show -d src/database/data-source.ts"
+    "migration:show": "typeorm-ts-node-commonjs migration:show -d src/database/data-source.ts",
+    "recommendation:dataset:preflight": "ts-node src/scripts/export-recommendation-training-dataset-v8.ts preflight",
+    "recommendation:dataset:export": "ts-node src/scripts/export-recommendation-training-dataset-v8.ts export",
+    "recommendation:value:dataset:preflight": "ts-node src/scripts/export-recommendation-value-training-dataset-v8.ts preflight",
+    "recommendation:value:dataset:export": "ts-node src/scripts/export-recommendation-value-training-dataset-v8.ts export",
+    "recommendation:value:train": "ts-node src/scripts/train-recommendation-value-v8.ts"
   },
   "jest": {
     "moduleFileExtensions": [
@@ -36,6 +41,7 @@
     "@nestjs/typeorm": "^11.0.3",
     "axios": "^1.18.1",
     "pg": "^8.22.0",
+    "puppeteer-core": "^24.0.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
     "typeorm": "^1.0.0"

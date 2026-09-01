@@ -1,0 +1,133 @@
+name: Recommendation CI
+
+on:
+  push:
+    branches:
+      - agent/add-inventory-simulator
+      - agent/statlocker-model-probe-poc
+      - agent/recommendation-roadmap-v8-runtime-finalization
+      - agent/recommendation-v8-roadmap-closure
+      - agent/recommendation-v8-pretraining-finalization
+      - agent/recommendation-v8-pretraining-absolute-final
+      - agent/recommendation-v8-wheelhouse-snapshot-final
+      - 'frozen/recommendation-v8-behavioral-*'
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  recommendation-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: deadlock_builds
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: yarn
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Test shared contracts
+        run: yarn workspace @deadlock-live-probe/shared test
+
+      - name: Test deterministic build domain
+        run: yarn workspace @deadlock-live-probe/build-domain test
+
+      - name: Test Overwolf evidence diagnostics
+        run: yarn workspace @deadlock-live-probe/overwolf-client test
+
+      - name: Build Overwolf production bundle
+        run: yarn workspace @deadlock-live-probe/overwolf-client build:bundle
+
+      - name: Build API
+        run: yarn workspace @deadlock-live-probe/api build
+
+      - name: Test API
+        run: yarn workspace @deadlock-live-probe/api test
+
+      - name: Test production database migration
+        env:
+          DB_MIGRATION_INTEGRATION: 'true'
+          DB_HOST: 127.0.0.1
+          DB_PORT: '5432'
+          DB_USER: postgres
+          DB_PASSWORD: postgres
+          DB_NAME: deadlock_builds
+        run: yarn workspace @deadlock-live-probe/api test production-database-migration.integration.spec.ts
+
+      - name: Validate adaptive compose config
+        env:
+          DB_PASSWORD: ci-placeholder
+          DEADLOCK_API_KEY: ci-placeholder
+          DEADLOCK_API_IMAGE: deadlock-adaptive-v1
+        run: sudo docker compose -p aboba-telegramovich config >/dev/null
+
+      - name: Build adaptive production image
+        run: sudo docker build -t deadlock-adaptive-v1 .
+
+      - name: Verify adaptive runtime dependencies
+        run: |
+          sudo docker run --rm --entrypoint sh deadlock-adaptive-v1 -c \
+            'test -x "$CHROMIUM_PATH" && node -e "require(\"puppeteer-core\"); require(\"@deadlock-live-probe/build-domain\")"'
+
+      - name: Test canonical model manifest identity
+        run: node scripts/recommendation-model-manifest-identity-test.mjs
+
+      - name: Compile training and serving Python
+        run: python -m py_compile training/recommendation_v8/common.py training/recommendation_v8/dataset_trust_contract.py training/recommendation_v8/dataset_trust_contract_test.py training/recommendation_v8/pretraining_audit.py training/recommendation_v8/pretraining_audit_test.py training/recommendation_v8/pretraining_environment_check.py training/recommendation_v8/pretraining_environment_provenance_test.py training/recommendation_v8/wheelhouse_identity.py training/recommendation_v8/wheelhouse_identity_test.py training/recommendation_v8/wheelhouse_snapshot.py training/recommendation_v8/wheelhouse_snapshot_test.py training/recommendation_v8/dataset_snapshot.py training/recommendation_v8/dataset_snapshot_test.py training/recommendation_v8/model.py training/recommendation_v8/train_behavioral.py training/recommendation_v8/compare_behavioral.py training/recommendation_v8/build_model_bundle.py training/recommendation_v8/verify_dataset.py training/recommendation_v8/serve_behavioral.py training/recommendation_v8/smoke_test.py
+
+      - name: Test static pretraining environment contract
+        run: python training/recommendation_v8/pretraining_environment_check.py --static-only
+
+      - name: Test approved wheelhouse dependency provenance
+        working-directory: training/recommendation_v8
+        run: python pretraining_environment_provenance_test.py
+
+      - name: Test immutable wheelhouse identity contract
+        working-directory: training/recommendation_v8
+        run: python wheelhouse_identity_test.py
+
+      - name: Test immutable wheelhouse snapshot contract
+        working-directory: training/recommendation_v8
+        run: python wheelhouse_snapshot_test.py
+
+      - name: Test immutable dataset snapshot contract
+        working-directory: training/recommendation_v8
+        run: python dataset_snapshot_test.py
+
+      - name: Test immutable dataset trust contract
+        working-directory: training/recommendation_v8
+        run: python dataset_trust_contract_test.py
+
+      - name: Test training data contract
+        working-directory: training/recommendation_v8
+        run: python smoke_test.py
+
+      - name: Test pretraining split isolation
+        working-directory: training/recommendation_v8
+        run: python pretraining_audit_test.py

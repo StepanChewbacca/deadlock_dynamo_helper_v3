@@ -1,0 +1,290 @@
+name: Recommendation Pretraining Readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      dataset_id:
+        description: Verified Recommendation Dataset V8 registry id
+        required: true
+        type: string
+      dataset_dir:
+        description: Pre-staged immutable dataset directory on the secure training runner
+        required: true
+        type: string
+      expected_dataset_sha256:
+        description: Expected immutable dataset SHA256
+        required: true
+        type: string
+      expected_manifest_sha256:
+        description: Expected canonical manifest SHA256 from the dataset registry
+        required: true
+        type: string
+      action_contract_version:
+        description: Action contract used by the dataset
+        required: true
+        default: recommendation-actions-v1
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-pretraining-readiness
+  cancel-in-progress: false
+
+jobs:
+  final-readiness:
+    environment: recommendation-training
+    runs-on: [self-hosted, linux, x64, recommendation-training]
+    timeout-minutes: 30
+    env:
+      DATASET_ID: ${{ inputs.dataset_id }}
+      DATASET_DIR: ${{ inputs.dataset_dir }}
+      EXPECTED_DATASET_SHA256: ${{ inputs.expected_dataset_sha256 }}
+      EXPECTED_MANIFEST_SHA256: ${{ inputs.expected_manifest_sha256 }}
+      EXPECTED_WHEELHOUSE_SHA256: ${{ vars.RECOMMENDATION_TRAINING_WHEELHOUSE_SHA256 }}
+      ACTION_CONTRACT_VERSION: ${{ inputs.action_contract_version }}
+      TRAINING_PREFLIGHT_URL: ${{ vars.RECOMMENDATION_TRAINING_PREFLIGHT_URL }}
+      TRAINING_TOKEN: ${{ secrets.RECOMMENDATION_TRAINING_TOKEN }}
+    steps:
+      - name: Checkout frozen training code
+        uses: actions/checkout@v4
+
+      - name: Validate secure runner and immutable input contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${RECOMMENDATION_TRAINING_OUTPUT_ROOT:-}" || { echo "RECOMMENDATION_TRAINING_OUTPUT_ROOT is required" >&2; exit 1; }
+          test -n "${RECOMMENDATION_DATASET_STAGING_ROOT:-}" || { echo "RECOMMENDATION_DATASET_STAGING_ROOT is required" >&2; exit 1; }
+          test -n "${RECOMMENDATION_TRAINING_WHEELHOUSE:-}" || { echo "RECOMMENDATION_TRAINING_WHEELHOUSE is required" >&2; exit 1; }
+          test -n "$EXPECTED_WHEELHOUSE_SHA256" || { echo "RECOMMENDATION_TRAINING_WHEELHOUSE_SHA256 environment variable is required" >&2; exit 1; }
+          test -n "$TRAINING_PREFLIGHT_URL" || { echo "RECOMMENDATION_TRAINING_PREFLIGHT_URL is required" >&2; exit 1; }
+          test -n "$TRAINING_TOKEN" || { echo "RECOMMENDATION_TRAINING_TOKEN is required" >&2; exit 1; }
+          case "$TRAINING_PREFLIGHT_URL" in https://*|http://127.0.0.1:*|http://localhost:*) ;; *) echo "Training preflight API must use HTTPS or loopback HTTP" >&2; exit 1;; esac
+          case "$TRAINING_PREFLIGHT_URL" in
+            */preflight) TRAINING_FINAL_READINESS_URL="${TRAINING_PREFLIGHT_URL%/preflight}/final-readiness" ;;
+            *) echo "RECOMMENDATION_TRAINING_PREFLIGHT_URL must end with /preflight" >&2; exit 1 ;;
+          esac
+          [[ "$DATASET_ID" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || { echo "dataset_id contains unsafe characters" >&2; exit 1; }
+          [[ "$EXPECTED_DATASET_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || { echo "expected_dataset_sha256 is invalid" >&2; exit 1; }
+          [[ "$EXPECTED_MANIFEST_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || { echo "expected_manifest_sha256 is invalid" >&2; exit 1; }
+          [[ "$EXPECTED_WHEELHOUSE_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || { echo "RECOMMENDATION_TRAINING_WHEELHOUSE_SHA256 is invalid" >&2; exit 1; }
+          [[ "$ACTION_CONTRACT_VERSION" =~ ^[A-Za-z0-9._:-]{1,128}$ ]] || { echo "action_contract_version contains unsafe characters" >&2; exit 1; }
+          case "$RECOMMENDATION_TRAINING_OUTPUT_ROOT" in /*) ;; *) echo "Training output root must be absolute" >&2; exit 1;; esac
+          case "$RECOMMENDATION_DATASET_STAGING_ROOT" in /*) ;; *) echo "Dataset staging root must be absolute" >&2; exit 1;; esac
+          case "$RECOMMENDATION_TRAINING_WHEELHOUSE" in /*) ;; *) echo "Training wheelhouse must be absolute" >&2; exit 1;; esac
+          OUTPUT_ROOT="$(realpath -e "$RECOMMENDATION_TRAINING_OUTPUT_ROOT")"
+          STAGING_ROOT="$(realpath -e "$RECOMMENDATION_DATASET_STAGING_ROOT")"
+          WHEELHOUSE="$(realpath -e "$RECOMMENDATION_TRAINING_WHEELHOUSE")"
+          DATASET_REAL="$(realpath -e "$DATASET_DIR")"
+          test -d "$OUTPUT_ROOT" && test -w "$OUTPUT_ROOT" || { echo "Training output root is not a writable directory" >&2; exit 1; }
+          test -d "$STAGING_ROOT" || { echo "Dataset staging root must be a directory" >&2; exit 1; }
+          test -d "$WHEELHOUSE" || { echo "Training wheelhouse must be a directory" >&2; exit 1; }
+          test -d "$DATASET_REAL" || { echo "Dataset directory does not exist" >&2; exit 1; }
+          case "$DATASET_REAL" in "$STAGING_ROOT"/*) ;; *) echo "Dataset directory must be inside staging root" >&2; exit 1;; esac
+          READINESS_ROOT="$(mktemp -d "$OUTPUT_ROOT/pretraining-readiness-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-XXXXXX")"
+          echo "READINESS_ROOT=$READINESS_ROOT" >> "$GITHUB_ENV"
+          echo "DATASET_SOURCE=$DATASET_REAL" >> "$GITHUB_ENV"
+          echo "TRAINING_WHEELHOUSE=$WHEELHOUSE" >> "$GITHUB_ENV"
+          echo "TRAINING_FINAL_READINESS_URL=$TRAINING_FINAL_READINESS_URL" >> "$GITHUB_ENV"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify approved wheelhouse bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python training/recommendation_v8/wheelhouse_identity.py \
+            --wheelhouse "$TRAINING_WHEELHOUSE" \
+            --expected-sha256 "$EXPECTED_WHEELHOUSE_SHA256" \
+            | tee "$READINESS_ROOT/wheelhouse-identity.json"
+
+      - name: Snapshot approved wheelhouse into this readiness run
+        shell: bash
+        run: |
+          set -euo pipefail
+          WHEELHOUSE_SNAPSHOT="$READINESS_ROOT/wheelhouse-snapshot"
+          python training/recommendation_v8/wheelhouse_snapshot.py \
+            --source "$TRAINING_WHEELHOUSE" \
+            --destination "$WHEELHOUSE_SNAPSHOT" \
+            --expected-sha256 "$EXPECTED_WHEELHOUSE_SHA256" \
+            | tee "$READINESS_ROOT/wheelhouse-snapshot.json"
+          echo "TRAINING_WHEELHOUSE_SNAPSHOT=$WHEELHOUSE_SNAPSHOT" >> "$GITHUB_ENV"
+
+      - name: Snapshot verified dataset into this readiness run
+        shell: bash
+        run: |
+          set -euo pipefail
+          DATASET_SNAPSHOT="$READINESS_ROOT/dataset-snapshot"
+          python training/recommendation_v8/dataset_snapshot.py \
+            --source "$DATASET_SOURCE" \
+            --destination "$DATASET_SNAPSHOT" \
+            --expected-dataset-sha256 "$EXPECTED_DATASET_SHA256" \
+            --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256" \
+            | tee "$READINESS_ROOT/dataset-snapshot.json"
+          echo "DATASET_DIR=$DATASET_SNAPSHOT" >> "$GITHUB_ENV"
+          echo "DATASET_SOURCE=" >> "$GITHUB_ENV"
+
+      - name: Build isolated environment from immutable offline wheelhouse snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$READINESS_ROOT/venv"
+          "$READINESS_ROOT/venv/bin/pip" install --no-index --find-links "$TRAINING_WHEELHOUSE_SNAPSHOT" -r training/recommendation_v8/requirements-training.txt
+          python training/recommendation_v8/wheelhouse_identity.py \
+            --wheelhouse "$TRAINING_WHEELHOUSE_SNAPSHOT" \
+            --expected-sha256 "$EXPECTED_WHEELHOUSE_SHA256" \
+            > "$READINESS_ROOT/wheelhouse-post-install-identity.json"
+
+      - name: Verify training runtime and CUDA device
+        shell: bash
+        env:
+          PYTHONHASHSEED: '0'
+          CUBLAS_WORKSPACE_CONFIG: ':4096:8'
+        run: |
+          set -euo pipefail
+          "$READINESS_ROOT/venv/bin/python" training/recommendation_v8/pretraining_environment_check.py \
+            | tee "$READINESS_ROOT/environment-readiness.json"
+
+      - name: Verify immutable dataset snapshot bytes and split isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$READINESS_ROOT/venv/bin/python" training/recommendation_v8/verify_dataset.py \
+            --dataset-dir "$DATASET_DIR" \
+            --expected-dataset-sha256 "$EXPECTED_DATASET_SHA256" \
+            --expected-manifest-sha256 "$EXPECTED_MANIFEST_SHA256" \
+            | tee "$READINESS_ROOT/dataset-verification.json"
+          "$READINESS_ROOT/venv/bin/python" - "$DATASET_DIR" "$ACTION_CONTRACT_VERSION" "$GITHUB_SHA" <<'PY'
+          import json, pathlib, sys
+          manifest = json.loads((pathlib.Path(sys.argv[1]) / "manifest.json").read_text())
+          if manifest.get("actionContractVersion") != sys.argv[2]:
+              raise SystemExit("Dataset action contract mismatch")
+          source_commit = manifest.get("sourceCommitSha")
+          if not isinstance(source_commit, str) or source_commit.lower() != sys.argv[3].lower():
+              raise SystemExit("Readiness workflow commit does not match immutable dataset sourceCommitSha")
+          if manifest.get("futureTestTouched") is not False:
+              raise SystemExit("FUTURE_TEST is not untouched")
+          keys = manifest.get("directShopSourceApprovalKeys")
+          if not isinstance(keys, list) or len(keys) != 1 or not isinstance(keys[0], str) or not keys[0]:
+              raise SystemExit("Dataset must bind exactly one validated direct shop source approval key")
+          subject = manifest.get("directShopSourceValidationSubjectSha256")
+          if not isinstance(subject, str) or len(subject) != 64 or any(c not in "0123456789abcdefABCDEF" for c in subject):
+              raise SystemExit("Dataset direct shop validation subject SHA is invalid")
+          PY
+          DIRECT_SHOP_APPROVAL_KEY="$("$READINESS_ROOT/venv/bin/python" -c 'import json, os, pathlib; print(json.loads((pathlib.Path(os.environ["DATASET_DIR"]) / "manifest.json").read_text())["directShopSourceApprovalKeys"][0])')"
+          DIRECT_SHOP_VALIDATION_SUBJECT_SHA256="$("$READINESS_ROOT/venv/bin/python" -c 'import json, os, pathlib; print(json.loads((pathlib.Path(os.environ["DATASET_DIR"]) / "manifest.json").read_text())["directShopSourceValidationSubjectSha256"])')"
+          test -n "$DIRECT_SHOP_APPROVAL_KEY" || { echo "Direct shop approval key is empty" >&2; exit 1; }
+          [[ "$DIRECT_SHOP_VALIDATION_SUBJECT_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || { echo "Direct shop validation subject SHA is invalid" >&2; exit 1; }
+          echo "DIRECT_SHOP_APPROVAL_KEY=$DIRECT_SHOP_APPROVAL_KEY" >> "$GITHUB_ENV"
+          echo "DIRECT_SHOP_VALIDATION_SUBJECT_SHA256=$DIRECT_SHOP_VALIDATION_SUBJECT_SHA256" >> "$GITHUB_ENV"
+
+      - name: Require server-owned final Behavioral training readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQUEST_FILE="$READINESS_ROOT/final-readiness-request.json"
+          RESPONSE_FILE="$READINESS_ROOT/final-readiness-server.json"
+          "$READINESS_ROOT/venv/bin/python" - "$REQUEST_FILE" <<'PY'
+          import json, os, sys
+          request = {
+              "rnnConfig": json.load(open("training/recommendation_v8/config/rnn.json", encoding="utf-8")),
+              "transformerConfig": json.load(open("training/recommendation_v8/config/transformer.json", encoding="utf-8")),
+              "runner": {
+                  "expectedDatasetSha256": os.environ["EXPECTED_DATASET_SHA256"],
+                  "expectedManifestSha256": os.environ["EXPECTED_MANIFEST_SHA256"],
+                  "sourceCommitSha": os.environ["GITHUB_SHA"],
+                  "trainingWheelhouseSha256": os.environ["EXPECTED_WHEELHOUSE_SHA256"],
+                  "splitIsolationPassed": True,
+                  "immutableDatasetBytesVerified": True,
+                  "offlineWheelhouseReady": True,
+                  "trainingDeviceReady": True,
+              },
+          }
+          with open(sys.argv[1], "x", encoding="utf-8") as handle:
+              json.dump(request, handle, separators=(",", ":"), sort_keys=True)
+              handle.write("\n")
+          PY
+          curl --fail-with-body --silent --show-error \
+            -H "content-type: application/json" \
+            -H "x-recommendation-training-token: $TRAINING_TOKEN" \
+            --data-binary "@$REQUEST_FILE" \
+            "$TRAINING_FINAL_READINESS_URL/$DATASET_ID" \
+            > "$RESPONSE_FILE"
+          "$READINESS_ROOT/venv/bin/python" - "$RESPONSE_FILE" "$EXPECTED_DATASET_SHA256" "$EXPECTED_MANIFEST_SHA256" "$GITHUB_SHA" "$DIRECT_SHOP_APPROVAL_KEY" "$DIRECT_SHOP_VALIDATION_SUBJECT_SHA256" "$EXPECTED_WHEELHOUSE_SHA256" <<'PY'
+          import json, re, sys
+          data = json.load(open(sys.argv[1], encoding="utf-8"))
+          if data.get("ready") is not True:
+              raise SystemExit("Final Behavioral readiness blocked: " + ",".join(data.get("blockers", [])))
+          final = data.get("finalReadiness") or {}
+          if final.get("readyToStartBehavioralTraining") is not True:
+              raise SystemExit("Shared final readiness contract did not authorize Behavioral training")
+          if (data.get("pairValidation") or {}).get("valid") is not True:
+              raise SystemExit("RNN/Transformer equal-observables pair is invalid")
+          if str(data.get("datasetSha256", "")).lower() != sys.argv[2].lower():
+              raise SystemExit("Final readiness dataset SHA mismatch")
+          if str(data.get("manifestSha256", "")).lower() != sys.argv[3].lower():
+              raise SystemExit("Final readiness manifest SHA mismatch")
+          if str(data.get("sourceCommitSha", "")).lower() != sys.argv[4].lower():
+              raise SystemExit("Final readiness source commit mismatch")
+          if str(data.get("trainingWheelhouseSha256", "")).lower() != sys.argv[7].lower():
+              raise SystemExit("Final readiness wheelhouse SHA mismatch")
+          if data.get("trainingPerformed") is not False or data.get("futureTestEvaluated") is not False:
+              raise SystemExit("Final readiness must remain no-training and pre-FUTURE_TEST")
+          subject = str(data.get("readinessSubjectSha256", ""))
+          if not re.fullmatch(r"[a-fA-F0-9]{64}", subject):
+              raise SystemExit("Final readiness subject SHA is invalid")
+          for name in ["rnnPreflight", "transformerPreflight"]:
+              preflight = data.get(name) or {}
+              if preflight.get("ready") is not True:
+                  raise SystemExit(f"{name} is not ready")
+              gates = preflight.get("currentDataGates") or {}
+              if gates.get("directShopSourceValidation") != "PASS":
+                  raise SystemExit(f"{name} direct shop validation is not PASS")
+              if gates.get("directShopSourceApprovalKeys") != [sys.argv[5]]:
+                  raise SystemExit(f"{name} direct shop approval identity mismatch")
+              if str(gates.get("directShopSourceValidationSubjectSha256", "")).lower() != sys.argv[6].lower():
+                  raise SystemExit(f"{name} direct shop validation snapshot mismatch")
+          print(json.dumps({
+              "status": "READY_TO_START_BEHAVIORAL_TRAINING",
+              "datasetId": data.get("datasetId"),
+              "datasetSha256": data.get("datasetSha256"),
+              "manifestSha256": data.get("manifestSha256"),
+              "sourceCommitSha": data.get("sourceCommitSha"),
+              "trainingWheelhouseSha256": data.get("trainingWheelhouseSha256"),
+              "readinessSubjectSha256": subject,
+              "trainingPerformed": False,
+              "futureTestEvaluated": False,
+          }, sort_keys=True))
+          PY
+
+      - name: Emit final no-training readiness attestation
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$READINESS_ROOT/venv/bin/python" - "$READINESS_ROOT/final-readiness-server.json" "$READINESS_ROOT/final-readiness.json" <<'PY'
+          import json, sys
+          server = json.load(open(sys.argv[1], encoding="utf-8"))
+          report = {
+              "contractVersion": "recommendation-pretraining-runner-attestation-v3",
+              "status": "READY_TO_START_BEHAVIORAL_TRAINING",
+              "datasetId": server["datasetId"],
+              "datasetSha256": server["datasetSha256"],
+              "manifestSha256": server["manifestSha256"],
+              "sourceCommitSha": server["sourceCommitSha"],
+              "trainingWheelhouseSha256": server["trainingWheelhouseSha256"],
+              "readinessSubjectSha256": server["readinessSubjectSha256"],
+              "pairValidation": server["pairValidation"],
+              "finalReadiness": server["finalReadiness"],
+              "trainingPerformed": False,
+              "futureTestEvaluated": False,
+              "nextAction": "Run Recommendation Behavioral Training with the exact same dataset id, dataset SHA, manifest SHA, source commit, and wheelhouse SHA. The training workflow re-evaluates this gate before the first optimizer step.",
+          }
+          with open(sys.argv[2], "x", encoding="utf-8") as handle:
+              json.dump(report, handle, indent=2, sort_keys=True)
+              handle.write("\n")
+          print(json.dumps(report, sort_keys=True))
+          PY

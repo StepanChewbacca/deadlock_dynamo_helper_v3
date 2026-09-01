@@ -1,0 +1,134 @@
+name: Recommendation Policy Bundle Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_id:
+        description: Policy model id
+        required: true
+        type: string
+      model_version:
+        description: Immutable Policy model version
+        required: true
+        type: string
+      behavioral_model_id:
+        description: Verified Behavioral model id
+        required: true
+        type: string
+      behavioral_model_version:
+        description: Verified Behavioral model version
+        required: true
+        type: string
+      value_model_id:
+        description: Verified causal Value model id
+        required: true
+        type: string
+      value_model_version:
+        description: Verified causal Value model version
+        required: true
+        type: string
+      policy_config_json:
+        description: Support-constrained RecommendationPolicyV1Config JSON
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-policy-bundle-build
+  cancel-in-progress: false
+
+jobs:
+  build-policy:
+    environment: recommendation-policy-build
+    runs-on: [self-hosted, linux, x64, recommendation-policy-build]
+    timeout-minutes: 30
+    env:
+      MODEL_ID: ${{ inputs.model_id }}
+      MODEL_VERSION: ${{ inputs.model_version }}
+      BEHAVIORAL_MODEL_ID: ${{ inputs.behavioral_model_id }}
+      BEHAVIORAL_MODEL_VERSION: ${{ inputs.behavioral_model_version }}
+      VALUE_MODEL_ID: ${{ inputs.value_model_id }}
+      VALUE_MODEL_VERSION: ${{ inputs.value_model_version }}
+      POLICY_CONFIG_JSON: ${{ inputs.policy_config_json }}
+      POLICY_API_BASE_URL: ${{ vars.RECOMMENDATION_POLICY_API_BASE_URL }}
+      ARTIFACT_TOKEN: ${{ secrets.RECOMMENDATION_ARTIFACT_REGISTRY_TOKEN }}
+    steps:
+      - name: Checkout frozen Policy build code
+        uses: actions/checkout@v4
+
+      - name: Validate protected Policy build inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${RECOMMENDATION_POLICY_OUTPUT_ROOT:-}" || { echo "RECOMMENDATION_POLICY_OUTPUT_ROOT is required" >&2; exit 1; }
+          test -n "$POLICY_API_BASE_URL" || { echo "RECOMMENDATION_POLICY_API_BASE_URL is required" >&2; exit 1; }
+          test -n "$ARTIFACT_TOKEN" || { echo "RECOMMENDATION_ARTIFACT_REGISTRY_TOKEN is required" >&2; exit 1; }
+          for VALUE in "$MODEL_ID" "$MODEL_VERSION" "$BEHAVIORAL_MODEL_ID" "$BEHAVIORAL_MODEL_VERSION" "$VALUE_MODEL_ID" "$VALUE_MODEL_VERSION"; do
+            [[ "$VALUE" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || { echo "Unsafe model identity" >&2; exit 1; }
+          done
+          OUTPUT_ROOT="$(realpath -e "$RECOMMENDATION_POLICY_OUTPUT_ROOT")"
+          test -d "$OUTPUT_ROOT" && test -w "$OUTPUT_ROOT" || { echo "Policy output root is not writable" >&2; exit 1; }
+          OUTPUT_DIR="$OUTPUT_ROOT/$MODEL_ID/$MODEL_VERSION"
+          test ! -e "$OUTPUT_DIR" || { echo "Immutable Policy output already exists" >&2; exit 1; }
+          REQUEST_FILE="$RUNNER_TEMP/recommendation-policy-build-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          python3 - "$REQUEST_FILE" <<'PY'
+          import json, os, re, sys
+          config = json.loads(os.environ["POLICY_CONFIG_JSON"])
+          if not isinstance(config, dict):
+              raise SystemExit("policy_config_json must be a JSON object")
+          request = {
+              "modelId": os.environ["MODEL_ID"],
+              "modelVersion": os.environ["MODEL_VERSION"],
+              "sourceCommitSha": os.environ["GITHUB_SHA"],
+              "behavioralModelId": os.environ["BEHAVIORAL_MODEL_ID"],
+              "behavioralModelVersion": os.environ["BEHAVIORAL_MODEL_VERSION"],
+              "valueModelId": os.environ["VALUE_MODEL_ID"],
+              "valueModelVersion": os.environ["VALUE_MODEL_VERSION"],
+              "policyConfig": config,
+          }
+          with open(sys.argv[1], "x", encoding="utf-8") as handle:
+              json.dump(request, handle, separators=(",", ":"), sort_keys=True)
+              handle.write("\n")
+          PY
+          echo "OUTPUT_DIR=$OUTPUT_DIR" >> "$GITHUB_ENV"
+          echo "REQUEST_FILE=$REQUEST_FILE" >> "$GITHUB_ENV"
+
+      - name: Build frozen Policy V1 specification
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESPONSE_FILE="$RUNNER_TEMP/recommendation-policy-response-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          curl --fail-with-body --silent --show-error \
+            -H "content-type: application/json" \
+            -H "x-recommendation-artifact-token: $ARTIFACT_TOKEN" \
+            --data-binary "@$REQUEST_FILE" \
+            "$POLICY_API_BASE_URL/deadlock-live/recommendation-policy/v1/build-spec" \
+            > "$RESPONSE_FILE"
+          mkdir -p "$OUTPUT_DIR"
+          python3 - "$RESPONSE_FILE" "$OUTPUT_DIR" <<'PY'
+          import json, pathlib, sys
+          response = json.load(open(sys.argv[1], encoding="utf-8"))
+          if response.get("ready") is not True:
+              raise SystemExit("Policy build did not return ready=true")
+          root = pathlib.Path(sys.argv[2])
+          policy_content = response.get("policyArtifactContent")
+          manifest = response.get("manifest")
+          if not isinstance(policy_content, str) or not isinstance(manifest, dict):
+              raise SystemExit("Policy build response is incomplete")
+          (root / "policy.json").write_text(policy_content, encoding="utf-8")
+          (root / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+          handoff = {
+              "status": "BUILT_NOT_REGISTERED_NOT_ACTIVATED",
+              "modelId": manifest["modelId"],
+              "modelVersion": manifest["modelVersion"],
+              "manifestSha256": response["manifestSha256"],
+              "policyArtifactSha256": response["policyArtifactSha256"],
+              "sourceCommitSha": manifest["sourceCommitSha"],
+              "futureTestEvaluated": False,
+              "nextRequiredStep": "Upload this exact immutable bundle to the approved artifact store, then run Recommendation Model Register Verify. Policy A/B must PASS before FUTURE_TEST; activation remains blocked until matching FUTURE_TEST PASS.",
+          }
+          (root / "registry-handoff.json").write_text(json.dumps(handoff, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          print(json.dumps(handoff, sort_keys=True))
+          PY

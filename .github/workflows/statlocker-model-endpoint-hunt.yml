@@ -1,0 +1,123 @@
+name: Statlocker Model Endpoint Hunt
+
+on:
+  push:
+    branches:
+      - agent/statlocker-model-probe-poc
+    paths:
+      - '.github/workflows/statlocker-model-endpoint-hunt.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify-model-endpoints:
+    if: github.repository == 'StepanChewbacca/deadlock_dynamo_helper_v2' && github.actor == 'StepanChewbacca'
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - name: Verify public Statlocker model endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          BASE = 'https://statlocker.gg'
+          HEADERS = {
+              'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140 Safari/537.36',
+              'Accept': 'application/json,text/plain,*/*',
+          }
+
+          def call(path, query=None):
+              url = BASE + path
+              if query:
+                  url += ('&' if '?' in url else '?') + urllib.parse.urlencode(query, doseq=True)
+              req = urllib.request.Request(url, headers=HEADERS)
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as res:
+                      raw = res.read(4_000_000)
+                      return url, res.status, raw.decode(res.headers.get_content_charset() or 'utf-8', errors='replace')
+              except urllib.error.HTTPError as exc:
+                  raw = exc.read(1_000_000)
+                  return url, exc.code, raw.decode('utf-8', errors='replace')
+
+          def shape(text):
+              try:
+                  data = json.loads(text)
+              except Exception:
+                  return {'type': 'text', 'preview': text[:180]}
+              if isinstance(data, dict):
+                  result = {'type': 'object', 'keys': list(data.keys())[:30]}
+                  for key in ['items', 'data', 'patches', 'availablePatches', 'chains', 'heroes', 'winRateIntervals']:
+                      value = data.get(key)
+                      if isinstance(value, list):
+                          result[key + 'Count'] = len(value)
+                          if value and isinstance(value[0], dict):
+                              result[key + 'ItemKeys'] = list(value[0].keys())[:25]
+                  return result
+              if isinstance(data, list):
+                  result = {'type': 'array', 'count': len(data)}
+                  if data and isinstance(data[0], dict):
+                      result['itemKeys'] = list(data[0].keys())[:30]
+                  return result
+              return {'type': type(data).__name__, 'value': data}
+
+          tests = [
+              ('WPA_PATCHES', '/api/info/wpa-patches', None),
+              ('T4_CHAINS', '/api/info/t4-chains-data', None),
+              ('VS_HERO_WPA', '/api/info/vs-hero-wpa-data', None),
+              ('WPA_FILTERED_DEFAULT', '/api/info/wpa-filtered-items', None),
+              ('WPA_FILTERED_ABRAMS', '/api/info/wpa-filtered-items', {
+                  'hero': 'Abrams',
+                  'tier': 'all',
+                  'queue': 'ranked',
+                  'rank': 'all',
+                  'category': 'all',
+                  'gameState': 'all',
+                  'purchaseTime': 'all',
+                  'teamComp': 'all',
+                  'buildType': 'all',
+                  'patch': 'all',
+                  'minSampleSize': 500,
+                  'searchTerm': '',
+                  'sortBy': 'wpa',
+                  'timeSyncEnabled': 'false',
+                  'currentGameTime': 0,
+                  'timeWindow': 5,
+              }),
+              ('PUBLIC_MATCHES', '/api/public/matches', {'limit': 1}),
+          ]
+
+          results = {}
+          for label, path, query in tests:
+              url, status, text = call(path, query)
+              info = shape(text)
+              results[label] = {'url': url, 'status': status, 'shape': info}
+              print(label + ' ' + json.dumps(results[label], ensure_ascii=False, separators=(',', ':')))
+
+          # Try to obtain one real match id from any public-match response, then hit the model timeline.
+          match_id = None
+          url, status, text = call('/api/public/matches', {'limit': 5})
+          try:
+              data = json.loads(text)
+              candidates = data if isinstance(data, list) else (data.get('matches') if isinstance(data, dict) else None)
+              if isinstance(candidates, list):
+                  for entry in candidates:
+                      if isinstance(entry, dict):
+                          value = entry.get('match_id') or entry.get('matchId') or entry.get('id')
+                          if value:
+                              match_id = str(value)
+                              break
+          except Exception:
+              pass
+
+          if match_id:
+              url, status, text = call('/api/match/' + urllib.parse.quote(match_id, safe='') + '/win-rate')
+              print('WIN_RATE ' + json.dumps({'matchId': match_id, 'url': url, 'status': status, 'shape': shape(text)}, ensure_ascii=False, separators=(',', ':')))
+          else:
+              print('WIN_RATE ' + json.dumps({'status': 'SKIPPED', 'reason': 'No public match id found'}, separators=(',', ':')))
+          PY

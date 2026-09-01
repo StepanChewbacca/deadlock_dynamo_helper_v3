@@ -1,0 +1,81 @@
+name: Recommendation Roadmap Materialization
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Roadmap evidence operation
+        required: true
+        type: choice
+        options:
+          - behavioral
+          - shadow
+          - experiment
+          - ope
+          - causal-value
+      request_json:
+        description: JSON request body for the selected protected materializer
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recommendation-roadmap-materialization
+  cancel-in-progress: false
+
+jobs:
+  materialize:
+    environment: recommendation-roadmap-evidence
+    runs-on: [self-hosted, linux, x64, recommendation-roadmap-evidence]
+    timeout-minutes: 20
+    env:
+      OPERATION: ${{ inputs.operation }}
+      REQUEST_JSON: ${{ inputs.request_json }}
+      ROADMAP_API_BASE_URL: ${{ vars.RECOMMENDATION_ROADMAP_API_BASE_URL }}
+      ROADMAP_TOKEN: ${{ secrets.RECOMMENDATION_ROADMAP_EVIDENCE_TOKEN }}
+    steps:
+      - name: Checkout frozen evidence code
+        uses: actions/checkout@v4
+
+      - name: Validate protected materialization request
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$ROADMAP_API_BASE_URL" || { echo "RECOMMENDATION_ROADMAP_API_BASE_URL is required" >&2; exit 1; }
+          test -n "$ROADMAP_TOKEN" || { echo "RECOMMENDATION_ROADMAP_EVIDENCE_TOKEN is required" >&2; exit 1; }
+          case "$OPERATION" in
+            behavioral|shadow|experiment|ope|causal-value) ;;
+            *) echo "Unsupported roadmap materialization operation" >&2; exit 1 ;;
+          esac
+          REQUEST_FILE="$RUNNER_TEMP/recommendation-roadmap-request-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          python3 - "$REQUEST_FILE" <<'PY'
+          import json, os, sys
+          value = json.loads(os.environ["REQUEST_JSON"])
+          if not isinstance(value, dict):
+              raise SystemExit("request_json must be a JSON object")
+          with open(sys.argv[1], "x", encoding="utf-8") as handle:
+              json.dump(value, handle, separators=(",", ":"), sort_keys=True)
+              handle.write("\n")
+          PY
+          echo "REQUEST_FILE=$REQUEST_FILE" >> "$GITHUB_ENV"
+
+      - name: Materialize immutable roadmap evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESPONSE_FILE="$RUNNER_TEMP/recommendation-roadmap-response-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+          curl --fail-with-body --silent --show-error \
+            -H "content-type: application/json" \
+            -H "x-recommendation-roadmap-token: $ROADMAP_TOKEN" \
+            --data-binary "@$REQUEST_FILE" \
+            "$ROADMAP_API_BASE_URL/deadlock-live/recommendation-roadmap/v1/materialize/$OPERATION" \
+            | tee "$RESPONSE_FILE"
+          python3 - "$RESPONSE_FILE" <<'PY'
+          import json, sys
+          data = json.load(open(sys.argv[1], encoding="utf-8"))
+          if not isinstance(data, dict):
+              raise SystemExit("Roadmap materializer returned a non-object response")
+          print(json.dumps({"status": "MATERIALIZED", "response": data}, sort_keys=True))
+          PY
