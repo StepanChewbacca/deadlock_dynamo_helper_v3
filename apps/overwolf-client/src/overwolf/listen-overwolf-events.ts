@@ -28,15 +28,16 @@ export function listenOverwolfEvents(onEvent: EventCallback): void {
   const capture = diagnosticCapture;
   capture.initialize(overwolf);
 
+  const eventsApi = overwolf.games.events as any;
   let currentMatchId: string | undefined;
-  overwolf.games.events.getInfo?.((infoResult: any) => {
+  eventsApi.getInfo?.((infoResult: any) => {
     currentMatchId =
       matchIdFromValue(infoResult?.res?.match_info?.match_id) ??
       matchIdFromValue(infoResult?.match_info?.match_id) ??
       currentMatchId;
   });
 
-  overwolf.games.events.onInfoUpdates2.addListener((infoUpdate: any) => {
+  eventsApi.onInfoUpdates2.addListener((infoUpdate: any) => {
     try {
       const { info, feature } = infoUpdate;
       if (!info || typeof info !== 'object') {
@@ -81,7 +82,7 @@ export function listenOverwolfEvents(onEvent: EventCallback): void {
     }
   });
 
-  overwolf.games.events.onNewEvents.addListener((eventsEvent: any) => {
+  eventsApi.onNewEvents.addListener((eventsEvent: any) => {
     try {
       const { events, feature } = eventsEvent;
       if (!Array.isArray(events)) {
