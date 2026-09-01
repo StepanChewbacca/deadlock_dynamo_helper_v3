@@ -12,9 +12,36 @@ const STATE_SAFETY_CATEGORIES = new Set([
   'items',
 ]);
 
+interface MatchContext {
+  currentMatchId?: string;
+}
+
 let diagnosticCapture: DiagnosticCapture | undefined;
 let stateSafetyTimer: ReturnType<typeof setInterval> | undefined;
 let stateSafetyPollInFlight = false;
+
+function matchIdFromValue(value: unknown): string | undefined {
+  const parsed = parseJsonSafely(value);
+  if (typeof parsed === 'string' && parsed.trim().length > 0) {
+    return parsed.trim().replace(/^"|"$/g, '');
+  }
+
+  if (typeof parsed === 'number' && Number.isFinite(parsed)) {
+    return String(parsed);
+  }
+
+  return undefined;
+}
+
+function extractMatchIdFromInfo(info: unknown): string | undefined {
+  if (!info || typeof info !== 'object') {
+    return undefined;
+  }
+
+  const record = info as Record<string, any>;
+  return matchIdFromValue(record.match_info?.match_id)
+    ?? matchIdFromValue(record.match_info?.matchId);
+}
 
 export function listenOverwolfEvents(onEvent: EventCallback): void {
   if (typeof overwolf === 'undefined' || !overwolf.games || !overwolf.games.events) {
@@ -24,6 +51,7 @@ export function listenOverwolfEvents(onEvent: EventCallback): void {
 
   diagnosticCapture ??= new DiagnosticCapture(`capture-${Math.random().toString(36).slice(2, 10)}`);
   const capture = diagnosticCapture;
+  const matchContext: MatchContext = {};
   capture.initialize(overwolf);
 
   overwolf.games.events.onInfoUpdates2.addListener((infoUpdate: any) => {
@@ -34,6 +62,7 @@ export function listenOverwolfEvents(onEvent: EventCallback): void {
         onEvent,
         capture,
         false,
+        matchContext,
       );
     } catch (err) {
       console.error('Error handling onInfoUpdates2 event:', err);
@@ -61,8 +90,12 @@ export function listenOverwolfEvents(onEvent: EventCallback): void {
           rawPayload: e.data,
         });
         const parsedData = parseJsonSafely(e.data);
+        if (e.name === 'match_id') {
+          matchContext.currentMatchId = matchIdFromValue(parsedData) ?? matchContext.currentMatchId;
+        }
 
         onEvent({
+          matchId: matchContext.currentMatchId,
           receivedAt,
           source: 'onNewEvents',
           feature,
@@ -75,12 +108,13 @@ export function listenOverwolfEvents(onEvent: EventCallback): void {
     }
   });
 
-  startStateSafetyPolling(onEvent, capture);
+  startStateSafetyPolling(onEvent, capture, matchContext);
 }
 
 function startStateSafetyPolling(
   onEvent: EventCallback,
   capture: DiagnosticCapture,
+  matchContext: MatchContext,
 ): void {
   const eventsApi = overwolf.games.events as any;
   if (stateSafetyTimer || typeof eventsApi.getInfo !== 'function') {
@@ -104,12 +138,14 @@ function startStateSafetyPolling(
           return;
         }
 
+        matchContext.currentMatchId = extractMatchIdFromInfo(result.res) ?? matchContext.currentMatchId;
         emitInfoEntries(
           result.res,
           'state_safety_poll',
           onEvent,
           capture,
           true,
+          matchContext,
         );
       } catch (err) {
         console.error('Error handling live state safety snapshot:', err);
@@ -130,10 +166,13 @@ function emitInfoEntries(
   onEvent: EventCallback,
   capture: DiagnosticCapture,
   stateSafetyOnly: boolean,
+  matchContext: MatchContext,
 ): void {
   if (!info || typeof info !== 'object') {
     return;
   }
+
+  matchContext.currentMatchId = extractMatchIdFromInfo(info) ?? matchContext.currentMatchId;
 
   for (const [category, categoryData] of Object.entries(info)) {
     if (!categoryData || typeof categoryData !== 'object') {
@@ -155,8 +194,12 @@ function emitInfoEntries(
         rawPayload: rawValue,
       });
       const parsedValue = parseJsonSafely(rawValue);
+      if (key === 'match_id') {
+        matchContext.currentMatchId = matchIdFromValue(parsedValue) ?? matchContext.currentMatchId;
+      }
 
       onEvent({
+        matchId: matchContext.currentMatchId,
         receivedAt,
         source: 'onInfoUpdates2',
         feature,
