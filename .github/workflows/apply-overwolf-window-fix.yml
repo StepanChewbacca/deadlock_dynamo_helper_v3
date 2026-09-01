@@ -1,0 +1,60 @@
+name: Apply Overwolf Window Signature Fix
+
+on:
+  push:
+    branches:
+      - agent/statlocker-model-probe-poc
+    paths:
+      - .github/workflows/apply-overwolf-window-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: agent/statlocker-model-probe-poc
+      - name: Apply callback signatures
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('apps/overwolf-client/src/index.ts')
+          source = path.read_text()
+          old = """              if (state === 'minimized' || state === 'closed') {
+                ow.windows.restore(windowId);
+              } else {
+                ow.windows.minimize(windowId);
+              }
+"""
+          new = """              if (state === 'minimized' || state === 'closed') {
+                ow.windows.restore(windowId, (restoreResult: any) => {
+                  if (!restoreResult?.success) {
+                    ui.logConsole(`Failed to restore in-game HUD overlay: ${restoreResult?.error || 'unknown error'}`);
+                  }
+                });
+              } else {
+                ow.windows.minimize(windowId, (minimizeResult: any) => {
+                  if (!minimizeResult?.success) {
+                    ui.logConsole(`Failed to minimize in-game HUD overlay: ${minimizeResult?.error || 'unknown error'}`);
+                  }
+                });
+              }
+"""
+          if source.count(old) != 1:
+              raise SystemExit(f'Expected exactly one window toggle block, found {source.count(old)}')
+          path.write_text(source.replace(old, new))
+      - name: Commit fix
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add apps/overwolf-client/src/index.ts
+          git commit -m 'fix(overwolf): use callback window APIs'
+          git push origin HEAD:agent/statlocker-model-probe-poc
