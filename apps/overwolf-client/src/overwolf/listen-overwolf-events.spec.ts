@@ -16,7 +16,7 @@ describe('listenOverwolfEvents', () => {
         success: true,
         res: {
           match_info: {
-            match_id: '93946399',
+            match_id: '"93946399"',
             match_outcome: JSON.stringify({ winning_team: 'SAPPHIRE' }),
             match_state: 'ended',
             match_end: true,
