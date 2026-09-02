@@ -1,0 +1,297 @@
+import type {
+  AdaptiveActionTypeV1,
+  AdaptiveActionV1,
+  AdaptiveRecommendationResultV1,
+} from '@deadlock-live-probe/shared';
+import {
+  ADAPTIVE_ITEM_CATALOG,
+  AdaptiveItemCatalogEntry,
+  AdaptiveItemSlot,
+} from './generated/adaptive-item-catalog';
+
+export interface AdaptivePresentedItem {
+  readonly id: number;
+  readonly name: string;
+  readonly slot: AdaptiveItemSlot;
+  readonly costLabel?: string;
+  readonly tierLabel?: string;
+  readonly diagnosticLabel?: string;
+  readonly known: boolean;
+}
+
+export interface AdaptivePresentedPlanItem {
+  readonly item: AdaptivePresentedItem;
+  readonly position: number;
+  readonly status: 'OWNED' | 'NEXT' | 'PLANNED';
+  readonly statusLabel: string;
+}
+
+export interface AdaptivePresentedAlternative {
+  readonly actionLabel: string;
+  readonly headline: string;
+  readonly item?: AdaptivePresentedItem;
+  readonly replacedItem?: AdaptivePresentedItem;
+  readonly scoreLabel: string;
+}
+
+export interface AdaptiveRecommendationPresentation {
+  readonly sourceLabel: string;
+  readonly stateLabel: string;
+  readonly stateTone: 'ahead' | 'even' | 'behind' | 'unknown';
+  readonly healthLabel: string;
+  readonly healthTone: 'live' | 'degraded' | 'waiting';
+  readonly actionLabel: string;
+  readonly headline: string;
+  readonly primaryItem?: AdaptivePresentedItem;
+  readonly replacedItem?: AdaptivePresentedItem;
+  readonly confidence: { readonly label: string; readonly value: number };
+  readonly reasons: readonly string[];
+  readonly plan: {
+    readonly items: readonly AdaptivePresentedPlanItem[];
+    readonly remainingCount: number;
+  };
+  readonly alternatives: readonly AdaptivePresentedAlternative[];
+  readonly evidenceLabel: string;
+}
+
+const REASON_LABELS: Readonly<Record<string, string>> = {
+  PLAN_HYSTERESIS: 'Current plan is still the safest choice',
+  CORE_TARGET_PENDING: 'Keep saving for the next core item',
+  NO_USABLE_STATLOCKER_EVIDENCE: 'Waiting for reliable Statlocker data',
+  STATLOCKER_UNAVAILABLE_PRESERVE_PLAN: 'Statlocker is updating; keeping the last safe plan',
+  FRESH_LEGALITY_FALLBACK: 'Adjusted to a legal purchase',
+  NO_FRESH_LEGAL_TRANSACTION: 'No safe purchase is available right now',
+};
+
+const GAME_STATE_LABELS = {
+  AHEAD: 'Playing ahead',
+  EVEN: 'Even game',
+  BEHIND: 'Playing from behind',
+  UNKNOWN: 'Game state updating',
+} as const;
+
+const PLAN_STATUS_LABELS = {
+  OWNED: 'Owned',
+  NEXT: 'Next',
+  PLANNED: 'Planned',
+} as const;
+
+const PLAN_DISPLAY_LIMIT = 6;
+const ALTERNATIVE_DISPLAY_LIMIT = 3;
+
+export function buildAdaptiveRecommendationPresentation(
+  recommendation: AdaptiveRecommendationResultV1,
+): AdaptiveRecommendationPresentation {
+  const primaryItemId = resolveActionItemId(
+    recommendation.nextAction,
+    recommendation.nextTargetItemId,
+  );
+  const primaryItem = primaryItemId === undefined
+    ? undefined
+    : presentItem(primaryItemId);
+  const replacedItem = recommendation.nextAction.type === 'REPLACE'
+    ? presentActionSellItem(recommendation.nextAction)
+    : undefined;
+  const confidenceValue = toPercent(recommendation.confidence);
+  const freshEvidenceCount = recommendation.evidence.families.filter(
+    (family) => family.freshness === 'FRESH',
+  ).length;
+  const hasDegradedEvidence = recommendation.evidence.families.some(
+    (family) => family.freshness !== 'FRESH',
+  ) || recommendation.evidence.degradedReasons.length > 0;
+  const orderedPlan = [...recommendation.recommendedBuild]
+    .sort((left, right) => left.position - right.position);
+
+  return {
+    sourceLabel: 'Statlocker Adaptive',
+    stateLabel: GAME_STATE_LABELS[recommendation.gameState] ?? GAME_STATE_LABELS.UNKNOWN,
+    stateTone: recommendation.gameState.toLowerCase() as AdaptiveRecommendationPresentation['stateTone'],
+    healthLabel: recommendation.ready
+      ? hasDegradedEvidence ? 'Degraded' : 'Live'
+      : 'Waiting',
+    healthTone: recommendation.ready
+      ? hasDegradedEvidence ? 'degraded' : 'live'
+      : 'waiting',
+    actionLabel: humanizeActionType(recommendation.nextAction.type),
+    headline: buildHeadline(recommendation.nextAction, primaryItem, replacedItem),
+    primaryItem,
+    replacedItem,
+    confidence: {
+      label: confidenceLabel(recommendation.nextAction.type, confidenceValue),
+      value: confidenceValue,
+    },
+    reasons: recommendation.nextAction.reasonCodes
+      .slice(0, 3)
+      .map(humanizeReasonCode),
+    plan: {
+      items: orderedPlan.slice(0, PLAN_DISPLAY_LIMIT).map((planned) => ({
+        item: presentItem(planned.itemId),
+        position: planned.position,
+        status: planned.status,
+        statusLabel: PLAN_STATUS_LABELS[planned.status],
+      })),
+      remainingCount: Math.max(0, orderedPlan.length - PLAN_DISPLAY_LIMIT),
+    },
+    alternatives: buildAlternatives(recommendation, primaryItemId),
+    evidenceLabel: freshEvidenceCount > 0
+      ? `${freshEvidenceCount} fresh Statlocker signal${freshEvidenceCount === 1 ? '' : 's'}`
+      : 'Statlocker evidence is updating',
+  };
+}
+
+function resolveActionItemId(
+  action: AdaptiveActionV1,
+  fallbackItemId?: number,
+): number | undefined {
+  const value = action.buyItemId
+    ?? action.itemId
+    ?? action.targetItemId
+    ?? action.sellItemId
+    ?? fallbackItemId;
+  return Number.isSafeInteger(value) && Number(value) > 0 ? Number(value) : undefined;
+}
+
+function presentItem(itemId: number): AdaptivePresentedItem {
+  const catalogItem: AdaptiveItemCatalogEntry | undefined = ADAPTIVE_ITEM_CATALOG[itemId];
+  if (!catalogItem) {
+    return {
+      id: itemId,
+      name: 'Unknown item',
+      slot: 'unknown',
+      diagnosticLabel: `#${itemId}`,
+      known: false,
+    };
+  }
+
+  return {
+    id: itemId,
+    name: catalogItem.name,
+    slot: catalogItem.slot,
+    costLabel: `${catalogItem.cost.toLocaleString('en-US')} souls`,
+    tierLabel: `Tier ${catalogItem.tier}`,
+    known: true,
+  };
+}
+
+function buildHeadline(
+  action: AdaptiveActionV1,
+  item: AdaptivePresentedItem | undefined,
+  replacedItem?: AdaptivePresentedItem,
+): string {
+  const itemName = item?.known ? item.name : undefined;
+  switch (action.type) {
+    case 'BUY':
+      return itemName ? `Buy ${itemName}` : 'Choose the next item';
+    case 'UPGRADE':
+      return itemName ? `Upgrade to ${itemName}` : 'Upgrade the current item';
+    case 'SELL':
+      return itemName ? `Sell ${itemName}` : 'Free a flex slot';
+    case 'REPLACE':
+      return describeReplacement(replacedItem, item);
+    case 'HOLD':
+      return itemName ? `Hold for ${itemName}` : 'Hold your souls';
+    case 'WAIT':
+      return 'Wait before buying';
+    case 'CONTINUE_CORE':
+      return itemName ? `Continue toward ${itemName}` : 'Continue the core build';
+    case 'ABSTAIN':
+      return 'No safe purchase yet';
+  }
+}
+
+function buildAlternatives(
+  recommendation: AdaptiveRecommendationResultV1,
+  primaryItemId: number | undefined,
+): readonly AdaptivePresentedAlternative[] {
+  const alternatives: AdaptivePresentedAlternative[] = [];
+  const seen = new Set<string>();
+
+  for (const candidate of recommendation.rankedImmediateCandidates) {
+    const itemId = resolveActionItemId(candidate.action);
+    const key = itemId === undefined
+      ? `action:${candidate.action.type}`
+      : `item:${itemId}`;
+    if (
+      candidate.action.actionKey === recommendation.nextAction.actionKey
+      || itemId === primaryItemId
+      || seen.has(key)
+    ) {
+      continue;
+    }
+
+    seen.add(key);
+    const item = itemId === undefined ? undefined : presentItem(itemId);
+    const replacedItem = candidate.action.type === 'REPLACE'
+      ? presentActionSellItem(candidate.action)
+      : undefined;
+    alternatives.push({
+      actionLabel: humanizeActionType(candidate.action.type),
+      headline: buildHeadline(candidate.action, item, replacedItem),
+      item,
+      replacedItem,
+      scoreLabel: `${toPercent(candidate.score)}% fit`,
+    });
+    if (alternatives.length === ALTERNATIVE_DISPLAY_LIMIT) {
+      break;
+    }
+  }
+
+  return alternatives;
+}
+
+function presentActionSellItem(action: AdaptiveActionV1): AdaptivePresentedItem | undefined {
+  return Number.isSafeInteger(action.sellItemId) && Number(action.sellItemId) > 0
+    ? presentItem(Number(action.sellItemId))
+    : undefined;
+}
+
+function describeReplacement(
+  replacedItem: AdaptivePresentedItem | undefined,
+  targetItem: AdaptivePresentedItem | undefined,
+): string {
+  const from = describeItem(replacedItem, 'a weaker item');
+  const to = describeItem(targetItem, 'a stronger item');
+  return `Replace ${from} with ${to}`;
+}
+
+function describeItem(item: AdaptivePresentedItem | undefined, fallback: string): string {
+  if (!item) {
+    return fallback;
+  }
+  return item.known ? item.name : `item ${item.diagnosticLabel}`;
+}
+
+function humanizeActionType(type: AdaptiveActionTypeV1): string {
+  return {
+    BUY: 'Buy now',
+    UPGRADE: 'Upgrade',
+    SELL: 'Sell',
+    REPLACE: 'Replace',
+    WAIT: 'Wait',
+    HOLD: 'Hold',
+    CONTINUE_CORE: 'Core path',
+    ABSTAIN: 'Stand by',
+  }[type];
+}
+
+function confidenceLabel(type: AdaptiveActionTypeV1, value: number): string {
+  if (value === 0 && (type === 'HOLD' || type === 'WAIT' || type === 'ABSTAIN')) {
+    return type === 'HOLD' ? 'Safe hold' : 'Safe fallback';
+  }
+  return `${value}% confidence`;
+}
+
+function humanizeReasonCode(code: string): string {
+  if (REASON_LABELS[code]) {
+    return REASON_LABELS[code];
+  }
+  const normalized = code.trim().toLowerCase().replace(/[_-]+/g, ' ');
+  return normalized
+    ? normalized.charAt(0).toUpperCase() + normalized.slice(1)
+    : 'Recommendation updated';
+}
+
+function toPercent(value: number): number {
+  const finite = Number.isFinite(Number(value)) ? Number(value) : 0;
+  return Math.round(Math.max(0, Math.min(1, finite)) * 100);
+}

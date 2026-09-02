@@ -5,6 +5,7 @@ import { isSuccessfulOverwolfResult } from './overwolf/window-result';
 import { InGameOverlayLifecycle } from './overwolf/in-game-overlay-lifecycle';
 import * as ui from './ui';
 import { AdaptiveRecommendationClient } from './adaptive-recommendation-client';
+import { didAdaptiveMatchChange } from './adaptive-match-transition';
 
 const clientId = `client-${Math.random().toString(36).substring(2, 8)}`;
 const apiBaseUrl = 'https://aboba-telegramovich.duckdns.org';
@@ -38,7 +39,7 @@ function initializeInGameWindow(windowId: string): void {
     }
 
     requestAnimationFrame(() => {
-      const minimumHeight = 240;
+      const minimumHeight = 190;
       const maximumHeight = 700;
       const contentHeight = Math.ceil(hud.scrollHeight + 24);
       const targetHeight = Math.max(
@@ -73,8 +74,16 @@ function initializeInGameWindow(windowId: string): void {
     ensureOverlayHeight();
   };
 
+  mainWindow.inGameAdaptiveError = (message: string): void => {
+    ui.showAdaptiveError(message);
+    ensureOverlayHeight();
+  };
+
   if (mainWindow.latestAdaptiveRecommendation) {
     mainWindow.inGameAdaptiveUpdate(mainWindow.latestAdaptiveRecommendation);
+  }
+  if (mainWindow.latestAdaptiveError) {
+    mainWindow.inGameAdaptiveError(mainWindow.latestAdaptiveError);
   }
 
   const setupDrag = (): void => {
@@ -108,6 +117,7 @@ function initializeBackgroundWindow(): void {
 
   const mainWindow = ow.windows.getMainWindow() as any;
   mainWindow.latestAdaptiveRecommendation = mainWindow.latestAdaptiveRecommendation || null;
+  mainWindow.latestAdaptiveError = mainWindow.latestAdaptiveError || null;
 
   registerWindowHotkeys(mainWindow);
 
@@ -140,6 +150,7 @@ function initializeBackgroundWindow(): void {
 
   const publishAdaptiveRecommendation = (data: any): void => {
     mainWindow.latestAdaptiveRecommendation = data;
+    mainWindow.latestAdaptiveError = null;
 
     if (data) {
       ui.showAdaptiveRecommendation(data);
@@ -148,6 +159,13 @@ function initializeBackgroundWindow(): void {
     }
 
     mainWindow.inGameAdaptiveUpdate?.(data);
+  };
+
+  const publishAdaptiveError = (error: Error): void => {
+    const message = error.message || 'Adaptive recommendation unavailable';
+    mainWindow.latestAdaptiveError = message;
+    ui.showAdaptiveError(message);
+    mainWindow.inGameAdaptiveError?.(message);
   };
 
   const scheduleAdaptiveRecommendation = (force = false): void => {
@@ -166,7 +184,7 @@ function initializeBackgroundWindow(): void {
         onResult: publishAdaptiveRecommendation,
         onError: (error) => {
           ui.logConsole(`Failed to fetch adaptive recommendation: ${error.message}`);
-          publishAdaptiveRecommendation(null);
+          publishAdaptiveError(error);
         },
       },
       force,
@@ -200,6 +218,11 @@ function initializeBackgroundWindow(): void {
         const context = extractAdaptiveContext(event);
 
         if (context.matchId) {
+          if (didAdaptiveMatchChange(previousMatchId, context.matchId)) {
+            adaptiveClient.cancel();
+            currentLocalSteamId = '';
+            publishAdaptiveRecommendation(null);
+          }
           currentMatchId = context.matchId;
           mainWindow.__deadlockLiveMatchId = currentMatchId;
           (globalThis as any).__deadlockLiveMatchId = currentMatchId;

@@ -3,130 +3,89 @@
   <head>
     <meta charset="utf-8" />
     <title>Deadlock Statlocker Adaptive</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <style>
-      :root {
-        --bg: #0b0b0e;
-        --card: #14141a;
-        --border: #272733;
-        --text: #f3f4f6;
-        --muted: #9ca3af;
-        --accent: #ff6b4a;
-        --success: #10b981;
-      }
+      :root { --bg:#090a0e; --surface:#15161c; --soft:rgba(255,255,255,.045); --line:rgba(255,255,255,.1); --text:#f8f7f5; --muted:#aaa9b1; --dim:#74737c; --accent:#ff7658; --live:#62d49a; --warning:#f5bd64; --weapon:#e5a83b; --vitality:#58bd74; --spirit:#a978df; }
+      * { box-sizing:border-box; }
+      html,body { width:100%; height:100%; margin:0; overflow:hidden; }
+      body { display:flex; flex-direction:column; gap:12px; padding:18px; color:var(--text); background:radial-gradient(circle at 85% 0,rgba(255,118,88,.1),transparent 36%),var(--bg); font-family:"Outfit","Segoe UI",sans-serif; }
+      header { display:flex; align-items:center; justify-content:space-between; padding-bottom:11px; border-bottom:1px solid var(--line); }
+      .brand { display:flex; align-items:center; gap:10px; }
+      .brand-mark { width:31px; height:31px; display:grid; place-items:center; border:1px solid rgba(255,118,88,.36); border-radius:9px; color:var(--accent); background:rgba(255,118,88,.12); font:700 14px/1 "JetBrains Mono",monospace; }
+      h1 { margin:0; font-size:16px; }
+      .kicker { margin-top:2px; color:var(--muted); font:500 8px/1 "JetBrains Mono",monospace; letter-spacing:.11em; text-transform:uppercase; }
+      #status { color:var(--muted); font:600 9px/1 "JetBrains Mono",monospace; text-transform:uppercase; }
+      #status.connected { color:var(--live); } #status.error { color:#ff8e79; }
 
-      * { box-sizing: border-box; }
-      html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
-      body {
-        font-family: Arial, sans-serif;
-        background: var(--bg);
-        color: var(--text);
-        padding: 20px;
-        display: flex;
-        flex-direction: column;
-        gap: 14px;
-      }
+      .status-row { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; }
+      .status-card { padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--soft); }
+      .status-label { color:var(--dim); font:500 7px/1 "JetBrains Mono",monospace; letter-spacing:.08em; text-transform:uppercase; }
+      .status-value { margin-top:4px; overflow:hidden; font-size:9px; text-overflow:ellipsis; white-space:nowrap; }
+      #indicator-dot { color:var(--dim); } #indicator-dot.active { color:var(--live); }
 
-      header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        border-bottom: 1px solid var(--border);
-        padding-bottom: 12px;
-      }
+      #guide-empty { flex:1; min-height:220px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:9px; padding:24px; border:1px dashed var(--line); border-radius:13px; color:var(--muted); background:rgba(255,255,255,.018); text-align:center; }
+      .waiting-pulse { width:40px; height:40px; border:1px solid rgba(255,118,88,.32); border-radius:50%; background:radial-gradient(circle,rgba(255,118,88,.28),transparent 66%); box-shadow:0 0 26px rgba(255,118,88,.15); }
+      .waiting-title { color:var(--text); font-size:17px; font-weight:650; }
+      .waiting-copy { max-width:390px; font-size:11px; line-height:1.5; }
+      #guide-active { display:none; flex:1; min-height:0; flex-direction:column; }
+      #situational-recommendation-panel { display:none; min-height:0; flex-direction:column; gap:8px; }
+      .rec-update-note { display:none; padding:7px 9px; border:1px solid rgba(245,189,100,.22); border-radius:8px; color:#f7cf8e; background:rgba(245,189,100,.08); font-size:9px; }
 
-      h1 { margin: 0; font-size: 18px; color: var(--accent); }
-      #status { color: var(--muted); font-size: 12px; }
-      #status.connected { color: var(--success); }
-      #status.error { color: #ef4444; }
+      .primary-card { --slot:var(--accent); padding:12px 13px; border:1px solid var(--line); border-left:3px solid var(--slot); border-radius:11px; background:linear-gradient(135deg,rgba(255,255,255,.065),rgba(255,255,255,.025)); }
+      #situational-recommendation-panel[data-slot="weapon"] .primary-card { --slot:var(--weapon); } #situational-recommendation-panel[data-slot="vitality"] .primary-card { --slot:var(--vitality); } #situational-recommendation-panel[data-slot="spirit"] .primary-card { --slot:var(--spirit); }
+      .rec-ribbon { display:flex; align-items:center; gap:7px; margin-bottom:10px; }
+      #rec-action-label { padding:3px 7px; border-radius:5px; color:#0b0b0d; background:var(--accent); font:700 8px/1.25 "JetBrains Mono",monospace; letter-spacing:.06em; text-transform:uppercase; }
+      #rec-game-state,#rec-health { font:600 8px/1.2 "JetBrains Mono",monospace; text-transform:uppercase; } #rec-game-state { color:var(--muted); } #rec-health { margin-left:auto; }
+      #rec-health::before { content:""; display:inline-block; width:5px; height:5px; margin-right:5px; border-radius:50%; background:currentColor; box-shadow:0 0 8px currentColor; }
+      #rec-health.health-live { color:var(--live); } #rec-health.health-degraded,#rec-health.health-waiting { color:var(--warning); } #rec-game-state.state-ahead { color:var(--live); } #rec-game-state.state-behind { color:#ff8e79; }
+      .primary-main { display:flex; align-items:center; gap:11px; }
+      #rec-item-glyph { width:43px; height:43px; display:grid; place-items:center; border:1px solid var(--slot); border-radius:9px; color:var(--slot); background:rgba(255,255,255,.03); font:700 16px/1 "JetBrains Mono",monospace; }
+      .primary-copy { flex:1; min-width:0; } #rec-headline { color:var(--muted); font-size:10px; } #rec-item-name { margin-top:2px; overflow:hidden; font-size:20px; font-weight:700; text-overflow:ellipsis; white-space:nowrap; } #rec-item-meta { margin-top:3px; color:var(--dim); font:500 8px/1.2 "JetBrains Mono",monospace; text-transform:uppercase; }
+      .confidence-block { width:160px; margin-left:auto; }
+      .confidence-copy { display:flex; justify-content:space-between; color:var(--dim); font:500 7px/1.2 "JetBrains Mono",monospace; text-transform:uppercase; } #rec-confidence-label { color:var(--muted); }
+      .confidence-track { height:3px; margin-top:6px; overflow:hidden; border-radius:2px; background:rgba(255,255,255,.075); } #rec-confidence-fill { width:4%; height:100%; background:linear-gradient(90deg,var(--accent),#ffad65); }
 
-      .status-row {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 8px;
-      }
-
-      .status-card, .adaptive-card {
-        background: var(--card);
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 12px;
-      }
-
-      .status-label { color: var(--muted); font-size: 10px; text-transform: uppercase; }
-      .status-value { margin-top: 5px; font-size: 12px; overflow-wrap: anywhere; }
-      #indicator-dot.active { color: var(--success); }
-
-      #guide-empty {
-        flex: 1;
-        min-height: 240px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 10px;
-        text-align: center;
-        color: var(--muted);
-      }
-
-      #guide-active {
-        display: none;
-        flex: 1;
-        flex-direction: column;
-      }
-
-      #situational-recommendation-panel {
-        display: none;
-        flex-direction: column;
-        gap: 10px;
-        border-left: 3px solid var(--accent);
-      }
-
-      #rec-decision-title {
-        color: var(--accent);
-        font-size: 12px;
-        font-weight: 700;
-        text-transform: uppercase;
-      }
-
-      #rec-item-name { font-size: 22px; font-weight: 700; }
-      #rec-reason { color: var(--muted); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
-      #console { display: none; }
+      .adaptive-secondary { display:grid; grid-template-columns:1fr 1.35fr; gap:8px; }
+      .section-card { min-width:0; padding:9px; border:1px solid var(--line); border-radius:9px; background:var(--soft); }
+      .section-header { display:flex; justify-content:space-between; margin-bottom:7px; } .section-title { color:var(--muted); font:600 8px/1.2 "JetBrains Mono",monospace; letter-spacing:.1em; text-transform:uppercase; } #rec-plan-more { color:var(--dim); font:500 8px/1.2 "JetBrains Mono",monospace; }
+      #rec-reasons { display:grid; gap:5px; margin:0; padding:0; list-style:none; } #rec-reasons li { position:relative; padding-left:11px; color:#d4d2d2; font-size:10px; line-height:1.3; } #rec-reasons li::before { content:""; position:absolute; left:0; top:5px; width:4px; height:4px; border-radius:50%; background:var(--accent); }
+      #rec-plan { display:grid; grid-template-columns:1fr 1fr; gap:5px; }
+      .plan-item { --slot:var(--dim); min-width:0; display:flex; align-items:center; gap:7px; padding:6px 7px; border:1px solid var(--line); border-left:2px solid var(--slot); border-radius:7px; background:rgba(5,6,9,.24); } .slot-weapon { --slot:var(--weapon); } .slot-vitality { --slot:var(--vitality); } .slot-spirit { --slot:var(--spirit); } .status-next { background:rgba(255,118,88,.075); border-color:rgba(255,118,88,.26); } .status-owned { opacity:.6; }
+      .plan-position { color:var(--slot); font:600 8px/1 "JetBrains Mono",monospace; } .plan-details { display:flex; min-width:0; flex-direction:column; gap:2px; } .plan-details strong { overflow:hidden; font-size:9px; text-overflow:ellipsis; white-space:nowrap; } .plan-details small { overflow:hidden; color:var(--dim); font:500 7px/1.1 "JetBrains Mono",monospace; text-overflow:ellipsis; white-space:nowrap; text-transform:uppercase; }
+      #rec-alternatives-section { grid-column:1/-1; } #rec-alternatives { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; } .alternative-row { display:flex; justify-content:space-between; gap:7px; padding-left:8px; border-left:2px solid var(--slot,var(--dim)); color:#d7d5d6; font-size:9px; } .alternative-row small { color:var(--dim); font:500 7px/1.2 "JetBrains Mono",monospace; } .empty-row { grid-column:1/-1; color:var(--dim); font-size:9px; }
+      .adaptive-footer { display:flex; justify-content:space-between; padding:0 2px; color:var(--dim); font:500 7.5px/1.2 "JetBrains Mono",monospace; text-transform:uppercase; } .source-dot { width:4px; height:4px; display:inline-block; margin-right:5px; border-radius:50%; background:var(--live); }
+      #console { display:none; }
     </style>
   </head>
   <body>
     <header>
-      <h1>Statlocker Adaptive</h1>
-      <div id="status">INITIALIZING...</div>
+      <div class="brand"><div class="brand-mark">S</div><div><h1>Statlocker Adaptive</h1><div class="kicker">Live build intelligence</div></div></div>
+      <div id="status">INITIALIZING…</div>
     </header>
-
     <section class="status-row">
-      <div class="status-card">
-        <div class="status-label">Connection</div>
-        <div class="status-value"><span id="indicator-dot">●</span> <span id="indicator-text">Waiting</span></div>
-      </div>
-      <div class="status-card">
-        <div class="status-label">Last event</div>
-        <div class="status-value" id="last-event">None</div>
-      </div>
-      <div class="status-card">
-        <div class="status-label">API sends</div>
-        <div class="status-value" id="last-send">0</div>
-      </div>
+      <div class="status-card"><div class="status-label">Connection</div><div class="status-value"><span id="indicator-dot">●</span> <span id="indicator-text">Waiting</span></div></div>
+      <div class="status-card"><div class="status-label">Last event</div><div class="status-value" id="last-event">None</div></div>
+      <div class="status-card"><div class="status-label">API sends</div><div class="status-value" id="last-send">0</div></div>
     </section>
 
-    <section id="guide-empty" class="adaptive-card">
-      <strong>Waiting for Statlocker recommendation</strong>
-      <span>Only /deadlock/adaptive/v1/recommend is used. Legacy build and pro-build fallback paths are disabled.</span>
-    </section>
-
+    <section id="guide-empty"><div class="waiting-pulse"></div><div id="guide-empty-title" class="waiting-title">Waiting for match data</div><div id="guide-empty-copy" class="waiting-copy">Your Statlocker recommendation will appear automatically when the match is detected.</div></section>
     <section id="guide-active">
-      <div id="situational-recommendation-panel" class="adaptive-card">
-        <div id="rec-decision-title">Statlocker Adaptive</div>
-        <div id="rec-item-name">Waiting...</div>
-        <div id="rec-reason"></div>
+      <div id="situational-recommendation-panel">
+        <div id="rec-update-note" class="rec-update-note"></div>
+        <article class="primary-card">
+          <div class="rec-ribbon"><span id="rec-action-label">Stand by</span><span id="rec-game-state">Game state updating</span><span id="rec-health" class="health-waiting">Waiting</span></div>
+          <div class="primary-main"><div id="rec-item-glyph">•</div><div class="primary-copy"><div id="rec-headline">Adaptive recommendation</div><div id="rec-item-name">Waiting…</div><div id="rec-item-meta"></div></div><div class="confidence-block"><div class="confidence-copy"><span>Confidence</span><span id="rec-confidence-label">—</span></div><div class="confidence-track"><div id="rec-confidence-fill"></div></div></div></div>
+        </article>
+        <div class="adaptive-secondary">
+          <section class="section-card"><div class="section-header"><span class="section-title">Why this move</span></div><ul id="rec-reasons"></ul></section>
+          <section class="section-card"><div class="section-header"><span class="section-title">Build path</span><span id="rec-plan-more"></span></div><div id="rec-plan"></div></section>
+          <section id="rec-alternatives-section" class="section-card"><div class="section-header"><span class="section-title">Also viable</span></div><div id="rec-alternatives"></div></section>
+        </div>
+        <footer class="adaptive-footer"><span><span class="source-dot"></span><span id="rec-source">Statlocker Adaptive</span></span><span id="rec-evidence">Evidence updating</span></footer>
       </div>
     </section>
-
     <pre id="console"></pre>
     <script src="dist/index.js"></script>
   </body>

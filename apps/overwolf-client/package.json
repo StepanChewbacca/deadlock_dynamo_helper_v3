@@ -1,11 +1,13 @@
 {
   "name": "@deadlock-live-probe/overwolf-client",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "private": true,
-  "description": "Recommendation Value V6 production build with support-aware pro-build fallback",
+  "description": "Statlocker Adaptive recommendations in the classic V8-style HUD",
   "scripts": {
-    "build:bundle": "webpack --mode production",
-    "build": "webpack --mode production && node scripts/configure-api-base-url.js && node scripts/validate-release.js && node scripts/sync-public-to-windows.js",
+    "generate:item-catalog": "node scripts/generate-adaptive-item-catalog.js",
+    "check:item-catalog": "node scripts/generate-adaptive-item-catalog.js --check",
+    "build:bundle": "node scripts/generate-adaptive-item-catalog.js --check && webpack --mode production",
+    "build": "node scripts/generate-adaptive-item-catalog.js --check && webpack --mode production && node scripts/configure-api-base-url.js && node scripts/validate-release.js && node scripts/sync-public-to-windows.js",
     "configure:api": "node scripts/configure-api-base-url.js",
     "validate:release": "node scripts/validate-release.js",
     "dev": "webpack --mode development",
