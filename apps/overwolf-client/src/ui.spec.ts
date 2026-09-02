@@ -60,7 +60,7 @@ const elementIds = [
   'rec-update-note',
 ];
 
-function recommendation(): any {
+function recommendation(overrides: Record<string, unknown> = {}): any {
   return {
     ready: true,
     blockers: [],
@@ -88,18 +88,35 @@ function recommendation(): any {
       families: [{ dataset: 'builds', freshness: 'FRESH', confidence: 0.9 }],
       degradedReasons: [],
     },
+    ...overrides,
+  };
+}
+
+function plannedItem(itemId: number, position: number, status: 'OWNED' | 'NEXT' | 'PLANNED'): any {
+  return {
+    itemId,
+    position,
+    status,
+    score: 0.5,
+    confidence: 0.5,
+    skeletonStrength: 0.5,
+    contextualSupport: 0.5,
+    reasonCodes: [],
   };
 }
 
 describe('adaptive recommendation UI state', () => {
   let elements: Map<string, FakeElement>;
+  let inGameOverlay = false;
   const originalDocument = globalThis.document;
 
   beforeEach(() => {
     elements = new Map(elementIds.map((id) => [id, new FakeElement()]));
+    inGameOverlay = false;
     globalThis.document = {
       getElementById: (id: string) => elements.get(id) || null,
       createElement: () => new FakeElement(),
+      querySelector: (selector: string) => selector === '.hud-container' && inGameOverlay ? new FakeElement() : null,
     } as unknown as Document;
     hideSituationalPanel();
   });
@@ -129,5 +146,36 @@ describe('adaptive recommendation UI state', () => {
     expect(elements.get('guide-empty')?.style.display).toBe('flex');
     expect(elements.get('guide-empty-title')?.textContent).toBe('Statlocker is reconnecting');
     expect(elements.get('guide-active')?.style.display).toBe('none');
+  });
+
+  it('keeps owned items visible in the desktop build path', () => {
+    showAdaptiveRecommendation(recommendation({
+      recommendedBuild: [
+        plannedItem(3862866912, 1, 'OWNED'),
+        plannedItem(968099481, 2, 'NEXT'),
+        plannedItem(1342610602, 3, 'PLANNED'),
+      ],
+    }));
+
+    const rows = elements.get('rec-plan')?.children ?? [];
+    expect(rows).toHaveLength(3);
+    expect(rows[0].className).toContain('status-owned');
+    expect(rows[1].className).toContain('status-next');
+  });
+
+  it('removes owned items from the in-game overlay build path', () => {
+    inGameOverlay = true;
+    showAdaptiveRecommendation(recommendation({
+      recommendedBuild: [
+        plannedItem(3862866912, 1, 'OWNED'),
+        plannedItem(968099481, 2, 'NEXT'),
+        plannedItem(1342610602, 3, 'PLANNED'),
+      ],
+    }));
+
+    const rows = elements.get('rec-plan')?.children ?? [];
+    expect(rows).toHaveLength(2);
+    expect(rows.every((row) => !row.className.includes('status-owned'))).toBe(true);
+    expect(rows[0].className).toContain('status-next');
   });
 });
