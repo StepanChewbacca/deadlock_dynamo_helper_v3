@@ -40,12 +40,14 @@ export class AdaptiveRecommendationClient {
   ): void {
     const normalized = normalizeRequest(request);
     const payload = JSON.stringify(normalized);
-    if (force && this.lastCompletedPayload === payload) this.lastCompletedPayload = undefined;
-    if (!force && (
-      payload === this.pending?.payload ||
-      payload === this.inFlightPayload ||
-      payload === this.lastCompletedPayload
-    )) return;
+
+    if (payload === this.pending?.payload) return;
+    if (payload === this.inFlightPayload && !force) return;
+
+    if (force && this.lastCompletedPayload === payload) {
+      this.lastCompletedPayload = undefined;
+    }
+    if (!force && payload === this.lastCompletedPayload) return;
 
     this.pending = {
       request: normalized,

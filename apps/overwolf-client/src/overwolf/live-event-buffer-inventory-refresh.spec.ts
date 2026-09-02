@@ -45,26 +45,36 @@ describe('LiveEventBuffer inventory refresh', () => {
   });
 
   it('does not refresh after a rejected inventory batch', async () => {
-    const onInventoryFlushSuccess = jest.fn();
-    const buffer = new LiveEventBuffer(
-      'client-1',
-      'http://localhost:3000',
-      async () => ({ ok: false, status: 500 } as Response),
-      1000,
-      () => 'match-1',
-      onInventoryFlushSuccess,
-    );
+    jest.useFakeTimers();
+    try {
+      const onInventoryFlushSuccess = jest.fn();
+      const fetchImpl = jest.fn(async () => ({ ok: false, status: 500 } as Response));
+      const buffer = new LiveEventBuffer(
+        'client-1',
+        'http://localhost:3000',
+        fetchImpl,
+        1000,
+        () => 'match-1',
+        onInventoryFlushSuccess,
+      );
 
-    buffer.push({
-      receivedAt: 1,
-      source: 'onInfoUpdates2',
-      key: 'items_0',
-      payload: { steam_id: 'local', items: [{ id: 100 }] },
-    });
+      buffer.push({
+        receivedAt: 1,
+        source: 'onInfoUpdates2',
+        key: 'items_0',
+        payload: { steam_id: 'local', items: [{ id: 100 }] },
+      });
 
-    await new Promise((resolve) => setTimeout(resolve, 10));
+      jest.advanceTimersByTime(0);
+      await Promise.resolve();
+      await Promise.resolve();
 
-    expect(onInventoryFlushSuccess).not.toHaveBeenCalled();
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(onInventoryFlushSuccess).not.toHaveBeenCalled();
+    } finally {
+      jest.clearAllTimers();
+      jest.useRealTimers();
+    }
   });
 });
 

@@ -11,6 +11,11 @@ const STATE_SAFETY_CATEGORIES = new Set([
   'roster',
   'items',
 ]);
+const STATE_SAFETY_TRANSITION_KEYS = new Set([
+  'match_end',
+  'match_outcome',
+  'match_state',
+]);
 
 interface MatchContext {
   currentMatchId?: string;
@@ -41,6 +46,37 @@ function extractMatchIdFromInfo(info: unknown): string | undefined {
   const record = info as Record<string, any>;
   return matchIdFromValue(record.match_info?.match_id)
     ?? matchIdFromValue(record.match_info?.matchId);
+}
+
+function isTerminalMatchSnapshot(info: unknown): boolean {
+  if (!info || typeof info !== 'object') {
+    return false;
+  }
+
+  const matchInfo = (info as Record<string, any>).match_info;
+  if (!matchInfo || typeof matchInfo !== 'object') {
+    return false;
+  }
+
+  const matchEnd = parseJsonSafely(matchInfo.match_end);
+  if (
+    matchEnd === true
+    || matchEnd === 1
+    || matchEnd === '1'
+    || (typeof matchEnd === 'string' && matchEnd.trim().toLowerCase() === 'true')
+  ) {
+    return true;
+  }
+
+  const matchState = matchIdFromValue(matchInfo.match_state)?.toLowerCase();
+  if (matchState && ['ended', 'complete', 'completed'].includes(matchState)) {
+    return true;
+  }
+
+  const matchOutcome = matchInfo.match_outcome;
+  return matchOutcome !== undefined
+    && matchOutcome !== null
+    && String(matchOutcome).trim() !== '';
 }
 
 export function listenOverwolfEvents(onEvent: EventCallback): void {
@@ -138,6 +174,11 @@ function startStateSafetyPolling(
           return;
         }
 
+        if (isTerminalMatchSnapshot(result.res)) {
+          matchContext.currentMatchId = undefined;
+          return;
+        }
+
         matchContext.currentMatchId = extractMatchIdFromInfo(result.res) ?? matchContext.currentMatchId;
         emitInfoEntries(
           result.res,
@@ -184,6 +225,10 @@ function emitInfoEntries(
     }
 
     for (const [key, rawValue] of Object.entries(categoryData)) {
+      if (stateSafetyOnly && STATE_SAFETY_TRANSITION_KEYS.has(key)) {
+        continue;
+      }
+
       const receivedAt = Date.now();
       capture.captureRaw({
         receivedAt,

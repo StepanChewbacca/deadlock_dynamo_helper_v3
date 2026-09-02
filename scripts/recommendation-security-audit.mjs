@@ -30,7 +30,8 @@ for (const name of fs.existsSync(workflowDir) ? fs.readdirSync(workflowDir) : []
   const causalValueTraining = /^recommendation-value-training\.ya?ml$/i.test(name);
   const behavioralTraining = /^recommendation-behavioral-training\.ya?ml$/i.test(name);
   const pretrainingReadiness = /^recommendation-pretraining-readiness\.ya?ml$/i.test(name);
-  const privilegedTraining = /recommendation-.*training/i.test(name);
+  const trainingMonitor = /^recommendation-v8-training-monitor(?:-bootstrap)?\.ya?ml$/i.test(name);
+  const privilegedTraining = /recommendation-.*training/i.test(name) && !trainingMonitor;
   if (privilegedTraining) {
     auditManualSelfHostedWorkflow(name, normalized, causalValueTraining
       ? {
@@ -47,6 +48,9 @@ for (const name of fs.existsSync(workflowDir) ? fs.readdirSync(workflowDir) : []
     if (!causalValueTraining && !/pip[^\n]*install[^\n]*--no-index[^\n]*--find-links/m.test(normalized)) {
       errors.push(`${name}: privileged Python training dependencies must be installed from an approved offline wheelhouse`);
     }
+  }
+  if (trainingMonitor) {
+    auditNoGitHubExpressionsInsideRunBlocks(name, normalized);
   }
 
   if (pretrainingReadiness) {
