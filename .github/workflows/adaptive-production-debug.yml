@@ -22,17 +22,23 @@ jobs:
           set -euo pipefail
           cd /home/ubuntu/apps/deadlock_dynamo_helper
 
+          echo '=== Compose services ==='
+          sudo docker compose ps
+
           echo '=== API container ==='
           container_id="$(sudo docker compose ps -q api)"
           echo "container_id=$container_id"
-          sudo docker inspect --format='image={{.Image}} name={{.Name}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$container_id"
+          sudo docker inspect --format='image={{.Image}} name={{.Name}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}} restart_count={{.RestartCount}}' "$container_id"
           sudo docker image inspect "$(sudo docker inspect --format='{{.Image}}' "$container_id")" --format='revision={{index .Config.Labels "org.opencontainers.image.revision"}}' || true
 
           echo '=== Adaptive status ==='
           curl --fail-with-body --show-error --silent http://127.0.0.1:3000/deadlock/adaptive/v1/status || true
           echo
 
-          echo '=== Recent adaptive/API errors ==='
-          sudo docker compose logs --since=60m --tail=2000 api 2>&1 \
-            | grep -E -B8 -A25 'adaptive|Adaptive|recommend|Recommendation|ERROR|Error|500|catalog|Catalog|No item catalog|QueryFailed|TypeError|local player|Local player' \
+          echo '=== Recent API logs ==='
+          sudo docker compose logs --since=60m --tail=4000 api 2>&1 \
+            | grep -E -B12 -A40 'Ingest|ingest|adaptive|Adaptive|recommend|Recommendation|ERROR|Error|500|QueryFailed|RangeError|TypeError|catalog|Catalog|No item catalog|local player|Local player' \
             || true
+
+          echo '=== Recent nginx errors ==='
+          sudo tail -n 300 /var/log/nginx/error.log 2>/dev/null || true
