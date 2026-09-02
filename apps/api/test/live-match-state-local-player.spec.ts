@@ -124,4 +124,144 @@ describe('LiveMatchStateService local Deadlock player resolution', () => {
       },
     ]);
   });
+
+  it('attaches local items by unique player name when the items suffix differs from the roster suffix', () => {
+    const service = new LiveMatchStateService();
+
+    service.applyBatch({
+      clientId: 'test-client',
+      events: [
+        {
+          receivedAt: 1,
+          source: 'onInfoUpdates2',
+          feature: 'game_info',
+          category: 'game_info',
+          key: 'steam_id',
+          payload: '76561198000000001',
+        },
+        {
+          receivedAt: 2,
+          source: 'onInfoUpdates2',
+          feature: 'match_info',
+          category: 'match_info',
+          key: 'match_id',
+          payload: '42',
+        },
+        {
+          receivedAt: 3,
+          source: 'onInfoUpdates2',
+          feature: 'match_info',
+          category: 'match_info',
+          key: 'roster_11',
+          payload: {
+            steam_id: '',
+            player_name: 'Local Player',
+            is_local: true,
+            hero_id: 76,
+            team_id: 2,
+          },
+        },
+      ],
+    });
+
+    service.applyBatch({
+      clientId: 'test-client',
+      events: [
+        {
+          receivedAt: 4,
+          source: 'onInfoUpdates2',
+          feature: 'match_info',
+          category: 'match_info',
+          key: 'items_3',
+          payload: {
+            steam_id: '',
+            player_name: 'Local Player',
+            items: [
+              {
+                id: 3862866912,
+                name: 'Restorative Shot',
+                class_name: 'restorative_shot',
+                enhanced: false,
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(service.getState('42')?.playersBySteamId['76561198000000001']?.items).toEqual([
+      {
+        id: 3862866912,
+        name: 'Restorative Shot',
+        className: 'restorative_shot',
+        enhanced: false,
+        firstSeenAtSec: undefined,
+      },
+    ]);
+  });
+
+  it('does not bind blank inventory by player name when the name is ambiguous', () => {
+    const service = new LiveMatchStateService();
+
+    service.applyBatch({
+      clientId: 'test-client',
+      events: [
+        {
+          receivedAt: 1,
+          source: 'onInfoUpdates2',
+          feature: 'match_info',
+          category: 'match_info',
+          key: 'match_id',
+          payload: '42',
+        },
+        {
+          receivedAt: 2,
+          source: 'onInfoUpdates2',
+          feature: 'match_info',
+          category: 'match_info',
+          key: 'roster_1',
+          payload: {
+            steam_id: '111',
+            player_name: 'Duplicate',
+            hero_id: 1,
+            team_id: 2,
+          },
+        },
+        {
+          receivedAt: 3,
+          source: 'onInfoUpdates2',
+          feature: 'match_info',
+          category: 'match_info',
+          key: 'roster_2',
+          payload: {
+            steam_id: '222',
+            player_name: 'Duplicate',
+            hero_id: 2,
+            team_id: 3,
+          },
+        },
+      ],
+    });
+
+    service.applyBatch({
+      clientId: 'test-client',
+      events: [
+        {
+          receivedAt: 4,
+          source: 'onInfoUpdates2',
+          feature: 'match_info',
+          category: 'match_info',
+          key: 'items_9',
+          payload: {
+            steam_id: '',
+            player_name: 'Duplicate',
+            items: [{ id: 123, name: 'Test Item', class_name: 'test_item' }],
+          },
+        },
+      ],
+    });
+
+    expect(service.getState('42')?.playersBySteamId['111']?.items).toEqual([]);
+    expect(service.getState('42')?.playersBySteamId['222']?.items).toEqual([]);
+  });
 });
