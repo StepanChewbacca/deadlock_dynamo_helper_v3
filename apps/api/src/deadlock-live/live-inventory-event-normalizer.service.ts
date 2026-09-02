@@ -17,11 +17,14 @@ const UINT32_MODULUS = 0x100000000;
 export class LiveInventoryEventNormalizerService {
   private readonly metadataByItemId = new Map<number, LiveItemMetadata>();
   private readonly steamIdByClientAndRosterSlot = new Map<string, Map<string, string>>();
+  private readonly steamIdsByClientAndPlayerName = new Map<string, Map<string, Set<string>>>();
+  private readonly localSteamIdByClientId = new Map<string, string>();
   private readonly matchIdByClientId = new Map<string, string>();
 
   normalizeBatch(batch: OverwolfLiveBatchDto): OverwolfLiveBatchDto {
-    this.resetRosterSlotsWhenMatchChanges(batch);
-    this.captureRosterSlots(batch.clientId, batch.events);
+    this.resetRosterIdentityWhenMatchChanges(batch);
+    this.captureLocalSteamId(batch.clientId, batch.events);
+    this.captureRosterIdentities(batch.clientId, batch.events);
 
     return {
       ...batch,
@@ -29,19 +32,58 @@ export class LiveInventoryEventNormalizerService {
     };
   }
 
-  private captureRosterSlots(
+  private captureLocalSteamId(
+    clientId: string,
+    events: readonly OverwolfLiveEventDto[],
+  ): void {
+    for (const event of events) {
+      if (event.key !== 'steam_id') {
+        continue;
+      }
+
+      const steamId = readSteamId(event.payload);
+      if (steamId && steamId !== '0') {
+        this.localSteamIdByClientId.set(clientId, steamId);
+        return;
+      }
+    }
+  }
+
+  private captureRosterIdentities(
     clientId: string,
     events: readonly OverwolfLiveEventDto[],
   ): void {
     const rosterSlots = this.getRosterSlots(clientId);
+    const steamIdsByPlayerName = this.getSteamIdsByPlayerName(clientId);
+    const localSteamId = this.localSteamIdByClientId.get(clientId);
+
     for (const event of events) {
       if (!event.key?.startsWith('roster_') || !isRecord(event.payload)) {
         continue;
       }
-      const steamId = readSteamId(event.payload.steam_id ?? event.payload.steamId);
-      if (steamId) {
-        rosterSlots.set(event.key, steamId);
+
+      const directSteamId = readSteamId(event.payload.steam_id ?? event.payload.steamId);
+      const isLocal = readBoolean(event.payload.is_local ?? event.payload.isLocal);
+      const resolvedSteamId =
+        directSteamId && directSteamId !== '0'
+          ? directSteamId
+          : isLocal && localSteamId
+            ? localSteamId
+            : directSteamId;
+
+      if (resolvedSteamId) {
+        rosterSlots.set(event.key, resolvedSteamId);
       }
+
+      const playerName = readString(event.payload.player_name ?? event.payload.playerName);
+      if (!playerName || !resolvedSteamId || resolvedSteamId === '0') {
+        continue;
+      }
+
+      const nameKey = normalizePlayerName(playerName);
+      const existing = steamIdsByPlayerName.get(nameKey) ?? new Set<string>();
+      existing.add(resolvedSteamId);
+      steamIdsByPlayerName.set(nameKey, existing);
     }
   }
 
@@ -60,8 +102,11 @@ export class LiveInventoryEventNormalizerService {
     const rosterSlot = event.key.startsWith('items_')
       ? `roster_${event.key.slice('items_'.length)}`
       : undefined;
-    const steamId = readSteamId(event.payload.steam_id ?? event.payload.steamId)
-      ?? (rosterSlot ? this.getRosterSlots(clientId).get(rosterSlot) : undefined);
+    const directSteamId = readSteamId(event.payload.steam_id ?? event.payload.steamId);
+    const playerName = readString(event.payload.player_name ?? event.payload.playerName);
+    const steamId = directSteamId
+      ?? (rosterSlot ? this.getRosterSlots(clientId).get(rosterSlot) : undefined)
+      ?? this.resolveUniqueSteamIdByPlayerName(clientId, playerName);
     const items = event.payload.items
       .map((item) => this.normalizeItem(item))
       .filter((item): item is Record<string, unknown> => item !== undefined);
@@ -76,7 +121,25 @@ export class LiveInventoryEventNormalizerService {
     };
   }
 
-  private resetRosterSlotsWhenMatchChanges(batch: OverwolfLiveBatchDto): void {
+  private resolveUniqueSteamIdByPlayerName(
+    clientId: string,
+    playerName: string | undefined,
+  ): string | undefined {
+    if (!playerName) {
+      return undefined;
+    }
+
+    const candidates = this.getSteamIdsByPlayerName(clientId).get(
+      normalizePlayerName(playerName),
+    );
+    if (!candidates || candidates.size !== 1) {
+      return undefined;
+    }
+
+    return candidates.values().next().value;
+  }
+
+  private resetRosterIdentityWhenMatchChanges(batch: OverwolfLiveBatchDto): void {
     const matchId = extractMatchId(batch.events);
     if (!matchId) {
       return;
@@ -85,6 +148,7 @@ export class LiveInventoryEventNormalizerService {
     const previousMatchId = this.matchIdByClientId.get(batch.clientId);
     if (previousMatchId && previousMatchId !== matchId) {
       this.steamIdByClientAndRosterSlot.delete(batch.clientId);
+      this.steamIdsByClientAndPlayerName.delete(batch.clientId);
     }
     this.matchIdByClientId.set(batch.clientId, matchId);
   }
@@ -97,6 +161,17 @@ export class LiveInventoryEventNormalizerService {
 
     const created = new Map<string, string>();
     this.steamIdByClientAndRosterSlot.set(clientId, created);
+    return created;
+  }
+
+  private getSteamIdsByPlayerName(clientId: string): Map<string, Set<string>> {
+    const existing = this.steamIdsByClientAndPlayerName.get(clientId);
+    if (existing) {
+      return existing;
+    }
+
+    const created = new Map<string, Set<string>>();
+    this.steamIdsByClientAndPlayerName.set(clientId, created);
     return created;
   }
 
@@ -144,6 +219,10 @@ function extractMatchId(events: readonly OverwolfLiveEventDto[]): string | undef
     }
   }
   return undefined;
+}
+
+function normalizePlayerName(value: string): string {
+  return value.trim().toLocaleLowerCase();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

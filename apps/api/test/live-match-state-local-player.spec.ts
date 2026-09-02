@@ -1,3 +1,4 @@
+import { LiveInventoryEventNormalizerService } from '../src/deadlock-live/live-inventory-event-normalizer.service';
 import { LiveMatchStateService } from '../src/deadlock-live/live-match-state.service';
 
 describe('LiveMatchStateService local Deadlock player resolution', () => {
@@ -125,15 +126,16 @@ describe('LiveMatchStateService local Deadlock player resolution', () => {
     ]);
   });
 
-  it('attaches local items by unique player name when the items suffix differs from the roster suffix', () => {
+  it('attaches local items through the production normalizer when GEP suffixes differ', () => {
+    const normalizer = new LiveInventoryEventNormalizerService();
     const service = new LiveMatchStateService();
 
-    service.applyBatch({
+    const identityBatch = {
       clientId: 'test-client',
       events: [
         {
           receivedAt: 1,
-          source: 'onInfoUpdates2',
+          source: 'onInfoUpdates2' as const,
           feature: 'game_info',
           category: 'game_info',
           key: 'steam_id',
@@ -141,7 +143,7 @@ describe('LiveMatchStateService local Deadlock player resolution', () => {
         },
         {
           receivedAt: 2,
-          source: 'onInfoUpdates2',
+          source: 'onInfoUpdates2' as const,
           feature: 'match_info',
           category: 'match_info',
           key: 'match_id',
@@ -149,7 +151,7 @@ describe('LiveMatchStateService local Deadlock player resolution', () => {
         },
         {
           receivedAt: 3,
-          source: 'onInfoUpdates2',
+          source: 'onInfoUpdates2' as const,
           feature: 'match_info',
           category: 'match_info',
           key: 'roster_11',
@@ -162,14 +164,16 @@ describe('LiveMatchStateService local Deadlock player resolution', () => {
           },
         },
       ],
-    });
+    };
 
-    service.applyBatch({
+    service.applyBatch(normalizer.normalizeBatch(identityBatch));
+
+    const inventoryBatch = {
       clientId: 'test-client',
       events: [
         {
           receivedAt: 4,
-          source: 'onInfoUpdates2',
+          source: 'onInfoUpdates2' as const,
           feature: 'match_info',
           category: 'match_info',
           key: 'items_3',
@@ -178,7 +182,7 @@ describe('LiveMatchStateService local Deadlock player resolution', () => {
             player_name: 'Local Player',
             items: [
               {
-                id: 3862866912,
+                id: -432100384,
                 name: 'Restorative Shot',
                 class_name: 'restorative_shot',
                 enhanced: false,
@@ -187,7 +191,9 @@ describe('LiveMatchStateService local Deadlock player resolution', () => {
           },
         },
       ],
-    });
+    };
+
+    service.applyBatch(normalizer.normalizeBatch(inventoryBatch));
 
     expect(service.getState('42')?.playersBySteamId['76561198000000001']?.items).toEqual([
       {
@@ -201,14 +207,15 @@ describe('LiveMatchStateService local Deadlock player resolution', () => {
   });
 
   it('does not bind blank inventory by player name when the name is ambiguous', () => {
+    const normalizer = new LiveInventoryEventNormalizerService();
     const service = new LiveMatchStateService();
 
-    service.applyBatch({
+    const rosterBatch = {
       clientId: 'test-client',
       events: [
         {
           receivedAt: 1,
-          source: 'onInfoUpdates2',
+          source: 'onInfoUpdates2' as const,
           feature: 'match_info',
           category: 'match_info',
           key: 'match_id',
@@ -216,7 +223,7 @@ describe('LiveMatchStateService local Deadlock player resolution', () => {
         },
         {
           receivedAt: 2,
-          source: 'onInfoUpdates2',
+          source: 'onInfoUpdates2' as const,
           feature: 'match_info',
           category: 'match_info',
           key: 'roster_1',
@@ -229,7 +236,7 @@ describe('LiveMatchStateService local Deadlock player resolution', () => {
         },
         {
           receivedAt: 3,
-          source: 'onInfoUpdates2',
+          source: 'onInfoUpdates2' as const,
           feature: 'match_info',
           category: 'match_info',
           key: 'roster_2',
@@ -241,14 +248,16 @@ describe('LiveMatchStateService local Deadlock player resolution', () => {
           },
         },
       ],
-    });
+    };
 
-    service.applyBatch({
+    service.applyBatch(normalizer.normalizeBatch(rosterBatch));
+
+    const inventoryBatch = {
       clientId: 'test-client',
       events: [
         {
           receivedAt: 4,
-          source: 'onInfoUpdates2',
+          source: 'onInfoUpdates2' as const,
           feature: 'match_info',
           category: 'match_info',
           key: 'items_9',
@@ -259,7 +268,9 @@ describe('LiveMatchStateService local Deadlock player resolution', () => {
           },
         },
       ],
-    });
+    };
+
+    service.applyBatch(normalizer.normalizeBatch(inventoryBatch));
 
     expect(service.getState('42')?.playersBySteamId['111']?.items).toEqual([]);
     expect(service.getState('42')?.playersBySteamId['222']?.items).toEqual([]);
