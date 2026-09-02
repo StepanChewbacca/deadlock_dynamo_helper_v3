@@ -2,43 +2,127 @@ name: Adaptive Production Debug
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - agent/live-inventory-evidence
+    paths:
+      - .github/workflows/adaptive-production-debug.yml
 
 permissions:
   contents: read
+
+concurrency:
+  group: adaptive-production-debug
+  cancel-in-progress: true
 
 jobs:
   debug:
     runs-on: self-hosted
     timeout-minutes: 10
     steps:
-      - name: Capture adaptive production evidence
+      - name: Capture live inventory evidence
         shell: bash
         run: |
           set -euo pipefail
+
+          echo '=== Production revision ==='
           cd /home/ubuntu/apps/deadlock_dynamo_helper
-
-          echo '=== Compose services ==='
-          sudo docker compose ps
-
-          echo '=== API container ==='
           container_id="$(sudo docker compose ps -q api)"
-          echo "container_id=$container_id"
-          sudo docker inspect --format='image={{.Image}} name={{.Name}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}} restart_count={{.RestartCount}}' "$container_id"
+          sudo docker inspect --format='health={{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}} restart_count={{.RestartCount}}' "$container_id"
           sudo docker image inspect "$(sudo docker inspect --format='{{.Image}}' "$container_id")" --format='revision={{index .Config.Labels "org.opencontainers.image.revision"}}' || true
 
-          echo '=== Disk ==='
-          df -h /
-          df -i /
-          sudo docker system df || true
+          echo '=== Live state and raw GEP evidence ==='
+          python3 - <<'PY'
+          import json
+          import urllib.request
 
-          echo '=== Adaptive status ==='
-          curl --fail-with-body --show-error --silent http://127.0.0.1:3000/deadlock/adaptive/v1/status || true
-          echo
+          BASE = 'http://127.0.0.1:3000'
 
-          echo '=== Recent API logs ==='
-          sudo docker compose logs --since=60m --tail=4000 api 2>&1 \
-            | grep -E -B12 -A40 'Ingest|ingest|adaptive|Adaptive|recommend|Recommendation|ERROR|Error|500|QueryFailed|RangeError|TypeError|catalog|Catalog|No item catalog|local player|Local player|ENOSPC|No space left' \
-            || true
+          def get(path):
+              with urllib.request.urlopen(BASE + path, timeout=10) as response:
+                  return json.load(response)
 
-          echo '=== Recent nginx errors ==='
-          sudo tail -n 300 /var/log/nginx/error.log 2>/dev/null || true
+          def masked(value):
+              text = str(value or '')
+              return ('***' + text[-4:]) if text else ''
+
+          states = get('/deadlock/live/states')
+          print('--- STATES ---')
+          state_view = []
+          for match in states if isinstance(states, list) else []:
+              players = []
+              for steam_id, player in (match.get('playersBySteamId') or {}).items():
+                  players.append({
+                      'steamId': masked(steam_id),
+                      'playerName': player.get('playerName'),
+                      'isLocal': player.get('isLocal'),
+                      'heroId': player.get('heroId'),
+                      'teamId': player.get('teamId'),
+                      'souls': player.get('souls'),
+                      'items': [
+                          {
+                              'id': item.get('id'),
+                              'name': item.get('name'),
+                              'className': item.get('className'),
+                          }
+                          for item in (player.get('items') or [])
+                      ],
+                  })
+              state_view.append({
+                  'matchId': match.get('matchId'),
+                  'gameTimeSec': match.get('gameTimeSec'),
+                  'lastUpdatedAt': match.get('lastUpdatedAt'),
+                  'players': players,
+              })
+          print(json.dumps(state_view, ensure_ascii=False, indent=2))
+
+          events = get('/deadlock/live/events/recent')
+          print('--- RAW RELEVANT EVENTS ---')
+          relevant = []
+          for event in events if isinstance(events, list) else []:
+              key = str(event.get('key') or '')
+              if key not in {'match_id', 'steam_id'} and not key.startswith('roster_') and not key.startswith('items_'):
+                  continue
+              payload = event.get('payload')
+              payload_view = payload
+              if isinstance(payload, dict):
+                  payload_view = {
+                      'steam_id': masked(payload.get('steam_id') or payload.get('steamId')),
+                      'player_name': payload.get('player_name') or payload.get('playerName'),
+                      'is_local': payload.get('is_local') if 'is_local' in payload else payload.get('isLocal'),
+                      'hero_id': payload.get('hero_id') or payload.get('heroId'),
+                      'team_id': payload.get('team_id') or payload.get('teamId'),
+                      'items': [
+                          {
+                              'id': item.get('id') if isinstance(item, dict) else None,
+                              'item_id': item.get('item_id') if isinstance(item, dict) else None,
+                              'name': item.get('name') if isinstance(item, dict) else None,
+                              'class_name': item.get('class_name') if isinstance(item, dict) else None,
+                          }
+                          for item in (payload.get('items') or [])
+                      ] if isinstance(payload.get('items'), list) else None,
+                  }
+              relevant.append({
+                  'receivedAt': event.get('receivedAt'),
+                  'source': event.get('source'),
+                  'feature': event.get('feature'),
+                  'category': event.get('category'),
+                  'key': key,
+                  'matchId': event.get('matchId'),
+                  'payload': payload_view,
+              })
+          print(json.dumps(relevant[-120:], ensure_ascii=False, indent=2))
+          PY
+
+          echo '=== Raw event log inventory tail ==='
+          sudo find /home/ubuntu/apps/deadlock_dynamo_helper/storage/deadlock-live -maxdepth 1 -type f -name '*.ndjson' -printf '%T@ %p\n' 2>/dev/null \
+            | sort -nr \
+            | head -n 2 \
+            | cut -d' ' -f2- \
+            | while read -r file; do
+                echo "--- $file ---"
+                sudo tail -n 120 "$file" \
+                  | grep -E '"key":"(items_|roster_|steam_id|match_id)' \
+                  | tail -n 80 \
+                  || true
+              done
