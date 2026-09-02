@@ -17,6 +17,14 @@ const REQUIRED_NEW_TABLES = [
   'recommendation_item_catalog_recipes_v1',
 ] as const;
 
+const PREEXISTING_MIGRATIONS = [
+  [1783785600000, 'InitialSchemaAndRawMetadata1783785600000'],
+  [1783828800000, 'AddCatalogResolutionFields1783828800000'],
+  [1783915200000, 'AddMetadataNormalizationFields1783915200000'],
+  [1784088000000, 'DeduplicateItemCatalogContent1784088000000'],
+  [1784937600000, 'PreserveRecipeComponentMultiplicity1784937600000'],
+] as const;
+
 const integrationDescribe =
   process.env.DB_MIGRATION_INTEGRATION === 'true' ? describe : describe.skip;
 
@@ -54,6 +62,20 @@ integrationDescribe('production database migration integration', () => {
     await client.query("INSERT INTO item_catalog_versions VALUES (1, 'legacy-version')");
     await client.query("INSERT INTO item_catalog_items VALUES (1, 'legacy-item')");
     await client.query("INSERT INTO item_catalog_recipes VALUES (1, 'legacy-recipe')");
+
+    await client.query(`
+      CREATE TABLE migrations (
+        id SERIAL PRIMARY KEY,
+        timestamp bigint NOT NULL,
+        name varchar NOT NULL
+      )
+    `);
+    for (const [timestamp, name] of PREEXISTING_MIGRATIONS) {
+      await client.query(
+        'INSERT INTO migrations (timestamp, name) VALUES ($1, $2)',
+        [timestamp, name],
+      );
+    }
     await client.end();
 
     const imported = await import('../src/database/data-source');
