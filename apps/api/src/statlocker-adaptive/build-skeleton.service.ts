@@ -78,15 +78,6 @@ export class BuildSkeletonService {
     const skeleton = deriveSkeleton(input.heroId, profileSnapshots.map((entry) => entry.payload));
     const contentSha256 = createHash('sha256').update(stableJson(skeleton)).digest('hex');
     const scopeKey = `hero:${input.heroId}:consensus`;
-    const existing = this.store.getActive({
-      dataset: 'CONSENSUS_SKELETON',
-      rulesetVersion: input.rulesetVersion,
-      catalogSha256: input.catalogSha256,
-      statlockerPatchId: input.statlockerPatchId,
-      scopeKey,
-    });
-    if (existing?.contentSha256 === contentSha256) return skeleton;
-
     const fetchedAt = newestDate([
       leaderboardSnapshot?.fetchedAt,
       ...profileSnapshots.map((entry) => entry.fetchedAt),
