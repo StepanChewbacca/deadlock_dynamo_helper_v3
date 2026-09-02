@@ -6,7 +6,12 @@ const identity = {
   catalogSha256: 'a'.repeat(64),
 };
 
-function createHarness() {
+const EXPECTED_STATLOCKER_HERO_POOL = [
+  1, 2, 3, 4, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+  25, 27, 31, 35, 50, 52, 58, 60, 63, 64, 65, 66, 67, 69, 72, 76, 77, 79, 80, 81,
+] as const;
+
+function createHarness(options: { observeIdentity?: boolean } = {}) {
   let releaseCollector: (() => void) | undefined;
   let publishSequence = 0;
   const block = { enabled: false };
@@ -39,20 +44,29 @@ function createHarness() {
     normalizeWpaPatchData: jest.fn(() => ({ dataset: 'WPA_PATCH_DATA', scopeKey: 'patch:15-1', statlockerPatchId: '15-1', contentSha256: '1'.repeat(64), payload: { patchId: '15-1', items: [] } })),
     normalizeVsHeroWpa: jest.fn(() => ({ dataset: 'VS_HERO_WPA', scopeKey: 'global', statlockerPatchId: '15-1', contentSha256: '2'.repeat(64), payload: { slices: [] } })),
     normalizeT4Chains: jest.fn(() => ({ dataset: 'T4_CHAINS', scopeKey: 'global', statlockerPatchId: '15-1', contentSha256: '3'.repeat(64), payload: { chains: [] } })),
-    normalizeHeroLeaderboard: jest.fn(() => ({
+    normalizeHeroLeaderboard: jest.fn((_: unknown, __: string, heroId: number) => ({
       dataset: 'HERO_LEADERBOARD',
-      scopeKey: 'hero:10',
+      scopeKey: `hero:${heroId}`,
       statlockerPatchId: '15-1',
-      contentSha256: '4'.repeat(64),
-      payload: { heroId: 10, profiles: [{ accountId: '101', heroId: 10, rank: 1 }] },
+      contentSha256: `${heroId}`.padStart(64, '0').slice(-64),
+      payload: { heroId, profiles: [{ accountId: '101', heroId, rank: 1 }] },
     })),
-    normalizeProBuildAnalysis: jest.fn(() => ({ dataset: 'PRO_BUILD_ANALYSIS', scopeKey: 'hero:10:account:101', statlockerPatchId: '15-1', contentSha256: '5'.repeat(64), payload: { accountId: '101', heroId: 10, items: [] } })),
+    normalizeProBuildAnalysis: jest.fn((_: unknown, __: string, accountId: string, heroId: number) => ({
+      dataset: 'PRO_BUILD_ANALYSIS',
+      scopeKey: `hero:${heroId}:account:${accountId}`,
+      statlockerPatchId: '15-1',
+      contentSha256: `${heroId}${accountId}`.padStart(64, '0').slice(-64),
+      payload: { accountId, heroId, items: [] },
+    })),
   };
   const active = new Map<string, any>();
   const publish = jest.fn(async (input: any): Promise<any> => {
     const key = [input.dataset, input.rulesetVersion, input.catalogSha256, input.statlockerPatchId, input.scopeKey].join('|');
     const current = active.get(key);
-    if (current?.contentSha256 === input.contentSha256) return current;
+    if (current?.contentSha256 === input.contentSha256) {
+      current.fetchedAt = input.fetchedAt;
+      return current;
+    }
     publishSequence += 1;
     const saved: any = { ...input, snapshotId: `snapshot-${publishSequence}` };
     active.set(key, saved);
@@ -67,11 +81,26 @@ function createHarness() {
       lookup.statlockerPatchId,
       lookup.scopeKey,
     ].join('|'))),
+    listActive: jest.fn(() => [...active.values()]),
   };
-  const service = new StatlockerRefreshService(collector as any, normalizer as any, store);
-  service.observeGameIdentity(identity, 1_000);
+  const versionRepo = {
+    find: jest.fn().mockResolvedValue([{
+      rulesetKey: identity.rulesetVersion,
+      payloadSha256: identity.catalogSha256,
+      importedAt: new Date('2026-09-01T00:00:00.000Z'),
+      catalogVersionId: 'catalog-a',
+    }]),
+  };
+  const service = new (StatlockerRefreshService as any)(
+    collector,
+    normalizer,
+    store,
+    undefined,
+    versionRepo,
+  ) as StatlockerRefreshService;
+  if (options.observeIdentity !== false) service.observeGameIdentity(identity, 1_000);
 
-  return { service, collector, normalizer, store, active, block, release: () => releaseCollector?.() };
+  return { service, collector, normalizer, store, active, versionRepo, block, release: () => releaseCollector?.() };
 }
 
 describe('StatlockerRefreshService', () => {
@@ -110,11 +139,59 @@ describe('StatlockerRefreshService', () => {
     h.release();
   });
 
-  it('does not publish duplicate normalized content twice', async () => {
+  it('keeps duplicate normalized content on the same active snapshots', async () => {
     const h = createHarness();
     await h.service.refreshGlobalNow(true, 1_000);
-    const publishesAfterFirst = h.store.publish.mock.calls.length;
+    const snapshotIdsAfterFirst = [...h.active.values()].map((entry) => entry.snapshotId).sort();
+
     await h.service.refreshGlobalNow(true, 2_000);
-    expect(h.store.publish.mock.calls.length).toBe(publishesAfterFirst);
+
+    expect([...h.active.values()].map((entry) => entry.snapshotId).sort()).toEqual(snapshotIdsAfterFirst);
+  });
+
+  it('walks the complete current Statlocker hero pool without active-player observations', async () => {
+    const h = createHarness();
+    const startMs = Date.parse('2026-09-01T00:00:00.000Z');
+
+    for (let index = 0; index < EXPECTED_STATLOCKER_HERO_POOL.length; index += 1) {
+      await h.service.scheduledTick(startMs + index * 60_000);
+    }
+
+    const leaderboardHeroIds = h.collector.collectBatch.mock.calls
+      .flatMap(([targets]) => targets)
+      .filter((target: any) => target.dataset === 'HERO_LEADERBOARD')
+      .map((target: any) => target.heroId);
+
+    expect(leaderboardHeroIds).toEqual(EXPECTED_STATLOCKER_HERO_POOL);
+  });
+
+  it('refreshes hero data before the two-day freshness deadline', async () => {
+    const h = createHarness();
+    const startMs = Date.parse('2026-09-01T00:00:00.000Z');
+    await h.service.refreshHeroNow(6, false, startMs);
+    h.collector.collectBatch.mockClear();
+
+    await h.service.refreshHeroNow(6, false, startMs + (35 * 60 * 60_000));
+    expect(h.collector.collectBatch).not.toHaveBeenCalled();
+
+    await h.service.refreshHeroNow(6, false, startMs + (37 * 60 * 60_000));
+    expect(h.collector.collectBatch).toHaveBeenCalled();
+  });
+
+  it('bootstraps collection identity from the latest serving catalog when no recommendation was served', async () => {
+    const h = createHarness({ observeIdentity: false });
+    const nowMs = Date.parse('2026-09-01T00:00:00.000Z');
+
+    await h.service.scheduledTick(nowMs);
+
+    expect(h.versionRepo.find).toHaveBeenCalledWith({
+      order: { importedAt: 'DESC', catalogVersionId: 'DESC' },
+      take: 1,
+    });
+    expect(h.service.getStatus().identity).toEqual(identity);
+    const leaderboardTargets = h.collector.collectBatch.mock.calls
+      .flatMap(([targets]) => targets)
+      .filter((target: any) => target.dataset === 'HERO_LEADERBOARD');
+    expect(leaderboardTargets).toHaveLength(1);
   });
 });
