@@ -14,19 +14,40 @@ export class LiveMatchStateService {
   private readonly maxSnapshotsPerMatch = 120;
   private readonly states = new Map<string, MinimalMatchState>();
   private readonly clientMatchIds = new Map<string, string>();
+  private readonly clientLocalSteamIds = new Map<string, string>();
+  private readonly clientLocalRosterSlots = new Map<string, string>();
   private readonly snapshots = new Map<string, MinimalMatchSnapshot[]>();
 
   applyBatch(batch: OverwolfLiveBatchDto): MinimalMatchState | undefined {
     const extractedMatchId = this.extractMatchId(batch.events);
+    const extractedLocalSteamId = this.extractLocalSteamId(batch.events);
     const previousMatchId = this.clientMatchIds.get(batch.clientId);
     const currentMatchId = extractedMatchId ?? previousMatchId ?? 'unknown';
     const state = this.getOrCreateState(currentMatchId, previousMatchId, extractedMatchId);
 
+    if (
+      previousMatchId &&
+      previousMatchId !== 'unknown' &&
+      extractedMatchId &&
+      previousMatchId !== extractedMatchId
+    ) {
+      this.clientLocalRosterSlots.delete(batch.clientId);
+    }
+    if (extractedLocalSteamId) {
+      this.clientLocalSteamIds.set(batch.clientId, extractedLocalSteamId);
+    }
+
+    const localSteamId = extractedLocalSteamId ?? this.clientLocalSteamIds.get(batch.clientId);
     this.clientMatchIds.set(batch.clientId, currentMatchId);
 
     let shouldSnapshot = false;
     for (const event of batch.events) {
-      shouldSnapshot = this.applyEvent(state, event) || shouldSnapshot;
+      shouldSnapshot = this.applyEvent(
+        state,
+        event,
+        batch.clientId,
+        localSteamId,
+      ) || shouldSnapshot;
     }
 
     state.lastUpdatedAt = new Date().toISOString();
@@ -117,7 +138,12 @@ export class LiveMatchStateService {
     return mergedPlayers;
   }
 
-  private applyEvent(state: MinimalMatchState, event: OverwolfLiveEventDto): boolean {
+  private applyEvent(
+    state: MinimalMatchState,
+    event: OverwolfLiveEventDto,
+    clientId: string,
+    localSteamId?: string,
+  ): boolean {
     if (event.key === 'match_clock') {
       const seconds = this.parseClockSeconds(event.payload);
       if (seconds !== undefined) {
@@ -127,12 +153,12 @@ export class LiveMatchStateService {
     }
 
     if (event.key?.startsWith('roster')) {
-      this.applyRosterPayload(state, event.payload, event.key);
+      this.applyRosterPayload(state, event.payload, event.key, clientId, localSteamId);
       return false;
     }
 
     if (event.key?.startsWith('items')) {
-      return this.applyItemsPayload(state, event.payload, event.key);
+      return this.applyItemsPayload(state, event.payload, event.key, clientId, localSteamId);
     }
 
     return false;
@@ -153,6 +179,21 @@ export class LiveMatchStateService {
         if (payloadMatchId) {
           return payloadMatchId;
         }
+      }
+    }
+
+    return undefined;
+  }
+
+  private extractLocalSteamId(events: OverwolfLiveEventDto[]): string | undefined {
+    for (const event of events) {
+      if (event.key !== 'steam_id') {
+        continue;
+      }
+
+      const steamId = this.getScalarString(event.payload);
+      if (steamId && steamId !== '0') {
+        return steamId;
       }
     }
 
@@ -182,12 +223,14 @@ export class LiveMatchStateService {
     state: MinimalMatchState,
     payload: unknown,
     eventKey: string,
+    clientId: string,
+    localSteamId?: string,
   ): void {
     if (!this.isRecord(payload)) {
       return;
     }
 
-    const playerKey = this.resolvePlayerKey(payload, eventKey);
+    const playerKey = this.resolvePlayerKey(payload, eventKey, clientId, localSteamId);
     if (!playerKey) {
       return;
     }
@@ -273,12 +316,14 @@ export class LiveMatchStateService {
     state: MinimalMatchState,
     payload: unknown,
     eventKey: string,
+    clientId: string,
+    localSteamId?: string,
   ): boolean {
     if (!this.isRecord(payload)) {
       return false;
     }
 
-    const playerKey = this.resolvePlayerKey(payload, eventKey);
+    const playerKey = this.resolvePlayerKey(payload, eventKey, clientId, localSteamId);
     if (!playerKey) {
       return false;
     }
@@ -321,21 +366,39 @@ export class LiveMatchStateService {
   private resolvePlayerKey(
     payload: Record<string, unknown>,
     eventKey: string,
+    clientId: string,
+    localSteamId?: string,
   ): string | undefined {
     const steamId = this.getStringValue(payload, 'steam_id');
+    const rosterSlot = this.rosterSlotForEvent(eventKey);
+    const isLocal =
+      this.getBooleanValue(payload, 'is_local') ||
+      this.getBooleanValue(payload, 'isLocal');
+
+    if (isLocal && rosterSlot) {
+      this.clientLocalRosterSlots.set(clientId, rosterSlot);
+    }
+
+    if (steamId && steamId !== '0') {
+      return steamId;
+    }
+
+    if (isLocal && localSteamId) {
+      return localSteamId;
+    }
+
+    if (
+      rosterSlot &&
+      this.clientLocalRosterSlots.get(clientId) === rosterSlot &&
+      localSteamId
+    ) {
+      return localSteamId;
+    }
+
     if (!steamId) {
       return undefined;
     }
 
-    if (steamId !== '0') {
-      return steamId;
-    }
-
-    const rosterSlot = eventKey.startsWith('roster_')
-      ? eventKey
-      : eventKey.startsWith('items_')
-        ? `roster_${eventKey.slice('items_'.length)}`
-        : undefined;
     if (rosterSlot) {
       return `bot:${rosterSlot}`;
     }
@@ -347,6 +410,16 @@ export class LiveMatchStateService {
     const heroId = this.getNumericValue(payload, 'hero_id') ?? 'unknown';
     const playerName = this.getStringValue(payload, 'player_name') ?? 'unknown';
     return `bot:${teamId}:${heroId}:${playerName}`;
+  }
+
+  private rosterSlotForEvent(eventKey: string): string | undefined {
+    if (eventKey.startsWith('roster_')) {
+      return eventKey;
+    }
+    if (eventKey.startsWith('items_')) {
+      return `roster_${eventKey.slice('items_'.length)}`;
+    }
+    return undefined;
   }
 
   private captureSnapshotIfNeeded(state: MinimalMatchState, force: boolean): void {
@@ -418,6 +491,17 @@ export class LiveMatchStateService {
     };
     state.playersBySteamId[steamId] = created;
     return created;
+  }
+
+  private getScalarString(value: unknown): string | undefined {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+    if (typeof value !== 'string') {
+      return undefined;
+    }
+    const trimmed = value.trim();
+    return trimmed || undefined;
   }
 
   private getStringValue(
