@@ -59,14 +59,20 @@ interface FreshnessPolicyV1 {
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+const FRESH_EVIDENCE_AGE_MS = 2 * DAY;
+const MAX_STALE_EVIDENCE_AGE_MS = 4 * DAY;
 const POLICIES: Record<AdaptiveScoringDatasetV1, FreshnessPolicyV1> = {
-  WPA_PATCH_DATA: { refreshAfterMs: 30 * MINUTE, maxStaleAgeMs: 4 * HOUR },
-  VS_HERO_WPA: { refreshAfterMs: 30 * MINUTE, maxStaleAgeMs: 4 * HOUR },
-  T4_CHAINS: { refreshAfterMs: 30 * MINUTE, maxStaleAgeMs: 4 * HOUR },
-  CONSENSUS_SKELETON: { refreshAfterMs: 60 * MINUTE, maxStaleAgeMs: 12 * HOUR },
-  WPA_FILTERED_ITEMS: { refreshAfterMs: 30 * MINUTE, maxStaleAgeMs: 4 * HOUR },
+  WPA_PATCH_DATA: { refreshAfterMs: FRESH_EVIDENCE_AGE_MS, maxStaleAgeMs: MAX_STALE_EVIDENCE_AGE_MS },
+  VS_HERO_WPA: { refreshAfterMs: FRESH_EVIDENCE_AGE_MS, maxStaleAgeMs: MAX_STALE_EVIDENCE_AGE_MS },
+  T4_CHAINS: { refreshAfterMs: FRESH_EVIDENCE_AGE_MS, maxStaleAgeMs: MAX_STALE_EVIDENCE_AGE_MS },
+  CONSENSUS_SKELETON: { refreshAfterMs: FRESH_EVIDENCE_AGE_MS, maxStaleAgeMs: MAX_STALE_EVIDENCE_AGE_MS },
+  WPA_FILTERED_ITEMS: { refreshAfterMs: FRESH_EVIDENCE_AGE_MS, maxStaleAgeMs: MAX_STALE_EVIDENCE_AGE_MS },
 };
-const PROFILE_POLICY: FreshnessPolicyV1 = { refreshAfterMs: HOUR, maxStaleAgeMs: 12 * HOUR };
+const PROFILE_POLICY: FreshnessPolicyV1 = {
+  refreshAfterMs: FRESH_EVIDENCE_AGE_MS,
+  maxStaleAgeMs: MAX_STALE_EVIDENCE_AGE_MS,
+};
 
 const DATASET_ORDER: readonly AdaptiveScoringDatasetV1[] = [
   'WPA_PATCH_DATA',

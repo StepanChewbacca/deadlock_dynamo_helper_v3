@@ -66,7 +66,11 @@ function createStore(profileCount = 10) {
       lookup.statlockerPatchId,
       lookup.scopeKey,
     ].join('|'))),
-    publish: jest.fn(async (input: any) => ({ ...input, snapshotId: 'consensus-new' })),
+    publish: jest.fn(async (input: any) => {
+      const saved = { ...input, snapshotId: 'consensus-new' };
+      snapshots.set(key(input.dataset, input.scopeKey), saved);
+      return saved;
+    }),
   };
   return { store, catalogSha256 };
 }
@@ -91,6 +95,23 @@ describe('BuildSkeletonService', () => {
     expect(result?.items[0].strength).toBeGreaterThan(result?.items[1].strength ?? 0);
     expect(result?.items[1].strength).toBeGreaterThan(result?.items[2].strength ?? 0);
     expect(result?.items[0].medianBuyTimeS).toBeLessThan(result?.items[1].medianBuyTimeS ?? 0);
+    expect(h.store.publish).toHaveBeenCalledTimes(1);
+  });
+
+  it('republishes unchanged consensus observations so their freshness advances', async () => {
+    const h = createStore(10);
+    const service = new BuildSkeletonService(h.store as any);
+    const input = {
+      heroId: 10,
+      rulesetVersion: 'ruleset-a',
+      catalogSha256: h.catalogSha256,
+      statlockerPatchId: '15-1',
+    };
+
+    await service.rebuild(input);
+    h.store.publish.mockClear();
+    await service.rebuild(input);
+
     expect(h.store.publish).toHaveBeenCalledTimes(1);
   });
 
