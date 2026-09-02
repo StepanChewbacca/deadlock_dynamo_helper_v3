@@ -48,6 +48,37 @@ function extractMatchIdFromInfo(info: unknown): string | undefined {
     ?? matchIdFromValue(record.match_info?.matchId);
 }
 
+function isTerminalMatchSnapshot(info: unknown): boolean {
+  if (!info || typeof info !== 'object') {
+    return false;
+  }
+
+  const matchInfo = (info as Record<string, any>).match_info;
+  if (!matchInfo || typeof matchInfo !== 'object') {
+    return false;
+  }
+
+  const matchEnd = parseJsonSafely(matchInfo.match_end);
+  if (
+    matchEnd === true
+    || matchEnd === 1
+    || matchEnd === '1'
+    || (typeof matchEnd === 'string' && matchEnd.trim().toLowerCase() === 'true')
+  ) {
+    return true;
+  }
+
+  const matchState = matchIdFromValue(matchInfo.match_state)?.toLowerCase();
+  if (matchState && ['ended', 'complete', 'completed'].includes(matchState)) {
+    return true;
+  }
+
+  const matchOutcome = matchInfo.match_outcome;
+  return matchOutcome !== undefined
+    && matchOutcome !== null
+    && String(matchOutcome).trim() !== '';
+}
+
 export function listenOverwolfEvents(onEvent: EventCallback): void {
   if (typeof overwolf === 'undefined' || !overwolf.games || !overwolf.games.events) {
     console.warn('Overwolf API is not available; events listener registration skipped.');
@@ -140,6 +171,11 @@ function startStateSafetyPolling(
           (result.success !== true && result.status !== 'success') ||
           !result.res
         ) {
+          return;
+        }
+
+        if (isTerminalMatchSnapshot(result.res)) {
+          matchContext.currentMatchId = undefined;
           return;
         }
 
