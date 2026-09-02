@@ -172,7 +172,12 @@ function previousEvidenceFallback(
   evidence: StatlockerEvidenceBundleV1,
   blockers: ReadonlySet<string>,
 ): AdaptiveRecommendationResultV1 {
-  const targetItemId = firstNextTarget(previous.recommendedBuild) ?? previous.nextTargetItemId;
+  const ownedItemIds = [...fresh.state.inventory.heldByItemId.keys()];
+  const preservedBuild = rebasePlanAgainstOwnedInventory(previous.recommendedBuild, ownedItemIds);
+  const owned = new Set(ownedItemIds);
+  const previousTarget = previous.nextTargetItemId;
+  const targetItemId = firstNextTarget(preservedBuild)
+    ?? (previousTarget !== undefined && !owned.has(previousTarget) ? previousTarget : undefined);
   return {
     ...previous,
     decisionId: fresh.state.decisionId,
@@ -185,6 +190,7 @@ function previousEvidenceFallback(
       reasonCodes: ['STATLOCKER_UNAVAILABLE_PRESERVE_PLAN'],
     },
     nextTargetItemId: targetItemId,
+    recommendedBuild: preservedBuild,
     changes: [],
     rankedImmediateCandidates: [],
     confidence: clamp01(previous.confidence * 0.5),
@@ -289,6 +295,26 @@ function isTransactionAction(action: AdaptiveActionV1): boolean {
 
 function firstNextTarget(build: AdaptiveRecommendationResultV1['recommendedBuild']): number | undefined {
   return build.find((item) => item.status === 'NEXT')?.itemId;
+}
+
+function rebasePlanAgainstOwnedInventory(
+  build: AdaptiveRecommendationResultV1['recommendedBuild'],
+  ownedItemIds: readonly number[],
+): AdaptiveRecommendationResultV1['recommendedBuild'] {
+  const owned = new Set(ownedItemIds);
+  let nextAssigned = false;
+  return build.map((item, index) => {
+    let status: typeof item.status;
+    if (owned.has(item.itemId)) {
+      status = 'OWNED';
+    } else if (!nextAssigned) {
+      status = 'NEXT';
+      nextAssigned = true;
+    } else {
+      status = 'PLANNED';
+    }
+    return { ...item, position: index + 1, status };
+  });
 }
 
 function resultMatchId(decision: AdaptiveDecisionStateV1): string {
