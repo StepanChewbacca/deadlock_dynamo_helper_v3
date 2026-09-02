@@ -152,6 +152,54 @@ describe('AdaptiveBuildPlannerV1Service', () => {
     expect(result.recommendedBuild.map((item) => item.itemId)).toEqual(previous.recommendedBuild.map((item) => item.itemId));
   });
 
+  it('advances NEXT when the previous target is now owned even if hysteresis preserves the plan', () => {
+    const previousResult = {
+      recommendedBuild: [
+        {
+          itemId: 1,
+          position: 1,
+          status: 'NEXT',
+          score: 0.8,
+          confidence: 0.8,
+          skeletonStrength: 0.8,
+          contextualSupport: 0.4,
+          reasonCodes: [],
+        },
+        {
+          itemId: 2,
+          position: 2,
+          status: 'PLANNED',
+          score: 0.7,
+          confidence: 0.7,
+          skeletonStrength: 0.7,
+          contextualSupport: 0.3,
+          reasonCodes: [],
+        },
+      ],
+      totalScore: 100,
+      nextAction: {
+        actionKey: 'HOLD:1',
+        type: 'HOLD',
+        targetItemId: 1,
+        reasonCodes: ['PLAN_HYSTERESIS'],
+      },
+      confidence: 0.8,
+    } as any;
+
+    const result = planner.plan({
+      decision: decision([1], 100),
+      evidence: evidence(),
+      previousResult,
+    });
+
+    expect(result.nextAction.type).toBe('HOLD');
+    expect(result.nextAction.targetItemId).toBe(2);
+    expect(result.recommendedBuild).toEqual([
+      expect.objectContaining({ itemId: 1, position: 1, status: 'OWNED' }),
+      expect.objectContaining({ itemId: 2, position: 2, status: 'NEXT' }),
+    ]);
+  });
+
   it('protects recently purchased inventory from immediate sell or replacement', () => {
     const result = planner.plan({
       decision: decision([1, 2, 3, 4, 5, 6, 7, 8], 5000),
