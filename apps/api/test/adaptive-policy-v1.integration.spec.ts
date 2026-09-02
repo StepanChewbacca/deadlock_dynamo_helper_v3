@@ -257,7 +257,7 @@ async function createFixture() {
     'WPA_PATCH_DATA',
     'patch:15-2',
     { ...wpaPayload, patchId: '15-2' },
-    new Date(Date.now() - 2 * 60 * 60_000),
+    new Date(Date.now() - 49 * 60 * 60_000),
     '15-2',
   );
 
