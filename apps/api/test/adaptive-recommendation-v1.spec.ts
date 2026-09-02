@@ -37,7 +37,7 @@ function inventory(ids: number[] = []) {
   };
 }
 
-function decision(options: { wallet?: number; shop?: 'AVAILABLE' | 'UNKNOWN'; revision?: string } = {}) {
+function decision(options: { wallet?: number; shop?: 'AVAILABLE' | 'UNKNOWN'; revision?: string; owned?: number[] } = {}) {
   const wallet = options.wallet;
   const shop = options.shop ?? 'AVAILABLE';
   const stateRevision = options.revision ?? 'revision-a';
@@ -49,7 +49,7 @@ function decision(options: { wallet?: number; shop?: 'AVAILABLE' | 'UNKNOWN'; re
       gameTimeSec: 700,
       rulesetId: 'ruleset-a',
       heroId: 10,
-      inventory: inventory(),
+      inventory: inventory(options.owned ?? []),
       economy: {
         spendableSouls: wallet === undefined ? unknownFact<number>('test') : observedFact(wallet, 'test'),
         shopOpportunity: shop === 'UNKNOWN' ? unknownFact('test') : observedFact(shop, 'test'),
@@ -184,6 +184,31 @@ describe('AdaptiveRecommendationV1Service', () => {
     expect(['HOLD', 'WAIT', 'CONTINUE_CORE']).toContain(result.nextAction.type);
     expect(result.confidence).toBeLessThan(previous.confidence);
     expect(result.blockers).toContain('STATLOCKER_EVIDENCE_UNAVAILABLE');
+  });
+
+  it('advances the preserved fallback plan when its previous NEXT item is now owned', async () => {
+    const previous = previousResult();
+    previous.recommendedBuild = [
+      { ...previous.recommendedBuild[0], itemId: 1, position: 1, status: 'NEXT' },
+      { ...previous.recommendedBuild[0], itemId: 2, position: 2, status: 'PLANNED' },
+    ];
+    previous.nextAction = { actionKey: 'HOLD', type: 'HOLD', targetItemId: 1, reasonCodes: ['PLAN_HYSTERESIS'] };
+    previous.nextTargetItemId = 1;
+    const current = decision({ wallet: 1000, owned: [1], revision: 'revision-b' });
+    const h = harness({
+      states: [current, current],
+      previous,
+      localEvidence: evidence(false),
+    });
+
+    const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
+
+    expect(result.recommendedBuild).toEqual([
+      expect.objectContaining({ itemId: 1, position: 1, status: 'OWNED' }),
+      expect.objectContaining({ itemId: 2, position: 2, status: 'NEXT' }),
+    ]);
+    expect(result.nextAction.targetItemId).toBe(2);
+    expect(result.nextTargetItemId).toBe(2);
   });
 
   it('returns a safe non-transaction action when no local evidence and no previous plan exist', async () => {

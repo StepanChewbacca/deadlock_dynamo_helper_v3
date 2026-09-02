@@ -57,7 +57,7 @@ describe('adaptive recommendation presentation', () => {
     expect(view.evidenceLabel).toBe('2 fresh Statlocker signals');
   });
 
-  it('shows only a short sorted plan and reports hidden items', () => {
+  it('shows the entire sorted build path without truncating later items', () => {
     const itemIds = [
       3862866912,
       968099481,
@@ -81,9 +81,9 @@ describe('adaptive recommendation presentation', () => {
 
     const view = buildAdaptiveRecommendationPresentation(recommendation({ recommendedBuild }));
 
-    expect(view.plan.items).toHaveLength(6);
-    expect(view.plan.items.map((item) => item.position)).toEqual([1, 2, 3, 4, 5, 6]);
-    expect(view.plan.remainingCount).toBe(2);
+    expect(view.plan.items).toHaveLength(8);
+    expect(view.plan.items.map((item) => item.position)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(view.plan.remainingCount).toBe(0);
     expect(view.plan.items.every((item) => ['Owned', 'Next', 'Planned'].includes(item.statusLabel))).toBe(true);
   });
 
