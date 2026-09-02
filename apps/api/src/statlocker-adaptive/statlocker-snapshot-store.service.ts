@@ -71,7 +71,17 @@ export class StatlockerSnapshotStoreService implements OnModuleInit {
     validatePublishInput(input);
     const key = lookupKey(input);
     const current = this.active.get(key);
-    if (current?.contentSha256 === input.contentSha256) return current;
+    if (current?.contentSha256 === input.contentSha256) {
+      if (input.fetchedAt.getTime() <= current.fetchedAt.getTime()) return current;
+      const refreshed = {
+        ...current,
+        fetchedAt: input.fetchedAt,
+        metadata: input.metadata ?? current.metadata,
+      };
+      const persisted = await this.repository.save(refreshed);
+      this.active.set(key, persisted);
+      return persisted;
+    }
 
     const snapshotId = computeSnapshotId(input);
     let persisted = await this.repository.findOne({ where: { snapshotId } });
