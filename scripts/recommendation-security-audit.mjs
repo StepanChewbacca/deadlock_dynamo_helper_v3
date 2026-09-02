@@ -108,7 +108,7 @@ const trainingConfigDir = path.resolve('training/recommendation_v8/config');
 const behavioralConfigs = new Map();
 for (const name of fs.existsSync(trainingConfigDir) ? fs.readdirSync(trainingConfigDir) : []) {
   if (!name.endsWith('.json')) continue;
-  const config = JSON.parse(fs.readFileSync(path.join(trainingConfigDir, name), 'utf8');
+  const config = JSON.parse(fs.readFileSync(path.join(trainingConfigDir, name), 'utf8'));
   if (config.contractVersion === 'recommendation-value-training-config-v1') {
     if (!Number.isInteger(config.hashDimension) || config.hashDimension < 128) errors.push(`${name}: causal Value hashDimension is invalid`);
     if (!Number.isFinite(config.minActionEffectMae) || config.minActionEffectMae <= 0) errors.push(`${name}: causal Value action-effect gate is invalid`);
