@@ -29,8 +29,8 @@
       .waiting-pulse { width:40px; height:40px; border:1px solid rgba(255,118,88,.32); border-radius:50%; background:radial-gradient(circle,rgba(255,118,88,.28),transparent 66%); box-shadow:0 0 26px rgba(255,118,88,.15); }
       .waiting-title { color:var(--text); font-size:17px; font-weight:650; }
       .waiting-copy { max-width:390px; font-size:11px; line-height:1.5; }
-      #guide-active { display:none; flex:1; min-height:0; flex-direction:column; }
-      #situational-recommendation-panel { display:none; min-height:0; flex-direction:column; gap:8px; }
+      #guide-active { display:none; flex:1; min-height:0; overflow-y:auto; padding-right:2px; flex-direction:column; }
+      #situational-recommendation-panel { display:none; flex:0 0 auto; min-height:0; flex-direction:column; gap:8px; }
       .rec-update-note { display:none; padding:7px 9px; border:1px solid rgba(245,189,100,.22); border-radius:8px; color:#f7cf8e; background:rgba(245,189,100,.08); font-size:9px; }
 
       .primary-card { --slot:var(--accent); padding:12px 13px; border:1px solid var(--line); border-left:3px solid var(--slot); border-radius:11px; background:linear-gradient(135deg,rgba(255,255,255,.065),rgba(255,255,255,.025)); }
