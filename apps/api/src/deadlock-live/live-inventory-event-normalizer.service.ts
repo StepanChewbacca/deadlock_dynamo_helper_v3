@@ -101,7 +101,7 @@ export class LiveInventoryEventNormalizerService {
       return undefined;
     }
 
-    const id = readPositiveInteger(value.id ?? value.item_id ?? value.itemId);
+    const id = readDeadlockItemId(value.id ?? value.item_id ?? value.itemId);
     if (id === undefined) {
       return undefined;
     }
@@ -146,13 +146,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function readPositiveInteger(value: unknown): number | undefined {
+function readDeadlockItemId(value: unknown): number | undefined {
   const parsed = typeof value === 'number'
     ? value
     : typeof value === 'string' && value.trim()
       ? Number(value)
       : Number.NaN;
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+  if (!Number.isSafeInteger(parsed) || parsed === 0) {
+    return undefined;
+  }
+  if (parsed > 0) {
+    return parsed;
+  }
+  if (parsed >= -0x80000000) {
+    return parsed + 0x100000000;
+  }
+  return undefined;
 }
 
 function readSteamId(value: unknown): string | undefined {
