@@ -80,7 +80,8 @@ if (!fs.existsSync(overwolfIndexPath)) {
   if (!overwolfIndexSource.includes('new AdaptiveRecommendationClient')) {
     fail('Overwolf primary entrypoint does not instantiate AdaptiveRecommendationClient');
   }
-  if (!overwolfIndexSource.includes('scheduleAdaptiveRecommendation();')) {
+  const schedulesFromLiveEvent = /if\s*\(\s*!context\.matchEnded\s*&&\s*currentMatchId\s*\)\s*\{\s*scheduleAdaptiveRecommendation\([^;]*\);\s*\}/m.test(overwolfIndexSource);
+  if (!schedulesFromLiveEvent) {
     fail('Overwolf primary recommendation trigger does not schedule adaptive recommendations');
   }
   if (overwolfIndexSource.includes('/deadlock/analysis/recommend')) {
