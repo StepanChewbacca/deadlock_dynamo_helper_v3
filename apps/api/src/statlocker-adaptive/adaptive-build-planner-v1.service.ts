@@ -124,11 +124,12 @@ export class AdaptiveBuildPlannerV1Service {
 
     if (preservePrevious && previous) {
       const wait = bestWaitCandidate(scoredImmediate);
+      const preservedBuild = rebasePlanAgainstOwnedInventory(previous.recommendedBuild, ownedItemIds);
       return {
         gameState,
-        nextAction: semanticNoTransactionAction('HOLD', wait?.candidate, firstPlannedItem(previous.recommendedBuild)),
-        recommendedBuild: previous.recommendedBuild,
-        changes: buildPlanChanges(previous.recommendedBuild, previous.recommendedBuild),
+        nextAction: semanticNoTransactionAction('HOLD', wait?.candidate, firstPlannedItem(preservedBuild)),
+        recommendedBuild: preservedBuild,
+        changes: buildPlanChanges(previous.recommendedBuild, preservedBuild),
         rankedImmediateCandidates: scoredImmediate.map((entry) => entry.adaptive),
         totalScore: previous.totalScore,
         confidence: Math.min(previous.confidence, proposedConfidence || previous.confidence),
@@ -447,6 +448,32 @@ function bestWaitCandidate(scored: readonly ScoredImmediateCandidateV1[]): Score
 
 function firstPlannedItem(build: readonly AdaptivePlannedItemV1[]): number | undefined {
   return build.find((item) => item.status === 'NEXT')?.itemId;
+}
+
+function rebasePlanAgainstOwnedInventory(
+  build: readonly AdaptivePlannedItemV1[],
+  ownedItemIds: readonly number[],
+): readonly AdaptivePlannedItemV1[] {
+  const owned = new Set(ownedItemIds);
+  let nextAssigned = false;
+
+  return build.map((item, index) => {
+    let status: AdaptivePlannedItemV1['status'];
+    if (owned.has(item.itemId)) {
+      status = 'OWNED';
+    } else if (!nextAssigned) {
+      status = 'NEXT';
+      nextAssigned = true;
+    } else {
+      status = 'PLANNED';
+    }
+
+    return {
+      ...item,
+      position: index + 1,
+      status,
+    };
+  });
 }
 
 function immediateReasonCodes(candidate: RecommendationCandidate, components: readonly AdaptiveScoreComponentV1[]): readonly string[] {
