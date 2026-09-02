@@ -28,7 +28,7 @@ let stateSafetyPollInFlight = false;
 function matchIdFromValue(value: unknown): string | undefined {
   const parsed = parseJsonSafely(value);
   if (typeof parsed === 'string' && parsed.trim().length > 0) {
-    return parsed.trim().replace(/^\"|\"$/g, '');
+    return parsed.trim().replace(/^"|"$/g, '');
   }
 
   if (typeof parsed === 'number' && Number.isFinite(parsed)) {
