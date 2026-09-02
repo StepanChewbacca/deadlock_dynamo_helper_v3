@@ -37,6 +37,20 @@ describe('StatlockerSnapshotStoreService', () => {
     expect(store.getActive(base)?.payload).toEqual(base.payload);
   });
 
+  it('advances fetchedAt when identical content is successfully observed again', async () => {
+    const repository = repo();
+    const store = new StatlockerSnapshotStoreService(repository);
+    const first = await store.publish(base);
+    const newerFetchedAt = new Date('2026-09-01T12:00:00.000Z');
+
+    const second = await store.publish({ ...base, fetchedAt: newerFetchedAt });
+
+    expect(second.snapshotId).toBe(first.snapshotId);
+    expect(second.fetchedAt).toEqual(newerFetchedAt);
+    expect(store.getActive(base)?.fetchedAt).toEqual(newerFetchedAt);
+    expect(repository.save).toHaveBeenCalledTimes(2);
+  });
+
   it('leaves last known good active snapshot unchanged if persistence fails', async () => {
     const repository = repo();
     const store = new StatlockerSnapshotStoreService(repository);
