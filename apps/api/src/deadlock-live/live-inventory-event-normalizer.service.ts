@@ -9,6 +9,10 @@ interface LiveItemMetadata {
   className: string;
 }
 
+const INT32_MIN = -0x80000000;
+const UINT32_MAX = 0xffffffff;
+const UINT32_MODULUS = 0x100000000;
+
 @Injectable()
 export class LiveInventoryEventNormalizerService {
   private readonly metadataByItemId = new Map<number, LiveItemMetadata>();
@@ -101,7 +105,7 @@ export class LiveInventoryEventNormalizerService {
       return undefined;
     }
 
-    const id = readPositiveInteger(value.id ?? value.item_id ?? value.itemId);
+    const id = readDeadlockItemId(value.id ?? value.item_id ?? value.itemId);
     if (id === undefined) {
       return undefined;
     }
@@ -146,13 +150,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function readPositiveInteger(value: unknown): number | undefined {
+function readDeadlockItemId(value: unknown): number | undefined {
   const parsed = typeof value === 'number'
     ? value
     : typeof value === 'string' && value.trim()
       ? Number(value)
       : Number.NaN;
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+
+  if (!Number.isSafeInteger(parsed) || parsed === 0) {
+    return undefined;
+  }
+  if (parsed > 0 && parsed <= UINT32_MAX) {
+    return parsed;
+  }
+  if (parsed >= INT32_MIN && parsed < 0) {
+    return parsed + UINT32_MODULUS;
+  }
+  return undefined;
 }
 
 function readSteamId(value: unknown): string | undefined {
