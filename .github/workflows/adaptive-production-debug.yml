@@ -20,7 +20,7 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 10
     steps:
-      - name: Compare production live state with adaptive response
+      - name: Inspect production catalog ownership gap
         shell: bash
         run: |
           set -euo pipefail
@@ -28,64 +28,68 @@ jobs:
           container_id="$(sudo docker compose ps -q api)"
           sudo docker image inspect "$(sudo docker inspect --format='{{.Image}}' "$container_id")" --format='revision={{index .Config.Labels "org.opencontainers.image.revision"}}'
 
-          python3 - <<'PY'
-          import json
-          import urllib.request
+          sudo docker compose exec -T api node - <<'NODE'
+          const { Client } = require('pg');
 
-          BASE = 'http://127.0.0.1:3000'
+          const client = new Client({
+            host: process.env.DB_HOST,
+            port: Number(process.env.DB_PORT || 5432),
+            user: process.env.DB_USER,
+            password: process.env.DB_PASSWORD,
+            database: process.env.DB_NAME,
+          });
 
-          def get(path):
-              with urllib.request.urlopen(BASE + path, timeout=15) as response:
-                  return json.load(response)
+          const pick = (row, names) => {
+            for (const name of names) if (Object.prototype.hasOwnProperty.call(row, name)) return row[name];
+            return undefined;
+          };
 
-          def post(path, body):
-              request = urllib.request.Request(
-                  BASE + path,
-                  data=json.dumps(body).encode('utf-8'),
-                  headers={'content-type': 'application/json'},
-                  method='POST',
-              )
-              with urllib.request.urlopen(request, timeout=60) as response:
-                  return json.load(response)
+          (async () => {
+            await client.connect();
+            const versionResult = await client.query('SELECT * FROM recommendation_item_catalog_versions_v1 ORDER BY "importedAt" DESC, "catalogVersionId" DESC LIMIT 1');
+            const version = versionResult.rows[0];
+            if (!version) throw new Error('No catalog version');
+            const catalogVersionId = pick(version, ['catalogVersionId', 'catalog_version_id']);
+            console.log('CATALOG_VERSION=' + JSON.stringify({
+              catalogVersionId,
+              contentCatalogVersionId: pick(version, ['contentCatalogVersionId', 'content_catalog_version_id']),
+              clientVersion: pick(version, ['clientVersion', 'client_version']),
+              rulesetKey: pick(version, ['rulesetKey', 'ruleset_key']),
+              importedAt: pick(version, ['importedAt', 'imported_at']),
+            }));
 
-          states = get('/deadlock/live/states')
-          active = [m for m in states if isinstance(m, dict) and m.get('playersBySteamId')]
-          if not active:
-              raise SystemExit('No live match with players found')
-          match = max(active, key=lambda m: str(m.get('lastUpdatedAt') or ''))
-          locals_ = [
-              (steam_id, player)
-              for steam_id, player in (match.get('playersBySteamId') or {}).items()
-              if player.get('isLocal') is True
-          ]
-          if len(locals_) != 1:
-              raise SystemExit(f'Expected exactly one local player, got {len(locals_)}')
-          _, local = locals_[0]
-          owned_ids = [item.get('id') for item in (local.get('items') or [])]
-          print('LIVE_STATE=' + json.dumps({
-              'matchId': match.get('matchId'),
-              'heroId': local.get('heroId'),
-              'souls': local.get('souls'),
-              'ownedItemIds': owned_ids,
-              'ownedItems': [item.get('name') for item in (local.get('items') or [])],
-          }, ensure_ascii=False))
+            const columns = await client.query(`
+              SELECT column_name
+              FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'recommendation_item_catalog_items_v1'
+              ORDER BY ordinal_position
+            `);
+            console.log('ITEM_COLUMNS=' + JSON.stringify(columns.rows.map((row) => row.column_name)));
 
-          result = post('/deadlock/adaptive/v1/recommend', {'matchId': match.get('matchId')})
-          print('ADAPTIVE_RESULT=' + json.dumps({
-              'ready': result.get('ready'),
-              'blockers': result.get('blockers'),
-              'decisionId': result.get('decisionId'),
-              'stateRevision': result.get('stateRevision'),
-              'nextAction': result.get('nextAction'),
-              'nextTargetItemId': result.get('nextTargetItemId'),
-              'recommendedBuild': [
-                  {
-                      'itemId': item.get('itemId'),
-                      'position': item.get('position'),
-                      'status': item.get('status'),
-                  }
-                  for item in (result.get('recommendedBuild') or [])[:12]
-              ],
-              'changes': result.get('changes'),
-          }, ensure_ascii=False))
-          PY
+            const itemIdColumn = columns.rows.some((row) => row.column_name === 'itemId') ? '"itemId"' : 'item_id';
+            const catalogIdColumn = columns.rows.some((row) => row.column_name === 'catalogVersionId') ? '"catalogVersionId"' : 'catalog_version_id';
+            const items = await client.query(
+              `SELECT * FROM recommendation_item_catalog_items_v1 WHERE ${catalogIdColumn} = $1 AND ${itemIdColumn} = ANY($2::bigint[]) ORDER BY ${itemIdColumn}`,
+              [catalogVersionId, ['3862866912', '1437614329']],
+            );
+            console.log('CATALOG_ITEMS=' + JSON.stringify(items.rows.map((row) => ({
+              itemId: String(pick(row, ['itemId', 'item_id'])),
+              name: pick(row, ['name']),
+              className: pick(row, ['className', 'class_name']),
+              itemType: pick(row, ['itemType', 'item_type']),
+              slotType: pick(row, ['slotType', 'slot_type']),
+              cost: pick(row, ['cost']),
+              tier: pick(row, ['tier']),
+              shopable: pick(row, ['shopable']),
+              disabled: pick(row, ['disabled']),
+              active: pick(row, ['active']),
+              isActiveItem: pick(row, ['isActiveItem', 'is_active_item']),
+              activationType: pick(row, ['activationType', 'activation_type']),
+            }))));
+            await client.end();
+          })().catch(async (error) => {
+            console.error(error);
+            try { await client.end(); } catch {}
+            process.exit(1);
+          });
+          NODE
