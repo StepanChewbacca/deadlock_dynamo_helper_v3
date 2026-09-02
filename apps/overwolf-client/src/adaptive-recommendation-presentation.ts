@@ -76,7 +76,6 @@ const PLAN_STATUS_LABELS = {
   PLANNED: 'Planned',
 } as const;
 
-const PLAN_DISPLAY_LIMIT = 6;
 const ALTERNATIVE_DISPLAY_LIMIT = 3;
 
 export function buildAdaptiveRecommendationPresentation(
@@ -124,13 +123,13 @@ export function buildAdaptiveRecommendationPresentation(
       .slice(0, 3)
       .map(humanizeReasonCode),
     plan: {
-      items: orderedPlan.slice(0, PLAN_DISPLAY_LIMIT).map((planned) => ({
+      items: orderedPlan.map((planned) => ({
         item: presentItem(planned.itemId),
         position: planned.position,
         status: planned.status,
         statusLabel: PLAN_STATUS_LABELS[planned.status],
       })),
-      remainingCount: Math.max(0, orderedPlan.length - PLAN_DISPLAY_LIMIT),
+      remainingCount: 0,
     },
     alternatives: buildAlternatives(recommendation, primaryItemId),
     evidenceLabel: freshEvidenceCount > 0
