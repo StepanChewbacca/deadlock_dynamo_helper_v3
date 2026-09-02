@@ -133,7 +133,11 @@ export class AdaptiveRecommendationClient {
     }
 
     if (pending.cancellationRevision !== this.cancellationRevision) return;
-    this.lastCompletedPayload = pending.payload;
+    if (!result.ready && !this.pending) {
+      this.pending = pending;
+      this.pendingDelayMs = this.retryDelayMs;
+    }
+    this.lastCompletedPayload = result.ready ? pending.payload : undefined;
     pending.handlers.onResult(result);
   }
 }

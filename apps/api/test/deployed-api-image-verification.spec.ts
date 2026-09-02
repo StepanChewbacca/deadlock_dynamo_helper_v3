@@ -88,4 +88,23 @@ describe('deployed API image verification', () => {
     expect(workflow).toContain('"$container_id"');
     expect(workflow).toContain('"$ADAPTIVE_PRODUCTION_IMAGE"');
   });
+
+  it('keeps a verified adaptive image as the safe Compose fallback', () => {
+    const compose = readFileSync(
+      resolve(__dirname, '../../../docker-compose.yml'),
+      'utf8',
+    );
+    const workflow = readFileSync(
+      resolve(__dirname, '../../../.github/workflows/deploy.yml'),
+      'utf8',
+    );
+
+    expect(compose).toContain('image: ${DEADLOCK_API_IMAGE:-deadlock-adaptive-production:current}');
+    expect(compose).not.toContain('image: ${DEADLOCK_API_IMAGE:-aboba-telegramovich-api}');
+    expect(compose).not.toContain('build:');
+    expect(workflow).toContain('sudo docker tag "$ADAPTIVE_PRODUCTION_IMAGE" deadlock-adaptive-production:current');
+    expect(
+      workflow.indexOf('sudo docker tag "$ADAPTIVE_PRODUCTION_IMAGE" deadlock-adaptive-production:current'),
+    ).toBeGreaterThan(workflow.indexOf('name: Verify Statlocker adaptive public route'));
+  });
 });

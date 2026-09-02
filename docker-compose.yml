@@ -8,10 +8,7 @@ services:
       - '3000'
 
   api:
-    image: ${DEADLOCK_API_IMAGE:-aboba-telegramovich-api}
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${DEADLOCK_API_IMAGE:-deadlock-adaptive-production:current}
     depends_on:
       - deadlock-live-events
     ports:

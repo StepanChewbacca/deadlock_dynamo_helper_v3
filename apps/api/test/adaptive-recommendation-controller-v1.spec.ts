@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { AdaptiveRecommendationV1Controller } from '../src/statlocker-adaptive/adaptive-recommendation-v1.controller';
+import { AdaptiveLiveStateNotReadyError } from '../src/statlocker-adaptive/adaptive-decision-state-v1.service';
 
 const recommendation = {
   ready: true,
@@ -70,6 +71,21 @@ describe('AdaptiveRecommendationV1Controller', () => {
     const result = await h.controller.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
     expect(result).toEqual(recommendation);
     expect(h.service.recommend).toHaveBeenCalledWith({ matchId: 'match-a', localSteamId: 'steam-a' });
+  });
+
+  it('returns a retryable waiting result while the live player state is still arriving', async () => {
+    const h = harness();
+    h.service.recommend.mockRejectedValueOnce(
+      new AdaptiveLiveStateNotReadyError('match-a', 'LOCAL_PLAYER_UNRESOLVED'),
+    );
+
+    await expect(h.controller.recommend({ matchId: 'match-a' })).resolves.toEqual(expect.objectContaining({
+      ready: false,
+      blockers: ['LIVE_STATE_NOT_READY', 'LOCAL_PLAYER_UNRESOLVED'],
+      decisionId: 'pending:match-a',
+      gameState: 'UNKNOWN',
+      nextAction: expect.objectContaining({ actionKey: 'HOLD', type: 'HOLD' }),
+    }));
   });
 
   it('returns local refresh and evidence status without browser/session material', () => {

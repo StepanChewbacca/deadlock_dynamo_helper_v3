@@ -272,6 +272,12 @@ jobs:
             exit 1
           fi
 
+      - name: Record verified adaptive Compose fallback
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo docker tag "$ADAPTIVE_PRODUCTION_IMAGE" deadlock-adaptive-production:current
+
       - name: Show API logs on failure
         if: failure()
         run: |

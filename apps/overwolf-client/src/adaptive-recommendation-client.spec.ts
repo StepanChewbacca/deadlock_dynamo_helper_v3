@@ -168,6 +168,32 @@ describe('AdaptiveRecommendationClient', () => {
     expect(onResult).toHaveBeenCalledWith(result);
   });
 
+  it('retries a successful waiting response without reporting an error', async () => {
+    const waiting = { ...result, ready: false, blockers: ['LIVE_STATE_NOT_READY'] };
+    const fetcher = jest.fn()
+      .mockResolvedValueOnce(response(waiting))
+      .mockResolvedValueOnce(response());
+    const onResult = jest.fn();
+    const onError = jest.fn();
+    const client = new AdaptiveRecommendationClient(
+      'https://api.example',
+      fetcher,
+      50,
+      200,
+    );
+
+    client.schedule({ matchId: 'match-a', localSteamId: 'steam-a' }, { onResult, onError });
+    jest.advanceTimersByTime(50);
+    await flush();
+
+    expect(onResult).toHaveBeenCalledWith(waiting);
+    expect(onError).not.toHaveBeenCalled();
+    jest.advanceTimersByTime(200);
+    await flush();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(onResult).toHaveBeenLastCalledWith(result);
+  });
+
   it('does not retry a rejected client request', async () => {
     const fetcher = jest.fn().mockResolvedValue({ ok: false, status: 400 } as Response);
     const client = new AdaptiveRecommendationClient(

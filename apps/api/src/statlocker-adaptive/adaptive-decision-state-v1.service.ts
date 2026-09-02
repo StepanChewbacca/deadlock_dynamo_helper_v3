@@ -32,6 +32,16 @@ export interface AdaptiveDecisionStateV1 {
   stateRevision: string;
 }
 
+export class AdaptiveLiveStateNotReadyError extends Error {
+  constructor(
+    readonly matchId: string,
+    readonly blocker: 'LIVE_MATCH_STATE_UNAVAILABLE' | 'LOCAL_PLAYER_UNRESOLVED' | 'LOCAL_PLAYER_IDENTITY_INCOMPLETE',
+  ) {
+    super(`Live state is not ready for match ${matchId}: ${blocker}`);
+    this.name = 'AdaptiveLiveStateNotReadyError';
+  }
+}
+
 @Injectable()
 export class AdaptiveDecisionStateV1Service {
   constructor(
@@ -47,11 +57,11 @@ export class AdaptiveDecisionStateV1Service {
 
   async build(matchId: string, requestedLocalSteamId?: string): Promise<AdaptiveDecisionStateV1> {
     const match = this.liveState.getState(matchId);
-    if (!match) throw new Error(`Live match state unavailable: ${matchId}`);
+    if (!match) throw new AdaptiveLiveStateNotReadyError(matchId, 'LIVE_MATCH_STATE_UNAVAILABLE');
     const localSteamId = resolveLocalSteamId(match, requestedLocalSteamId);
     const local = match.playersBySteamId[localSteamId];
     if (!local?.heroId || local.teamId === undefined) {
-      throw new Error(`Local player identity incomplete: ${localSteamId}`);
+      throw new AdaptiveLiveStateNotReadyError(matchId, 'LOCAL_PLAYER_IDENTITY_INCOMPLETE');
     }
 
     const [version] = await this.versionRepo.find({
@@ -162,7 +172,7 @@ function resolveLocalSteamId(match: MinimalMatchState, requested?: string): stri
     .sort((a, b) => a.steamId.localeCompare(b.steamId));
   if (markedLocal.length === 1) return markedLocal[0].steamId;
   if (markedLocal.length > 1) {
-    throw new Error(`Unable to resolve exactly one local player for match ${match.matchId}`);
+    throw new AdaptiveLiveStateNotReadyError(match.matchId, 'LOCAL_PLAYER_UNRESOLVED');
   }
 
   const realPlayers = Object.values(match.playersBySteamId)
@@ -170,7 +180,7 @@ function resolveLocalSteamId(match: MinimalMatchState, requested?: string): stri
     .sort((a, b) => a.steamId.localeCompare(b.steamId));
   if (realPlayers.length === 1) return realPlayers[0].steamId;
 
-  throw new Error(`Unable to resolve exactly one local player for match ${match.matchId}`);
+  throw new AdaptiveLiveStateNotReadyError(match.matchId, 'LOCAL_PLAYER_UNRESOLVED');
 }
 
 function calculateTeamSoulTotals(

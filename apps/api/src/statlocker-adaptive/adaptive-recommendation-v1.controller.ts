@@ -1,8 +1,10 @@
 import { BadRequestException, Body, Controller, Get, Post } from '@nestjs/common';
 import { AdaptiveRecommendationRequestV1, AdaptiveRecommendationResultV1 } from '@deadlock-live-probe/shared';
 import { AdaptiveRecommendationV1Service } from './adaptive-recommendation-v1.service';
+import { AdaptiveLiveStateNotReadyError } from './adaptive-decision-state-v1.service';
 import { StatlockerEvidenceService } from './statlocker-evidence.service';
 import { StatlockerRefreshService, StatlockerRefreshStatusV1 } from './statlocker-refresh.service';
+import { ADAPTIVE_POLICY_V1_CONFIG } from './statlocker-adaptive.config';
 
 export interface AdaptiveRecommendationStatusV1 {
   refresh: StatlockerRefreshStatusV1;
@@ -29,10 +31,13 @@ export class AdaptiveRecommendationV1Controller {
     if (body.localSteamId !== undefined && (typeof body.localSteamId !== 'string' || body.localSteamId.trim() === '')) {
       throw new BadRequestException('localSteamId is invalid');
     }
-    return this.recommendation.recommend({
-      matchId: body.matchId.trim(),
-      localSteamId: body.localSteamId?.trim(),
-    });
+    const request = { matchId: body.matchId.trim(), localSteamId: body.localSteamId?.trim() };
+    try {
+      return await this.recommendation.recommend(request);
+    } catch (error) {
+      if (error instanceof AdaptiveLiveStateNotReadyError) return waitingRecommendation(request.matchId, error.blocker);
+      throw error;
+    }
   }
 
   @Get('status')
@@ -48,4 +53,33 @@ export class AdaptiveRecommendationV1Controller {
       families: local.families,
     };
   }
+}
+
+function waitingRecommendation(
+  matchId: string,
+  blocker: AdaptiveLiveStateNotReadyError['blocker'],
+): AdaptiveRecommendationResultV1 {
+  return {
+    ready: false,
+    blockers: ['LIVE_STATE_NOT_READY', blocker],
+    decisionId: `pending:${matchId}`,
+    stateRevision: `pending:${matchId}`,
+    gameState: 'UNKNOWN',
+    nextAction: { actionKey: 'HOLD', type: 'HOLD', reasonCodes: ['LIVE_STATE_NOT_READY'] },
+    recommendedBuild: [],
+    changes: [],
+    rankedImmediateCandidates: [],
+    totalScore: 0,
+    confidence: 0,
+    scorerVersion: 'adaptive-evidence-scorer-v1',
+    plannerVersion: 'adaptive-build-planner-v1',
+    configVersion: ADAPTIVE_POLICY_V1_CONFIG.version,
+    evidence: {
+      rulesetVersion: 'UNKNOWN',
+      catalogSha256: '',
+      snapshotIds: [],
+      families: [],
+      degradedReasons: ['LIVE_STATE_NOT_READY', blocker],
+    },
+  };
 }
