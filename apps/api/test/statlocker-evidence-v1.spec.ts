@@ -2,6 +2,8 @@ import { StatlockerEvidenceService } from '../src/statlocker-adaptive/statlocker
 
 const catalogSha256 = 'a'.repeat(64);
 const now = Date.parse('2026-08-31T12:00:00.000Z');
+const HOUR = 60 * 60_000;
+const DAY = 24 * HOUR;
 
 function row(dataset: string, scopeKey: string, ageMs: number, overrides: Record<string, unknown> = {}) {
   return {
@@ -30,15 +32,16 @@ function service(rows: any[]) {
 }
 
 describe('StatlockerEvidenceService', () => {
-  it('classifies fresh, stale usable and unavailable evidence by age', () => {
+  it('treats Statlocker evidence as fresh for up to two days', () => {
     const h = service([
-      row('WPA_PATCH_DATA', 'patch:15-1', 5 * 60_000),
-      row('VS_HERO_WPA', 'global', 45 * 60_000),
-      row('T4_CHAINS', 'global', 10 * 60 * 60_000),
-      row('CONSENSUS_SKELETON', 'hero:10:consensus', 10 * 60_000),
+      row('WPA_PATCH_DATA', 'patch:15-1', 47 * HOUR),
+      row('VS_HERO_WPA', 'global', 49 * HOUR),
+      row('T4_CHAINS', 'global', 5 * DAY),
+      row('CONSENSUS_SKELETON', 'hero:10:consensus', 47 * HOUR),
     ]);
     const bundle = h.service.getEvidence({ heroId: 10, rulesetVersion: 'ruleset-a', catalogSha256, statlockerPatchId: '15-1', nowMs: now });
     expect(bundle.byDataset.WPA_PATCH_DATA.freshness).toBe('FRESH');
+    expect(bundle.byDataset.CONSENSUS_SKELETON.freshness).toBe('FRESH');
     expect(bundle.byDataset.VS_HERO_WPA.freshness).toBe('STALE_USABLE');
     expect(bundle.byDataset.T4_CHAINS.freshness).toBe('UNAVAILABLE');
     expect(bundle.byDataset.VS_HERO_WPA.confidence).toBeLessThan(bundle.byDataset.WPA_PATCH_DATA.confidence);
