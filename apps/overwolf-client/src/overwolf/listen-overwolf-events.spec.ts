@@ -8,7 +8,7 @@ jest.mock('../diagnostics/diagnostic-capture', () => ({
 import { listenOverwolfEvents } from './listen-overwolf-events';
 
 describe('listenOverwolfEvents', () => {
-  it('reconciles the full live state with the restored match id immediately and every three seconds', () => {
+  it('reconciles stable live state without replaying terminal transitions', () => {
     jest.useFakeTimers();
     const onEvent = jest.fn();
     const getInfo = jest.fn((callback: (result: unknown) => void) => {
@@ -17,6 +17,9 @@ describe('listenOverwolfEvents', () => {
         res: {
           match_info: {
             match_id: '93946399',
+            match_outcome: JSON.stringify({ winning_team: 'SAPPHIRE' }),
+            match_state: 'ended',
+            match_end: true,
           },
           roster: {
             roster_12: JSON.stringify({
@@ -58,6 +61,11 @@ describe('listenOverwolfEvents', () => {
 
     expect(getInfo).toHaveBeenCalledTimes(1);
     expect(onEvent).toHaveBeenCalledTimes(3);
+    expect(onEvent.mock.calls.map(([event]) => event.key)).toEqual([
+      'match_id',
+      'roster_12',
+      'items_12',
+    ]);
     expect(onEvent.mock.calls.map(([event]) => event.category)).toEqual([
       'match_info',
       'roster',
@@ -82,40 +90,6 @@ describe('listenOverwolfEvents', () => {
 
     expect(getInfo).toHaveBeenCalledTimes(2);
     expect(onEvent).toHaveBeenCalledTimes(6);
-
-    jest.clearAllTimers();
-    jest.useRealTimers();
-    delete (globalThis as any).overwolf;
-  });
-
-  it('does not replay match_outcome from the periodic state snapshot', () => {
-    jest.useFakeTimers();
-    const onEvent = jest.fn();
-    const getInfo = jest.fn((callback: (result: unknown) => void) => {
-      callback({
-        success: true,
-        res: {
-          match_info: {
-            match_id: '93946399',
-            match_outcome: JSON.stringify({ winning_team: 'SAPPHIRE' }),
-          },
-        },
-      });
-    });
-
-    (globalThis as any).overwolf = {
-      games: {
-        events: {
-          onInfoUpdates2: { addListener: jest.fn() },
-          onNewEvents: { addListener: jest.fn() },
-          getInfo,
-        },
-      },
-    };
-
-    listenOverwolfEvents(onEvent);
-
-    expect(onEvent.mock.calls.map(([event]) => event.key)).toEqual(['match_id']);
 
     jest.clearAllTimers();
     jest.useRealTimers();
