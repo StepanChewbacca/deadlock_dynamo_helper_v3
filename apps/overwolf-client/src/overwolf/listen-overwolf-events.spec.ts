@@ -87,4 +87,38 @@ describe('listenOverwolfEvents', () => {
     jest.useRealTimers();
     delete (globalThis as any).overwolf;
   });
+
+  it('does not replay match_outcome from the periodic state snapshot', () => {
+    jest.useFakeTimers();
+    const onEvent = jest.fn();
+    const getInfo = jest.fn((callback: (result: unknown) => void) => {
+      callback({
+        success: true,
+        res: {
+          match_info: {
+            match_id: '93946399',
+            match_outcome: JSON.stringify({ winning_team: 'SAPPHIRE' }),
+          },
+        },
+      });
+    });
+
+    (globalThis as any).overwolf = {
+      games: {
+        events: {
+          onInfoUpdates2: { addListener: jest.fn() },
+          onNewEvents: { addListener: jest.fn() },
+          getInfo,
+        },
+      },
+    };
+
+    listenOverwolfEvents(onEvent);
+
+    expect(onEvent.mock.calls.map(([event]) => event.key)).toEqual(['match_id']);
+
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    delete (globalThis as any).overwolf;
+  });
 });
