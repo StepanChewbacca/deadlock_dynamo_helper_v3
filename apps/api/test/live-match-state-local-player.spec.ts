@@ -1,3 +1,4 @@
+import { LiveInventoryEventNormalizerService } from '../src/deadlock-live/live-inventory-event-normalizer.service';
 import { LiveMatchStateService } from '../src/deadlock-live/live-match-state.service';
 
 describe('LiveMatchStateService local Deadlock player resolution', () => {
@@ -126,14 +127,14 @@ describe('LiveMatchStateService local Deadlock player resolution', () => {
   });
 
   it('normalizes signed 32-bit item ids before adaptive state reads inventory', () => {
+    const normalizer = new LiveInventoryEventNormalizerService();
     const service = new LiveMatchStateService();
-
-    service.applyBatch({
+    const batch = {
       clientId: 'test-client',
       events: [
         {
           receivedAt: 1,
-          source: 'onInfoUpdates2',
+          source: 'onInfoUpdates2' as const,
           feature: 'game_info',
           category: 'game_info',
           key: 'steam_id',
@@ -141,7 +142,7 @@ describe('LiveMatchStateService local Deadlock player resolution', () => {
         },
         {
           receivedAt: 2,
-          source: 'onInfoUpdates2',
+          source: 'onInfoUpdates2' as const,
           feature: 'match_info',
           category: 'match_info',
           key: 'match_id',
@@ -149,7 +150,7 @@ describe('LiveMatchStateService local Deadlock player resolution', () => {
         },
         {
           receivedAt: 3,
-          source: 'onInfoUpdates2',
+          source: 'onInfoUpdates2' as const,
           feature: 'match_info',
           category: 'match_info',
           key: 'roster_11',
@@ -163,7 +164,7 @@ describe('LiveMatchStateService local Deadlock player resolution', () => {
         },
         {
           receivedAt: 4,
-          source: 'onInfoUpdates2',
+          source: 'onInfoUpdates2' as const,
           feature: 'match_info',
           category: 'match_info',
           key: 'items_11',
@@ -180,7 +181,9 @@ describe('LiveMatchStateService local Deadlock player resolution', () => {
           },
         },
       ],
-    });
+    };
+
+    service.applyBatch(normalizer.normalizeBatch(batch));
 
     expect(service.getState('42')?.playersBySteamId['76561198000000001']?.items).toEqual([
       {
