@@ -66,6 +66,44 @@ describe('LiveInventoryEventNormalizerService', () => {
     });
   });
 
+  it('normalizes signed 32-bit Deadlock item ids to canonical uint32 ids', () => {
+    const service = new LiveInventoryEventNormalizerService();
+
+    const normalized = service.normalizeBatch({
+      clientId: 'client-1',
+      events: [
+        {
+          receivedAt: 1,
+          source: 'onInfoUpdates2',
+          key: 'items_0',
+          payload: {
+            steam_id: 's1',
+            items: [
+              {
+                id: -432100384,
+                name: 'Restorative Shot',
+                class_name: 'restorative_shot',
+                enhanced: false,
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(normalized.events[0].payload).toEqual({
+      steam_id: 's1',
+      items: [
+        {
+          id: 3862866912,
+          name: 'Restorative Shot',
+          class_name: 'restorative_shot',
+          enhanced: false,
+        },
+      ],
+    });
+  });
+
   it('does not modify non-inventory events', () => {
     const service = new LiveInventoryEventNormalizerService();
     const event = {
