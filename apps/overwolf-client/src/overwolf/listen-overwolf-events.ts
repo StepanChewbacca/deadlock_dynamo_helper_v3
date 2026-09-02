@@ -11,6 +11,11 @@ const STATE_SAFETY_CATEGORIES = new Set([
   'roster',
   'items',
 ]);
+const STATE_SAFETY_TRANSITION_KEYS = new Set([
+  'match_end',
+  'match_outcome',
+  'match_state',
+]);
 
 interface MatchContext {
   currentMatchId?: string;
@@ -23,7 +28,7 @@ let stateSafetyPollInFlight = false;
 function matchIdFromValue(value: unknown): string | undefined {
   const parsed = parseJsonSafely(value);
   if (typeof parsed === 'string' && parsed.trim().length > 0) {
-    return parsed.trim().replace(/^"|"$/g, '');
+    return parsed.trim().replace(/^\"|\"$/g, '');
   }
 
   if (typeof parsed === 'number' && Number.isFinite(parsed)) {
@@ -184,6 +189,10 @@ function emitInfoEntries(
     }
 
     for (const [key, rawValue] of Object.entries(categoryData)) {
+      if (stateSafetyOnly && STATE_SAFETY_TRANSITION_KEYS.has(key)) {
+        continue;
+      }
+
       const receivedAt = Date.now();
       capture.captureRaw({
         receivedAt,
