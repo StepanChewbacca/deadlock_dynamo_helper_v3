@@ -2,11 +2,6 @@ name: Adaptive Production Debug
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - .github/workflows/adaptive-production-debug.yml
 
 permissions:
   contents: read
@@ -31,13 +26,18 @@ jobs:
           sudo docker inspect --format='image={{.Image}} name={{.Name}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}} restart_count={{.RestartCount}}' "$container_id"
           sudo docker image inspect "$(sudo docker inspect --format='{{.Image}}' "$container_id")" --format='revision={{index .Config.Labels "org.opencontainers.image.revision"}}' || true
 
+          echo '=== Disk ==='
+          df -h /
+          df -i /
+          sudo docker system df || true
+
           echo '=== Adaptive status ==='
           curl --fail-with-body --show-error --silent http://127.0.0.1:3000/deadlock/adaptive/v1/status || true
           echo
 
           echo '=== Recent API logs ==='
           sudo docker compose logs --since=60m --tail=4000 api 2>&1 \
-            | grep -E -B12 -A40 'Ingest|ingest|adaptive|Adaptive|recommend|Recommendation|ERROR|Error|500|QueryFailed|RangeError|TypeError|catalog|Catalog|No item catalog|local player|Local player' \
+            | grep -E -B12 -A40 'Ingest|ingest|adaptive|Adaptive|recommend|Recommendation|ERROR|Error|500|QueryFailed|RangeError|TypeError|catalog|Catalog|No item catalog|local player|Local player|ENOSPC|No space left' \
             || true
 
           echo '=== Recent nginx errors ==='

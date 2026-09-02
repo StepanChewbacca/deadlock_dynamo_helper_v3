@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Logger, Param, Post } from '@nestjs/common';
 import { OverwolfLiveBatchDto } from '@deadlock-live-probe/shared';
 import { canonicalizeLiveBatchForStateV2 } from './canonical-live-batch';
 import { InventoryShadowReplayService } from './inventory-shadow-replay.service';
@@ -9,6 +9,8 @@ import { RecentLiveEventsService } from './recent-live-events.service';
 
 @Controller('deadlock/live')
 export class LiveIngestController {
+  private readonly logger = new Logger(LiveIngestController.name);
+
   constructor(
     private readonly rawEventLogService: RawEventLogService,
     private readonly liveMatchStateService: LiveMatchStateService,
@@ -25,7 +27,13 @@ export class LiveIngestController {
     const stateBatch = canonicalizeLiveBatchForStateV2(normalizedBatch);
     const state = this.liveMatchStateService.applyBatch(stateBatch);
     this.inventoryShadowReplayService.applyBatch(normalizedBatch, state?.matchId);
-    await this.rawEventLogService.appendEvents(batch.events);
+
+    try {
+      await this.rawEventLogService.appendEvents(batch.events);
+    } catch (error) {
+      this.logger.warn(`Raw live event logging failed: ${describeError(error)}`);
+    }
+
     return { ok: true };
   }
 
@@ -56,4 +64,12 @@ export class LiveIngestController {
   getRecentEvents() {
     return this.recentLiveEventsService.getRecent();
   }
+}
+
+function describeError(error: unknown): string {
+  if (error instanceof Error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code ? `${code}: ${error.message}` : error.message;
+  }
+  return String(error);
 }
