@@ -4,11 +4,15 @@ type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 type MatchIdProvider = () => string | undefined;
 type InventoryFlushCallback = (batch: OverwolfLiveBatchDto) => void;
 
+const MAX_RETRY_DELAY_MS = 30_000;
+
 export class LiveEventBuffer {
   private readonly events: OverwolfLiveEventDto[] = [];
   private readonly pendingBatches: OverwolfLiveEventDto[][] = [];
   private timerId?: ReturnType<typeof setTimeout>;
   private flushing = false;
+  private consecutiveFailures = 0;
+  private retryScheduled = false;
 
   constructor(
     private readonly clientId: string,
@@ -28,6 +32,9 @@ export class LiveEventBuffer {
     this.events.push(matchId ? { ...event, matchId } : event);
 
     if (isImmediateEvent(event)) {
+      if (this.retryScheduled) {
+        return;
+      }
       this.scheduleFlush(0, true);
       return;
     }
@@ -35,7 +42,11 @@ export class LiveEventBuffer {
     this.scheduleFlush(this.flushDelayMs, false);
   }
 
-  private scheduleFlush(delayMs: number, replaceExisting: boolean): void {
+  private scheduleFlush(
+    delayMs: number,
+    replaceExisting: boolean,
+    retry = false,
+  ): void {
     if (this.timerId) {
       if (!replaceExisting) {
         return;
@@ -44,7 +55,12 @@ export class LiveEventBuffer {
       this.timerId = undefined;
     }
 
+    this.retryScheduled = retry;
     this.timerId = setTimeout(() => {
+      this.timerId = undefined;
+      if (retry) {
+        this.retryScheduled = false;
+      }
       void this.flush();
     }, delayMs);
   }
@@ -92,6 +108,7 @@ export class LiveEventBuffer {
 
       this.pendingBatches.shift();
       accepted = true;
+      this.consecutiveFailures = 0;
       if (events.some(isInventoryEvent)) {
         try {
           this.onInventoryFlushSuccess(body);
@@ -102,11 +119,21 @@ export class LiveEventBuffer {
     } finally {
       this.flushing = false;
       if (this.pendingBatches.length > 0) {
-        this.scheduleFlush(accepted ? 0 : this.flushDelayMs, true);
+        if (accepted) {
+          this.scheduleFlush(0, true);
+        } else {
+          this.consecutiveFailures += 1;
+          this.scheduleFlush(this.getRetryDelayMs(), true, true);
+        }
       } else if (this.events.length > 0 && this.timerId === undefined) {
         this.scheduleFlush(this.flushDelayMs, false);
       }
     }
+  }
+
+  private getRetryDelayMs(): number {
+    const exponent = Math.max(0, this.consecutiveFailures - 1);
+    return Math.min(this.flushDelayMs * (2 ** exponent), MAX_RETRY_DELAY_MS);
   }
 }
 
