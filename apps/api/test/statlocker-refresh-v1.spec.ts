@@ -139,12 +139,14 @@ describe('StatlockerRefreshService', () => {
     h.release();
   });
 
-  it('does not publish duplicate normalized content twice', async () => {
+  it('keeps duplicate normalized content on the same active snapshots', async () => {
     const h = createHarness();
     await h.service.refreshGlobalNow(true, 1_000);
-    const publishesAfterFirst = h.store.publish.mock.calls.length;
+    const snapshotIdsAfterFirst = [...h.active.values()].map((entry) => entry.snapshotId).sort();
+
     await h.service.refreshGlobalNow(true, 2_000);
-    expect(h.store.publish.mock.calls.length).toBe(publishesAfterFirst);
+
+    expect([...h.active.values()].map((entry) => entry.snapshotId).sort()).toEqual(snapshotIdsAfterFirst);
   });
 
   it('walks the complete current Statlocker hero pool without active-player observations', async () => {
