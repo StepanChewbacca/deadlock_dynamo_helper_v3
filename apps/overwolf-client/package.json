@@ -11,7 +11,7 @@
     "configure:api": "node scripts/configure-api-base-url.js",
     "validate:release": "node scripts/validate-release.js",
     "dev": "webpack --mode development",
-    "test": "bash -lc 'for f in $(find src -name \"*.spec.ts\" | sort); do echo === $f ===; timeout 15s jest --runInBand \"$f\" || exit $?; done'",
+    "test": "jest --runInBand",
     "lint": "echo \"overwolf: no lint\""
   },
   "jest": {
