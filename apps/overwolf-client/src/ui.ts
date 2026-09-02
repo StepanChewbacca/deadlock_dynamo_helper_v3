@@ -107,8 +107,12 @@ export function showAdaptiveRecommendation(data: AdaptiveRecommendationResultV1)
     confidenceFill.style.width = `${view.confidence.value}%`;
   }
 
+  const planItems = isInGameOverlay()
+    ? view.plan.items.filter((item) => item.status !== 'OWNED')
+    : view.plan.items;
+
   renderReasons(view.reasons);
-  renderPlan(view.plan.items, view.plan.remainingCount);
+  renderPlan(planItems, view.plan.remainingCount);
   renderAlternatives(view.alternatives);
   clearAdaptiveError();
 }
@@ -240,6 +244,10 @@ function clearAdaptiveError(): void {
     note.style.display = 'none';
     note.removeAttribute('title');
   }
+}
+
+function isInGameOverlay(): boolean {
+  return document.querySelector('.hud-container') !== null;
 }
 
 function setText(id: string, text: string): void {
