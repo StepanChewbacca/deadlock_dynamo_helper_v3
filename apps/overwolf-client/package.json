@@ -11,7 +11,7 @@
     "configure:api": "node scripts/configure-api-base-url.js",
     "validate:release": "node scripts/validate-release.js",
     "dev": "webpack --mode development",
-    "test": "jest --runInBand",
+    "test": "jest --runInBand --detectOpenHandles --forceExit",
     "lint": "echo \"overwolf: no lint\""
   },
   "jest": {
