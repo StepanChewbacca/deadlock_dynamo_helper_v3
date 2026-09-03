@@ -255,21 +255,23 @@ function previousPlan(itemId: number) {
 describe('AdaptiveBuildPlannerV1Service structured planning', () => {
   const planner = new AdaptiveBuildPlannerV1Service(new AdaptiveEvidenceScorerV1Service());
 
-  it('hard-gates a high-WPA MID item at 120 seconds', () => {
+  it('hard-gates a high-WPA MID item at 120 seconds while retaining only the next reachable phase as PLANNED', () => {
     const result = planner.plan({
       decision: decision({ gameTimeSec: 120 }),
       evidence: evidence({
         groups: [
           group('early-core', 'EARLY', 'REQUIRED', [1]),
           group('mid-core', 'MID', 'REQUIRED', [9]),
+          group('late-core', 'LATE', 'REQUIRED', [18]),
         ],
-        baseWpa: { 1: 0.01, 9: 0.8 },
-        exactWpa: { 1: 0, 9: 0.8 },
+        baseWpa: { 1: 0.01, 9: 0.8, 18: 0.95 },
+        exactWpa: { 1: 0, 9: 0.8, 18: 0.95 },
       }),
     });
 
     expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(1);
-    expect(result.recommendedBuild.some((item) => item.itemId === 9)).toBe(false);
+    expect(result.recommendedBuild.find((item) => item.itemId === 9)?.status).toBe('PLANNED');
+    expect(result.recommendedBuild.some((item) => item.itemId === 18)).toBe(false);
   });
 
   it('resolves a CHOICE with exact-enemy WPA and never emits both alternatives', () => {
@@ -393,6 +395,31 @@ describe('AdaptiveBuildPlannerV1Service structured planning', () => {
 
     expect(result.nextAction.type).toBe('UPGRADE');
     expect(result.nextAction.targetItemId).toBe(11);
+  });
+
+  it('uses a preparatory SELL when one replacement refund is insufficient to reach the required target', () => {
+    const result = planner.plan({
+      decision: decision({ owned: [20, 21], wallet: 0 }),
+      evidence: evidence({ groups: [group('core', 'EARLY', 'REQUIRED', [1])] }),
+    });
+
+    expect(result.nextAction.type).toBe('SELL');
+    expect(result.nextAction.targetItemId).toBe(1);
+    expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(1);
+  });
+
+  it('rejects stale hysteresis when the previous NEXT upgrade is not an executable transaction step', () => {
+    const previous = previousPlan(11);
+    previous.totalScore = 100;
+    const result = planner.plan({
+      decision: decision(),
+      evidence: evidence({ groups: [group('upgrade', 'EARLY', 'REQUIRED', [11])] }),
+      previousResult: previous,
+    });
+
+    expect(result.nextAction.type).not.toBe('HOLD');
+    expect(result.nextAction.targetItemId).toBe(1);
+    expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(1);
   });
 
   it('never appends unselected choice or inactive optional skeleton tails', () => {
