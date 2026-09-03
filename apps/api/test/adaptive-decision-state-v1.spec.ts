@@ -58,11 +58,13 @@ const items = [
     className: 'owned',
     slotType: 'weapon',
     cost: 500,
-    shopable: true,
-    disabled: false,
-    active: true,
-    isActiveItem: false,
-    rawPayload: {},
+    rawPayload: {
+      type: 'upgrade',
+      shopable: true,
+      disabled: false,
+      is_active_item: false,
+      activation: 'passive',
+    },
   },
   {
     catalogVersionId: 'catalog-1',
@@ -71,11 +73,13 @@ const items = [
     className: 'target',
     slotType: 'vitality',
     cost: 1250,
-    shopable: true,
-    disabled: false,
-    active: true,
-    isActiveItem: false,
-    rawPayload: {},
+    rawPayload: {
+      type: 'upgrade',
+      shopable: true,
+      disabled: false,
+      is_active_item: false,
+      activation: 'passive',
+    },
   },
 ];
 

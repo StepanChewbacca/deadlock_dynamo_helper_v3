@@ -18,6 +18,7 @@ import { SoulsAffordabilityEvidenceV2Service } from '../deadlock-live/souls-affo
 import { RecommendationItemCatalogVersionV1 } from '../deadlock-live/entities/recommendation-item-catalog-version-v1.entity';
 import { RecommendationItemCatalogItemV1 } from '../deadlock-live/entities/recommendation-item-catalog-item-v1.entity';
 import { RecommendationItemCatalogRecipeV1 } from '../deadlock-live/entities/recommendation-item-catalog-recipe-v1.entity';
+import { resolveRecommendationCatalogAssetSemantics } from '../deadlock-live/recommendation-catalog-asset-semantics';
 
 export interface AdaptiveDecisionStateV1 {
   state: RecommendationDecisionState;
@@ -87,21 +88,24 @@ export class AdaptiveDecisionStateV1Service {
         payloadSha256: version.payloadSha256,
         importedAt: version.importedAt.toISOString(),
       },
-      items: itemRows.map((row) => ({
-        itemId: Number(row.itemId),
-        name: row.name,
-        className: row.className,
-        itemType: row.itemType,
-        slotType: row.slotType,
-        cost: row.cost,
-        tier: row.tier,
-        shopable: row.shopable,
-        disabled: row.disabled,
-        active: row.active,
-        isActiveItem: row.isActiveItem,
-        activationType: row.activationType,
-        rawPayload: row.rawPayload,
-      })),
+      items: itemRows.map((row) => {
+        const semantics = resolveRecommendationCatalogAssetSemantics(row);
+        return {
+          itemId: Number(row.itemId),
+          name: row.name,
+          className: row.className,
+          itemType: semantics.itemType,
+          slotType: row.slotType,
+          cost: row.cost,
+          tier: row.tier,
+          shopable: semantics.shopable,
+          disabled: semantics.disabled,
+          active: semantics.active,
+          isActiveItem: semantics.isActiveItem,
+          activationType: semantics.activationType,
+          rawPayload: row.rawPayload,
+        };
+      }),
       recipeEdges: recipeRows.map((row) => ({
         parentItemId: Number(row.parentItemId),
         componentItemId: Number(row.componentItemId),

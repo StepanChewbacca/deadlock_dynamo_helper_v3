@@ -5,6 +5,7 @@ import { DataSource, Repository } from 'typeorm';
 import { RecommendationItemCatalogItemV1 } from './entities/recommendation-item-catalog-item-v1.entity';
 import { RecommendationItemCatalogRecipeV1 } from './entities/recommendation-item-catalog-recipe-v1.entity';
 import { RecommendationItemCatalogVersionV1 } from './entities/recommendation-item-catalog-version-v1.entity';
+import { resolveRecommendationCatalogAssetSemantics } from './recommendation-catalog-asset-semantics';
 
 export const RECOMMENDATION_ITEM_CATALOG_SOURCE = 'DEADLOCK_API_ASSETS_V1' as const;
 
@@ -89,22 +90,25 @@ export class RecommendationCatalogContentV1Service {
         payloadSha256,
       }));
 
-      const itemRows = parsed.map((asset) => itemRepo.create({
-        catalogVersionId,
-        itemId: asset.itemId,
-        name: asset.name,
-        className: asset.className,
-        itemType: asset.itemType,
-        slotType: asset.slotType,
-        cost: asset.cost,
-        tier: asset.tier,
-        shopable: asset.shopable,
-        disabled: asset.disabled,
-        active: asset.active,
-        isActiveItem: asset.isActiveItem,
-        activationType: asset.activationType,
-        rawPayload: asset.rawPayload,
-      }));
+      const itemRows = parsed.map((asset) => {
+        const semantics = resolveRecommendationCatalogAssetSemantics(asset);
+        return itemRepo.create({
+          catalogVersionId,
+          itemId: asset.itemId,
+          name: asset.name,
+          className: asset.className,
+          itemType: semantics.itemType,
+          slotType: asset.slotType,
+          cost: asset.cost,
+          tier: asset.tier,
+          shopable: semantics.shopable,
+          disabled: semantics.disabled,
+          active: semantics.active,
+          isActiveItem: semantics.isActiveItem,
+          activationType: semantics.activationType,
+          rawPayload: asset.rawPayload,
+        });
+      });
       if (itemRows.length > 0) await itemRepo.save(itemRows, { chunk: 250 });
 
       const itemIdByClassName = new Map<string, number>();
