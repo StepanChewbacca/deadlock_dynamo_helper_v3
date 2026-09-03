@@ -4,23 +4,68 @@ import {
   unknownFact,
 } from '@deadlock-live-probe/build-domain';
 import { AdaptiveBuildPlannerV1Service } from '../src/statlocker-adaptive/adaptive-build-planner-v1.service';
+import {
+  RecommendationEconomyRulesV1,
+  deriveAdaptiveInvestmentStateV1,
+  deriveAdaptiveSlotStateV1,
+} from '../src/statlocker-adaptive/adaptive-economy-v1';
 import { AdaptiveEvidenceScorerV1Service } from '../src/statlocker-adaptive/adaptive-evidence-scorer-v1.service';
+import {
+  ConsensusBuildGroupTypeV1,
+  ConsensusBuildGroupV1,
+  ConsensusBuildPhaseV1,
+} from '../src/statlocker-adaptive/statlocker-adaptive.types';
+
+const catalogSha256 = 'a'.repeat(64);
+const economyRules: RecommendationEconomyRulesV1 = {
+  rulesetId: 'ruleset-a',
+  catalogSha256,
+  baseSlots: 9,
+  maxFlexSlots: 3,
+  investmentBreakpoints: {
+    weapon: [1600, 3200, 6400],
+    vitality: [1600, 3200, 6400],
+    spirit: [1600, 3200, 6400],
+  },
+};
 
 function graph() {
-  return createRecommendationItemGraph(Array.from({ length: 9 }, (_, index) => {
+  const standard = Array.from({ length: 30 }, (_, index) => {
     const itemId = index + 1;
+    const slotType = itemId === 10
+      ? 'vitality' as const
+      : itemId % 3 === 0
+        ? 'spirit' as const
+        : itemId % 3 === 1
+          ? 'weapon' as const
+          : 'vitality' as const;
     return {
       itemId,
       name: `Item ${itemId}`,
-      slotType: 'weapon' as const,
+      slotType,
       active: false,
       availableRulesetIds: ['ruleset-a'],
-      directPurchaseCost: itemId === 9 ? 3000 : 500,
-      upgradeRecipes: [],
-      sellTransition: { soulsRefund: 250, returnedItemIds: [] },
+      directPurchaseCost: 800,
+      upgradeRecipes: [] as { recipeId: string; consumedItemIds: number[]; soulsCost: number }[],
+      sellTransition: { soulsRefund: 400, returnedItemIds: [] as number[] },
       maxCopies: 1,
     };
-  }));
+  });
+  standard[0].slotType = 'weapon';
+  standard[19].slotType = 'weapon';
+  standard[10] = {
+    ...standard[10],
+    slotType: 'weapon',
+    directPurchaseCost: undefined as unknown as number,
+    upgradeRecipes: [{ recipeId: 'upgrade-11', consumedItemIds: [1], soulsCost: 800 }],
+  };
+  standard[11] = {
+    ...standard[11],
+    slotType: 'vitality',
+    directPurchaseCost: undefined as unknown as number,
+    upgradeRecipes: [{ recipeId: 'upgrade-12', consumedItemIds: [2], soulsCost: 800 }],
+  };
+  return createRecommendationItemGraph(standard);
 }
 
 function inventory(ids: number[]) {
@@ -38,174 +83,345 @@ function inventory(ids: number[]) {
   };
 }
 
-function decision(owned: number[], wallet: number | undefined, shop: 'AVAILABLE' | 'UNKNOWN' = 'AVAILABLE') {
+function decision(options: {
+  owned?: number[];
+  wallet?: number;
+  gameTimeSec?: number;
+  flexEvidence?: 'OBSERVED' | 'RECONSTRUCTED' | 'UNKNOWN';
+  unlockedFlexSlots?: number;
+  verifiedEconomy?: boolean;
+  shop?: 'AVAILABLE' | 'UNKNOWN';
+} = {}) {
   const itemGraph = graph();
+  const owned = options.owned ?? [];
+  const rules = options.verifiedEconomy === false ? undefined : economyRules;
+  const slotState = deriveAdaptiveSlotStateV1(
+    owned,
+    itemGraph,
+    { baseSlots: 9, maxFlexSlots: 3 },
+    {
+      unlockedFlexSlots: options.unlockedFlexSlots ?? (options.flexEvidence === 'UNKNOWN' ? undefined : 3),
+      evidence: options.flexEvidence ?? 'OBSERVED',
+    },
+  );
   return {
     state: {
       decisionId: 'decision-a',
       matchId: 'match-a',
       playerSlot: 0,
-      gameTimeSec: 700,
+      gameTimeSec: options.gameTimeSec ?? 700,
       rulesetId: 'ruleset-a',
       heroId: 10,
       inventory: inventory(owned),
       economy: {
-        spendableSouls: wallet === undefined ? unknownFact<number>('test') : observedFact(wallet, 'test'),
-        shopOpportunity: shop === 'UNKNOWN' ? unknownFact('test') : observedFact(shop, 'test'),
+        spendableSouls: options.wallet === undefined ? observedFact(5000, 'test') : observedFact(options.wallet, 'test'),
+        shopOpportunity: options.shop === 'UNKNOWN' ? unknownFact('test') : observedFact('AVAILABLE', 'test'),
       },
     },
     itemGraph,
     catalogVersionId: 'catalog-a',
-    catalogSha256: 'a'.repeat(64),
+    catalogSha256,
     rulesetId: 'ruleset-a',
     localSteamId: 'steam-a',
     enemyHeroIds: [20],
     ourTeamSouls: 100000,
     enemyTeamSouls: 100000,
+    slots: slotState,
+    investment: deriveAdaptiveInvestmentStateV1(owned, itemGraph, rules),
+    economyRules: rules,
     stateRevision: 'revision-a',
   } as any;
 }
 
-function family(dataset: string, payload: any) {
-  return { dataset, scopeKey: 'global', freshness: 'FRESH', confidence: 1, payload } as any;
+function group(
+  groupId: string,
+  phase: ConsensusBuildPhaseV1,
+  type: ConsensusBuildGroupTypeV1,
+  itemIds: number[],
+  options: { strength?: number; rushEvidence?: boolean; minSelect?: number; maxSelect?: number } = {},
+): ConsensusBuildGroupV1 {
+  return {
+    groupId,
+    phase,
+    type,
+    minSelect: options.minSelect ?? 1,
+    maxSelect: options.maxSelect ?? 1,
+    candidates: itemIds.map((itemId) => ({
+      itemId,
+      strength: options.strength ?? 0.8,
+      coverage: 0.8,
+      purchaseRate: 0.8,
+      medianBuyTimeS: phase === 'EARLY' ? 300 : phase === 'MID' ? 900 : 1800,
+      timingSpreadS: 90,
+      sourceProfileCount: 8,
+      frequencyTier: type === 'OPTIONAL' ? 'SOMETIMES' : 'CORE',
+      rushEvidence: options.rushEvidence ?? false,
+    })),
+    confidence: 0.9,
+    inferred: false,
+  };
 }
 
-function evidence(options: { skeletonTarget?: boolean; exactCount?: number; baseWpa?: boolean } = {}) {
-  const skeletonItems = options.skeletonTarget === false ? [] : [{
-    itemId: 9,
-    medianBuyTimeS: 900,
-    strength: 0.98,
-    tier: 'CORE',
-    components: { coverage: 1, purchaseRate: 1, frequencyTier: 1, orderConsistency: 1, relationship: 0.8 },
-  }];
-  const baseWpaEnabled = options.baseWpa !== false;
+function family(dataset: string, payload: any) {
   return {
-    heroId: 10,
-    rulesetVersion: 'ruleset-a',
-    catalogSha256: 'a'.repeat(64),
-    statlockerPatchId: '15-1',
-    usable: true,
-    snapshotIds: ['s1'],
-    degradedReasons: [],
-    families: [],
-    byDataset: {
-      WPA_PATCH_DATA: family('WPA_PATCH_DATA', {
-        patchId: '15-1',
-        items: [{
-          heroId: 10,
-          itemId: 9,
-          meanWpa: baseWpaEnabled ? 0.2 : 0,
-          sampleSize: baseWpaEnabled ? 1000 : 0,
-          wpaConfidence: baseWpaEnabled ? 1 : 0,
-          gameState: { even: baseWpaEnabled ? 0.2 : 0 },
-          purchaseTiming: baseWpaEnabled ? { medianPurchaseSec: 900 } : {},
-        }],
-      }),
-      VS_HERO_WPA: family('VS_HERO_WPA', {
-        slices: [{ heroId: 10, enemyHeroId: 20, items: [{ itemId: 9, deltaWpa: 0.5, count: options.exactCount ?? 1000 }] }],
-      }),
-      T4_CHAINS: family('T4_CHAINS', { chains: [] }),
-      CONSENSUS_SKELETON: family('CONSENSUS_SKELETON', { heroId: 10, profileCount: 10, items: skeletonItems }),
-      WPA_FILTERED_ITEMS: family('WPA_FILTERED_ITEMS', { heroId: 10, items: [] }),
-    },
+    dataset,
+    scopeKey: dataset === 'CONSENSUS_SKELETON' ? 'hero:10:consensus' : 'global',
+    snapshotId: `${dataset}-snapshot`,
+    contentSha256: 'b'.repeat(64),
+    freshness: 'FRESH',
+    confidence: 1,
+    payload,
   } as any;
 }
 
-describe('AdaptiveBuildPlannerV1Service', () => {
+function evidence(options: {
+  groups: ConsensusBuildGroupV1[];
+  baseWpa?: Record<number, number>;
+  exactWpa?: Record<number, number>;
+  extraWpaItems?: number[];
+}) {
+  const candidateIds = [...new Set([
+    ...options.groups.flatMap((entry) => entry.candidates.map((candidate) => candidate.itemId)),
+    ...(options.extraWpaItems ?? []),
+  ])].sort((a, b) => a - b);
+  const wpaItems = candidateIds.map((itemId) => ({
+    heroId: 10,
+    itemId,
+    meanWpa: options.baseWpa?.[itemId] ?? 0,
+    sampleSize: 1000,
+    wpaConfidence: 1,
+    gameState: { even: options.baseWpa?.[itemId] ?? 0 },
+    purchaseTiming: {
+      medianPurchaseSec: options.groups
+        .flatMap((entry) => entry.candidates)
+        .find((candidate) => candidate.itemId === itemId)?.medianBuyTimeS ?? 700,
+    },
+  }));
+  const exactItems = candidateIds.map((itemId) => ({
+    itemId,
+    deltaWpa: options.exactWpa?.[itemId] ?? 0,
+    count: 2000,
+  }));
+  const byDataset = {
+    WPA_PATCH_DATA: family('WPA_PATCH_DATA', { patchId: '15-1', items: wpaItems }),
+    VS_HERO_WPA: family('VS_HERO_WPA', {
+      slices: [{ heroId: 10, enemyHeroId: 20, items: exactItems }],
+    }),
+    T4_CHAINS: family('T4_CHAINS', { chains: [] }),
+    CONSENSUS_SKELETON: family('CONSENSUS_SKELETON', {
+      heroId: 10,
+      profileCount: 10,
+      groups: options.groups,
+    }),
+    WPA_FILTERED_ITEMS: family('WPA_FILTERED_ITEMS', { heroId: 10, items: wpaItems }),
+  };
+  return {
+    heroId: 10,
+    rulesetVersion: 'ruleset-a',
+    catalogSha256,
+    statlockerPatchId: '15-1',
+    usable: true,
+    snapshotIds: Object.values(byDataset).map((entry) => entry.snapshotId),
+    degradedReasons: [],
+    families: Object.values(byDataset),
+    byDataset,
+  } as any;
+}
+
+function previousPlan(itemId: number) {
+  return {
+    recommendedBuild: [{
+      itemId,
+      position: 1,
+      status: 'NEXT',
+      score: 0.5,
+      confidence: 0.6,
+      skeletonStrength: 0.8,
+      contextualSupport: 0.1,
+      reasonCodes: [],
+    }],
+    totalScore: 0,
+    nextAction: {
+      actionKey: `BUY_ITEM:${itemId}`,
+      type: 'BUY',
+      itemId,
+      targetItemId: itemId,
+      reasonCodes: [],
+    },
+    confidence: 0.6,
+  } as any;
+}
+
+describe('AdaptiveBuildPlannerV1Service structured planning', () => {
   const planner = new AdaptiveBuildPlannerV1Service(new AdaptiveEvidenceScorerV1Service());
 
-  it('keeps a strong future core target while immediate action waits when unaffordable', () => {
-    const result = planner.plan({ decision: decision([], 100), evidence: evidence() });
-    expect(result.recommendedBuild.some((item) => item.itemId === 9)).toBe(true);
-    expect(['WAIT', 'CONTINUE_CORE']).toContain(result.nextAction.type);
-    expect(result.rankedImmediateCandidates.every((candidate) => candidate.action.type !== 'BUY')).toBe(true);
+  it('hard-gates a high-WPA MID item at 120 seconds', () => {
+    const result = planner.plan({
+      decision: decision({ gameTimeSec: 120 }),
+      evidence: evidence({
+        groups: [
+          group('early-core', 'EARLY', 'REQUIRED', [1]),
+          group('mid-core', 'MID', 'REQUIRED', [9]),
+        ],
+        baseWpa: { 1: 0.01, 9: 0.8 },
+        exactWpa: { 1: 0, 9: 0.8 },
+      }),
+    });
+
+    expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(1);
+    expect(result.recommendedBuild.some((item) => item.itemId === 9)).toBe(false);
   });
 
-  it('never selects BUY when shop opportunity is unknown but still returns the target plan', () => {
-    const result = planner.plan({ decision: decision([], 5000, 'UNKNOWN'), evidence: evidence() });
-    expect(result.recommendedBuild.some((item) => item.itemId === 9)).toBe(true);
+  it('resolves a CHOICE with exact-enemy WPA and never emits both alternatives', () => {
+    const result = planner.plan({
+      decision: decision(),
+      evidence: evidence({
+        groups: [group('defense-choice', 'EARLY', 'CHOICE', [2, 3])],
+        exactWpa: { 2: 0.01, 3: 0.5 },
+      }),
+    });
+
+    expect(result.recommendedBuild.some((item) => item.itemId === 3)).toBe(true);
+    expect(result.recommendedBuild.some((item) => item.itemId === 2)).toBe(false);
+  });
+
+  it('can switch an uncommitted previous CHOICE when contextual evidence materially improves', () => {
+    const result = planner.plan({
+      decision: decision(),
+      evidence: evidence({
+        groups: [group('choice', 'EARLY', 'CHOICE', [2, 3])],
+        exactWpa: { 2: 0, 3: 0.7 },
+      }),
+      previousResult: previousPlan(2),
+    });
+
+    expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(3);
+  });
+
+  it('does not switch a CHOICE after branch-unique component investment', () => {
+    const result = planner.plan({
+      decision: decision({ owned: [1] }),
+      evidence: evidence({
+        groups: [group('upgrade-choice', 'EARLY', 'CHOICE', [11, 12])],
+        exactWpa: { 11: 0, 12: 0.8 },
+      }),
+    });
+
+    expect(result.recommendedBuild.some((item) => item.itemId === 12)).toBe(false);
+    expect(result.nextAction.targetItemId).toBe(11);
+  });
+
+  it('does not activate a weak OPTIONAL group', () => {
+    const result = planner.plan({
+      decision: decision(),
+      evidence: evidence({
+        groups: [
+          group('core', 'EARLY', 'REQUIRED', [1]),
+          group('optional', 'EARLY', 'OPTIONAL', [4], { strength: 0.15 }),
+        ],
+      }),
+    });
+
+    expect(result.recommendedBuild.some((item) => item.itemId === 4)).toBe(false);
+  });
+
+  it('does not treat raw WPA-only items as mandatory build targets', () => {
+    const result = planner.plan({
+      decision: decision(),
+      evidence: evidence({
+        groups: [group('core', 'EARLY', 'REQUIRED', [1])],
+        baseWpa: { 1: 0.01, 19: 0.9 },
+        exactWpa: { 1: 0, 19: 0.9 },
+        extraWpaItems: [19],
+      }),
+    });
+
+    expect(result.recommendedBuild.some((item) => item.itemId === 19)).toBe(false);
+  });
+
+  it('never assumes unknown flex slots are already unlocked', () => {
+    const result = planner.plan({
+      decision: decision({
+        owned: [20, 21, 22, 23, 24, 25, 26, 27, 28],
+        flexEvidence: 'UNKNOWN',
+        unlockedFlexSlots: undefined,
+      }),
+      evidence: evidence({ groups: [group('core', 'EARLY', 'REQUIRED', [1])] }),
+    });
+
     expect(result.nextAction.type).not.toBe('BUY');
+    if (result.nextAction.type === 'REPLACE') expect(result.nextAction.buyItemId).toBe(1);
   });
 
-  it('uses legal REPLACE for full inventory when target evidence is strong', () => {
-    const result = planner.plan({ decision: decision([1, 2, 3, 4, 5, 6, 7, 8], 5000), evidence: evidence() });
-    expect(result.nextAction.type).toBe('REPLACE');
-    expect(result.nextAction.buyItemId).toBe(9);
-  });
-
-  it('does not replace from tiny exact-enemy evidence without core or base support', () => {
+  it('can prefer a verified investment breakpoint over an otherwise equal target', () => {
     const result = planner.plan({
-      decision: decision([1, 2, 3, 4, 5, 6, 7, 8], 5000),
-      evidence: evidence({ skeletonTarget: false, exactCount: 11, baseWpa: false }),
-    });
-    expect(result.nextAction.type).not.toBe('REPLACE');
-  });
-
-  it('preserves previous plan under hysteresis and returns HOLD', () => {
-    const previous = planner.plan({ decision: decision([], 100), evidence: evidence() });
-    const result = planner.plan({
-      decision: decision([], 100),
-      evidence: evidence(),
-      previousResult: { ...previous, totalScore: previous.totalScore + 0.01 },
-    });
-    expect(result.nextAction.type).toBe('HOLD');
-    expect(result.recommendedBuild.map((item) => item.itemId)).toEqual(previous.recommendedBuild.map((item) => item.itemId));
-  });
-
-  it('advances NEXT when the previous target is now owned even if hysteresis preserves the plan', () => {
-    const previousResult = {
-      recommendedBuild: [
-        {
-          itemId: 1,
-          position: 1,
-          status: 'NEXT',
-          score: 0.8,
-          confidence: 0.8,
-          skeletonStrength: 0.8,
-          contextualSupport: 0.4,
-          reasonCodes: [],
-        },
-        {
-          itemId: 2,
-          position: 2,
-          status: 'PLANNED',
-          score: 0.7,
-          confidence: 0.7,
-          skeletonStrength: 0.7,
-          contextualSupport: 0.3,
-          reasonCodes: [],
-        },
-      ],
-      totalScore: 100,
-      nextAction: {
-        actionKey: 'HOLD:1',
-        type: 'HOLD',
-        targetItemId: 1,
-        reasonCodes: ['PLAN_HYSTERESIS'],
-      },
-      confidence: 0.8,
-    } as any;
-
-    const result = planner.plan({
-      decision: decision([1], 100),
-      evidence: evidence(),
-      previousResult,
+      decision: decision({ owned: [20], verifiedEconomy: true }),
+      evidence: evidence({
+        groups: [
+          group('weapon', 'EARLY', 'REQUIRED', [1], { strength: 0.75 }),
+          group('vitality', 'EARLY', 'REQUIRED', [10], { strength: 0.75 }),
+        ],
+      }),
     });
 
-    expect(result.nextAction.type).toBe('HOLD');
-    expect(result.nextAction.targetItemId).toBe(2);
-    expect(result.recommendedBuild).toEqual([
-      expect.objectContaining({ itemId: 1, position: 1, status: 'OWNED' }),
-      expect.objectContaining({ itemId: 2, position: 2, status: 'NEXT' }),
-    ]);
+    expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(1);
   });
 
-  it('protects recently purchased inventory from immediate sell or replacement', () => {
+  it('lets a critical exact-enemy counter override the investment preference', () => {
     const result = planner.plan({
-      decision: decision([1, 2, 3, 4, 5, 6, 7, 8], 5000),
-      evidence: evidence(),
-      recentPurchasedItemIds: [1, 2, 3, 4, 5, 6, 7, 8],
+      decision: decision({ owned: [20], verifiedEconomy: true }),
+      evidence: evidence({
+        groups: [
+          group('weapon', 'EARLY', 'REQUIRED', [1], { strength: 0.75 }),
+          group('vitality', 'EARLY', 'REQUIRED', [10], { strength: 0.75 }),
+        ],
+        exactWpa: { 1: 0, 10: 0.8 },
+      }),
     });
-    expect(['SELL', 'REPLACE']).not.toContain(result.nextAction.type);
+
+    expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(10);
+  });
+
+  it('uses a legal upgrade at full base inventory instead of an illegal extra buy', () => {
+    const result = planner.plan({
+      decision: decision({
+        owned: [1, 20, 21, 22, 23, 24, 25, 26, 27],
+        unlockedFlexSlots: 0,
+      }),
+      evidence: evidence({ groups: [group('upgrade', 'EARLY', 'REQUIRED', [11])] }),
+    });
+
+    expect(result.nextAction.type).toBe('UPGRADE');
+    expect(result.nextAction.targetItemId).toBe(11);
+  });
+
+  it('never appends unselected choice or inactive optional skeleton tails', () => {
+    const result = planner.plan({
+      decision: decision(),
+      evidence: evidence({
+        groups: [
+          group('core', 'EARLY', 'REQUIRED', [1]),
+          group('choice', 'EARLY', 'CHOICE', [2, 3]),
+          group('optional', 'EARLY', 'OPTIONAL', [4], { strength: 0.1 }),
+        ],
+        exactWpa: { 2: 0, 3: 0.5 },
+      }),
+    });
+
+    const ids = result.recommendedBuild.map((item) => item.itemId);
+    expect(ids).toEqual(expect.arrayContaining([1, 3]));
+    expect(ids).not.toContain(2);
+    expect(ids).not.toContain(4);
+  });
+
+  it('keeps NEXT consistent with the selected legal action target', () => {
+    const result = planner.plan({
+      decision: decision(),
+      evidence: evidence({ groups: [group('core', 'EARLY', 'REQUIRED', [1])] }),
+    });
+
+    expect(result.recommendedBuild.filter((item) => item.status === 'NEXT')).toHaveLength(1);
+    expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId)
+      .toBe(result.nextAction.targetItemId);
   });
 });
