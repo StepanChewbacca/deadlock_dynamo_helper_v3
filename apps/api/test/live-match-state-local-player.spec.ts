@@ -126,6 +126,55 @@ describe('LiveMatchStateService local Deadlock player resolution', () => {
     ]);
   });
 
+  it('does not bind a new match local roster row to the prior match Steam ID', () => {
+    const service = new LiveMatchStateService();
+    const oldSteamId = '76561198000000001';
+
+    service.applyBatch({
+      clientId: 'test-client',
+      events: [
+        {
+          receivedAt: 1,
+          source: 'onInfoUpdates2',
+          key: 'steam_id',
+          payload: oldSteamId,
+        },
+        {
+          receivedAt: 2,
+          source: 'onInfoUpdates2',
+          key: 'match_id',
+          payload: '42',
+        },
+        {
+          receivedAt: 3,
+          source: 'onInfoUpdates2',
+          key: 'roster_11',
+          payload: { steam_id: '', is_local: true, player_name: 'Old Local' },
+        },
+      ],
+    });
+
+    const nextMatch = service.applyBatch({
+      clientId: 'test-client',
+      events: [
+        {
+          receivedAt: 4,
+          source: 'onInfoUpdates2',
+          key: 'match_id',
+          payload: '43',
+        },
+        {
+          receivedAt: 5,
+          source: 'onInfoUpdates2',
+          key: 'roster_11',
+          payload: { steam_id: '', is_local: true, player_name: 'New Local' },
+        },
+      ],
+    });
+
+    expect(nextMatch?.playersBySteamId[oldSteamId]).toBeUndefined();
+  });
+
   it('attaches local items through the production normalizer when GEP suffixes differ', () => {
     const normalizer = new LiveInventoryEventNormalizerService();
     const service = new LiveMatchStateService();

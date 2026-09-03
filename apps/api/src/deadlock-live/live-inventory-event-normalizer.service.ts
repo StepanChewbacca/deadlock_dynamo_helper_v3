@@ -102,7 +102,8 @@ export class LiveInventoryEventNormalizerService {
     const rosterSlot = event.key.startsWith('items_')
       ? `roster_${event.key.slice('items_'.length)}`
       : undefined;
-    const directSteamId = readSteamId(event.payload.steam_id ?? event.payload.steamId);
+    const rawSteamId = readSteamId(event.payload.steam_id ?? event.payload.steamId);
+    const directSteamId = rawSteamId && rawSteamId !== '0' ? rawSteamId : undefined;
     const playerName = readString(event.payload.player_name ?? event.payload.playerName);
     const steamId = directSteamId
       ?? (rosterSlot ? this.getRosterSlots(clientId).get(rosterSlot) : undefined)
@@ -149,6 +150,7 @@ export class LiveInventoryEventNormalizerService {
     if (previousMatchId && previousMatchId !== matchId) {
       this.steamIdByClientAndRosterSlot.delete(batch.clientId);
       this.steamIdsByClientAndPlayerName.delete(batch.clientId);
+      this.localSteamIdByClientId.delete(batch.clientId);
     }
     this.matchIdByClientId.set(batch.clientId, matchId);
   }

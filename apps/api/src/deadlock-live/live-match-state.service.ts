@@ -32,6 +32,7 @@ export class LiveMatchStateService {
       previousMatchId !== extractedMatchId
     ) {
       this.clientLocalRosterSlots.delete(batch.clientId);
+      this.clientLocalSteamIds.delete(batch.clientId);
     }
     if (extractedLocalSteamId) {
       this.clientLocalSteamIds.set(batch.clientId, extractedLocalSteamId);

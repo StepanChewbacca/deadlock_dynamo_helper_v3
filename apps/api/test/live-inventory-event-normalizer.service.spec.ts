@@ -140,6 +140,124 @@ describe('LiveInventoryEventNormalizerService', () => {
     });
   });
 
+  it('falls back to the unique player name when GEP reports inventory steam_id as zero', () => {
+    const service = new LiveInventoryEventNormalizerService();
+    const localSteamId = '76561198000000001';
+
+    service.normalizeBatch({
+      clientId: 'client-1',
+      events: [
+        {
+          receivedAt: 1,
+          source: 'onInfoUpdates2',
+          key: 'steam_id',
+          payload: localSteamId,
+        },
+        {
+          receivedAt: 2,
+          source: 'onInfoUpdates2',
+          key: 'match_id',
+          payload: '42',
+        },
+        {
+          receivedAt: 3,
+          source: 'onInfoUpdates2',
+          key: 'roster_11',
+          payload: {
+            steam_id: '',
+            player_name: 'Local Player',
+            is_local: true,
+          },
+        },
+      ],
+    });
+
+    const normalized = service.normalizeBatch({
+      clientId: 'client-1',
+      events: [
+        {
+          receivedAt: 4,
+          source: 'onInfoUpdates2',
+          key: 'items_3',
+          payload: {
+            steam_id: '0',
+            player_name: 'Local Player',
+            items: [{ id: 100 }],
+          },
+        },
+      ],
+    });
+
+    expect(normalized.events[0].payload).toMatchObject({ steam_id: localSteamId });
+  });
+
+  it('does not carry a cached local Steam ID into a new match without one', () => {
+    const service = new LiveInventoryEventNormalizerService();
+    const oldSteamId = '76561198000000001';
+
+    service.normalizeBatch({
+      clientId: 'client-1',
+      events: [
+        {
+          receivedAt: 1,
+          source: 'onInfoUpdates2',
+          key: 'steam_id',
+          payload: oldSteamId,
+        },
+        {
+          receivedAt: 2,
+          source: 'onInfoUpdates2',
+          key: 'match_id',
+          payload: '42',
+        },
+        {
+          receivedAt: 3,
+          source: 'onInfoUpdates2',
+          key: 'roster_11',
+          payload: {
+            steam_id: '',
+            player_name: 'Local Player',
+            is_local: true,
+          },
+        },
+      ],
+    });
+
+    const normalized = service.normalizeBatch({
+      clientId: 'client-1',
+      events: [
+        {
+          receivedAt: 4,
+          source: 'onInfoUpdates2',
+          key: 'match_id',
+          payload: '43',
+        },
+        {
+          receivedAt: 5,
+          source: 'onInfoUpdates2',
+          key: 'roster_11',
+          payload: {
+            steam_id: '',
+            player_name: 'Local Player',
+            is_local: true,
+          },
+        },
+        {
+          receivedAt: 6,
+          source: 'onInfoUpdates2',
+          key: 'items_3',
+          payload: {
+            steam_id: '',
+            player_name: 'Local Player',
+            items: [{ id: 100 }],
+          },
+        },
+      ],
+    });
+
+    expect(normalized.events[2].payload).not.toMatchObject({ steam_id: oldSteamId });
+  });
+
   it('does not modify non-inventory events', () => {
     const service = new LiveInventoryEventNormalizerService();
     const event = {
