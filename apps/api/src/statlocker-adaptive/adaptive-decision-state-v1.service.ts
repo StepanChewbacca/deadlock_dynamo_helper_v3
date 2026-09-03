@@ -23,6 +23,7 @@ import { resolveRecommendationCatalogAssetSemantics } from '../deadlock-live/rec
 import {
   AdaptiveInvestmentStateV1,
   AdaptiveSlotStateV1,
+  RecommendationEconomyRulesV1,
   deriveAdaptiveInvestmentStateV1,
   deriveAdaptiveSlotStateV1,
   resolveRecommendationEconomyRulesV1,
@@ -40,6 +41,7 @@ export interface AdaptiveDecisionStateV1 {
   enemyTeamSouls?: number;
   slots: AdaptiveSlotStateV1;
   investment: AdaptiveInvestmentStateV1;
+  economyRules?: RecommendationEconomyRulesV1;
   stateRevision: string;
 }
 
@@ -135,7 +137,7 @@ export class AdaptiveDecisionStateV1Service {
 
     const exactEconomyRules = resolveRecommendationEconomyRulesV1(compiled.rulesetId, version.payloadSha256);
     const slotRules = exactEconomyRules ?? {
-      baseSlotsByType: DEFAULT_RECOMMENDATION_CANDIDATE_RULES.baseSlotsByType,
+      baseSlots: DEFAULT_RECOMMENDATION_CANDIDATE_RULES.baseSlots ?? 9,
       maxFlexSlots: DEFAULT_RECOMMENDATION_CANDIDATE_RULES.maxFlexSlots,
     };
     const slots = deriveAdaptiveSlotStateV1(ownedItemIds, compiled.graph, slotRules, { evidence: 'UNKNOWN' });
@@ -183,6 +185,7 @@ export class AdaptiveDecisionStateV1Service {
       enemyTeamSouls: teamTotals.enemy,
       slots,
       investment,
+      economyRules: exactEconomyRules,
       stateRevision,
     };
   }
