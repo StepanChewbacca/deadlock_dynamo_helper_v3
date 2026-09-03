@@ -143,9 +143,10 @@ function selectFreshLegalAction(
     return { action: selected, changed: false };
   }
 
+  const targetItemId = firstNextTarget(build);
   for (const scored of ranked) {
-    if (isTransactionAction(scored.action) && !feasibleByActionKey.has(scored.action.actionKey)) continue;
-    if (!isTransactionAction(scored.action) && !feasibleByActionKey.has(scored.action.actionKey)) continue;
+    if (!feasibleByActionKey.has(scored.action.actionKey)) continue;
+    if (transactionTargetsNextItem(scored.action) && scored.action.targetItemId !== targetItemId) continue;
     return {
       action: scored.action.type === 'WAIT'
         ? withFreshLegalityFallback(rebasePlanTarget(scored.action, build, feasibleByActionKey))
@@ -157,7 +158,6 @@ function selectFreshLegalAction(
     };
   }
 
-  const targetItemId = firstNextTarget(build);
   return {
     action: {
       actionKey: freshWaitActionKey(targetItemId, feasibleByActionKey),
@@ -294,6 +294,10 @@ function toProvenance(evidence: StatlockerEvidenceBundleV1): AdaptiveRecommendat
 
 function isTransactionAction(action: AdaptiveActionV1): boolean {
   return action.type === 'BUY' || action.type === 'UPGRADE' || action.type === 'SELL' || action.type === 'REPLACE';
+}
+
+function transactionTargetsNextItem(action: AdaptiveActionV1): boolean {
+  return action.type === 'BUY' || action.type === 'UPGRADE' || action.type === 'REPLACE';
 }
 
 function targetsOwnedItem(action: AdaptiveActionV1, ownedItemIds: ReadonlySet<number>): boolean {
