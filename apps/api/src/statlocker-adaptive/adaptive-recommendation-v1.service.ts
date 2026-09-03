@@ -143,11 +143,7 @@ function selectFreshLegalAction(
     if (!isTransactionAction(scored.action) && !feasibleByActionKey.has(scored.action.actionKey)) continue;
     return {
       action: scored.action.type === 'WAIT'
-        ? {
-            ...scored.action,
-            targetItemId: firstNextTarget(build) ?? scored.action.targetItemId,
-            reasonCodes: unique([...scored.action.reasonCodes, 'FRESH_LEGALITY_FALLBACK']),
-          }
+        ? withFreshLegalityFallback(rebasePlanTarget(scored.action, build))
         : {
             ...scored.action,
             reasonCodes: unique([...scored.action.reasonCodes, 'FRESH_LEGALITY_FALLBACK']),
@@ -306,7 +302,29 @@ function rebasePlanTarget(
   build: AdaptiveRecommendationResultV1['recommendedBuild'],
 ): AdaptiveActionV1 {
   if (action.type !== 'WAIT' && action.type !== 'HOLD' && action.type !== 'CONTINUE_CORE') return action;
-  return { ...action, targetItemId: firstNextTarget(build) };
+  const targetItemId = firstNextTarget(build);
+  return {
+    ...action,
+    actionKey: action.type === 'WAIT' && isWaitSaveActionKey(action.actionKey)
+      ? waitSaveActionKey(targetItemId)
+      : action.actionKey,
+    targetItemId,
+  };
+}
+
+function withFreshLegalityFallback(action: AdaptiveActionV1): AdaptiveActionV1 {
+  return {
+    ...action,
+    reasonCodes: unique([...action.reasonCodes, 'FRESH_LEGALITY_FALLBACK']),
+  };
+}
+
+function waitSaveActionKey(targetItemId: number | undefined): string {
+  return targetItemId === undefined ? 'WAIT_SAVE' : `WAIT_SAVE:${targetItemId}`;
+}
+
+function isWaitSaveActionKey(actionKey: string): boolean {
+  return actionKey === 'WAIT_SAVE' || actionKey.startsWith('WAIT_SAVE:');
 }
 
 function rebasePlanAgainstOwnedInventory(

@@ -9,9 +9,9 @@ import { AdaptiveRecommendationV1Service } from '../src/statlocker-adaptive/adap
 const catalogSha256 = 'a'.repeat(64);
 
 function graph() {
-  return createRecommendationItemGraph([{
-    itemId: 1,
-    name: 'Item 1',
+  return createRecommendationItemGraph([1, 2].map((itemId) => ({
+    itemId,
+    name: `Item ${itemId}`,
     slotType: 'weapon' as const,
     active: false,
     availableRulesetIds: ['ruleset-a'],
@@ -19,7 +19,7 @@ function graph() {
     upgradeRecipes: [],
     sellTransition: { soulsRefund: 250, returnedItemIds: [] },
     maxCopies: 1,
-  }]);
+  })));
 }
 
 function inventory(ids: number[] = []) {
@@ -106,7 +106,7 @@ function plannerResult() {
     changes: [{ type: 'INSERT', itemId: 1, toPosition: 1, reasonCodes: ['PLAN_TARGET_ADDED'] }],
     rankedImmediateCandidates: [
       { action: { actionKey: 'BUY_ITEM:1', type: 'BUY', itemId: 1, targetItemId: 1, reasonCodes: ['FEASIBLE'] }, score: 0.9, confidence: 0.8, components: [], reasonCodes: ['FEASIBLE'] },
-      { action: { actionKey: 'WAIT_SAVE', type: 'WAIT', targetItemId: 1, reasonCodes: ['FEASIBLE'] }, score: 0.1, confidence: 0.5, components: [], reasonCodes: ['FEASIBLE'] },
+      { action: { actionKey: 'WAIT_SAVE:1', type: 'WAIT', targetItemId: 1, reasonCodes: ['FEASIBLE'] }, score: 0.1, confidence: 0.5, components: [], reasonCodes: ['FEASIBLE'] },
     ],
     totalScore: 0.9,
     confidence: 0.8,
@@ -170,7 +170,7 @@ describe('AdaptiveRecommendationV1Service', () => {
     const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
     expect(h.stateService.build).toHaveBeenCalledTimes(2);
     expect(result.nextAction.type).toBe('WAIT');
-    expect(result.nextAction.actionKey).toBe('WAIT_SAVE');
+    expect(result.nextAction.actionKey).toBe('WAIT_SAVE:1');
     expect(result.blockers).toContain('STATE_CHANGED_LEGALITY_RECHECK');
     expect(h.replay.persist).toHaveBeenCalledTimes(1);
     expect(h.replay.persist.mock.calls[0][0].result.nextAction.type).toBe('WAIT');
@@ -235,6 +235,41 @@ describe('AdaptiveRecommendationV1Service', () => {
 
     expect(result.nextAction).toEqual(expect.objectContaining({ type: 'HOLD', targetItemId: undefined }));
     expect(result.nextTargetItemId).toBeUndefined();
+  });
+
+  it('clears a fallback WAIT target and top-level target when the fresh build is entirely owned', async () => {
+    const h = harness({
+      states: [
+        decision({ wallet: 1000, revision: 'revision-a' }),
+        decision({ wallet: undefined, owned: [1], revision: 'revision-b' }),
+      ],
+    });
+
+    const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
+
+    expect(result.recommendedBuild).toEqual([expect.objectContaining({ itemId: 1, status: 'OWNED' })]);
+    expect(result.nextAction).toEqual(expect.objectContaining({ actionKey: 'WAIT_SAVE', type: 'WAIT', targetItemId: undefined }));
+    expect(result.nextTargetItemId).toBeUndefined();
+  });
+
+  it('rebuilds a fallback targeted WAIT key when the fresh build advances its target', async () => {
+    const plan = plannerResult();
+    plan.recommendedBuild = [
+      ...plan.recommendedBuild,
+      { ...plan.recommendedBuild[0], itemId: 2, position: 2, status: 'PLANNED' },
+    ];
+    const h = harness({
+      states: [
+        decision({ wallet: 1000, revision: 'revision-a' }),
+        decision({ wallet: undefined, owned: [1], revision: 'revision-b' }),
+      ],
+      plan,
+    });
+
+    const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
+
+    expect(result.nextAction).toEqual(expect.objectContaining({ actionKey: 'WAIT_SAVE:2', type: 'WAIT', targetItemId: 2 }));
+    expect(result.nextTargetItemId).toBe(2);
   });
 
   it('preserves a previous valid plan conservatively when local Statlocker evidence is unavailable', async () => {
