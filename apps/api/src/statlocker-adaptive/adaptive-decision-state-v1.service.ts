@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
+  DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
   InventoryState,
   RecommendationDecisionState,
   RecommendationItemGraph,
@@ -19,6 +20,13 @@ import { RecommendationItemCatalogVersionV1 } from '../deadlock-live/entities/re
 import { RecommendationItemCatalogItemV1 } from '../deadlock-live/entities/recommendation-item-catalog-item-v1.entity';
 import { RecommendationItemCatalogRecipeV1 } from '../deadlock-live/entities/recommendation-item-catalog-recipe-v1.entity';
 import { resolveRecommendationCatalogAssetSemantics } from '../deadlock-live/recommendation-catalog-asset-semantics';
+import {
+  AdaptiveInvestmentStateV1,
+  AdaptiveSlotStateV1,
+  deriveAdaptiveInvestmentStateV1,
+  deriveAdaptiveSlotStateV1,
+  resolveRecommendationEconomyRulesV1,
+} from './adaptive-economy-v1';
 
 export interface AdaptiveDecisionStateV1 {
   state: RecommendationDecisionState;
@@ -30,6 +38,8 @@ export interface AdaptiveDecisionStateV1 {
   enemyHeroIds: readonly number[];
   ourTeamSouls?: number;
   enemyTeamSouls?: number;
+  slots: AdaptiveSlotStateV1;
+  investment: AdaptiveInvestmentStateV1;
   stateRevision: string;
 }
 
@@ -123,6 +133,14 @@ export class AdaptiveDecisionStateV1Service {
       nextInstanceSequence: heldByItemId.size + 1,
     };
 
+    const exactEconomyRules = resolveRecommendationEconomyRulesV1(compiled.rulesetId, version.payloadSha256);
+    const slotRules = exactEconomyRules ?? {
+      baseSlotsByType: DEFAULT_RECOMMENDATION_CANDIDATE_RULES.baseSlotsByType,
+      maxFlexSlots: DEFAULT_RECOMMENDATION_CANDIDATE_RULES.maxFlexSlots,
+    };
+    const slots = deriveAdaptiveSlotStateV1(ownedItemIds, compiled.graph, slotRules, { evidence: 'UNKNOWN' });
+    const investment = deriveAdaptiveInvestmentStateV1(ownedItemIds, compiled.graph, exactEconomyRules);
+
     const canVerifySpendable = await this.soulsEvidence.canVerifyScope(
       compiled.rulesetId,
       version.payloadSha256,
@@ -163,6 +181,8 @@ export class AdaptiveDecisionStateV1Service {
       enemyHeroIds,
       ourTeamSouls: teamTotals.our,
       enemyTeamSouls: teamTotals.enemy,
+      slots,
+      investment,
       stateRevision,
     };
   }
