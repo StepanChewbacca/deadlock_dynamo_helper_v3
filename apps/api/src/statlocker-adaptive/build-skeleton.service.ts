@@ -1,13 +1,13 @@
 import { createHash } from 'crypto';
 import { Injectable } from '@nestjs/common';
 import {
+  BuiltConsensusSkeletonV1,
   ConsensusBuildCandidateV1,
   ConsensusBuildGroupTypeV1,
   ConsensusBuildGroupV1,
   ConsensusBuildPhaseV1,
   ConsensusSkeletonComponentV1,
   ConsensusSkeletonItemV1,
-  ConsensusSkeletonV1,
   StatlockerFrequencyTierV1,
   StatlockerHeroLeaderboardV1,
   StatlockerProBuildAnalysisV1,
@@ -42,6 +42,7 @@ const COMPONENT_WEIGHTS = {
 
 interface DerivedItemV1 {
   candidate: ConsensusBuildCandidateV1;
+  phase: ConsensusBuildPhaseV1;
   components: ConsensusSkeletonComponentV1;
   explicitGroup?: StatlockerProBuildExplicitGroupV1;
 }
@@ -57,7 +58,7 @@ export class BuildSkeletonService {
 
   constructor(private readonly store: StatlockerSnapshotStoreService) {}
 
-  async rebuild(input: RebuildConsensusSkeletonInputV1): Promise<ConsensusSkeletonV1 | undefined> {
+  async rebuild(input: RebuildConsensusSkeletonInputV1): Promise<BuiltConsensusSkeletonV1 | undefined> {
     validateInput(input);
     const leaderboardSnapshot = this.store.getActive({
       dataset: 'HERO_LEADERBOARD',
@@ -116,7 +117,7 @@ export class BuildSkeletonService {
     return skeleton;
   }
 
-  private getCurrentSkeleton(input: RebuildConsensusSkeletonInputV1): ConsensusSkeletonV1 | undefined {
+  private getCurrentSkeleton(input: RebuildConsensusSkeletonInputV1): BuiltConsensusSkeletonV1 | undefined {
     const current = this.store.getActive({
       dataset: 'CONSENSUS_SKELETON',
       rulesetVersion: input.rulesetVersion,
@@ -131,7 +132,7 @@ export class BuildSkeletonService {
 export function deriveSkeleton(
   heroId: number,
   profiles: readonly StatlockerProBuildAnalysisV1[],
-): ConsensusSkeletonV1 {
+): BuiltConsensusSkeletonV1 {
   const selected = [...profiles]
     .filter((profile) => profile.heroId === heroId)
     .sort((a, b) => a.accountId.localeCompare(b.accountId))
@@ -163,15 +164,15 @@ function deriveGroups(
   for (const entry of derived) {
     const explicit = entry.explicitGroup;
     if (!explicit) continue;
-    const key = [entry.candidate.phase, explicit.type, explicit.groupKey, explicit.minSelect, explicit.maxSelect].join('|');
+    const key = [entry.phase, explicit.type, explicit.groupKey, explicit.minSelect, explicit.maxSelect].join('|');
     const bucket = explicitBuckets.get(key) ?? [];
     bucket.push(entry);
     explicitBuckets.set(key, bucket);
   }
 
-  for (const [key, entries] of [...explicitBuckets.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+  for (const entries of [...explicitBuckets.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, value]) => value)) {
     const explicit = entries[0].explicitGroup as StatlockerProBuildExplicitGroupV1;
-    const phase = entries[0].candidate.phase;
+    const phase = entries[0].phase;
     const candidates = entries.map((entry) => entry.candidate).sort(compareCandidates);
     groups.push({
       groupId: stableConsensusGroupIdV1(heroId, phase, explicit.type, candidates.map((candidate) => candidate.itemId)),
@@ -184,12 +185,11 @@ function deriveGroups(
       inferred: false,
     });
     for (const candidate of candidates) assigned.add(candidate.itemId);
-    void key;
   }
 
   const available = derived
     .filter((entry) => !assigned.has(entry.candidate.itemId))
-    .sort((a, b) => compareCandidates(a.candidate, b.candidate));
+    .sort(compareDerivedItems);
 
   for (let index = 0; index < available.length; index += 1) {
     const seed = available[index];
@@ -198,7 +198,7 @@ function deriveGroups(
     for (let candidateIndex = index + 1; candidateIndex < available.length; candidateIndex += 1) {
       const candidate = available[candidateIndex];
       if (assigned.has(candidate.candidate.itemId)) continue;
-      if (clique.every((member) => choicePairConfidence(member.candidate, candidate.candidate, profiles) !== undefined)) {
+      if (clique.every((member) => choicePairConfidence(member, candidate, profiles) !== undefined)) {
         clique.push(candidate);
       }
     }
@@ -206,14 +206,14 @@ function deriveGroups(
     const confidences: number[] = [];
     for (let left = 0; left < clique.length; left += 1) {
       for (let right = left + 1; right < clique.length; right += 1) {
-        const confidence = choicePairConfidence(clique[left].candidate, clique[right].candidate, profiles);
+        const confidence = choicePairConfidence(clique[left], clique[right], profiles);
         if (confidence !== undefined) confidences.push(confidence);
       }
     }
     const confidence = average(confidences);
     if (confidence < ADAPTIVE_POLICY_V1_CONFIG.choice.inferenceMinConfidence) continue;
     const candidates = clique.map((entry) => entry.candidate).sort(compareCandidates);
-    const phase = candidates[0].phase;
+    const phase = clique[0].phase;
     groups.push({
       groupId: stableConsensusGroupIdV1(heroId, phase, 'CHOICE', candidates.map((candidate) => candidate.itemId)),
       phase,
@@ -234,8 +234,8 @@ function deriveGroups(
         ? 'REQUIRED'
         : 'OPTIONAL';
     groups.push({
-      groupId: stableConsensusGroupIdV1(heroId, entry.candidate.phase, type, [entry.candidate.itemId]),
-      phase: entry.candidate.phase,
+      groupId: stableConsensusGroupIdV1(heroId, entry.phase, type, [entry.candidate.itemId]),
+      phase: entry.phase,
       type,
       minSelect: type === 'OPTIONAL' ? 0 : 1,
       maxSelect: 1,
@@ -293,31 +293,31 @@ function deriveItem(itemId: number, profiles: readonly StatlockerProBuildAnalysi
       purchaseRate,
       sourceProfileCount: observed.length,
       frequencyTier,
-      phase,
       rushEvidence: deriveRushEvidence(phase, buyTimes),
     },
+    phase,
     components,
     explicitGroup,
   };
 }
 
 function choicePairConfidence(
-  a: ConsensusBuildCandidateV1,
-  b: ConsensusBuildCandidateV1,
+  a: DerivedItemV1,
+  b: DerivedItemV1,
   profiles: readonly StatlockerProBuildAnalysisV1[],
 ): number | undefined {
   const config = ADAPTIVE_POLICY_V1_CONFIG.choice;
   if (a.phase !== b.phase) return undefined;
-  if (a.coverage < config.inferenceMinCoverage || b.coverage < config.inferenceMinCoverage) return undefined;
-  const timeDelta = Math.abs(a.medianBuyTimeS - b.medianBuyTimeS);
+  if (a.candidate.coverage < config.inferenceMinCoverage || b.candidate.coverage < config.inferenceMinCoverage) return undefined;
+  const timeDelta = Math.abs(a.candidate.medianBuyTimeS - b.candidate.medianBuyTimeS);
   if (timeDelta > config.inferenceMaxMedianTimeDeltaSec) return undefined;
 
   let countA = 0;
   let countB = 0;
   let both = 0;
   for (const profile of profiles) {
-    const hasA = profile.items.some((item) => item.itemId === a.itemId);
-    const hasB = profile.items.some((item) => item.itemId === b.itemId);
+    const hasA = profile.items.some((item) => item.itemId === a.candidate.itemId);
+    const hasB = profile.items.some((item) => item.itemId === b.candidate.itemId);
     if (hasA) countA += 1;
     if (hasB) countB += 1;
     if (hasA && hasB) both += 1;
@@ -327,7 +327,7 @@ function choicePairConfidence(
   const cooccurrenceRate = both / denominator;
   if (cooccurrenceRate > config.inferenceMaxCooccurrence) return undefined;
 
-  const coverageScore = clamp01((a.coverage + b.coverage) / 2);
+  const coverageScore = clamp01((a.candidate.coverage + b.candidate.coverage) / 2);
   const exclusivityScore = clamp01(1 - cooccurrenceRate);
   const timingScore = clamp01(1 - timeDelta / Math.max(1, config.inferenceMaxMedianTimeDeltaSec));
   const confidence = (coverageScore + exclusivityScore + timingScore) / 3;
@@ -377,7 +377,11 @@ function normalizePhaseCompat(value: ConsensusBuildPhaseV1 | string): ConsensusB
 }
 
 function compareCandidates(a: ConsensusBuildCandidateV1, b: ConsensusBuildCandidateV1): number {
-  return phaseOrderV1(a.phase) - phaseOrderV1(b.phase) || a.medianBuyTimeS - b.medianBuyTimeS || a.itemId - b.itemId;
+  return a.medianBuyTimeS - b.medianBuyTimeS || a.itemId - b.itemId;
+}
+
+function compareDerivedItems(a: DerivedItemV1, b: DerivedItemV1): number {
+  return phaseOrderV1(a.phase) - phaseOrderV1(b.phase) || compareCandidates(a.candidate, b.candidate);
 }
 
 function groupMedianTime(group: ConsensusBuildGroupV1): number {
@@ -416,9 +420,17 @@ function asProBuild(value: unknown, accountId: string, heroId: number): Statlock
   return value as unknown as StatlockerProBuildAnalysisV1;
 }
 
-function asSkeleton(value: unknown, heroId: number): ConsensusSkeletonV1 | undefined {
-  if (!isRecord(value) || value.heroId !== heroId || !Number.isInteger(value.profileCount) || !Array.isArray(value.groups)) return undefined;
-  return value as unknown as ConsensusSkeletonV1;
+function asSkeleton(value: unknown, heroId: number): BuiltConsensusSkeletonV1 | undefined {
+  if (
+    !isRecord(value) ||
+    value.heroId !== heroId ||
+    !Number.isInteger(value.profileCount) ||
+    !Array.isArray(value.groups) ||
+    !Array.isArray(value.items)
+  ) {
+    return undefined;
+  }
+  return value as unknown as BuiltConsensusSkeletonV1;
 }
 
 function newestDate(values: readonly (Date | undefined)[]): Date {
