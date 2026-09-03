@@ -4,6 +4,7 @@ import {
   createRecommendationItemGraph,
   generateRecommendationCandidates,
   observedFact,
+  projectRecommendationCandidateState,
   RecommendationDecisionState,
   RecommendationItemDefinition,
   toRecommendationDatasetCandidateV1,
@@ -44,8 +45,8 @@ function decision(
       inventory: {
         initializedFromSnapshot: true,
         heldByItemId: buildInventoryInstancesForRecommendation(held, graph),
-        lifecycleCountByItemId: new Map(),
-        nextInstanceSequence: 1,
+        lifecycleCountByItemId: new Map(held.map((itemId) => [itemId, 1])),
+        nextInstanceSequence: held.length + 1,
       },
       economy: {
         spendableSouls: options.walletUnknown ? unknownFact('test') : observedFact(souls, 'test'),
@@ -94,10 +95,51 @@ describe('recommendation candidate generator', () => {
     expect(candidates.find((entry) => entry.actionId === 'WAIT_SAVE:1')?.feasible).toBe(true);
   });
 
+  it('uses actual unlocked flex capacity instead of the ruleset maximum', () => {
+    const definitions = [1, 2, 3, 4, 5].map((id) => item(id));
+    const input = decision(definitions, [1, 2, 3, 4], 5_000);
+    const lockedRules = {
+      ...DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
+      unlockedFlexSlots: 0,
+      flexCapacityEvidence: 'OBSERVED' as const,
+    };
+    const unlockedRules = {
+      ...DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
+      unlockedFlexSlots: 1,
+      flexCapacityEvidence: 'OBSERVED' as const,
+    };
+
+    const locked = generateRecommendationCandidates({ state: input.state, itemGraph: input.graph, rules: lockedRules });
+    const unlocked = generateRecommendationCandidates({ state: input.state, itemGraph: input.graph, rules: unlockedRules });
+
+    expect(locked.find((entry) => entry.actionId === 'BUY_ITEM:5')?.reasons).toContain('SLOT_LIMIT_EXCEEDED');
+    expect(unlocked.find((entry) => entry.actionId === 'BUY_ITEM:5')?.feasible).toBe(true);
+  });
+
+  it('treats observed current flex usage as a lower bound when capacity is unknown', () => {
+    const definitions = [1, 2, 3, 4, 5, 6].map((id) => item(id));
+    const input = decision(definitions, [1, 2, 3, 4, 5], 5_000);
+    const rules = {
+      ...DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
+      flexCapacityEvidence: 'UNKNOWN' as const,
+      unlockedFlexSlots: undefined,
+    };
+    const candidates = generateRecommendationCandidates({ state: input.state, itemGraph: input.graph, rules });
+
+    expect(candidates.find((entry) => entry.actionId === 'BUY_ITEM:6')?.reasons)
+      .toContain('FLEX_SLOT_CAPACITY_UNKNOWN');
+    expect(candidates.find((entry) => entry.actionId === 'REPLACE_ITEM:1->6')?.feasible).toBe(true);
+  });
+
   it('rejects a typed-slot overflow while allowing an economically feasible replacement', () => {
     const definitions = [1, 2, 3, 4, 5].map((id) => item(id));
     const input = decision(definitions, [1, 2, 3, 4], 5_000);
-    const rules = { ...DEFAULT_RECOMMENDATION_CANDIDATE_RULES, maxFlexSlots: 0 };
+    const rules = {
+      ...DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
+      maxFlexSlots: 0,
+      unlockedFlexSlots: 0,
+      flexCapacityEvidence: 'OBSERVED' as const,
+    };
     const candidates = generateRecommendationCandidates({ state: input.state, itemGraph: input.graph, rules });
     expect(candidates.find((entry) => entry.actionId === 'BUY_ITEM:5')?.reasons).toContain('SLOT_LIMIT_EXCEEDED');
     expect(candidates.find((entry) => entry.actionId === 'REPLACE_ITEM:1->5')?.feasible).toBe(true);
@@ -128,6 +170,20 @@ describe('recommendation candidate generator', () => {
       spendableSoulsAfter: 900,
       resultingItemIds: [1],
     });
+  });
+
+  it('projects the exact canonical candidate result into a future decision state', () => {
+    const input = decision([
+      item(1),
+      item(2, { directPurchaseCost: 1_600, upgradeRecipes: [{ recipeId: 'u2', consumedItemIds: [1], soulsCost: 800 }] }),
+    ], [1], 1_000);
+    const upgrade = candidate(input, 'UPGRADE_ITEM:2:u2');
+    const projected = projectRecommendationCandidateState(input.state, upgrade, input.graph);
+
+    expect([...projected.inventory.heldByItemId.keys()]).toEqual([2]);
+    expect(projected.inventory.heldByItemId.get(2)?.acquiredBy).toBe('UPGRADE');
+    expect(projected.economy.spendableSouls.value).toBe(200);
+    expect(projected.economy.spendableSouls.evidence).toBe('RECONSTRUCTED');
   });
 
   it('preserves the no observed-action injection invariant in dataset rows', () => {
