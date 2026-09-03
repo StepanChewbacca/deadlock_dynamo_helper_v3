@@ -76,7 +76,11 @@ export class AdaptiveRecommendationV1Service {
         ? previousEvidenceFallback(previous, fresh, localEvidence, blockers)
         : emptyEvidenceFallback(fresh, localEvidence, blockers, feasibleByActionKey);
     } else if (planned) {
-      const legality = selectFreshLegalAction(planned.nextAction, planned.rankedImmediateCandidates, feasibleByActionKey, planned.recommendedBuild);
+      const freshBuild = rebasePlanAgainstOwnedInventory(
+        planned.recommendedBuild,
+        [...fresh.state.inventory.heldByItemId.keys()],
+      );
+      const legality = selectFreshLegalAction(planned.nextAction, planned.rankedImmediateCandidates, feasibleByActionKey, freshBuild);
       if (legality.changed || fresh.stateRevision !== initial.stateRevision) {
         blockers.add('STATE_CHANGED_LEGALITY_RECHECK');
       }
@@ -87,8 +91,8 @@ export class AdaptiveRecommendationV1Service {
         stateRevision: fresh.stateRevision,
         gameState: planned.gameState,
         nextAction: legality.action,
-        nextTargetItemId: legality.action.targetItemId ?? firstNextTarget(planned.recommendedBuild),
-        recommendedBuild: planned.recommendedBuild,
+        nextTargetItemId: firstNextTarget(freshBuild) ?? legality.action.targetItemId,
+        recommendedBuild: freshBuild,
         changes: planned.changes,
         rankedImmediateCandidates: planned.rankedImmediateCandidates,
         totalScore: planned.totalScore,
@@ -141,7 +145,7 @@ function selectFreshLegalAction(
       action: scored.action.type === 'WAIT'
         ? {
             ...scored.action,
-            targetItemId: scored.action.targetItemId ?? firstNextTarget(build),
+            targetItemId: firstNextTarget(build) ?? scored.action.targetItemId,
             reasonCodes: unique([...scored.action.reasonCodes, 'FRESH_LEGALITY_FALLBACK']),
           }
         : {

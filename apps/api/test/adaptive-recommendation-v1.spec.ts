@@ -176,6 +176,29 @@ describe('AdaptiveRecommendationV1Service', () => {
     expect(h.replay.persist.mock.calls[0][0].result.nextAction.type).toBe('WAIT');
   });
 
+  it('publishes a planned build rebased to an item purchased before the fresh state read', async () => {
+    const plan = plannerResult();
+    plan.recommendedBuild = [
+      ...plan.recommendedBuild,
+      { ...plan.recommendedBuild[0], itemId: 2, position: 2, status: 'PLANNED' },
+    ];
+    const h = harness({
+      states: [
+        decision({ wallet: 1000, revision: 'revision-a' }),
+        decision({ wallet: 1000, owned: [1], revision: 'revision-b' }),
+      ],
+      plan,
+    });
+
+    const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
+
+    expect(result.recommendedBuild).toEqual([
+      expect.objectContaining({ itemId: 1, status: 'OWNED' }),
+      expect.objectContaining({ itemId: 2, status: 'NEXT' }),
+    ]);
+    expect(result.nextTargetItemId).toBe(2);
+  });
+
   it('preserves a previous valid plan conservatively when local Statlocker evidence is unavailable', async () => {
     const previous = previousResult();
     const h = harness({ previous, localEvidence: evidence(false) });
