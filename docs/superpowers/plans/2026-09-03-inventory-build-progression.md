@@ -177,3 +177,49 @@ git push origin main
 - [ ] **Step 5: Verify production**
 
 Check `/deadlock/live/matches/103332534/state` and `/deadlock/adaptive/v1/recommend`; matching held IDs must be `OWNED`, and the first non-owned plan item must be `NEXT`.
+
+### Task 5: Keep fresh actions and alternatives internally consistent
+
+**Files:**
+- Modify: `apps/api/src/statlocker-adaptive/adaptive-recommendation-v1.service.ts`
+- Test: `apps/api/test/adaptive-recommendation-v1.spec.ts`
+- Test: `apps/overwolf-client/src/adaptive-recommendation-presentation.spec.ts`
+
+**Interfaces:**
+- Consumes: the fresh feasible-candidate map and the rebased build produced by Task 2.
+- Produces: a `nextAction` whose target-specific key matches its target, plus alternatives that cannot expose freshly owned items.
+
+- [ ] **Step 1: Write failing wrapper-key and stale-alternative tests**
+
+```ts
+expect(result.nextAction).toMatchObject({ actionKey: 'WAIT_SAVE:2', targetItemId: 2 });
+expect(result.rankedImmediateCandidates.some(({ action }) => action.targetItemId === 1)).toBe(false);
+```
+
+- [ ] **Step 2: Run the tests and verify RED**
+
+Run: `yarn workspace @deadlock-live-probe/api test adaptive-recommendation-v1.spec.ts`
+
+Run: `yarn workspace @deadlock-live-probe/overwolf-client test adaptive-recommendation-presentation.spec.ts`
+
+Expected: a semantic `HOLD`/`CONTINUE_CORE` retains `WAIT_SAVE:1`, or the stale owned alternative remains visible.
+
+- [ ] **Step 3: Reconcile action identity and ranked candidates with fresh feasibility**
+
+```ts
+const freshRanked = planned.rankedImmediateCandidates.filter(({ action }) =>
+  feasibleByActionKey.has(action.actionKey),
+);
+```
+
+Select a fresh targeted wait only when its canonical key exists; otherwise preserve the generic `WAIT_SAVE` candidate without an encoded target. Publish the fresh feasible ranked subset.
+
+- [ ] **Step 4: Run focused tests and API build for GREEN**
+
+Run: `yarn workspace @deadlock-live-probe/api test adaptive-recommendation-v1.spec.ts`
+
+Run: `yarn workspace @deadlock-live-probe/overwolf-client test adaptive-recommendation-presentation.spec.ts`
+
+Run: `yarn workspace @deadlock-live-probe/api build`
+
+Expected: all commands pass and action identity agrees with the fresh target.
