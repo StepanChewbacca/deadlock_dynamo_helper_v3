@@ -8,3 +8,4 @@ storage
 !.env.example
 .idea
 .qwen
+/.worktrees/

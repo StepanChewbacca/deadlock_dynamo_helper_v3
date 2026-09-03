@@ -25,6 +25,8 @@ describe('Recommendation Value V6 promotion script', () => {
     );
     expect(workflow).toContain('--label "org.opencontainers.image.revision=${GITHUB_SHA}"');
     expect(workflow).toContain('DEADLOCK_API_IMAGE="$ADAPTIVE_PRODUCTION_IMAGE"');
-    expect(workflow).toContain('DB_RUN_MIGRATIONS="$DB_RUN_MIGRATIONS"');
+    expect(workflow.match(/node run-migrations\.js/g)).toHaveLength(1);
+    expect(workflow).toContain("DB_RUN_MIGRATIONS='false'");
+    expect(workflow).not.toContain("DB_RUN_MIGRATIONS: 'true'");
   });
 });

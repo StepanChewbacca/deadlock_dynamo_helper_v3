@@ -22,10 +22,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: yarn
@@ -35,9 +37,6 @@ jobs:
 
       - name: Build shared package
         run: yarn workspace @deadlock-live-probe/shared build
-
-      - name: Build domain package
-        run: yarn workspace @deadlock-live-probe/build-domain build
 
       - name: Build API
         run: yarn workspace @deadlock-live-probe/api build
@@ -49,10 +48,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: yarn
@@ -79,7 +80,7 @@ jobs:
 
       - name: Upload failed Overwolf build log
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: overwolf-build-log-${{ github.sha }}
           path: ${{ runner.temp }}/overwolf-build.log
@@ -87,7 +88,7 @@ jobs:
           retention-days: 3
 
       - name: Upload Overwolf build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: overwolf-client-${{ github.sha }}
           path: ${{ runner.temp }}/overwolf-client/public
@@ -101,10 +102,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: yarn
@@ -112,14 +115,14 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile --ignore-engines
 
-      - name: Build shared package for tests
-        run: yarn workspace @deadlock-live-probe/shared build
+      - name: Test shared package
+        run: yarn workspace @deadlock-live-probe/shared test
+
+      - name: Audit Statlocker adaptive serving boundary
+        run: node scripts/statlocker-adaptive-serving-audit.mjs
 
       - name: Test domain package
         run: yarn workspace @deadlock-live-probe/build-domain test
-
-      - name: Build domain package for API tests
-        run: yarn workspace @deadlock-live-probe/build-domain build
 
       - name: Test API
         shell: bash
@@ -135,7 +138,7 @@ jobs:
 
       - name: Upload failed API test log
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: api-test-log-${{ github.sha }}
           path: ${{ runner.temp }}/api-tests.log
@@ -156,9 +159,68 @@ jobs:
 
       - name: Upload failed Overwolf test log
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: overwolf-test-log-${{ github.sha }}
           path: ${{ runner.temp }}/overwolf-tests.log
           if-no-files-found: error
           retention-days: 3
+
+  production-validation:
+    name: Validate production runtime
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: deadlock_builds
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Test production database migration
+        env:
+          DB_MIGRATION_INTEGRATION: 'true'
+          DB_HOST: 127.0.0.1
+          DB_PORT: '5432'
+          DB_USER: postgres
+          DB_PASSWORD: postgres
+          DB_NAME: deadlock_builds
+        run: yarn workspace @deadlock-live-probe/api test production-database-migration.integration.spec.ts
+
+      - name: Validate adaptive Compose config
+        env:
+          DB_PASSWORD: ci-placeholder
+          DEADLOCK_API_KEY: ci-placeholder
+          DEADLOCK_API_IMAGE: deadlock-adaptive-production:ci
+        run: docker compose -p deadlock-ci config >/dev/null
+
+      - name: Build adaptive production image
+        run: docker build -t deadlock-adaptive-production:ci .
+
+      - name: Verify adaptive runtime dependencies
+        run: |
+          docker run --rm --entrypoint sh deadlock-adaptive-production:ci -c \
+            'test -x "$CHROMIUM_PATH" && node -e "require(\"puppeteer-core\"); require(\"@deadlock-live-probe/build-domain\")"'

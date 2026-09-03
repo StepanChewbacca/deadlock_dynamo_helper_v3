@@ -19,14 +19,14 @@ jobs:
     timeout-minutes: 60
     env:
       ADAPTIVE_PRODUCTION_IMAGE: deadlock-adaptive-production:${{ github.sha }}
-      DB_RUN_MIGRATIONS: 'true'
       CHROMIUM_PATH: /usr/bin/chromium-browser
       PUBLIC_API_BASE_URL: ${{ vars.PUBLIC_API_BASE_URL || 'https://aboba-telegramovich.duckdns.org' }}
-      DUCKDNS_TOKEN: ${{ secrets.DUCKDNS_TOKEN }}
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
       - name: Copy files to deployment directory
         run: |
@@ -34,6 +34,10 @@ jobs:
             --exclude 'node_modules' \
             --exclude '.env' \
             --exclude 'storage' \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude 'docs' \
+            --exclude 'training' \
             ./ /home/ubuntu/apps/deadlock_dynamo_helper/
 
       - name: Rebuild and restart adaptive API
@@ -45,12 +49,11 @@ jobs:
             -t "$ADAPTIVE_PRODUCTION_IMAGE" .
           sudo env \
             DEADLOCK_API_IMAGE="$ADAPTIVE_PRODUCTION_IMAGE" \
-            DB_RUN_MIGRATIONS="$DB_RUN_MIGRATIONS" \
             CHROMIUM_PATH="$CHROMIUM_PATH" \
             docker compose run --rm --no-deps api node run-migrations.js
           sudo env \
             DEADLOCK_API_IMAGE="$ADAPTIVE_PRODUCTION_IMAGE" \
-            DB_RUN_MIGRATIONS="$DB_RUN_MIGRATIONS" \
+            DB_RUN_MIGRATIONS='false' \
             CHROMIUM_PATH="$CHROMIUM_PATH" \
             docker compose up -d --force-recreate --no-build --no-deps api
 
@@ -96,6 +99,8 @@ jobs:
 
       - name: Restore DuckDNS record when needed
         shell: bash
+        env:
+          DUCKDNS_TOKEN: ${{ secrets.DUCKDNS_TOKEN }}
         run: |
           set -euo pipefail
           public_host="${PUBLIC_API_BASE_URL#https://}"
