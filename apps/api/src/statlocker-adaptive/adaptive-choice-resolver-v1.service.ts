@@ -104,7 +104,7 @@ export function reconstructChoiceStateV1(
     return divergedState(group.groupId);
   }
 
-  const closures = new Map<number, Set<number>>();
+  const closures = new Map<number, ReadonlySet<number>>();
   const componentOwners = new Map<number, number>();
   for (const itemId of alternativeIds) {
     const closure = componentClosureV1(itemId, itemGraph);
