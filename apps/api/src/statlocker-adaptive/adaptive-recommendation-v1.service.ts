@@ -76,11 +76,16 @@ export class AdaptiveRecommendationV1Service {
         ? previousEvidenceFallback(previous, fresh, localEvidence, blockers)
         : emptyEvidenceFallback(fresh, localEvidence, blockers, feasibleByActionKey);
     } else if (planned) {
+      const freshOwnedItemIds = new Set(fresh.state.inventory.heldByItemId.keys());
       const freshBuild = rebasePlanAgainstOwnedInventory(
         planned.recommendedBuild,
-        [...fresh.state.inventory.heldByItemId.keys()],
+        [...freshOwnedItemIds],
       );
-      const legality = selectFreshLegalAction(planned.nextAction, planned.rankedImmediateCandidates, feasibleByActionKey, freshBuild);
+      const freshRanked = planned.rankedImmediateCandidates.filter(({ action }) =>
+        feasibleByActionKey.has(action.actionKey)
+        && !targetsOwnedItem(action, freshOwnedItemIds),
+      );
+      const legality = selectFreshLegalAction(planned.nextAction, freshRanked, feasibleByActionKey, freshBuild);
       if (legality.changed || fresh.stateRevision !== initial.stateRevision) {
         blockers.add('STATE_CHANGED_LEGALITY_RECHECK');
       }
@@ -94,7 +99,7 @@ export class AdaptiveRecommendationV1Service {
         nextTargetItemId: firstNextTarget(freshBuild) ?? legality.action.targetItemId,
         recommendedBuild: freshBuild,
         changes: planned.changes,
-        rankedImmediateCandidates: planned.rankedImmediateCandidates,
+        rankedImmediateCandidates: freshRanked,
         totalScore: planned.totalScore,
         confidence: clamp01(planned.confidence * (legality.changed ? 0.85 : 1)),
         scorerVersion: SCORER_VERSION,
@@ -131,9 +136,9 @@ function selectFreshLegalAction(
 ): { action: AdaptiveActionV1; changed: boolean } {
   if (!isTransactionAction(selected)) {
     if (selected.actionKey === 'WAIT' || selected.actionKey === 'HOLD' || selected.actionKey === 'CONTINUE_CORE' || selected.actionKey === 'ABSTAIN') {
-      return { action: rebasePlanTarget(selected, build), changed: false };
+      return { action: rebasePlanTarget(selected, build, feasibleByActionKey), changed: false };
     }
-    if (feasibleByActionKey.has(selected.actionKey)) return { action: rebasePlanTarget(selected, build), changed: false };
+    if (feasibleByActionKey.has(selected.actionKey)) return { action: rebasePlanTarget(selected, build, feasibleByActionKey), changed: false };
   } else if (feasibleByActionKey.has(selected.actionKey)) {
     return { action: selected, changed: false };
   }
@@ -143,7 +148,7 @@ function selectFreshLegalAction(
     if (!isTransactionAction(scored.action) && !feasibleByActionKey.has(scored.action.actionKey)) continue;
     return {
       action: scored.action.type === 'WAIT'
-        ? withFreshLegalityFallback(rebasePlanTarget(scored.action, build))
+        ? withFreshLegalityFallback(rebasePlanTarget(scored.action, build, feasibleByActionKey))
         : {
             ...scored.action,
             reasonCodes: unique([...scored.action.reasonCodes, 'FRESH_LEGALITY_FALLBACK']),
@@ -152,14 +157,12 @@ function selectFreshLegalAction(
     };
   }
 
-  const waitCandidate = [...feasibleByActionKey.values()]
-    .filter((candidate) => candidate.action.type === 'WAIT_SAVE')
-    .sort((a, b) => a.actionId.localeCompare(b.actionId))[0];
+  const targetItemId = firstNextTarget(build);
   return {
     action: {
-      actionKey: waitCandidate?.actionId ?? 'WAIT',
+      actionKey: freshWaitActionKey(targetItemId, feasibleByActionKey),
       type: 'WAIT',
-      targetItemId: firstNextTarget(build),
+      targetItemId,
       reasonCodes: ['NO_FRESH_LEGAL_TRANSACTION'],
     },
     changed: true,
@@ -293,6 +296,10 @@ function isTransactionAction(action: AdaptiveActionV1): boolean {
   return action.type === 'BUY' || action.type === 'UPGRADE' || action.type === 'SELL' || action.type === 'REPLACE';
 }
 
+function targetsOwnedItem(action: AdaptiveActionV1, ownedItemIds: ReadonlySet<number>): boolean {
+  return action.targetItemId !== undefined && ownedItemIds.has(action.targetItemId);
+}
+
 function firstNextTarget(build: AdaptiveRecommendationResultV1['recommendedBuild']): number | undefined {
   return build.find((item) => item.status === 'NEXT')?.itemId;
 }
@@ -300,13 +307,14 @@ function firstNextTarget(build: AdaptiveRecommendationResultV1['recommendedBuild
 function rebasePlanTarget(
   action: AdaptiveActionV1,
   build: AdaptiveRecommendationResultV1['recommendedBuild'],
+  feasibleByActionKey: ReadonlyMap<string, RecommendationCandidate>,
 ): AdaptiveActionV1 {
   if (action.type !== 'WAIT' && action.type !== 'HOLD' && action.type !== 'CONTINUE_CORE') return action;
   const targetItemId = firstNextTarget(build);
   return {
     ...action,
-    actionKey: action.type === 'WAIT' && isWaitSaveActionKey(action.actionKey)
-      ? waitSaveActionKey(targetItemId)
+    actionKey: isWaitSaveActionKey(action.actionKey)
+      ? freshWaitActionKey(targetItemId, feasibleByActionKey)
       : action.actionKey,
     targetItemId,
   };
@@ -319,8 +327,15 @@ function withFreshLegalityFallback(action: AdaptiveActionV1): AdaptiveActionV1 {
   };
 }
 
-function waitSaveActionKey(targetItemId: number | undefined): string {
-  return targetItemId === undefined ? 'WAIT_SAVE' : `WAIT_SAVE:${targetItemId}`;
+function freshWaitActionKey(
+  targetItemId: number | undefined,
+  feasibleByActionKey: ReadonlyMap<string, RecommendationCandidate>,
+): string {
+  const targetedActionKey = targetItemId === undefined ? 'WAIT_SAVE' : `WAIT_SAVE:${targetItemId}`;
+  const targetedWait = feasibleByActionKey.get(targetedActionKey);
+  if (targetedWait?.action.type === 'WAIT_SAVE') return targetedWait.actionId;
+  const genericWait = feasibleByActionKey.get('WAIT_SAVE');
+  return genericWait?.action.type === 'WAIT_SAVE' ? genericWait.actionId : 'WAIT';
 }
 
 function isWaitSaveActionKey(actionKey: string): boolean {

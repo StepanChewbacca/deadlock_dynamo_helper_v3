@@ -220,6 +220,27 @@ describe('AdaptiveRecommendationV1Service', () => {
     expect(result.nextTargetItemId).toBe(2);
   });
 
+  it('aligns a rebased semantic wait wrapper with the fresh target and hides owned alternatives', async () => {
+    const plan = plannerResult();
+    plan.nextAction = { actionKey: 'WAIT_SAVE:1', type: 'HOLD', targetItemId: 1, reasonCodes: ['PLAN_HYSTERESIS'] };
+    plan.recommendedBuild = [
+      ...plan.recommendedBuild,
+      { ...plan.recommendedBuild[0], itemId: 2, position: 2, status: 'PLANNED' },
+    ];
+    const h = harness({
+      states: [
+        decision({ wallet: 1000, revision: 'revision-a' }),
+        decision({ wallet: undefined, owned: [1], revision: 'revision-b' }),
+      ],
+      plan,
+    });
+
+    const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
+
+    expect(result.nextAction).toMatchObject({ actionKey: 'WAIT_SAVE:2', targetItemId: 2 });
+    expect(result.rankedImmediateCandidates.some(({ action }) => action.targetItemId === 1)).toBe(false);
+  });
+
   it('clears a feasible HOLD action target when its final planned item becomes owned', async () => {
     const plan = plannerResult();
     plan.nextAction = { actionKey: 'HOLD', type: 'HOLD', targetItemId: 1, reasonCodes: ['PLAN_HYSTERESIS'] };
