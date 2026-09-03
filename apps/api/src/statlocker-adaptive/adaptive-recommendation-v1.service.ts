@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
   RecommendationCandidate,
   generateRecommendationCandidates,
 } from '@deadlock-live-probe/build-domain';
@@ -60,6 +61,13 @@ export class AdaptiveRecommendationV1Service {
     const freshCandidates = generateRecommendationCandidates({
       state: fresh.state,
       itemGraph: fresh.itemGraph,
+      rules: {
+        ...DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
+        baseSlots: fresh.slots.baseSlots,
+        maxFlexSlots: fresh.slots.maxFlexSlots,
+        unlockedFlexSlots: fresh.slots.unlockedFlexSlots,
+        flexCapacityEvidence: fresh.slots.evidence,
+      },
     });
     const feasibleByActionKey = new Map(
       freshCandidates
