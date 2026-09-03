@@ -13,6 +13,7 @@ import { RecommendationItemGraph } from './recommendation-item-graph';
 import { InventoryAcquisitionType, InventoryItemInstance, InventorySlotType, InventoryState } from './types';
 
 export interface RecommendationCandidateGeneratorRules {
+  baseSlots?: number;
   baseSlotsByType: Readonly<Record<InventorySlotType, number>>;
   maxFlexSlots: number;
   unlockedFlexSlots?: number;
@@ -23,8 +24,9 @@ export interface RecommendationCandidateGeneratorRules {
 }
 
 export const DEFAULT_RECOMMENDATION_CANDIDATE_RULES: RecommendationCandidateGeneratorRules = {
+  baseSlots: 9,
   baseSlotsByType: { weapon: 4, vitality: 4, spirit: 4 },
-  maxFlexSlots: 4,
+  maxFlexSlots: 3,
   flexCapacityEvidence: 'UNKNOWN',
   maxActiveItems: 4,
   allowSellOnlyActions: true,
@@ -272,16 +274,15 @@ function slotFailureReason(
 
 export function flexUsedFor(
   itemIds: readonly number[],
-  graph: RecommendationItemGraph,
+  _graph: RecommendationItemGraph,
   rules: RecommendationCandidateGeneratorRules,
 ): number {
-  const counts: Record<InventorySlotType, number> = { weapon: 0, vitality: 0, spirit: 0 };
-  for (const itemId of itemIds) {
-    const slotType = graph.getItem(itemId)?.slotType;
-    if (slotType) counts[slotType] += 1;
-  }
-  return (Object.keys(counts) as InventorySlotType[])
-    .reduce((sum, type) => sum + Math.max(0, counts[type] - rules.baseSlotsByType[type]), 0);
+  const legacyBaseSlots = (Object.keys(rules.baseSlotsByType) as InventorySlotType[])
+    .reduce((sum, type) => sum + Math.max(0, rules.baseSlotsByType[type]), 0);
+  const baseSlots = Number.isFinite(rules.baseSlots)
+    ? Math.max(0, Math.floor(rules.baseSlots as number))
+    : legacyBaseSlots;
+  return Math.max(0, itemIds.length - baseSlots);
 }
 
 function checkActiveLimit(
