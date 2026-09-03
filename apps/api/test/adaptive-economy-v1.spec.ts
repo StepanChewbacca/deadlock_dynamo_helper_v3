@@ -1,4 +1,12 @@
-import { createRecommendationItemGraph } from '@deadlock-live-probe/build-domain';
+import {
+  buildInventoryInstancesForRecommendation,
+  createRecommendationItemGraph,
+  generateRecommendationCandidates,
+  observedFact,
+  RecommendationCandidate,
+  RecommendationCandidateGeneratorRules,
+  RecommendationDecisionState,
+} from '@deadlock-live-probe/build-domain';
 import {
   RecommendationEconomyRulesV1,
   deriveAdaptiveInvestmentDeltasV1,
@@ -6,6 +14,10 @@ import {
   deriveAdaptiveSlotStateV1,
   resolveRecommendationEconomyRulesV1,
 } from '../src/statlocker-adaptive/adaptive-economy-v1';
+import {
+  createAdaptivePlannerNodeV1,
+  projectPlannerCandidateV1,
+} from '../src/statlocker-adaptive/adaptive-planner-transition-v1';
 
 const catalogSha256 = 'a'.repeat(64);
 const rules: RecommendationEconomyRulesV1 = {
@@ -20,6 +32,16 @@ const rules: RecommendationEconomyRulesV1 = {
   },
 };
 
+const generatorRules: RecommendationCandidateGeneratorRules = {
+  baseSlotsByType: rules.baseSlotsByType,
+  maxFlexSlots: rules.maxFlexSlots,
+  unlockedFlexSlots: 4,
+  flexCapacityEvidence: 'OBSERVED',
+  maxActiveItems: 4,
+  allowSellOnlyActions: true,
+  generateTargetedWaitActions: true,
+};
+
 function graph() {
   return createRecommendationItemGraph([
     ...[1, 2, 3, 4, 5, 6].map((itemId) => ({
@@ -30,7 +52,18 @@ function graph() {
       availableRulesetIds: ['ruleset-a'],
       directPurchaseCost: 800,
       upgradeRecipes: [],
+      sellTransition: { soulsRefund: 400, returnedItemIds: [] },
     })),
+    {
+      itemId: 7,
+      name: 'Weapon Upgrade',
+      slotType: 'weapon' as const,
+      active: false,
+      availableRulesetIds: ['ruleset-a'],
+      directPurchaseCost: 1600,
+      upgradeRecipes: [{ recipeId: 'upgrade-7', consumedItemIds: [1], soulsCost: 800 }],
+      sellTransition: { soulsRefund: 800, returnedItemIds: [1] },
+    },
     {
       itemId: 10,
       name: 'Vitality',
@@ -39,8 +72,50 @@ function graph() {
       availableRulesetIds: ['ruleset-a'],
       directPurchaseCost: 1600,
       upgradeRecipes: [],
+      sellTransition: { soulsRefund: 800, returnedItemIds: [] },
     },
   ]);
+}
+
+function decisionState(held: number[], wallet = 5000): RecommendationDecisionState {
+  const itemGraph = graph();
+  return {
+    decisionId: 'decision',
+    matchId: 'match',
+    playerSlot: 0,
+    gameTimeSec: 500,
+    rulesetId: 'ruleset-a',
+    heroId: 10,
+    inventory: {
+      initializedFromSnapshot: true,
+      heldByItemId: buildInventoryInstancesForRecommendation(held, itemGraph),
+      lifecycleCountByItemId: new Map(held.map((itemId) => [itemId, 1])),
+      nextInstanceSequence: held.length + 1,
+    },
+    economy: {
+      spendableSouls: observedFact(wallet, 'test'),
+      shopOpportunity: observedFact('AVAILABLE', 'test'),
+    },
+  };
+}
+
+function plannerNode(held: number[], wallet = 5000) {
+  const itemGraph = graph();
+  const state = decisionState(held, wallet);
+  return createAdaptivePlannerNodeV1({
+    decisionState: state,
+    slots: deriveAdaptiveSlotStateV1(held, itemGraph, rules, { unlockedFlexSlots: 4, evidence: 'OBSERVED' }),
+    investment: deriveAdaptiveInvestmentStateV1(held, itemGraph, rules),
+  });
+}
+
+function candidateFor(state: RecommendationDecisionState, actionId: string): RecommendationCandidate {
+  const itemGraph = graph();
+  const candidate = generateRecommendationCandidates({ state, itemGraph, rules: generatorRules })
+    .find((entry) => entry.actionId === actionId);
+  expect(candidate).toBeDefined();
+  expect(candidate?.feasible).toBe(true);
+  return candidate as RecommendationCandidate;
 }
 
 describe('adaptive economy v1', () => {
@@ -87,5 +162,47 @@ describe('adaptive economy v1', () => {
     const weapon = deriveAdaptiveInvestmentDeltasV1(before, after).find((entry) => entry.type === 'weapon');
 
     expect(weapon?.crossedBreakpoints).toEqual([1600]);
+  });
+
+  it('projects BUY through the canonical candidate result and recomputes economy state', () => {
+    const node = plannerNode([], 5000);
+    const buy = candidateFor(node.decisionState, 'BUY_ITEM:2');
+    const result = projectPlannerCandidateV1({ node, candidate: buy, graph: graph(), economyRules: rules });
+
+    expect([...result.node.decisionState.inventory.heldByItemId.keys()]).toEqual([2]);
+    expect(result.node.decisionState.economy.spendableSouls.value).toBe(4200);
+    expect(result.node.investment.tracks.weapon.currentValue).toBe(800);
+  });
+
+  it('projects UPGRADE with component consumption and breakpoint crossing', () => {
+    const node = plannerNode([1], 5000);
+    const upgrade = candidateFor(node.decisionState, 'UPGRADE_ITEM:7:upgrade-7');
+    const result = projectPlannerCandidateV1({ node, candidate: upgrade, graph: graph(), economyRules: rules });
+
+    expect([...result.node.decisionState.inventory.heldByItemId.keys()]).toEqual([7]);
+    expect(result.node.decisionState.economy.spendableSouls.value).toBe(4200);
+    expect(result.node.investment.tracks.weapon.currentValue).toBe(1600);
+    expect(result.investmentDelta.breakpointsCrossed).toBe(1);
+  });
+
+  it('projects SELL using the candidate refund and returned-item transition', () => {
+    const node = plannerNode([7], 100);
+    const sell = candidateFor(node.decisionState, 'SELL_ITEM:7');
+    const result = projectPlannerCandidateV1({ node, candidate: sell, graph: graph(), economyRules: rules });
+
+    expect([...result.node.decisionState.inventory.heldByItemId.keys()]).toEqual([1]);
+    expect(result.node.decisionState.economy.spendableSouls.value).toBe(900);
+    expect(result.node.investment.tracks.weapon.currentValue).toBe(800);
+    expect(result.investmentDelta.achievedBreakpointsLost).toBe(1);
+  });
+
+  it('projects REPLACE exactly as the canonical candidate result', () => {
+    const node = plannerNode([1], 5000);
+    const replace = candidateFor(node.decisionState, 'REPLACE_ITEM:1->2');
+    const result = projectPlannerCandidateV1({ node, candidate: replace, graph: graph(), economyRules: rules });
+
+    expect([...result.node.decisionState.inventory.heldByItemId.keys()]).toEqual([2]);
+    expect(result.node.decisionState.economy.spendableSouls.value).toBe(4600);
+    expect(result.node.actions.map((entry) => entry.actionId)).toEqual(['REPLACE_ITEM:1->2']);
   });
 });
