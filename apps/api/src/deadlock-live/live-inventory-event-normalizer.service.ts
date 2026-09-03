@@ -62,14 +62,15 @@ export class LiveInventoryEventNormalizerService {
         continue;
       }
 
-      const directSteamId = readSteamId(event.payload.steam_id ?? event.payload.steamId);
+      const rawSteamId = readSteamId(event.payload.steam_id ?? event.payload.steamId);
+      const directSteamId = rawSteamId && rawSteamId !== '0' ? rawSteamId : undefined;
       const isLocal = readBoolean(event.payload.is_local ?? event.payload.isLocal);
       const resolvedSteamId =
-        directSteamId && directSteamId !== '0'
+        directSteamId
           ? directSteamId
           : isLocal && localSteamId
             ? localSteamId
-            : directSteamId;
+            : undefined;
 
       if (resolvedSteamId) {
         rosterSlots.set(event.key, resolvedSteamId);
