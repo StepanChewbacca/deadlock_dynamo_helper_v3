@@ -61,13 +61,7 @@ export class AdaptiveRecommendationV1Service {
     const freshCandidates = generateRecommendationCandidates({
       state: fresh.state,
       itemGraph: fresh.itemGraph,
-      rules: {
-        ...DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
-        baseSlots: fresh.slots.baseSlots,
-        maxFlexSlots: fresh.slots.maxFlexSlots,
-        unlockedFlexSlots: fresh.slots.unlockedFlexSlots,
-        flexCapacityEvidence: fresh.slots.evidence,
-      },
+      rules: finalLegalityRules(fresh),
     });
     const feasibleByActionKey = new Map(
       freshCandidates
@@ -134,6 +128,18 @@ export class AdaptiveRecommendationV1Service {
     });
     return result;
   }
+}
+
+function finalLegalityRules(decision: AdaptiveDecisionStateV1) {
+  const slots = decision.slots;
+  if (!slots) return DEFAULT_RECOMMENDATION_CANDIDATE_RULES;
+  return {
+    ...DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
+    baseSlots: slots.baseSlots,
+    maxFlexSlots: slots.maxFlexSlots,
+    unlockedFlexSlots: slots.unlockedFlexSlots,
+    flexCapacityEvidence: slots.evidence,
+  };
 }
 
 function selectFreshLegalAction(
