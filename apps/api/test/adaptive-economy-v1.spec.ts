@@ -23,8 +23,8 @@ const catalogSha256 = 'a'.repeat(64);
 const rules: RecommendationEconomyRulesV1 = {
   rulesetId: 'ruleset-a',
   catalogSha256,
-  baseSlotsByType: { weapon: 4, vitality: 4, spirit: 4 },
-  maxFlexSlots: 4,
+  baseSlots: 9,
+  maxFlexSlots: 3,
   investmentBreakpoints: {
     weapon: [1600, 3200, 6400],
     vitality: [1600, 3200, 6400],
@@ -33,9 +33,10 @@ const rules: RecommendationEconomyRulesV1 = {
 };
 
 const generatorRules: RecommendationCandidateGeneratorRules = {
-  baseSlotsByType: rules.baseSlotsByType,
+  baseSlots: rules.baseSlots,
+  baseSlotsByType: { weapon: 4, vitality: 4, spirit: 4 },
   maxFlexSlots: rules.maxFlexSlots,
-  unlockedFlexSlots: 4,
+  unlockedFlexSlots: 3,
   flexCapacityEvidence: 'OBSERVED',
   maxActiveItems: 4,
   allowSellOnlyActions: true,
@@ -64,16 +65,26 @@ function graph() {
       upgradeRecipes: [{ recipeId: 'upgrade-7', consumedItemIds: [1], soulsCost: 800 }],
       sellTransition: { soulsRefund: 800, returnedItemIds: [1] },
     },
-    {
-      itemId: 10,
-      name: 'Vitality',
+    ...[10, 11].map((itemId) => ({
+      itemId,
+      name: `Vitality ${itemId}`,
       slotType: 'vitality' as const,
       active: false,
       availableRulesetIds: ['ruleset-a'],
       directPurchaseCost: 1600,
       upgradeRecipes: [],
       sellTransition: { soulsRefund: 800, returnedItemIds: [] },
-    },
+    })),
+    ...[20, 21, 22].map((itemId) => ({
+      itemId,
+      name: `Spirit ${itemId}`,
+      slotType: 'spirit' as const,
+      active: false,
+      availableRulesetIds: ['ruleset-a'],
+      directPurchaseCost: 1600,
+      upgradeRecipes: [],
+      sellTransition: { soulsRefund: 800, returnedItemIds: [] },
+    })),
   ]);
 }
 
@@ -104,7 +115,7 @@ function plannerNode(held: number[], wallet = 5000) {
   const state = decisionState(held, wallet);
   return createAdaptivePlannerNodeV1({
     decisionState: state,
-    slots: deriveAdaptiveSlotStateV1(held, itemGraph, rules, { unlockedFlexSlots: 4, evidence: 'OBSERVED' }),
+    slots: deriveAdaptiveSlotStateV1(held, itemGraph, rules, { unlockedFlexSlots: 3, evidence: 'OBSERVED' }),
     investment: deriveAdaptiveInvestmentStateV1(held, itemGraph, rules),
   });
 }
@@ -119,7 +130,7 @@ function candidateFor(state: RecommendationDecisionState, actionId: string): Rec
 }
 
 describe('adaptive economy v1', () => {
-  it('derives current investment and next exact breakpoint by slot type', () => {
+  it('derives current investment and next exact breakpoint by investment type', () => {
     const state = deriveAdaptiveInvestmentStateV1([1, 2], graph(), rules);
 
     expect(state.evidence).toBe('RECONSTRUCTED');
@@ -146,14 +157,31 @@ describe('adaptive economy v1', () => {
     expect(resolveRecommendationEconomyRulesV1('ruleset-a', 'b'.repeat(64), [rules])).toBeUndefined();
   });
 
-  it('derives current flex usage as a lower bound without inventing unlocked capacity', () => {
-    const state = deriveAdaptiveSlotStateV1([1, 2, 3, 4, 5], graph(), rules, { evidence: 'UNKNOWN' });
+  it('derives flex usage from universal occupied slots, not category counts', () => {
+    const held = [1, 2, 3, 4, 5, 6, 10, 11, 20, 21];
+    const state = deriveAdaptiveSlotStateV1(held, graph(), rules, { evidence: 'UNKNOWN' });
 
+    expect(state.baseSlots).toBe(9);
+    expect(state.usedSlots).toBe(10);
     expect(state.usedFlexSlots).toBe(1);
     expect(state.provedFlexLowerBound).toBe(1);
     expect(state.unlockedFlexSlots).toBeUndefined();
     expect(state.freeFlexSlots).toBeUndefined();
     expect(state.evidence).toBe('UNKNOWN');
+  });
+
+  it('reports exact free slots when flex capacity is observed', () => {
+    const held = [1, 2, 3, 4, 5, 6, 10, 11, 20, 21];
+    const state = deriveAdaptiveSlotStateV1(
+      held,
+      graph(),
+      rules,
+      { unlockedFlexSlots: 2, evidence: 'OBSERVED' },
+    );
+
+    expect(state.freeBaseSlots).toBe(0);
+    expect(state.freeFlexSlots).toBe(1);
+    expect(state.totalCapacity).toBe(11);
   });
 
   it('reports breakpoint crossings from projected inventory states', () => {
