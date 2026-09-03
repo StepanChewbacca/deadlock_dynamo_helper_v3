@@ -306,8 +306,7 @@ function rebasePlanTarget(
   build: AdaptiveRecommendationResultV1['recommendedBuild'],
 ): AdaptiveActionV1 {
   if (action.type !== 'WAIT' && action.type !== 'HOLD' && action.type !== 'CONTINUE_CORE') return action;
-  const targetItemId = firstNextTarget(build);
-  return targetItemId === undefined ? action : { ...action, targetItemId };
+  return { ...action, targetItemId: firstNextTarget(build) };
 }
 
 function rebasePlanAgainstOwnedInventory(
