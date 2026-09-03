@@ -75,7 +75,7 @@ export function projectPlannerCandidateV1(
   );
   const projectedItemIds = [...projectedDecision.inventory.heldByItemId.keys()].sort((a, b) => a - b);
   const slotRules = input.economyRules ?? {
-    baseSlotsByType: input.node.slots.baseByType,
+    baseSlots: input.node.slots.baseSlots,
     maxFlexSlots: input.node.slots.maxFlexSlots,
   };
   const slots = deriveAdaptiveSlotStateV1(
