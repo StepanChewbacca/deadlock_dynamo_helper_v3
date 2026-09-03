@@ -49,6 +49,8 @@ export interface AdaptivePolicyV1Config {
     laneFit: number;
     chainFit: number;
     skeletonDeviation: number;
+    investmentUtility: number;
+    slotEfficiency: number;
     transaction: number;
     churn: number;
     instability: number;
@@ -106,6 +108,8 @@ export const ADAPTIVE_POLICY_V1_CONFIG: AdaptivePolicyV1Config = {
     laneFit: 0.3,
     chainFit: 0.7,
     skeletonDeviation: 1.0,
+    investmentUtility: 1.0,
+    slotEfficiency: 0.3,
     transaction: 0.7,
     churn: 1.0,
     instability: 0.8,

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { FactEvidence } from '@deadlock-live-probe/build-domain';
 import { AdaptiveScoreComponentV1 } from '@deadlock-live-probe/shared';
 import { ADAPTIVE_POLICY_V1_CONFIG } from './statlocker-adaptive.config';
 import {
@@ -10,6 +11,20 @@ import {
 } from './statlocker-adaptive.types';
 import { StatlockerEvidenceBundleV1 } from './statlocker-evidence.service';
 import { AdaptiveGameStateBlendV1 } from './adaptive-game-state';
+import { findConsensusCandidateV1 } from './structured-build-v1';
+
+export interface AdaptiveInvestmentDeltaV1 {
+  evidence: FactEvidence;
+  breakpointsCrossed: number;
+  distanceReducedSouls: number;
+  achievedBreakpointsLost: number;
+}
+
+export interface AdaptiveSlotDeltaV1 {
+  flexUsedBefore: number;
+  flexUsedAfter: number;
+  slotsFreed: number;
+}
 
 export interface AdaptiveItemScoreContextV1 {
   heroId: number;
@@ -23,6 +38,8 @@ export interface AdaptiveItemScoreContextV1 {
   ownBuildArchetype?: string;
   transactionPenalty?: number;
   churnPenalty?: number;
+  investmentDelta?: AdaptiveInvestmentDeltaV1;
+  slotDelta?: AdaptiveSlotDeltaV1;
 }
 
 export interface AdaptiveItemScoreV1 {
@@ -55,14 +72,17 @@ export class AdaptiveEvidenceScorerV1Service {
       (entry) => entry.heroId === context.heroId && entry.itemId === itemId,
     );
     const skeleton = asSkeleton(skeletonFamily.payload, context.heroId);
-    const skeletonItem = skeleton?.items.find((entry) => entry.itemId === itemId);
+    const structuredCandidate = findConsensusCandidateV1(skeleton, itemId);
+    const legacySkeletonItem = skeleton?.items?.find((entry) => entry.itemId === itemId);
+    const skeletonStrength = structuredCandidate?.strength ?? legacySkeletonItem?.strength;
+    const skeletonMedianBuyTimeS = structuredCandidate?.medianBuyTimeS ?? legacySkeletonItem?.medianBuyTimeS;
     const components: AdaptiveScoreComponentV1[] = [];
 
     components.push(makeComponent(
       'skeletonPrior',
-      skeletonItem?.strength ?? 0,
-      skeletonItem ? skeletonItem.strength * 2 - 1 : 0,
-      skeletonItem ? skeletonFamily.confidence : 0,
+      skeletonStrength ?? 0,
+      skeletonStrength === undefined ? 0 : skeletonStrength * 2 - 1,
+      skeletonStrength === undefined ? 0 : skeletonFamily.confidence,
       config.weights.skeletonPrior,
     ));
 
@@ -123,7 +143,7 @@ export class AdaptiveEvidenceScorerV1Service {
       config.weights.ownBuildFit,
     ));
 
-    const medianPurchaseSec = wpa?.purchaseTiming.medianPurchaseSec ?? skeletonItem?.medianBuyTimeS;
+    const medianPurchaseSec = wpa?.purchaseTiming.medianPurchaseSec ?? skeletonMedianBuyTimeS;
     const timingNormalized = medianPurchaseSec === undefined
       ? 0
       : clamp11(2 * Math.exp(-Math.abs(context.gameTimeSec - medianPurchaseSec) / 900) - 1);
@@ -131,7 +151,7 @@ export class AdaptiveEvidenceScorerV1Service {
       'timingFit',
       medianPurchaseSec === undefined ? 0 : context.gameTimeSec - medianPurchaseSec,
       timingNormalized,
-      medianPurchaseSec === undefined ? 0 : Math.max(baseConfidence, skeletonItem ? skeletonFamily.confidence : 0),
+      medianPurchaseSec === undefined ? 0 : Math.max(baseConfidence, skeletonStrength === undefined ? 0 : skeletonFamily.confidence),
       config.weights.timingFit,
     ));
 
@@ -161,10 +181,28 @@ export class AdaptiveEvidenceScorerV1Service {
 
     components.push(makeComponent(
       'skeletonDeviation',
-      skeletonItem ? 0 : 1,
-      skeleton && !skeletonItem ? -1 : 0,
+      skeletonStrength === undefined ? 1 : 0,
+      skeleton && skeletonStrength === undefined ? -1 : 0,
       skeleton ? skeletonFamily.confidence : 0,
       config.weights.skeletonDeviation,
+    ));
+
+    const investment = investmentUtilityV1(context.investmentDelta);
+    components.push(makeComponent(
+      'investmentUtility',
+      investment,
+      investment,
+      context.investmentDelta?.evidence === 'UNKNOWN' || context.investmentDelta === undefined ? 0 : 1,
+      config.weights.investmentUtility,
+    ));
+
+    const slotEfficiency = slotEfficiencyV1(context.slotDelta);
+    components.push(makeComponent(
+      'slotEfficiency',
+      slotEfficiency,
+      slotEfficiency,
+      context.slotDelta === undefined ? 0 : 1,
+      config.weights.slotEfficiency,
     ));
 
     components.push(makeComponent(
@@ -184,7 +222,10 @@ export class AdaptiveEvidenceScorerV1Service {
 
     const score = components.reduce((sum, component) => sum + component.weighted, 0);
     const evidenceComponents = components.filter((component) =>
-      component.key !== 'transaction' && component.key !== 'churn',
+      component.key !== 'transaction' &&
+      component.key !== 'churn' &&
+      !(component.key === 'investmentUtility' && context.investmentDelta === undefined) &&
+      !(component.key === 'slotEfficiency' && context.slotDelta === undefined),
     );
     const present = evidenceComponents.filter((component) => component.confidence > 0);
     const completeness = evidenceComponents.length === 0 ? 0 : present.length / evidenceComponents.length;
@@ -203,6 +244,25 @@ export class AdaptiveEvidenceScorerV1Service {
       version: this.version,
     };
   }
+}
+
+export function investmentUtilityV1(delta: AdaptiveInvestmentDeltaV1 | undefined): number {
+  if (!delta || delta.evidence === 'UNKNOWN') return 0;
+  const config = ADAPTIVE_POLICY_V1_CONFIG.investment;
+  const nearProgress = clamp01(
+    Math.max(0, delta.distanceReducedSouls) / Math.max(1, config.nearBreakpointMaxSouls),
+  );
+  return clamp11(
+    Math.max(0, delta.breakpointsCrossed) * config.crossingBonus +
+    nearProgress * config.nearBreakpointBonus -
+    Math.max(0, delta.achievedBreakpointsLost) * config.achievedBreakpointDropPenalty,
+  );
+}
+
+export function slotEfficiencyV1(delta: AdaptiveSlotDeltaV1 | undefined): number {
+  if (!delta) return 0;
+  const flexRelief = delta.flexUsedBefore - delta.flexUsedAfter;
+  return clamp11(flexRelief * 0.35 + Math.max(0, delta.slotsFreed) * 0.20);
 }
 
 export function shrinkConfidenceV1(sampleSize: number, k: number): number {
@@ -341,7 +401,8 @@ function asT4Chains(value: unknown): StatlockerT4ChainsV1 | undefined {
 }
 
 function asSkeleton(value: unknown, heroId: number): ConsensusSkeletonV1 | undefined {
-  if (!isRecord(value) || value.heroId !== heroId || !Array.isArray(value.items)) return undefined;
+  if (!isRecord(value) || value.heroId !== heroId) return undefined;
+  if (!Array.isArray(value.groups) && !Array.isArray(value.items)) return undefined;
   return value as unknown as ConsensusSkeletonV1;
 }
 

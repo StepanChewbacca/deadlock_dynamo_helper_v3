@@ -39,9 +39,30 @@ function evidence(exactCount = 600, familyConfidence = 1) {
     enemyHeroId: 20 + index,
     items: [{ itemId: 100, deltaWpa: 0.25 - index * 0.02, count: exactCount }],
   }));
+  const candidate = {
+    itemId: 100,
+    strength: 0.95,
+    coverage: 1,
+    purchaseRate: 0.9,
+    medianBuyTimeS: 700,
+    timingSpreadS: 40,
+    sourceProfileCount: 10,
+    frequencyTier: 'CORE',
+    rushEvidence: false,
+  };
   const skeleton = {
     heroId: 10,
     profileCount: 10,
+    groups: [{
+      groupId: 'hero:10:MID:REQUIRED:100',
+      phase: 'MID',
+      type: 'REQUIRED',
+      minSelect: 1,
+      maxSelect: 1,
+      candidates: [candidate],
+      confidence: 0.95,
+      inferred: true,
+    }],
     items: [{
       itemId: 100,
       medianBuyTimeS: 700,
@@ -131,7 +152,72 @@ describe('AdaptiveEvidenceScorerV1Service', () => {
     expect(stale.confidence).toBeLessThan(fresh.confidence);
   });
 
-  it('emits explainable base/game/timing/lane/chain/context and penalty components', () => {
+  it('rewards a verified investment breakpoint crossing', () => {
+    const scorer = new AdaptiveEvidenceScorerV1Service();
+    const baseline = scorer.scoreItem(100, { ...context, evidence: evidence() });
+    const crossing = scorer.scoreItem(100, {
+      ...context,
+      evidence: evidence(),
+      investmentDelta: {
+        evidence: 'RECONSTRUCTED',
+        breakpointsCrossed: 1,
+        distanceReducedSouls: 600,
+        achievedBreakpointsLost: 0,
+      },
+    });
+
+    expect(crossing.score).toBeGreaterThan(baseline.score);
+    expect(crossing.components.find((component) => component.key === 'investmentUtility')?.weighted ?? 0)
+      .toBeGreaterThan(0);
+  });
+
+  it('penalizes losing an achieved investment breakpoint', () => {
+    const scorer = new AdaptiveEvidenceScorerV1Service();
+    const result = scorer.scoreItem(100, {
+      ...context,
+      evidence: evidence(),
+      investmentDelta: {
+        evidence: 'RECONSTRUCTED',
+        breakpointsCrossed: 0,
+        distanceReducedSouls: 0,
+        achievedBreakpointsLost: 1,
+      },
+    });
+
+    expect(result.components.find((component) => component.key === 'investmentUtility')?.weighted ?? 0)
+      .toBeLessThan(0);
+  });
+
+  it('makes unknown investment evidence contribute exactly zero', () => {
+    const scorer = new AdaptiveEvidenceScorerV1Service();
+    const result = scorer.scoreItem(100, {
+      ...context,
+      evidence: evidence(),
+      investmentDelta: {
+        evidence: 'UNKNOWN',
+        breakpointsCrossed: 10,
+        distanceReducedSouls: 10_000,
+        achievedBreakpointsLost: 0,
+      },
+    });
+    const investment = result.components.find((component) => component.key === 'investmentUtility');
+
+    expect(investment?.normalized).toBe(0);
+    expect(investment?.weighted).toBe(0);
+  });
+
+  it('rewards projected slot relief but never changes feasibility itself', () => {
+    const scorer = new AdaptiveEvidenceScorerV1Service();
+    const result = scorer.scoreItem(100, {
+      ...context,
+      evidence: evidence(),
+      slotDelta: { flexUsedBefore: 2, flexUsedAfter: 1, slotsFreed: 1 },
+    });
+    expect(result.components.find((component) => component.key === 'slotEfficiency')?.weighted ?? 0)
+      .toBeGreaterThan(0);
+  });
+
+  it('emits explainable base/game/timing/lane/chain/context/path and penalty components', () => {
     const scorer = new AdaptiveEvidenceScorerV1Service();
     const result = scorer.scoreItem(100, { ...context, evidence: evidence() });
     const keys = result.components.map((component) => component.key);
@@ -146,6 +232,8 @@ describe('AdaptiveEvidenceScorerV1Service', () => {
       'laneFit',
       'chainFit',
       'skeletonDeviation',
+      'investmentUtility',
+      'slotEfficiency',
       'transaction',
       'churn',
     ]));
