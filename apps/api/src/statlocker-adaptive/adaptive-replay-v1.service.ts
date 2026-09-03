@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
+  DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
   FactEvidence,
   InventoryState,
   RecommendationDecisionState,
@@ -18,6 +19,13 @@ import {
   AdaptiveScoredActionV1,
 } from '@deadlock-live-probe/shared';
 import { AdaptiveRecommendationDecisionV1Entity } from '../deadlock-live/entities/adaptive-recommendation-decision-v1.entity';
+import {
+  AdaptiveInvestmentStateV1,
+  AdaptiveSlotStateV1,
+  RecommendationEconomyRulesV1,
+  deriveAdaptiveInvestmentStateV1,
+  deriveAdaptiveSlotStateV1,
+} from './adaptive-economy-v1';
 import { ADAPTIVE_POLICY_V1_CONFIG } from './statlocker-adaptive.config';
 import {
   AdaptiveBuildPlannerResultV1,
@@ -54,6 +62,9 @@ export interface AdaptiveReplayDecisionV1 {
   enemyHeroIds: readonly number[];
   ourTeamSouls?: number;
   enemyTeamSouls?: number;
+  slots?: AdaptiveSlotStateV1;
+  investment?: AdaptiveInvestmentStateV1;
+  economyRules?: RecommendationEconomyRulesV1;
   stateRevision: string;
 }
 
@@ -233,6 +244,9 @@ function serializeDecision(decision: AdaptiveDecisionStateV1): AdaptiveReplayDec
     enemyHeroIds: [...decision.enemyHeroIds].sort((a, b) => a - b),
     ourTeamSouls: decision.ourTeamSouls,
     enemyTeamSouls: decision.enemyTeamSouls,
+    slots: cloneJson(decision.slots),
+    investment: cloneJson(decision.investment),
+    economyRules: decision.economyRules ? cloneJson(decision.economyRules) : undefined,
     stateRevision: decision.stateRevision,
   };
 }
@@ -260,6 +274,16 @@ function reconstructDecision(input: AdaptiveReplayDecisionV1): AdaptiveDecisionS
       shopOpportunity: { ...input.state.shopOpportunity },
     },
   };
+  const fallbackSlotRules = {
+    baseSlots: DEFAULT_RECOMMENDATION_CANDIDATE_RULES.baseSlots ?? 9,
+    maxFlexSlots: DEFAULT_RECOMMENDATION_CANDIDATE_RULES.maxFlexSlots,
+  };
+  const slots = input.slots
+    ? cloneJson(input.slots)
+    : deriveAdaptiveSlotStateV1(ownedItemIds, itemGraph, fallbackSlotRules, { evidence: 'UNKNOWN' });
+  const investment = input.investment
+    ? cloneJson(input.investment)
+    : deriveAdaptiveInvestmentStateV1(ownedItemIds, itemGraph, input.economyRules);
   return {
     state,
     itemGraph,
@@ -270,6 +294,9 @@ function reconstructDecision(input: AdaptiveReplayDecisionV1): AdaptiveDecisionS
     enemyHeroIds: [...input.enemyHeroIds].sort((a, b) => a - b),
     ourTeamSouls: input.ourTeamSouls,
     enemyTeamSouls: input.enemyTeamSouls,
+    slots,
+    investment,
+    economyRules: input.economyRules ? cloneJson(input.economyRules) : undefined,
     stateRevision: input.stateRevision,
   };
 }
