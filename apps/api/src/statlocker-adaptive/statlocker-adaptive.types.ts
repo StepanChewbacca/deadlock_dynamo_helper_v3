@@ -147,7 +147,6 @@ export interface ConsensusBuildCandidateV1 {
   timingSpreadS: number;
   sourceProfileCount: number;
   frequencyTier: StatlockerFrequencyTierV1;
-  phase: ConsensusBuildPhaseV1;
   rushEvidence: boolean;
 }
 
@@ -166,8 +165,8 @@ export interface ConsensusSkeletonV1 {
   heroId: number;
   profileCount: number;
   groups: readonly ConsensusBuildGroupV1[];
-  /** Legacy read-only compatibility for pre-v2 scorer/planner call sites during the in-place migration. */
-  items?: readonly ConsensusSkeletonItemV1[];
+  /** Legacy read-only compatibility for scorer/integration call sites during the in-place migration. */
+  items: readonly ConsensusSkeletonItemV1[];
 }
 
 export type StatlockerNormalizedPayloadV1 =
