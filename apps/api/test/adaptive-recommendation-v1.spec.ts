@@ -199,6 +199,27 @@ describe('AdaptiveRecommendationV1Service', () => {
     expect(result.nextTargetItemId).toBe(2);
   });
 
+  it('rebases a feasible HOLD action target when its planned item becomes owned', async () => {
+    const plan = plannerResult();
+    plan.nextAction = { actionKey: 'HOLD', type: 'HOLD', targetItemId: 1, reasonCodes: ['PLAN_HYSTERESIS'] };
+    plan.recommendedBuild = [
+      ...plan.recommendedBuild,
+      { ...plan.recommendedBuild[0], itemId: 2, position: 2, status: 'PLANNED' },
+    ];
+    const h = harness({
+      states: [
+        decision({ wallet: 1000, revision: 'revision-a' }),
+        decision({ wallet: 1000, owned: [1], revision: 'revision-b' }),
+      ],
+      plan,
+    });
+
+    const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
+
+    expect(result.nextAction).toEqual(expect.objectContaining({ type: 'HOLD', targetItemId: 2 }));
+    expect(result.nextTargetItemId).toBe(2);
+  });
+
   it('preserves a previous valid plan conservatively when local Statlocker evidence is unavailable', async () => {
     const previous = previousResult();
     const h = harness({ previous, localEvidence: evidence(false) });

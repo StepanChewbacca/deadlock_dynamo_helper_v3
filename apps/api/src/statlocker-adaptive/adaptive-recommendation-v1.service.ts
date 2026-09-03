@@ -131,9 +131,9 @@ function selectFreshLegalAction(
 ): { action: AdaptiveActionV1; changed: boolean } {
   if (!isTransactionAction(selected)) {
     if (selected.actionKey === 'WAIT' || selected.actionKey === 'HOLD' || selected.actionKey === 'CONTINUE_CORE' || selected.actionKey === 'ABSTAIN') {
-      return { action: selected, changed: false };
+      return { action: rebasePlanTarget(selected, build), changed: false };
     }
-    if (feasibleByActionKey.has(selected.actionKey)) return { action: selected, changed: false };
+    if (feasibleByActionKey.has(selected.actionKey)) return { action: rebasePlanTarget(selected, build), changed: false };
   } else if (feasibleByActionKey.has(selected.actionKey)) {
     return { action: selected, changed: false };
   }
@@ -299,6 +299,15 @@ function isTransactionAction(action: AdaptiveActionV1): boolean {
 
 function firstNextTarget(build: AdaptiveRecommendationResultV1['recommendedBuild']): number | undefined {
   return build.find((item) => item.status === 'NEXT')?.itemId;
+}
+
+function rebasePlanTarget(
+  action: AdaptiveActionV1,
+  build: AdaptiveRecommendationResultV1['recommendedBuild'],
+): AdaptiveActionV1 {
+  if (action.type !== 'WAIT' && action.type !== 'HOLD' && action.type !== 'CONTINUE_CORE') return action;
+  const targetItemId = firstNextTarget(build);
+  return targetItemId === undefined ? action : { ...action, targetItemId };
 }
 
 function rebasePlanAgainstOwnedInventory(
