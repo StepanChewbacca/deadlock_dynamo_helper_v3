@@ -147,6 +147,7 @@ export interface ConsensusBuildCandidateV1 {
   timingSpreadS: number;
   sourceProfileCount: number;
   frequencyTier: StatlockerFrequencyTierV1;
+  phase: ConsensusBuildPhaseV1;
   rushEvidence: boolean;
 }
 
@@ -178,21 +179,21 @@ export type StatlockerNormalizedPayloadV1 =
   | StatlockerWpaFilteredItemsV1
   | ConsensusSkeletonV1;
 
-export interface StatlockerNormalizedDatasetV1<T extends StatlockerNormalizedPayloadV1 = StatlockerNormalizedPayloadV1> {
+export interface StatlockerNormalizedDatasetV1<TPayload extends StatlockerNormalizedPayloadV1> {
   dataset: StatlockerDatasetV1;
   scopeKey: string;
   statlockerPatchId: string;
   contentSha256: string;
-  payload: T;
+  payload: TPayload;
 }
 
-export interface StatlockerEvidenceFamilyV1<T extends StatlockerNormalizedPayloadV1 = StatlockerNormalizedPayloadV1> {
+export interface StatlockerEvidenceFamilyV1<TPayload = unknown> {
   dataset: StatlockerDatasetV1;
   scopeKey: string;
-  snapshotId?: string;
-  contentSha256?: string;
   freshness: AdaptiveEvidenceFreshnessV1;
   confidence: number;
+  snapshotId?: string;
+  contentSha256?: string;
   fetchedAt?: string;
-  payload?: T;
+  payload?: TPayload;
 }
