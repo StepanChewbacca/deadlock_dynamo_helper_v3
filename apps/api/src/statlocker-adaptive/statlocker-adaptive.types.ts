@@ -86,10 +86,19 @@ export interface StatlockerHeroLeaderboardV1 {
 }
 
 export type StatlockerFrequencyTierV1 = 'CORE' | 'FREQUENT' | 'SOMETIMES' | 'FLEX';
+export type ConsensusBuildPhaseV1 = 'EARLY' | 'MID' | 'LATE';
+export type ConsensusBuildGroupTypeV1 = 'REQUIRED' | 'CHOICE' | 'OPTIONAL';
 
 export interface StatlockerProItemRelationshipV1 {
   itemId: number;
   strength: number;
+}
+
+export interface StatlockerProBuildExplicitGroupV1 {
+  type: ConsensusBuildGroupTypeV1;
+  groupKey: string;
+  minSelect: number;
+  maxSelect: number;
 }
 
 export interface StatlockerProBuildItemV1 {
@@ -97,8 +106,9 @@ export interface StatlockerProBuildItemV1 {
   purchaseRate: number;
   medianBuyTimeS: number;
   frequencyTier: StatlockerFrequencyTierV1;
-  phase: string;
+  phase: ConsensusBuildPhaseV1;
   relationships: readonly StatlockerProItemRelationshipV1[];
+  explicitGroup?: StatlockerProBuildExplicitGroupV1;
 }
 
 export interface StatlockerProBuildAnalysisV1 {
@@ -128,10 +138,35 @@ export interface ConsensusSkeletonItemV1 {
   components: ConsensusSkeletonComponentV1;
 }
 
+export interface ConsensusBuildCandidateV1 {
+  itemId: number;
+  strength: number;
+  coverage: number;
+  purchaseRate: number;
+  medianBuyTimeS: number;
+  timingSpreadS: number;
+  sourceProfileCount: number;
+  frequencyTier: StatlockerFrequencyTierV1;
+  rushEvidence: boolean;
+}
+
+export interface ConsensusBuildGroupV1 {
+  groupId: string;
+  phase: ConsensusBuildPhaseV1;
+  type: ConsensusBuildGroupTypeV1;
+  minSelect: number;
+  maxSelect: number;
+  candidates: readonly ConsensusBuildCandidateV1[];
+  confidence: number;
+  inferred: boolean;
+}
+
 export interface ConsensusSkeletonV1 {
   heroId: number;
   profileCount: number;
-  items: readonly ConsensusSkeletonItemV1[];
+  groups: readonly ConsensusBuildGroupV1[];
+  /** Legacy read-only compatibility for pre-v2 scorer/planner call sites during the in-place migration. */
+  items?: readonly ConsensusSkeletonItemV1[];
 }
 
 export type StatlockerNormalizedPayloadV1 =

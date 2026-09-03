@@ -1,4 +1,4 @@
-import { BuildSkeletonService } from '../src/statlocker-adaptive/build-skeleton.service';
+import { BuildSkeletonService, deriveSkeleton } from '../src/statlocker-adaptive/build-skeleton.service';
 
 function profile(accountId: string, index: number) {
   const items: any[] = [
@@ -7,7 +7,7 @@ function profile(accountId: string, index: number) {
       purchaseRate: 0.92,
       medianBuyTimeS: 300 + (index % 3) * 10,
       frequencyTier: 'CORE',
-      phase: 'early',
+      phase: 'EARLY',
       relationships: [{ itemId: 101, strength: 0.8 }],
     },
   ];
@@ -17,7 +17,7 @@ function profile(accountId: string, index: number) {
       purchaseRate: 0.72,
       medianBuyTimeS: 620 + index * 5,
       frequencyTier: 'FREQUENT',
-      phase: 'mid',
+      phase: 'MID',
       relationships: [{ itemId: 100, strength: 0.6 }],
     });
   }
@@ -27,7 +27,7 @@ function profile(accountId: string, index: number) {
       purchaseRate: 0.35,
       medianBuyTimeS: 900 + index * 20,
       frequencyTier: 'SOMETIMES',
-      phase: 'late',
+      phase: 'LATE',
       relationships: [],
     });
   }
@@ -75,8 +75,23 @@ function createStore(profileCount = 10) {
   return { store, catalogSha256 };
 }
 
+function choiceProfile(accountId: string, itemId: number) {
+  return {
+    accountId,
+    heroId: 10,
+    items: [{
+      itemId,
+      purchaseRate: 0.8,
+      medianBuyTimeS: itemId === 200 ? 720 : 760,
+      frequencyTier: 'FREQUENT' as const,
+      phase: 'MID' as const,
+      relationships: [],
+    }],
+  };
+}
+
 describe('BuildSkeletonService', () => {
-  it('derives core, frequent and flex support from up to ten profiles in deterministic order', async () => {
+  it('derives structured required and optional groups from up to ten profiles in deterministic order', async () => {
     const h = createStore(10);
     const service = new BuildSkeletonService(h.store as any);
 
@@ -88,14 +103,112 @@ describe('BuildSkeletonService', () => {
     });
 
     expect(result?.profileCount).toBe(10);
-    expect(result?.items.map((item) => item.itemId)).toEqual([100, 101, 102]);
-    expect(result?.items[0].tier).toBe('CORE');
-    expect(result?.items[1].tier).toBe('FREQUENT');
-    expect(result?.items[2].tier).toBe('FLEX');
-    expect(result?.items[0].strength).toBeGreaterThan(result?.items[1].strength ?? 0);
-    expect(result?.items[1].strength).toBeGreaterThan(result?.items[2].strength ?? 0);
-    expect(result?.items[0].medianBuyTimeS).toBeLessThan(result?.items[1].medianBuyTimeS ?? 0);
+    expect(result?.groups.map((group) => group.candidates[0].itemId)).toEqual([100, 101, 102]);
+    expect(result?.groups[0]).toEqual(expect.objectContaining({ phase: 'EARLY', type: 'REQUIRED' }));
+    expect(result?.groups[1]).toEqual(expect.objectContaining({ phase: 'MID', type: 'REQUIRED' }));
+    expect(result?.groups[2]).toEqual(expect.objectContaining({ phase: 'LATE', type: 'OPTIONAL' }));
+    expect(result?.items?.map((item) => item.itemId)).toEqual([100, 101, 102]);
     expect(h.store.publish).toHaveBeenCalledTimes(1);
+    expect(h.store.publish.mock.calls[0][0]).toEqual(expect.objectContaining({
+      schemaVersion: 'statlocker-consensus-skeleton-v2',
+      normalizerVersion: 'consensus-builder-v2',
+    }));
+  });
+
+  it('infers a choice when same-phase popular items are mutually exclusive', () => {
+    const profiles = [
+      ...Array.from({ length: 5 }, (_, index) => choiceProfile(`a-${index}`, 200)),
+      ...Array.from({ length: 5 }, (_, index) => choiceProfile(`b-${index}`, 201)),
+    ];
+
+    const result = deriveSkeleton(10, profiles);
+    const choice = result.groups.find((group) => group.type === 'CHOICE');
+
+    expect(choice).toEqual(expect.objectContaining({
+      phase: 'MID',
+      minSelect: 1,
+      maxSelect: 1,
+      inferred: true,
+    }));
+    expect(choice?.candidates.map((candidate) => candidate.itemId).sort((a, b) => a - b)).toEqual([200, 201]);
+  });
+
+  it('does not infer a choice for items that are repeatedly purchased together', () => {
+    const profiles = Array.from({ length: 10 }, (_, index) => ({
+      accountId: String(index),
+      heroId: 10,
+      items: [200, 201].map((itemId) => ({
+        itemId,
+        purchaseRate: 0.8,
+        medianBuyTimeS: itemId === 200 ? 720 : 760,
+        frequencyTier: 'CORE' as const,
+        phase: 'MID' as const,
+        relationships: [],
+      })),
+    }));
+
+    const result = deriveSkeleton(10, profiles);
+
+    expect(result.groups.filter((group) => group.type === 'CHOICE')).toHaveLength(0);
+    expect(result.groups.filter((group) => group.type === 'REQUIRED')).toHaveLength(2);
+  });
+
+  it('keeps a rare item optional instead of making it mandatory', () => {
+    const profiles = Array.from({ length: 10 }, (_, index) => ({
+      accountId: String(index),
+      heroId: 10,
+      items: [
+        {
+          itemId: 300,
+          purchaseRate: 0.9,
+          medianBuyTimeS: 300,
+          frequencyTier: 'CORE' as const,
+          phase: 'EARLY' as const,
+          relationships: [],
+        },
+        ...(index < 2 ? [{
+          itemId: 301,
+          purchaseRate: 0.3,
+          medianBuyTimeS: 1200,
+          frequencyTier: 'SOMETIMES' as const,
+          phase: 'MID' as const,
+          relationships: [],
+        }] : []),
+      ],
+    }));
+
+    const result = deriveSkeleton(10, profiles);
+    const rare = result.groups.find((group) => group.candidates.some((candidate) => candidate.itemId === 301));
+
+    expect(rare?.type).toBe('OPTIONAL');
+    expect(rare?.minSelect).toBe(0);
+  });
+
+  it('uses explicit group semantics before statistical inference', () => {
+    const profiles = Array.from({ length: 8 }, (_, index) => ({
+      accountId: String(index),
+      heroId: 10,
+      items: [400, 401].map((itemId) => ({
+        itemId,
+        purchaseRate: 0.7,
+        medianBuyTimeS: 800 + (itemId - 400) * 20,
+        frequencyTier: 'FREQUENT' as const,
+        phase: 'MID' as const,
+        relationships: [],
+        explicitGroup: {
+          type: 'CHOICE' as const,
+          groupKey: 'defense',
+          minSelect: 1,
+          maxSelect: 1,
+        },
+      })),
+    }));
+
+    const result = deriveSkeleton(10, profiles);
+    const group = result.groups.find((entry) => entry.candidates.some((candidate) => candidate.itemId === 400));
+
+    expect(group).toEqual(expect.objectContaining({ type: 'CHOICE', inferred: false }));
+    expect(group?.candidates.map((candidate) => candidate.itemId)).toEqual([400, 401]);
   });
 
   it('republishes unchanged consensus observations so their freshness advances', async () => {

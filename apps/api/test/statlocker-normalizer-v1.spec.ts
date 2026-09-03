@@ -44,7 +44,7 @@ describe('StatlockerNormalizerService', () => {
       purchaseRate: 0.9,
       medianBuyTimeS: 630,
       frequencyTier: 'CORE',
-      phase: 'mid',
+      phase: 'MID',
     });
     expect(pro.payload.items[0].relationships).toEqual([{ itemId: 101, strength: 0.7 }]);
 
@@ -53,6 +53,36 @@ describe('StatlockerNormalizerService', () => {
     expect(wpa.contentSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(service.normalizeWpaPatchData({ ...statlockerV1Fixtures.patchData }, '15-1').contentSha256)
       .toBe(wpa.contentSha256);
+  });
+
+  it('normalizes explicit pro-build choice metadata without inferring from relationships', () => {
+    const result = service.normalizeProBuildAnalysis({
+      accountId: 101,
+      heroId: 10,
+      items: [{
+        itemId: 100,
+        purchaseRate: 0.8,
+        medianBuyTimeS: 280,
+        frequencyTier: 'frequent',
+        phase: 'early_game',
+        group: 'defense',
+        pick: 1,
+        relationships: [{ itemId: 200, strength: 0.9 }],
+      }, {
+        itemId: 101,
+        purchaseRate: 0.4,
+        medianBuyTimeS: 300,
+        frequencyTier: 'sometimes',
+        phase: 'early',
+        relationships: [{ itemId: 100, strength: 0.95 }],
+      }],
+    }, '15-1', '101', 10);
+
+    expect(result.payload.items[0]).toEqual(expect.objectContaining({
+      phase: 'EARLY',
+      explicitGroup: { type: 'CHOICE', groupKey: 'defense', minSelect: 1, maxSelect: 1 },
+    }));
+    expect(result.payload.items[1].explicitGroup).toBeUndefined();
   });
 
   it('normalizes the live nested Statlocker aggregate contracts', () => {
@@ -174,11 +204,11 @@ describe('StatlockerNormalizerService', () => {
     expect(pro.payload).toMatchObject({
       accountId: '1893890487',
       heroId: 6,
-      items: [{ itemId: 754480263, frequencyTier: 'CORE' }],
+      items: [{ itemId: 754480263, frequencyTier: 'CORE', phase: 'MID' }],
     });
   });
 
-  it('rejects structurally incomplete or non-finite primary evidence', () => {
+  it('rejects structurally incomplete, invalid-phase or non-finite primary evidence', () => {
     expect(() => service.normalizeWpaPatchData({ patch: '15-1', items: [] }, '15-1'))
       .toThrow(StatlockerDatasetValidationError);
     expect(() => service.normalizeWpaPatchData({
@@ -189,6 +219,17 @@ describe('StatlockerNormalizerService', () => {
       .toThrow(StatlockerDatasetValidationError);
     expect(() => service.normalizeProBuildAnalysis({ account_id: '101', hero_id: 10, items: [{}] }, '15-1', '101', 10))
       .toThrow(StatlockerDatasetValidationError);
+    expect(() => service.normalizeProBuildAnalysis({
+      account_id: '101',
+      hero_id: 10,
+      items: [{
+        item_id: 100,
+        purchase_rate: 0.5,
+        median_buy_time_s: 400,
+        frequency_tier: 'CORE',
+        phase: 'someday',
+      }],
+    }, '15-1', '101', 10)).toThrow(StatlockerDatasetValidationError);
   });
 
   it('rejects live leaderboard rows whose hero scope is inconsistent', () => {
