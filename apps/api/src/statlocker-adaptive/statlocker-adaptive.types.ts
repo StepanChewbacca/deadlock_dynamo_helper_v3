@@ -166,6 +166,10 @@ export interface ConsensusSkeletonV1 {
   profileCount: number;
   groups: readonly ConsensusBuildGroupV1[];
   /** Legacy read-only compatibility for scorer/integration call sites during the in-place migration. */
+  items?: readonly ConsensusSkeletonItemV1[];
+}
+
+export interface BuiltConsensusSkeletonV1 extends ConsensusSkeletonV1 {
   items: readonly ConsensusSkeletonItemV1[];
 }
 
