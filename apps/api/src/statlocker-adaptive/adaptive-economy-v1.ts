@@ -3,18 +3,19 @@ import {
   ObservedFact,
   RecommendationItemGraph,
 } from '@deadlock-live-probe/build-domain';
-import { InventorySlotType } from '@deadlock-live-probe/build-domain';
 
 export type AdaptiveInvestmentTypeV1 = 'weapon' | 'vitality' | 'spirit';
 
 export interface AdaptiveSlotStateV1 {
-  baseByType: Readonly<Record<InventorySlotType, number>>;
+  baseSlots: number;
   maxFlexSlots: number;
   unlockedFlexSlots?: number;
+  usedSlots: number;
   usedFlexSlots: number;
   provedFlexLowerBound: number;
-  freeBaseByType: Readonly<Record<InventorySlotType, number>>;
+  freeBaseSlots: number;
   freeFlexSlots?: number;
+  totalCapacity?: number;
   evidence: FactEvidence;
 }
 
@@ -34,7 +35,7 @@ export interface AdaptiveInvestmentStateV1 {
 export interface RecommendationEconomyRulesV1 {
   rulesetId: string;
   catalogSha256: string;
-  baseSlotsByType: Readonly<Record<InventorySlotType, number>>;
+  baseSlots: number;
   maxFlexSlots: number;
   investmentBreakpoints: Readonly<Record<AdaptiveInvestmentTypeV1, readonly number[]>>;
 }
@@ -42,6 +43,11 @@ export interface RecommendationEconomyRulesV1 {
 export interface AdaptiveFlexCapacityInputV1 {
   unlockedFlexSlots?: number;
   evidence: FactEvidence;
+}
+
+export interface AdaptiveSlotRulesV1 {
+  baseSlots: number;
+  maxFlexSlots: number;
 }
 
 const VERIFIED_RECOMMENDATION_ECONOMY_RULES_V1: readonly RecommendationEconomyRulesV1[] = [];
@@ -56,35 +62,28 @@ export function resolveRecommendationEconomyRulesV1(
 
 export function deriveAdaptiveSlotStateV1(
   itemIds: readonly number[],
-  graph: RecommendationItemGraph,
-  slotRules: Pick<RecommendationEconomyRulesV1, 'baseSlotsByType' | 'maxFlexSlots'>,
+  _graph: RecommendationItemGraph,
+  slotRules: AdaptiveSlotRulesV1,
   capacity: AdaptiveFlexCapacityInputV1 = { evidence: 'UNKNOWN' },
 ): AdaptiveSlotStateV1 {
-  const counts: Record<InventorySlotType, number> = { weapon: 0, vitality: 0, spirit: 0 };
-  for (const itemId of itemIds) {
-    const type = graph.getItem(itemId)?.slotType;
-    if (type) counts[type] += 1;
-  }
-
-  const freeBaseByType: Record<InventorySlotType, number> = { weapon: 0, vitality: 0, spirit: 0 };
-  let usedFlexSlots = 0;
-  for (const type of Object.keys(counts) as InventorySlotType[]) {
-    freeBaseByType[type] = Math.max(0, slotRules.baseSlotsByType[type] - counts[type]);
-    usedFlexSlots += Math.max(0, counts[type] - slotRules.baseSlotsByType[type]);
-  }
-
+  const baseSlots = Math.max(0, Math.floor(slotRules.baseSlots));
+  const maxFlexSlots = Math.max(0, Math.floor(slotRules.maxFlexSlots));
+  const usedSlots = new Set(itemIds).size;
+  const usedFlexSlots = Math.max(0, usedSlots - baseSlots);
   const unlocked = capacity.unlockedFlexSlots === undefined
     ? undefined
-    : Math.min(slotRules.maxFlexSlots, Math.max(0, Math.floor(capacity.unlockedFlexSlots)));
+    : Math.min(maxFlexSlots, Math.max(0, Math.floor(capacity.unlockedFlexSlots)));
 
   return {
-    baseByType: { ...slotRules.baseSlotsByType },
-    maxFlexSlots: slotRules.maxFlexSlots,
+    baseSlots,
+    maxFlexSlots,
     unlockedFlexSlots: unlocked,
+    usedSlots,
     usedFlexSlots,
     provedFlexLowerBound: usedFlexSlots,
-    freeBaseByType,
+    freeBaseSlots: Math.max(0, baseSlots - usedSlots),
     freeFlexSlots: unlocked === undefined ? undefined : Math.max(0, unlocked - usedFlexSlots),
+    totalCapacity: unlocked === undefined ? undefined : baseSlots + unlocked,
     evidence: capacity.evidence,
   };
 }
