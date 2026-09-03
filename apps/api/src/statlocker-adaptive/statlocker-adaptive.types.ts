@@ -179,7 +179,9 @@ export type StatlockerNormalizedPayloadV1 =
   | StatlockerWpaFilteredItemsV1
   | ConsensusSkeletonV1;
 
-export interface StatlockerNormalizedDatasetV1<TPayload extends StatlockerNormalizedPayloadV1> {
+export interface StatlockerNormalizedDatasetV1<
+  TPayload extends StatlockerNormalizedPayloadV1 = StatlockerNormalizedPayloadV1,
+> {
   dataset: StatlockerDatasetV1;
   scopeKey: string;
   statlockerPatchId: string;
@@ -187,7 +189,9 @@ export interface StatlockerNormalizedDatasetV1<TPayload extends StatlockerNormal
   payload: TPayload;
 }
 
-export interface StatlockerEvidenceFamilyV1<TPayload = unknown> {
+export interface StatlockerEvidenceFamilyV1<
+  TPayload extends StatlockerNormalizedPayloadV1 = StatlockerNormalizedPayloadV1,
+> {
   dataset: StatlockerDatasetV1;
   scopeKey: string;
   freshness: AdaptiveEvidenceFreshnessV1;
