@@ -227,6 +227,13 @@ describe('AdaptiveRecommendationV1Service', () => {
       ...plan.recommendedBuild,
       { ...plan.recommendedBuild[0], itemId: 2, position: 2, status: 'PLANNED' },
     ];
+    plan.rankedImmediateCandidates.push({
+      action: { actionKey: 'WAIT_SAVE:2', type: 'WAIT', targetItemId: 2, reasonCodes: ['FEASIBLE'] },
+      score: 0.05,
+      confidence: 0.5,
+      components: [],
+      reasonCodes: ['FEASIBLE'],
+    });
     const h = harness({
       states: [
         decision({ wallet: 1000, revision: 'revision-a' }),
@@ -239,6 +246,28 @@ describe('AdaptiveRecommendationV1Service', () => {
 
     expect(result.nextAction).toMatchObject({ actionKey: 'WAIT_SAVE:2', targetItemId: 2 });
     expect(result.rankedImmediateCandidates.some(({ action }) => action.targetItemId === 1)).toBe(false);
+    expect(result.rankedImmediateCandidates.some(({ action }) => action.actionKey === 'WAIT_SAVE:2')).toBe(true);
+  });
+
+  it('falls back to the generic fresh wait when the rebased target has no targeted wait candidate', async () => {
+    const plan = plannerResult();
+    plan.nextAction = { actionKey: 'WAIT_SAVE:1', type: 'HOLD', targetItemId: 1, reasonCodes: ['PLAN_HYSTERESIS'] };
+    plan.recommendedBuild = [
+      ...plan.recommendedBuild,
+      { ...plan.recommendedBuild[0], itemId: 2, position: 2, status: 'PLANNED' },
+    ];
+    const h = harness({
+      states: [
+        decision({ wallet: 1000, revision: 'revision-a' }),
+        decision({ wallet: 1000, owned: [1], revision: 'revision-b' }),
+      ],
+      plan,
+    });
+
+    const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
+
+    expect(result.nextAction).toMatchObject({ actionKey: 'WAIT_SAVE', targetItemId: 2 });
+    expect(result.nextTargetItemId).toBe(2);
   });
 
   it('clears a feasible HOLD action target when its final planned item becomes owned', async () => {

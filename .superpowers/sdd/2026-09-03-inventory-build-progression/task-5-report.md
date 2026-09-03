@@ -46,3 +46,29 @@ The Overwolf presentation code did not need modification: it renders the ranked 
 ## Concerns
 
 None identified within Task 5 scope.
+
+## Fix round 1: generic fallback and survivor coverage
+
+Added two API regressions:
+
+- A rebased build whose fresh target is item `2` and whose fresh candidate map contains only generic `WAIT_SAVE`. The published action remains generic `WAIT_SAVE` while `nextTargetItemId` remains `2`.
+- A stale-alternative case with a still-feasible, non-owned `WAIT_SAVE:2` candidate. The stale item `1` alternatives are removed and the fresh item `2` alternative remains published.
+
+The implementation already satisfied the generic fallback contract, so no production adjustment was needed. To validate the new generic-fallback assertion, a temporary mutation that returned `WAIT_SAVE:2` without a fresh targeted candidate produced the required semantic RED:
+
+```text
+Expected actionKey: WAIT_SAVE
+Received actionKey: WAIT_SAVE:2
+```
+
+The mutation was restored before GREEN verification.
+
+GREEN commands:
+
+```text
+yarn workspace @deadlock-live-probe/api test adaptive-recommendation-v1.spec.ts
+14 passed
+
+yarn workspace @deadlock-live-probe/overwolf-client test adaptive-recommendation-presentation.spec.ts
+7 passed
+```
