@@ -25,6 +25,9 @@ import {
   RecommendationEconomyRulesV1,
   deriveAdaptiveInvestmentStateV1,
   deriveAdaptiveSlotStateV1,
+  isCanonicalAdaptiveInvestmentStateV1,
+  ADAPTIVE_INVESTMENT_TYPES_V1,
+  unknownAdaptiveInvestmentStateV1,
 } from './adaptive-economy-v1';
 import { ADAPTIVE_POLICY_V1_CONFIG } from './statlocker-adaptive.config';
 import {
@@ -281,9 +284,13 @@ function reconstructDecision(input: AdaptiveReplayDecisionV1): AdaptiveDecisionS
   const slots = input.slots
     ? cloneJson(input.slots)
     : deriveAdaptiveSlotStateV1(ownedItemIds, itemGraph, fallbackSlotRules, { evidence: 'UNKNOWN' });
-  const investment = input.investment
-    ? cloneJson(input.investment)
-    : deriveAdaptiveInvestmentStateV1(ownedItemIds, itemGraph, input.economyRules);
+  const economyRules = exactReplayEconomyRulesV1(input);
+  const investment = normalizeReplayInvestmentStateV1(
+    input.investment,
+    ownedItemIds,
+    itemGraph,
+    economyRules,
+  );
   return {
     state,
     itemGraph,
@@ -296,9 +303,42 @@ function reconstructDecision(input: AdaptiveReplayDecisionV1): AdaptiveDecisionS
     enemyTeamSouls: input.enemyTeamSouls,
     slots,
     investment,
-    economyRules: input.economyRules ? cloneJson(input.economyRules) : undefined,
+    economyRules: economyRules ? cloneJson(economyRules) : undefined,
     stateRevision: input.stateRevision,
   };
+}
+
+function normalizeReplayInvestmentStateV1(
+  supplied: unknown,
+  ownedItemIds: readonly number[],
+  itemGraph: ReturnType<typeof createRecommendationItemGraph>,
+  economyRules: RecommendationEconomyRulesV1 | undefined,
+): AdaptiveInvestmentStateV1 {
+  if (isCanonicalAdaptiveInvestmentStateV1(supplied)) return cloneJson(supplied);
+  if (economyRules) return deriveAdaptiveInvestmentStateV1(ownedItemIds, itemGraph, economyRules);
+  return unknownAdaptiveInvestmentStateV1();
+}
+
+function exactReplayEconomyRulesV1(input: AdaptiveReplayDecisionV1): RecommendationEconomyRulesV1 | undefined {
+  const rules = input.economyRules;
+  if (!isRecord(rules) || rules.rulesetId !== input.rulesetId || rules.catalogSha256 !== input.catalogSha256 ||
+    !isNonNegativeInteger(rules.baseSlots) || !isNonNegativeInteger(rules.maxFlexSlots) ||
+    !isRecord(rules.investmentBreakpoints)) return undefined;
+  const validBreakpoints = ADAPTIVE_INVESTMENT_TYPES_V1.every((type) => {
+    const values = rules.investmentBreakpoints[type];
+    return Array.isArray(values) && values.every((value) =>
+      typeof value === 'number' && Number.isFinite(value) && value > 0,
+    );
+  });
+  return validBreakpoints ? rules as RecommendationEconomyRulesV1 : undefined;
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 function validatePersistInput(input: PersistAdaptiveDecisionV1): void {

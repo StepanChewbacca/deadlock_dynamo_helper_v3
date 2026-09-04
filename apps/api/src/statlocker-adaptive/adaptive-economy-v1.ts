@@ -6,6 +6,12 @@ import {
 
 export type AdaptiveInvestmentTypeV1 = 'weapon' | 'vitality' | 'spirit';
 
+export const ADAPTIVE_INVESTMENT_TYPES_V1: readonly AdaptiveInvestmentTypeV1[] = [
+  'weapon',
+  'vitality',
+  'spirit',
+];
+
 export interface AdaptiveSlotStateV1 {
   baseSlots: number;
   maxFlexSlots: number;
@@ -29,6 +35,11 @@ export interface AdaptiveInvestmentTrackStateV1 {
 
 export interface AdaptiveInvestmentStateV1 {
   tracks: Readonly<Record<AdaptiveInvestmentTypeV1, AdaptiveInvestmentTrackStateV1>>;
+  /**
+   * Phase acceleration currently accepts only RECONSTRUCTED evidence because achieved breakpoints
+   * come from inventory plus exact economy rules. This is a provenance contract, not a ranking of
+   * OBSERVED evidence; a future observed breakpoint source requires an explicit contract update.
+   */
   evidence: FactEvidence;
 }
 
@@ -38,6 +49,27 @@ export interface RecommendationEconomyRulesV1 {
   baseSlots: number;
   maxFlexSlots: number;
   investmentBreakpoints: Readonly<Record<AdaptiveInvestmentTypeV1, readonly number[]>>;
+}
+
+export function isCanonicalAdaptiveInvestmentStateV1(value: unknown): value is AdaptiveInvestmentStateV1 {
+  if (!isRecord(value) || !isFactEvidence(value.evidence)) return false;
+  const tracks = value.tracks;
+  if (!isRecord(tracks)) return false;
+  return ADAPTIVE_INVESTMENT_TYPES_V1.every((type) =>
+    isCanonicalAdaptiveInvestmentTrackV1(tracks[type], type),
+  );
+}
+
+export function isCanonicalAdaptiveInvestmentTrackV1(
+  value: unknown,
+  expectedType: AdaptiveInvestmentTypeV1,
+): value is AdaptiveInvestmentTrackStateV1 {
+  if (!isRecord(value) || value.type !== expectedType || typeof value.currentValue !== 'number' ||
+    !Number.isFinite(value.currentValue) || value.currentValue < 0) return false;
+  const achievedBreakpoint = value.achievedBreakpoint;
+  return achievedBreakpoint === undefined ||
+    (typeof achievedBreakpoint === 'number' && Number.isFinite(achievedBreakpoint) &&
+      achievedBreakpoint > 0 && achievedBreakpoint <= value.currentValue);
 }
 
 export interface AdaptiveFlexCapacityInputV1 {
@@ -195,6 +227,14 @@ function investmentTrack(
     nextBreakpoint,
     soulsToNextBreakpoint: nextBreakpoint === undefined ? undefined : Math.max(0, nextBreakpoint - currentValue),
   };
+}
+
+function isFactEvidence(value: unknown): value is FactEvidence {
+  return value === 'OBSERVED' || value === 'RECONSTRUCTED' || value === 'UNKNOWN';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 export function observedFlexCapacityV1(value: number, source: string): ObservedFact<number> {

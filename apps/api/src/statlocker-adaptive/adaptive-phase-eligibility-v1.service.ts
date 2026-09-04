@@ -1,5 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { AdaptiveInvestmentStateV1 } from './adaptive-economy-v1';
+import {
+  AdaptiveInvestmentStateV1,
+  ADAPTIVE_INVESTMENT_TYPES_V1,
+  isCanonicalAdaptiveInvestmentStateV1,
+} from './adaptive-economy-v1';
 import { AdaptiveGameStateV1 } from './adaptive-game-state';
 import { ADAPTIVE_POLICY_V1_CONFIG } from './statlocker-adaptive.config';
 import { ConsensusBuildGroupV1, ConsensusSkeletonV1 } from './statlocker-adaptive.types';
@@ -44,10 +48,16 @@ export class AdaptivePhaseEligibilityV1Service {
 }
 
 function investmentProgressAccelerationSec(investment: AdaptiveInvestmentStateV1): number {
-  if (investment.evidence !== 'RECONSTRUCTED') return 0;
-  const achievedBreakpointCount = Object.values(investment.tracks)
-    .filter((track) => track.achievedBreakpoint !== undefined)
-    .length;
+  // RECONSTRUCTED is required because achieved breakpoints are derived from inventory plus exact rules.
+  // A future observed breakpoint source needs an explicit provenance contract before it can accelerate phases.
+  if (!isCanonicalAdaptiveInvestmentStateV1(investment) || investment.evidence !== 'RECONSTRUCTED') return 0;
+
+  let achievedBreakpointCount = 0;
+  for (const type of ADAPTIVE_INVESTMENT_TYPES_V1) {
+    const track = investment.tracks[type];
+    if (track.achievedBreakpoint !== undefined) achievedBreakpointCount += 1;
+  }
+
   return achievedBreakpointCount >= ADAPTIVE_POLICY_V1_CONFIG.phase.strongInvestmentMinAchievedBreakpoints
     ? ADAPTIVE_POLICY_V1_CONFIG.phase.strongInvestmentProgressAccelerationSec
     : 0;

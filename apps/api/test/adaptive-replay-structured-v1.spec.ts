@@ -704,6 +704,51 @@ describe('AdaptiveReplayV1Service structured replay invariants', () => {
     expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(2);
   });
 
+  it('reconstructs malformed persisted investment from matching exact economy rules', () => {
+    const replay = replayService();
+    const input = clone(replayInput());
+    input.decision.state.gameTimeSec = 480;
+    input.decision.state.ownedItemIds = [1, 3];
+    input.decision.itemDefinitions = [
+      { ...directItem(1, 1600), slotType: 'weapon' },
+      directItem(2),
+      { ...directItem(3, 1600), slotType: 'vitality' },
+    ];
+    input.decision.economyRules = {
+      rulesetId: 'ruleset-a',
+      catalogSha256,
+      baseSlots: 9,
+      maxFlexSlots: 3,
+      investmentBreakpoints: {
+        weapon: [1600],
+        vitality: [1600],
+        spirit: [1600],
+      },
+    };
+    input.decision.investment = {
+      evidence: 'RECONSTRUCTED',
+      tracks: null,
+    } as any;
+
+    const result = replay.run(input);
+
+    expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(2);
+  });
+
+  it('fails closed for malformed persisted investment without exact economy rules', () => {
+    const replay = replayService();
+    const input = clone(replayInput());
+    input.decision.state.gameTimeSec = 480;
+    input.decision.investment = {
+      evidence: 'RECONSTRUCTED',
+      tracks: null,
+    } as any;
+
+    const result = replay.run(input);
+
+    expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(1);
+  });
+
   it('does not flag a valid fully committed pick-two group as branch churn', () => {
     const replay = replayService();
     const input = pickTwoCommittedReplayInput();

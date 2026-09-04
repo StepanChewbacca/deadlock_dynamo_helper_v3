@@ -116,6 +116,40 @@ describe('AdaptivePhaseEligibilityV1Service', () => {
     expect(service.evaluateGroup(target, context(target, 480, [1], 'EVEN', investment('OBSERVED', 2)))).toBe('NOT_YET_ELIGIBLE');
   });
 
+  it('fails closed instead of throwing for a null reconstructed investment track', () => {
+    const target = group('mid', 'MID', 2);
+    const malformed = investment('RECONSTRUCTED', 2) as unknown as { tracks: Record<string, unknown> };
+    malformed.tracks.weapon = null;
+
+    expect(service.evaluateGroup(target, context(
+      target,
+      480,
+      [1],
+      'EVEN',
+      malformed as unknown as AdaptiveInvestmentStateV1,
+    ))).toBe('NOT_YET_ELIGIBLE');
+  });
+
+  it.each([
+    ['a missing track', (state: { tracks: Record<string, unknown> }) => { delete state.tracks.weapon; }],
+    ['a non-finite current value', (state: { tracks: Record<string, any> }) => { state.tracks.weapon.currentValue = Number.NaN; }],
+    ['a zero achieved breakpoint', (state: { tracks: Record<string, any> }) => { state.tracks.weapon.achievedBreakpoint = 0; }],
+    ['a non-finite achieved breakpoint', (state: { tracks: Record<string, any> }) => { state.tracks.weapon.achievedBreakpoint = Number.POSITIVE_INFINITY; }],
+    ['an achieved breakpoint above its current value', (state: { tracks: Record<string, any> }) => { state.tracks.weapon.achievedBreakpoint = 1_601; }],
+  ])('does not accelerate MID from %s', (_description, corrupt) => {
+    const target = group('mid', 'MID', 2);
+    const malformed = investment('RECONSTRUCTED', 2) as unknown as { tracks: Record<string, unknown> };
+    corrupt(malformed);
+
+    expect(service.evaluateGroup(target, context(
+      target,
+      480,
+      [1],
+      'EVEN',
+      malformed as unknown as AdaptiveInvestmentStateV1,
+    ))).toBe('NOT_YET_ELIGIBLE');
+  });
+
   it('keeps LATE gated before its own floor', () => {
     const early = group('early', 'EARLY', 1);
     const mid = group('mid', 'MID', 2);
