@@ -1,6 +1,7 @@
 import {
   buildRecommendationRulesetCatalogV1,
   compileStrictRecommendationCatalogV1,
+  generateRecommendationCandidates,
   observedFact,
 } from '../src';
 
@@ -75,13 +76,48 @@ describe('recommendation ruleset catalog', () => {
     expect(compiled.graph.getItem(1)).toBeUndefined();
   });
 
-  it('keeps recipe topology but omits UPGRADE when transaction cost is unverified', () => {
+  it('keeps recipe topology for lineage while omitting executable UPGRADE when transaction cost is unverified', () => {
     const catalog = buildRecommendationRulesetCatalogV1(baseInput());
     expect(catalog.items.find((item) => item.itemId === 2)?.upgradeRecipes).toHaveLength(1);
     expect(catalog.items.find((item) => item.itemId === 2)?.upgradeRecipes[0].soulsCost.evidence).toBe('UNKNOWN');
 
     const compiled = compileStrictRecommendationCatalogV1(catalog);
     expect(compiled.graph.getItem(2)?.upgradeRecipes).toEqual([]);
+    expect(compiled.graph.getDirectComponentIds(2)).toEqual([1]);
+    expect(compiled.graph.getDirectUpgradeIds(1)).toEqual([2]);
+    expect(compiled.graph.getTransitiveComponentIds(2)).toEqual([1]);
+    expect(compiled.graph.isTargetSatisfied(1, [2])).toBe(true);
+  });
+
+  it('does not create an executable upgrade action from topology-only recipe data', () => {
+    const compiled = compileStrictRecommendationCatalogV1(buildRecommendationRulesetCatalogV1(baseInput()));
+    const state = {
+      decisionId: 'd1',
+      matchId: 'm1',
+      playerSlot: 0,
+      gameTimeSec: 100,
+      rulesetId: compiled.rulesetId,
+      heroId: 1,
+      inventory: {
+        initializedFromSnapshot: true,
+        heldByItemId: new Map([[1, {
+          itemId: 1,
+          instanceId: '1:1',
+          lifecycle: 1,
+          acquiredBy: 'RECONCILE' as const,
+          acquiredAtMs: 0,
+        }]]),
+        lifecycleCountByItemId: new Map([[1, 1]]),
+        nextInstanceSequence: 2,
+      },
+      economy: {
+        spendableSouls: observedFact(5_000, 'test'),
+        shopOpportunity: observedFact('AVAILABLE' as const, 'test'),
+      },
+    };
+
+    const candidates = generateRecommendationCandidates({ state, itemGraph: compiled.graph });
+    expect(candidates.some((candidate) => candidate.action.type === 'UPGRADE_ITEM' && candidate.action.itemId === 2)).toBe(false);
   });
 
   it('compiles exact upgrade and sell mechanics only when enriched with provenance', () => {
@@ -110,6 +146,7 @@ describe('recommendation ruleset catalog', () => {
     expect(compiled.graph.getItem(2)?.upgradeRecipes).toEqual([
       { recipeId: 'upgrade:2', consumedItemIds: [1], soulsCost: 800 },
     ]);
+    expect(compiled.graph.getDirectComponentIds(2)).toEqual([1]);
     expect(compiled.graph.getItem(2)?.sellTransition).toEqual({ soulsRefund: 800, returnedItemIds: [1] });
     expect(compiled.graph.getItem(2)?.maxCopies).toBe(1);
   });
