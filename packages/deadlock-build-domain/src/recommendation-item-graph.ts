@@ -1,5 +1,10 @@
 import { RecommendationItemDefinition } from './recommendation-action-domain';
 
+export interface RecommendationItemLineageEdge {
+  parentItemId: number;
+  componentItemId: number;
+}
+
 export interface RecommendationItemGraph {
   getItem(itemId: number): RecommendationItemDefinition | undefined;
   getAllItems(): readonly RecommendationItemDefinition[];
@@ -14,6 +19,7 @@ export interface RecommendationItemGraph {
 
 export function createRecommendationItemGraph(
   definitions: readonly RecommendationItemDefinition[],
+  lineageEdges: readonly RecommendationItemLineageEdge[] = [],
 ): RecommendationItemGraph {
   const byId = new Map<number, RecommendationItemDefinition>();
 
@@ -40,16 +46,31 @@ export function createRecommendationItemGraph(
     }
   }
 
-  assertAcyclic(byId);
+  const directComponents = new Map<number, number[]>();
+  const addDirectEdge = (parentItemId: number, componentItemId: number): void => {
+    if (!byId.has(parentItemId)) throw new Error(`Lineage parent ${parentItemId} does not exist`);
+    if (!byId.has(componentItemId)) throw new Error(`Lineage component ${componentItemId} does not exist`);
+    const components = directComponents.get(parentItemId) ?? [];
+    if (!components.includes(componentItemId)) components.push(componentItemId);
+    directComponents.set(parentItemId, components);
+  };
 
-  const directUpgrades = new Map<number, number[]>();
   for (const item of byId.values()) {
     for (const recipe of item.upgradeRecipes) {
-      for (const componentId of recipe.consumedItemIds) {
-        const targets = directUpgrades.get(componentId) ?? [];
-        if (!targets.includes(item.itemId)) targets.push(item.itemId);
-        directUpgrades.set(componentId, targets);
-      }
+      for (const componentId of recipe.consumedItemIds) addDirectEdge(item.itemId, componentId);
+    }
+  }
+  for (const edge of lineageEdges) addDirectEdge(edge.parentItemId, edge.componentItemId);
+  for (const values of directComponents.values()) values.sort((a, b) => a - b);
+
+  assertAcyclic(byId, directComponents);
+
+  const directUpgrades = new Map<number, number[]>();
+  for (const [parentItemId, componentIds] of directComponents) {
+    for (const componentId of componentIds) {
+      const targets = directUpgrades.get(componentId) ?? [];
+      if (!targets.includes(parentItemId)) targets.push(parentItemId);
+      directUpgrades.set(componentId, targets);
     }
   }
   for (const values of directUpgrades.values()) values.sort((a, b) => a - b);
@@ -62,12 +83,9 @@ export function createRecommendationItemGraph(
     if (cached) return cached;
 
     const result = new Set<number>();
-    const item = byId.get(itemId);
-    for (const recipe of item?.upgradeRecipes ?? []) {
-      for (const componentId of recipe.consumedItemIds) {
-        result.add(componentId);
-        for (const ancestorId of resolveComponents(componentId)) result.add(ancestorId);
-      }
+    for (const componentId of directComponents.get(itemId) ?? []) {
+      result.add(componentId);
+      for (const ancestorId of resolveComponents(componentId)) result.add(ancestorId);
     }
     const sorted = [...result].sort((a, b) => a - b);
     transitiveComponents.set(itemId, sorted);
@@ -97,11 +115,7 @@ export function createRecommendationItemGraph(
   return {
     getItem: (itemId) => byId.get(itemId),
     getAllItems: () => allItems,
-    getDirectComponentIds: (itemId) => {
-      const item = byId.get(itemId);
-      if (!item) return [];
-      return [...new Set(item.upgradeRecipes.flatMap((recipe) => recipe.consumedItemIds))].sort((a, b) => a - b);
-    },
+    getDirectComponentIds: (itemId) => directComponents.get(itemId) ?? [],
     getDirectUpgradeIds: (itemId) => directUpgrades.get(itemId) ?? [],
     getTransitiveComponentIds: (itemId) => transitiveComponents.get(itemId) ?? [],
     getTransitiveUpgradeIds: (itemId) => transitiveUpgrades.get(itemId) ?? [],
@@ -166,17 +180,17 @@ function normalizeItem(item: RecommendationItemDefinition): RecommendationItemDe
   };
 }
 
-function assertAcyclic(byId: ReadonlyMap<number, RecommendationItemDefinition>): void {
+function assertAcyclic(
+  byId: ReadonlyMap<number, RecommendationItemDefinition>,
+  directComponents: ReadonlyMap<number, readonly number[]>,
+): void {
   const state = new Map<number, 'VISITING' | 'DONE'>();
   const visit = (itemId: number): void => {
     const current = state.get(itemId);
     if (current === 'VISITING') throw new Error(`Recommendation upgrade graph contains a cycle at ${itemId}`);
     if (current === 'DONE') return;
     state.set(itemId, 'VISITING');
-    const item = byId.get(itemId);
-    for (const recipe of item?.upgradeRecipes ?? []) {
-      for (const componentId of recipe.consumedItemIds) visit(componentId);
-    }
+    for (const componentId of directComponents.get(itemId) ?? []) visit(componentId);
     state.set(itemId, 'DONE');
   };
   for (const itemId of byId.keys()) visit(itemId);
