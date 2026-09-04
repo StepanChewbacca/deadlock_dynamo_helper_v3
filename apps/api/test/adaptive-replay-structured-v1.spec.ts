@@ -265,6 +265,53 @@ function committedChoiceReplayInput(): AdaptiveReplayInputV1 {
   return input;
 }
 
+function pickTwoCommittedReplayInput(): AdaptiveReplayInputV1 {
+  const input = clone(replayInput());
+  input.decision.state.decisionId = 'adaptive-replay-pick-two';
+  input.decision.state.matchId = 'match-pick-two';
+  input.decision.state.ownedItemIds = [1, 2];
+  input.decision.state.gameTimeSec = 300;
+  input.decision.stateRevision = 'revision-pick-two';
+  input.decision.itemDefinitions = [directItem(1), directItem(2), directItem(3)];
+  input.decision.slots = exactSlotState(2, 0);
+  const patch = input.evidence.byDataset.WPA_PATCH_DATA.payload as any;
+  patch.items = [1, 2, 3].map((itemId) => ({
+    heroId: 10,
+    itemId,
+    meanWpa: itemId === 3 ? 0 : 0.05,
+    sampleSize: 1000,
+    wpaConfidence: 1,
+    gameState: { even: itemId === 3 ? 0 : 0.05 },
+    purchaseTiming: { medianPurchaseSec: 300 },
+  }));
+  const vsHero = input.evidence.byDataset.VS_HERO_WPA.payload as any;
+  vsHero.slices = [{
+    heroId: 10,
+    enemyHeroId: 20,
+    items: [1, 2, 3].map((itemId) => ({
+      itemId,
+      deltaWpa: itemId === 3 ? 0 : 0.05,
+      count: 1000,
+    })),
+  }];
+  const skeleton = input.evidence.byDataset.CONSENSUS_SKELETON.payload as any;
+  skeleton.groups = [{
+    groupId: 'hero:10:EARLY:CHOICE:1,2,3:pick2',
+    phase: 'EARLY',
+    type: 'CHOICE',
+    minSelect: 2,
+    maxSelect: 2,
+    candidates: [
+      candidate(1, 300, 0.8),
+      candidate(2, 300, 0.8),
+      candidate(3, 300, 0.8),
+    ],
+    confidence: 0.9,
+    inferred: false,
+  }];
+  return input;
+}
+
 function fullInventoryReplayInput(): AdaptiveReplayInputV1 {
   const input = clone(replayInput());
   input.decision.state.decisionId = 'adaptive-replay-full-inventory';
@@ -376,6 +423,7 @@ function replayCorpus(): AdaptiveReplayInputV1[] {
     replayInput(),
     choiceReplayInput(),
     committedChoiceReplayInput(),
+    pickTwoCommittedReplayInput(),
     fullInventoryReplayInput(),
     preparatorySellReplayInput(),
   ];
@@ -484,9 +532,13 @@ function hasDoubleChoice(input: AdaptiveReplayInputV1, output: AdaptiveReplayOut
   const buildIds = new Set(output.recommendedBuild.map((item) => item.itemId));
   return skeletonGroups(input)
     .filter((group: any) => group.type === 'CHOICE')
-    .some((group: any) =>
-      group.candidates.filter((entry: any) => buildIds.has(entry.itemId)).length > group.maxSelect,
-    );
+    .some((group: any) => {
+      const replacedBranches = explicitlyReplacedChoiceBranches(input, output, group);
+      const selectedCount = group.candidates.filter((entry: any) =>
+        buildIds.has(entry.itemId) && !replacedBranches.has(entry.itemId),
+      ).length;
+      return selectedCount > Math.max(1, group.maxSelect);
+    });
 }
 
 function hasUnreachablePlan(input: AdaptiveReplayInputV1, output: AdaptiveReplayOutputV1): boolean {
@@ -520,29 +572,68 @@ function hasPostCommitBranchChurn(input: AdaptiveReplayInputV1, output: Adaptive
   const owned = new Set(input.decision.state.ownedItemIds);
   const buildIds = new Set(output.recommendedBuild.map((item) => item.itemId));
   for (const group of skeletonGroups(input).filter((entry: any) => entry.type === 'CHOICE')) {
-    const branchClosures = new Map<number, Set<number>>(
-      group.candidates.map((entry: any) => [entry.itemId, itemClosure(input, entry.itemId)]),
-    );
-    const committed: number[] = [];
-    for (const entry of group.candidates) {
-      const ownClosure = branchClosures.get(entry.itemId) ?? new Set<number>();
-      const siblingItems = new Set<number>();
-      for (const [siblingId, closure] of branchClosures) {
-        if (siblingId === entry.itemId) continue;
-        for (const itemId of closure) siblingItems.add(itemId);
-      }
-      const uniqueItems = [...ownClosure].filter((itemId) => !siblingItems.has(itemId));
-      if (uniqueItems.some((itemId) => owned.has(itemId))) committed.push(entry.itemId);
-    }
-    if (committed.length > 1) return true;
-    if (committed.length === 1) {
-      const committedItemId = committed[0];
-      if (group.candidates.some((entry: any) => entry.itemId !== committedItemId && buildIds.has(entry.itemId))) {
-        return true;
-      }
-    }
+    const branchClosures = choiceBranchClosures(input, group);
+    const committed = committedChoiceBranches(owned, branchClosures);
+    if (committed.length > Math.max(1, group.maxSelect)) return true;
+
+    const replacedBranches = explicitlyReplacedChoiceBranches(input, output, group, branchClosures);
+    const effectiveCommitted = committed.filter((itemId) => !replacedBranches.has(itemId));
+    const newlyPlanned = group.candidates
+      .map((entry: any) => entry.itemId as number)
+      .filter((itemId: number) =>
+        buildIds.has(itemId) &&
+        !effectiveCommitted.includes(itemId) &&
+        !replacedBranches.has(itemId),
+      );
+    if (effectiveCommitted.length + newlyPlanned.length > Math.max(1, group.maxSelect)) return true;
   }
   return false;
+}
+
+function explicitlyReplacedChoiceBranches(
+  input: AdaptiveReplayInputV1,
+  output: AdaptiveReplayOutputV1,
+  group: any,
+  branchClosures = choiceBranchClosures(input, group),
+): Set<number> {
+  const sellItemId = output.nextAction.sellItemId;
+  if (sellItemId === undefined || (output.nextAction.type !== 'SELL' && output.nextAction.type !== 'REPLACE')) {
+    return new Set<number>();
+  }
+  const result = new Set<number>();
+  for (const [itemId, closure] of branchClosures) {
+    const siblingItems = new Set<number>();
+    for (const [siblingId, siblingClosure] of branchClosures) {
+      if (siblingId === itemId) continue;
+      for (const siblingItemId of siblingClosure) siblingItems.add(siblingItemId);
+    }
+    const uniqueItems = [...closure].filter((candidateItemId) => !siblingItems.has(candidateItemId));
+    if (uniqueItems.includes(sellItemId)) result.add(itemId);
+  }
+  return result;
+}
+
+function choiceBranchClosures(input: AdaptiveReplayInputV1, group: any): Map<number, Set<number>> {
+  return new Map<number, Set<number>>(
+    group.candidates.map((entry: any) => [entry.itemId, itemClosure(input, entry.itemId)]),
+  );
+}
+
+function committedChoiceBranches(
+  owned: ReadonlySet<number>,
+  branchClosures: ReadonlyMap<number, Set<number>>,
+): number[] {
+  const committed: number[] = [];
+  for (const [itemId, closure] of branchClosures) {
+    const siblingItems = new Set<number>();
+    for (const [siblingId, siblingClosure] of branchClosures) {
+      if (siblingId === itemId) continue;
+      for (const siblingItemId of siblingClosure) siblingItems.add(siblingItemId);
+    }
+    const uniqueItems = [...closure].filter((candidateItemId) => !siblingItems.has(candidateItemId));
+    if (uniqueItems.some((candidateItemId) => owned.has(candidateItemId))) committed.push(itemId);
+  }
+  return committed.sort((a, b) => a - b);
 }
 
 function itemClosure(input: AdaptiveReplayInputV1, itemId: number, visiting = new Set<number>()): Set<number> {
@@ -592,6 +683,27 @@ describe('AdaptiveReplayV1Service structured replay invariants', () => {
     expect(next?.itemId).toBe(1);
     expect(result.nextAction.targetItemId).toBe(1);
     expect(result.recommendedBuild.some((item) => item.itemId === 2 && item.status === 'NEXT')).toBe(false);
+  });
+
+  it('does not flag a valid fully committed pick-two group as branch churn', () => {
+    const replay = replayService();
+    const input = pickTwoCommittedReplayInput();
+    const output = replay.run(input);
+
+    expect(hasDoubleChoice(input, output)).toBe(false);
+    expect(hasPostCommitBranchChurn(input, output)).toBe(false);
+    expect(output.recommendedBuild.filter((item) => [1, 2, 3].includes(item.itemId))).toHaveLength(2);
+  });
+
+  it('accepts an explicit committed-branch replacement without treating it as silent churn', () => {
+    const replay = replayService();
+    const input = committedChoiceReplayInput();
+    const output = replay.run(input);
+
+    expect(['SELL', 'REPLACE']).toContain(output.nextAction.type);
+    expect(output.nextAction.sellItemId).toBe(1);
+    expect(hasDoubleChoice(input, output)).toBe(false);
+    expect(hasPostCommitBranchChurn(input, output)).toBe(false);
   });
 
   it('replays identical structured input deterministically', () => {
