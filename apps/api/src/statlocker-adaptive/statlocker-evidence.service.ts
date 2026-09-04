@@ -8,6 +8,7 @@ import { StatlockerRefreshService, StatlockerGameIdentityV1 } from './statlocker
 import {
   StatlockerSnapshotStoreService,
   StatlockerStoredSnapshotV1,
+  isSelectableSnapshot,
 } from './statlocker-snapshot-store.service';
 
 export type AdaptiveScoringDatasetV1 =
@@ -189,6 +190,7 @@ export class StatlockerEvidenceService {
   ): StatlockerEvidenceFamilyV1 {
     const candidates = rows
       .filter((row) => row.dataset === dataset && row.scopeKey === scopeKey)
+      .filter(isSelectableSnapshot)
       .sort(compareNewest);
     const exact = candidates.find((row) =>
       row.rulesetVersion === input.rulesetVersion &&

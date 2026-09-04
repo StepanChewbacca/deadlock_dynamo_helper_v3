@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
   RecommendationCandidate,
   generateRecommendationCandidates,
 } from '@deadlock-live-probe/build-domain';
@@ -14,6 +15,7 @@ import {
   AdaptiveDecisionStateV1,
   AdaptiveDecisionStateV1Service,
 } from './adaptive-decision-state-v1.service';
+import { AdaptiveRecommendationObservabilityV1Service } from './adaptive-recommendation-observability-v1.service';
 import { AdaptiveReplayV1Service } from './adaptive-replay-v1.service';
 import {
   AdaptiveScoringDatasetV1,
@@ -32,11 +34,13 @@ export class AdaptiveRecommendationV1Service {
     private readonly evidence: StatlockerEvidenceService,
     private readonly planner: AdaptiveBuildPlannerV1Service,
     private readonly replay: AdaptiveReplayV1Service,
+    private readonly observability: AdaptiveRecommendationObservabilityV1Service = new AdaptiveRecommendationObservabilityV1Service(),
   ) {}
 
   async recommend(request: AdaptiveRecommendationRequestV1): Promise<AdaptiveRecommendationResultV1> {
     validateRequest(request);
     const initial = await this.decisionState.build(request.matchId, request.localSteamId);
+    this.observability.recordDecisionState(initial);
     const previous = await this.replay.getPreviousPlan(initial.state.matchId, initial.localSteamId);
     const patchId = this.evidence.resolveLocalPatchId(initial.rulesetId, initial.catalogSha256) ?? 'UNKNOWN';
     const localEvidence = this.evidence.getLocalEvidence({
@@ -45,21 +49,40 @@ export class AdaptiveRecommendationV1Service {
       catalogSha256: initial.catalogSha256,
       statlockerPatchId: patchId,
     });
+    this.observability.recordEvidence(localEvidence);
 
-    const planned = localEvidence.usable
-      ? this.planner.plan({
-          decision: initial,
-          evidence: localEvidence,
-          previousResult: previous,
-          recentPurchasedItemIds: [],
-          recentSoldItemIds: [],
-        })
+    let planned = localEvidence.usable
+      ? (() => {
+          const plannerStartedAt = Date.now();
+          const result = this.planner.plan({
+            decision: initial,
+            evidence: localEvidence,
+            previousResult: previous,
+            recentPurchasedItemIds: [],
+            recentSoldItemIds: [],
+          });
+          this.observability.recordPlannerLatency(Date.now() - plannerStartedAt);
+          return result;
+        })()
       : undefined;
 
     const fresh = await this.decisionState.build(request.matchId, request.localSteamId);
+    if (localEvidence.usable && planned && fresh.stateRevision !== initial.stateRevision) {
+      const plannerStartedAt = Date.now();
+      planned = this.planner.plan({
+        decision: fresh,
+        evidence: localEvidence,
+        previousResult: previous,
+        recentPurchasedItemIds: [],
+        recentSoldItemIds: [],
+        suppressObservability: true,
+      });
+      this.observability.recordPlannerLatency(Date.now() - plannerStartedAt);
+    }
     const freshCandidates = generateRecommendationCandidates({
       state: fresh.state,
       itemGraph: fresh.itemGraph,
+      rules: finalLegalityRules(fresh),
     });
     const feasibleByActionKey = new Map(
       freshCandidates
@@ -69,6 +92,8 @@ export class AdaptiveRecommendationV1Service {
 
     const blockers = new Set<string>(localEvidence.degradedReasons);
     let result: AdaptiveRecommendationResultV1;
+    let legalityFallback = false;
+    let legalityFallbackReasonCodes: readonly string[] = [];
 
     if (!localEvidence.usable) {
       blockers.add('STATLOCKER_EVIDENCE_UNAVAILABLE');
@@ -82,13 +107,14 @@ export class AdaptiveRecommendationV1Service {
         [...freshOwnedItemIds],
       );
       const freshRanked = planned.rankedImmediateCandidates.filter(({ action }) =>
-        feasibleByActionKey.has(action.actionKey)
-        && !targetsOwnedItem(action, freshOwnedItemIds),
+        feasibleByActionKey.has(action.actionKey),
       );
       const legality = selectFreshLegalAction(planned.nextAction, freshRanked, feasibleByActionKey, freshBuild);
       if (legality.changed || fresh.stateRevision !== initial.stateRevision) {
         blockers.add('STATE_CHANGED_LEGALITY_RECHECK');
       }
+      legalityFallback = legality.changed;
+      legalityFallbackReasonCodes = legality.action.reasonCodes ?? [];
       result = {
         ready: true,
         blockers: [...blockers].sort(),
@@ -111,7 +137,16 @@ export class AdaptiveRecommendationV1Service {
       throw new Error('Adaptive planner did not produce a result');
     }
 
-    const replayInput = this.replay.toReplayInput(initial, localEvidence, {
+    this.observability.recordRecommendationOutcome({
+      evidence: localEvidence,
+      decision: fresh,
+      previousResult: previous,
+      result,
+      legalityFallback,
+      legalityFallbackReasonCodes,
+    });
+
+    const replayInput = this.replay.toReplayInput(fresh, localEvidence, {
       previousResult: previous,
       recentPurchasedItemIds: [],
       recentSoldItemIds: [],
@@ -128,36 +163,51 @@ export class AdaptiveRecommendationV1Service {
   }
 }
 
+function finalLegalityRules(decision: AdaptiveDecisionStateV1) {
+  const slots = decision.slots;
+  if (!slots) return DEFAULT_RECOMMENDATION_CANDIDATE_RULES;
+  return {
+    ...DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
+    baseSlots: slots.baseSlots,
+    maxFlexSlots: slots.maxFlexSlots,
+    unlockedFlexSlots: slots.unlockedFlexSlots,
+    flexCapacityEvidence: slots.evidence,
+  };
+}
+
 function selectFreshLegalAction(
   selected: AdaptiveActionV1,
   ranked: readonly AdaptiveScoredActionV1[],
   feasibleByActionKey: ReadonlyMap<string, RecommendationCandidate>,
   build: AdaptiveRecommendationResultV1['recommendedBuild'],
 ): { action: AdaptiveActionV1; changed: boolean } {
+  const targetItemId = firstNextTarget(build);
   if (!isTransactionAction(selected)) {
     if (selected.actionKey === 'WAIT' || selected.actionKey === 'HOLD' || selected.actionKey === 'CONTINUE_CORE' || selected.actionKey === 'ABSTAIN') {
-      return { action: rebasePlanTarget(selected, build, feasibleByActionKey), changed: false };
+      const action = rebasePlanTarget(selected, build, feasibleByActionKey);
+      return { action, changed: actionWasRewritten(selected, action) };
     }
-    if (feasibleByActionKey.has(selected.actionKey)) return { action: rebasePlanTarget(selected, build, feasibleByActionKey), changed: false };
-  } else if (feasibleByActionKey.has(selected.actionKey)) {
-    return { action: selected, changed: false };
+    if (feasibleByActionKey.has(selected.actionKey)) {
+      const action = rebasePlanTarget(selected, build, feasibleByActionKey);
+      return { action, changed: actionWasRewritten(selected, action) };
+    }
+  } else {
+    const candidate = feasibleByActionKey.get(selected.actionKey);
+    if (candidate && selectedActionServesFreshNext(selected, targetItemId)) {
+      const action = canonicalFreshAction(selected, candidate, targetItemId);
+      return { action, changed: actionWasRewritten(selected, action) };
+    }
   }
 
   for (const scored of ranked) {
-    if (isTransactionAction(scored.action) && !feasibleByActionKey.has(scored.action.actionKey)) continue;
-    if (!isTransactionAction(scored.action) && !feasibleByActionKey.has(scored.action.actionKey)) continue;
+    const candidate = feasibleByActionKey.get(scored.action.actionKey);
+    if (!candidate || !fallbackActionServesFreshNext(scored.action, targetItemId)) continue;
     return {
-      action: scored.action.type === 'WAIT'
-        ? withFreshLegalityFallback(rebasePlanTarget(scored.action, build, feasibleByActionKey))
-        : {
-            ...scored.action,
-            reasonCodes: unique([...scored.action.reasonCodes, 'FRESH_LEGALITY_FALLBACK']),
-          },
+      action: withFreshLegalityFallback(canonicalFreshAction(scored.action, candidate, targetItemId)),
       changed: true,
     };
   }
 
-  const targetItemId = firstNextTarget(build);
   return {
     action: {
       actionKey: freshWaitActionKey(targetItemId, feasibleByActionKey),
@@ -167,6 +217,15 @@ function selectFreshLegalAction(
     },
     changed: true,
   };
+}
+
+function actionWasRewritten(before: AdaptiveActionV1, after: AdaptiveActionV1): boolean {
+  return before.actionKey !== after.actionKey ||
+    before.type !== after.type ||
+    before.targetItemId !== after.targetItemId ||
+    before.itemId !== after.itemId ||
+    before.sellItemId !== after.sellItemId ||
+    before.buyItemId !== after.buyItemId;
 }
 
 function previousEvidenceFallback(
@@ -296,8 +355,70 @@ function isTransactionAction(action: AdaptiveActionV1): boolean {
   return action.type === 'BUY' || action.type === 'UPGRADE' || action.type === 'SELL' || action.type === 'REPLACE';
 }
 
-function targetsOwnedItem(action: AdaptiveActionV1, ownedItemIds: ReadonlySet<number>): boolean {
-  return action.targetItemId !== undefined && ownedItemIds.has(action.targetItemId);
+function transactionTargetsNextItem(action: AdaptiveActionV1): boolean {
+  return action.type === 'BUY' || action.type === 'UPGRADE' || action.type === 'REPLACE';
+}
+
+function selectedActionServesFreshNext(action: AdaptiveActionV1, targetItemId: number | undefined): boolean {
+  if (action.type === 'SELL') return targetItemId !== undefined;
+  return !transactionTargetsNextItem(action) || action.targetItemId === targetItemId;
+}
+
+function fallbackActionServesFreshNext(action: AdaptiveActionV1, targetItemId: number | undefined): boolean {
+  if (action.type === 'SELL') return targetItemId !== undefined && action.targetItemId === targetItemId;
+  return !transactionTargetsNextItem(action) || action.targetItemId === targetItemId;
+}
+
+function canonicalFreshAction(
+  planned: AdaptiveActionV1,
+  candidate: RecommendationCandidate,
+  semanticNextTargetItemId: number | undefined,
+): AdaptiveActionV1 {
+  const action = candidate.action;
+  if (action.type === 'BUY_ITEM') {
+    return {
+      ...planned,
+      actionKey: candidate.actionId,
+      type: 'BUY',
+      itemId: action.itemId,
+      targetItemId: action.itemId,
+    };
+  }
+  if (action.type === 'UPGRADE_ITEM') {
+    return {
+      ...planned,
+      actionKey: candidate.actionId,
+      type: 'UPGRADE',
+      itemId: action.itemId,
+      targetItemId: action.itemId,
+    };
+  }
+  if (action.type === 'REPLACE_ITEM') {
+    return {
+      ...planned,
+      actionKey: candidate.actionId,
+      type: 'REPLACE',
+      sellItemId: action.sellItemId,
+      buyItemId: action.buyItemId,
+      targetItemId: action.buyItemId,
+    };
+  }
+  if (action.type === 'SELL_ITEM') {
+    return {
+      ...planned,
+      actionKey: candidate.actionId,
+      type: 'SELL',
+      itemId: action.itemId,
+      sellItemId: action.itemId,
+      targetItemId: semanticNextTargetItemId,
+    };
+  }
+  return {
+    ...planned,
+    actionKey: candidate.actionId,
+    type: 'WAIT',
+    targetItemId: semanticNextTargetItemId,
+  };
 }
 
 function firstNextTarget(build: AdaptiveRecommendationResultV1['recommendedBuild']): number | undefined {

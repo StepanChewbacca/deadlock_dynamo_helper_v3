@@ -11,6 +11,27 @@ export interface AdaptivePolicyV1Config {
   coreReplaceMinImprovement: number;
   recentPurchaseProtectionMs: number;
   recentSellRebuyPenaltyMs: number;
+  phase: {
+    midMinTimeSec: number;
+    lateMinTimeSec: number;
+    strongInvestmentMinAchievedBreakpoints: number;
+    strongInvestmentProgressAccelerationSec: number;
+  };
+  choice: {
+    switchMinImprovement: number;
+    committedReplaceMinImprovement: number;
+    inferenceMinCoverage: number;
+    inferenceMaxCooccurrence: number;
+    inferenceMaxMedianTimeDeltaSec: number;
+    inferenceMinConfidence: number;
+  };
+  optionalActivationMinScore: number;
+  investment: {
+    crossingBonus: number;
+    nearBreakpointBonus: number;
+    achievedBreakpointDropPenalty: number;
+    nearBreakpointMaxSouls: number;
+  };
   shrinkK: {
     baseWpa: number;
     gameState: number;
@@ -29,6 +50,8 @@ export interface AdaptivePolicyV1Config {
     laneFit: number;
     chainFit: number;
     skeletonDeviation: number;
+    investmentUtility: number;
+    slotEfficiency: number;
     transaction: number;
     churn: number;
     instability: number;
@@ -36,7 +59,7 @@ export interface AdaptivePolicyV1Config {
 }
 
 export const ADAPTIVE_POLICY_V1_CONFIG: AdaptivePolicyV1Config = {
-  version: 'statlocker-adaptive-v1.0.0',
+  version: 'statlocker-adaptive-v1.2.0',
   gameStateThreshold: 0.08,
   gameStateBlendWidth: 0.03,
   exactEnemyMaxMatchups: 3,
@@ -48,6 +71,27 @@ export const ADAPTIVE_POLICY_V1_CONFIG: AdaptivePolicyV1Config = {
   coreReplaceMinImprovement: 0.25,
   recentPurchaseProtectionMs: 120_000,
   recentSellRebuyPenaltyMs: 180_000,
+  phase: {
+    midMinTimeSec: 600,
+    lateMinTimeSec: 1500,
+    strongInvestmentMinAchievedBreakpoints: 2,
+    strongInvestmentProgressAccelerationSec: 120,
+  },
+  choice: {
+    switchMinImprovement: 0.08,
+    committedReplaceMinImprovement: 0.25,
+    inferenceMinCoverage: 0.30,
+    inferenceMaxCooccurrence: 0.25,
+    inferenceMaxMedianTimeDeltaSec: 300,
+    inferenceMinConfidence: 0.60,
+  },
+  optionalActivationMinScore: 0.15,
+  investment: {
+    crossingBonus: 0.18,
+    nearBreakpointBonus: 0.08,
+    achievedBreakpointDropPenalty: 0.20,
+    nearBreakpointMaxSouls: 800,
+  },
   shrinkK: {
     baseWpa: 200,
     gameState: 250,
@@ -66,6 +110,8 @@ export const ADAPTIVE_POLICY_V1_CONFIG: AdaptivePolicyV1Config = {
     laneFit: 0.3,
     chainFit: 0.7,
     skeletonDeviation: 1.0,
+    investmentUtility: 1.0,
+    slotEfficiency: 0.3,
     transaction: 0.7,
     churn: 1.0,
     instability: 0.8,
@@ -166,6 +212,9 @@ function scalar(
 function cloneDefaults(): AdaptivePolicyV1Config {
   return {
     ...ADAPTIVE_POLICY_V1_CONFIG,
+    phase: { ...ADAPTIVE_POLICY_V1_CONFIG.phase },
+    choice: { ...ADAPTIVE_POLICY_V1_CONFIG.choice },
+    investment: { ...ADAPTIVE_POLICY_V1_CONFIG.investment },
     shrinkK: { ...ADAPTIVE_POLICY_V1_CONFIG.shrinkK },
     weights: { ...ADAPTIVE_POLICY_V1_CONFIG.weights },
   };

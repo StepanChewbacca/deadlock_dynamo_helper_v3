@@ -7,21 +7,27 @@ import {
   RecommendationFeasibilityReason,
   RecommendationItemDefinition,
   recommendationActionId,
+  reconstructedFact,
 } from './recommendation-action-domain';
 import { RecommendationItemGraph } from './recommendation-item-graph';
-import { InventoryItemInstance, InventorySlotType } from './types';
+import { InventoryAcquisitionType, InventoryItemInstance, InventorySlotType, InventoryState } from './types';
 
 export interface RecommendationCandidateGeneratorRules {
+  baseSlots?: number;
   baseSlotsByType: Readonly<Record<InventorySlotType, number>>;
   maxFlexSlots: number;
+  unlockedFlexSlots?: number;
+  flexCapacityEvidence: FactEvidence;
   maxActiveItems: number;
   allowSellOnlyActions: boolean;
   generateTargetedWaitActions: boolean;
 }
 
 export const DEFAULT_RECOMMENDATION_CANDIDATE_RULES: RecommendationCandidateGeneratorRules = {
+  baseSlots: 9,
   baseSlotsByType: { weapon: 4, vitality: 4, spirit: 4 },
-  maxFlexSlots: 4,
+  maxFlexSlots: 3,
+  flexCapacityEvidence: 'UNKNOWN',
   maxActiveItems: 4,
   allowSellOnlyActions: true,
   generateTargetedWaitActions: true,
@@ -59,7 +65,7 @@ export function generateRecommendationCandidates(
       applyPurchaseObservabilityReasons(state, reasons);
       applyAffordabilityReason(state, item.directPurchaseCost, reasons);
       const resulting = addItemToInventory(state, item);
-      if (!checkSlots(resulting, graph, rules)) reasons.push('SLOT_LIMIT_EXCEEDED');
+      applySlotReason(state, resulting, graph, rules, reasons);
       if (!checkActiveLimit(resulting, graph, rules)) reasons.push('ACTIVE_ITEM_LIMIT_EXCEEDED');
       const feasible = reasons.length === 0;
       candidates.push(buildCandidate(
@@ -92,7 +98,7 @@ export function generateRecommendationCandidates(
       applyPurchaseObservabilityReasons(state, reasons);
       applyAffordabilityReason(state, recipe.soulsCost, reasons);
       const resulting = upgradeInventory(state, item, recipe.consumedItemIds);
-      if (!checkSlots(resulting, graph, rules)) reasons.push('SLOT_LIMIT_EXCEEDED');
+      applySlotReason(state, resulting, graph, rules, reasons);
       if (!checkActiveLimit(resulting, graph, rules)) reasons.push('ACTIVE_ITEM_LIMIT_EXCEEDED');
       const feasible = reasons.length === 0;
       candidates.push(buildCandidate(
@@ -156,7 +162,7 @@ function evaluateSell(
   }
   applyShopObservabilityReasons(state, reasons);
   const resulting = applySellTransition(state, item, graph);
-  if (!checkSlots(resulting, graph, rules)) reasons.push('SLOT_LIMIT_EXCEEDED');
+  applySlotReason(state, resulting, graph, rules, reasons);
   if (!checkActiveLimit(resulting, graph, rules)) reasons.push('ACTIVE_ITEM_LIMIT_EXCEEDED');
   const feasible = reasons.length === 0;
   const refund = item.sellTransition?.soulsRefund ?? 0;
@@ -189,7 +195,7 @@ function evaluateReplace(
 
   const afterSell = applySellTransition(state, sold, graph);
   const resulting = bought.directPurchaseCost === undefined ? afterSell : addItemIds(afterSell, [bought.itemId]);
-  if (!checkSlots(resulting, graph, rules)) reasons.push('SLOT_LIMIT_EXCEEDED');
+  applySlotReason(state, resulting, graph, rules, reasons);
   if (!checkActiveLimit(resulting, graph, rules)) reasons.push('ACTIVE_ITEM_LIMIT_EXCEEDED');
 
   const refund = sold.sellTransition?.soulsRefund ?? 0;
@@ -235,19 +241,47 @@ function rulesetAvailability(rulesetId: string, item: RecommendationItemDefiniti
   return item.availableRulesetIds.includes(rulesetId);
 }
 
-function checkSlots(
-  itemIds: readonly number[],
+function applySlotReason(
+  state: RecommendationDecisionState,
+  resultingItemIds: readonly number[],
   graph: RecommendationItemGraph,
   rules: RecommendationCandidateGeneratorRules,
-): boolean {
-  const counts: Record<InventorySlotType, number> = { weapon: 0, vitality: 0, spirit: 0 };
-  for (const itemId of itemIds) {
-    const slotType = graph.getItem(itemId)?.slotType;
-    if (slotType) counts[slotType] += 1;
+  reasons: RecommendationFeasibilityReason[],
+): void {
+  const reason = slotFailureReason(heldIds(state), resultingItemIds, graph, rules);
+  if (reason) reasons.push(reason);
+}
+
+function slotFailureReason(
+  currentItemIds: readonly number[],
+  resultingItemIds: readonly number[],
+  graph: RecommendationItemGraph,
+  rules: RecommendationCandidateGeneratorRules,
+): 'SLOT_LIMIT_EXCEEDED' | 'FLEX_SLOT_CAPACITY_UNKNOWN' | undefined {
+  const currentUsed = flexUsedFor(currentItemIds, graph, rules);
+  const resultingUsed = flexUsedFor(resultingItemIds, graph, rules);
+  if (resultingUsed <= currentUsed) return undefined;
+  if (resultingUsed > rules.maxFlexSlots) return 'SLOT_LIMIT_EXCEEDED';
+
+  if (rules.flexCapacityEvidence === 'UNKNOWN') {
+    return resultingUsed > currentUsed ? 'FLEX_SLOT_CAPACITY_UNKNOWN' : undefined;
   }
-  const flexUsed = (Object.keys(counts) as InventorySlotType[])
-    .reduce((sum, type) => sum + Math.max(0, counts[type] - rules.baseSlotsByType[type]), 0);
-  return flexUsed <= rules.maxFlexSlots;
+
+  const unlocked = Math.min(rules.maxFlexSlots, Math.max(0, rules.unlockedFlexSlots ?? 0));
+  return resultingUsed > unlocked ? 'SLOT_LIMIT_EXCEEDED' : undefined;
+}
+
+export function flexUsedFor(
+  itemIds: readonly number[],
+  _graph: RecommendationItemGraph,
+  rules: RecommendationCandidateGeneratorRules,
+): number {
+  const legacyBaseSlots = (Object.keys(rules.baseSlotsByType) as InventorySlotType[])
+    .reduce((sum, type) => sum + Math.max(0, rules.baseSlotsByType[type]), 0);
+  const baseSlots = Number.isFinite(rules.baseSlots)
+    ? Math.max(0, Math.floor(rules.baseSlots as number))
+    : legacyBaseSlots;
+  return Math.max(0, itemIds.length - baseSlots);
 }
 
 function checkActiveLimit(
@@ -357,4 +391,69 @@ export function buildInventoryInstancesForRecommendation(
     });
   }
   return held;
+}
+
+export function projectRecommendationCandidateState(
+  state: RecommendationDecisionState,
+  candidate: RecommendationCandidate,
+  graph: RecommendationItemGraph,
+): RecommendationDecisionState {
+  const inventory = inventoryFromProjectedIds(state, candidate, graph);
+  return {
+    ...state,
+    inventory,
+    economy: {
+      ...state.economy,
+      spendableSouls: candidate.spendableSoulsAfter === undefined
+        ? state.economy.spendableSouls
+        : reconstructedFact(candidate.spendableSoulsAfter, `candidate:${candidate.actionId}`),
+    },
+  };
+}
+
+function inventoryFromProjectedIds(
+  state: RecommendationDecisionState,
+  candidate: RecommendationCandidate,
+  graph: RecommendationItemGraph,
+): InventoryState {
+  const held = new Map<number, InventoryItemInstance>();
+  const lifecycleCountByItemId = new Map(state.inventory.lifecycleCountByItemId);
+  let sequence = state.inventory.nextInstanceSequence;
+  const acquisition = projectedAcquisitionType(candidate.action);
+
+  for (const itemId of [...new Set(candidate.resultingItemIds)].sort((a, b) => a - b)) {
+    const existing = state.inventory.heldByItemId.get(itemId);
+    if (existing) {
+      held.set(itemId, existing);
+      continue;
+    }
+    const item = graph.getItem(itemId);
+    if (!item) continue;
+    const lifecycle = (lifecycleCountByItemId.get(itemId) ?? 0) + 1;
+    lifecycleCountByItemId.set(itemId, lifecycle);
+    held.set(itemId, {
+      itemId,
+      name: item.name,
+      slotType: item.slotType,
+      instanceId: `projected:${candidate.actionId}:${itemId}:${lifecycle}:${sequence}`,
+      lifecycle,
+      acquiredBy: acquisition,
+      acquiredAtMs: Math.max(0, Math.round(state.gameTimeSec * 1000)),
+      acquiredAtGameTimeSec: state.gameTimeSec,
+    });
+    sequence += 1;
+  }
+
+  return {
+    initializedFromSnapshot: state.inventory.initializedFromSnapshot,
+    heldByItemId: held,
+    lifecycleCountByItemId,
+    nextInstanceSequence: sequence,
+  };
+}
+
+function projectedAcquisitionType(action: RecommendationAction): InventoryAcquisitionType {
+  if (action.type === 'UPGRADE_ITEM') return 'UPGRADE';
+  if (action.type === 'BUY_ITEM' || action.type === 'REPLACE_ITEM') return 'BUY';
+  return 'RECONCILE';
 }

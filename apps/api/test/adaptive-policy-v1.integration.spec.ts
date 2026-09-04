@@ -161,6 +161,10 @@ async function publish(
   payload: Record<string, unknown>,
   fetchedAt: Date,
   statlockerPatchId = patchId,
+  lineage: Partial<Pick<
+    Parameters<StatlockerSnapshotStoreService['publish']>[0],
+    'schemaVersion' | 'collectorVersion' | 'normalizerVersion'
+  >> = {},
 ): Promise<void> {
   await store.publish({
     dataset,
@@ -169,16 +173,16 @@ async function publish(
     statlockerPatchId,
     scopeKey,
     fetchedAt,
-    schemaVersion: 'statlocker-evidence-v1',
-    collectorVersion: 'integration-fixture-v1',
-    normalizerVersion: 'integration-fixture-v1',
+    schemaVersion: lineage.schemaVersion ?? 'statlocker-evidence-v1',
+    collectorVersion: lineage.collectorVersion ?? 'integration-fixture-v1',
+    normalizerVersion: lineage.normalizerVersion ?? 'integration-fixture-v1',
     contentSha256: sha(`${dataset}|${scopeKey}|${statlockerPatchId}|${JSON.stringify(payload)}`),
     payload,
     metadata: { source: 'adaptive-policy-v1.integration' },
   });
 }
 
-async function createFixture() {
+async function createFixture(options: { rebuildSkeleton?: boolean } = {}) {
   const match = liveMatch();
   const liveState = { getState: jest.fn((matchId: string) => matchId === match.matchId ? match : undefined) } as any;
   const soulsEvidence = { canVerifyScope: jest.fn().mockResolvedValue(true) } as any;
@@ -244,13 +248,15 @@ async function createFixture() {
   }
 
   const skeleton = new BuildSkeletonService(store);
-  const skeletonResult = await skeleton.rebuild({
-    heroId: 10,
-    rulesetVersion,
-    catalogSha256,
-    statlockerPatchId: patchId,
-  });
-  if (!skeletonResult) throw new Error('Integration skeleton was not produced');
+  const skeletonResult = options.rebuildSkeleton === false
+    ? undefined
+    : await skeleton.rebuild({
+      heroId: 10,
+      rulesetVersion,
+      catalogSha256,
+      statlockerPatchId: patchId,
+    });
+  if (options.rebuildSkeleton !== false && !skeletonResult) throw new Error('Integration skeleton was not produced');
 
   await publish(
     store,
@@ -313,6 +319,82 @@ function withImmediateEconomy(decision: any, ownedItemIds: readonly number[], sp
 }
 
 describe('Statlocker adaptive policy v1 integration', () => {
+  it('rejects a fresh flat skeleton until rebuild publishes a structured replacement', async () => {
+    const h = await createFixture({ rebuildSkeleton: false });
+    const flatPayload = {
+      heroId: 10,
+      profileCount: 6,
+      items: [{
+        itemId: 9,
+        medianBuyTimeS: 900,
+        strength: 0.95,
+        tier: 'CORE',
+        components: { coverage: 1, purchaseRate: 0.95, frequencyTier: 1, orderConsistency: 1, relationship: 0.8 },
+      }],
+    };
+    await publish(
+      h.store,
+      'CONSENSUS_SKELETON',
+      'hero:10:consensus',
+      flatPayload,
+      new Date(Date.now() - 30_000),
+      patchId,
+      {
+        schemaVersion: 'statlocker-consensus-skeleton-v2',
+        collectorVersion: 'internal-consensus-v1',
+        normalizerVersion: 'consensus-builder-v1',
+      },
+    );
+
+    const beforeRebuild = h.evidence.getLocalEvidence({
+      heroId: 10,
+      rulesetVersion,
+      catalogSha256,
+      statlockerPatchId: patchId,
+    });
+    expect(beforeRebuild.byDataset.CONSENSUS_SKELETON.freshness).toBe('UNAVAILABLE');
+    expect(beforeRebuild.byDataset.CONSENSUS_SKELETON.payload).toBeUndefined();
+
+    const degraded = await h.coordinator.recommend({ matchId: h.match.matchId, localSteamId: 'local' });
+    expect(['WAIT', 'HOLD', 'ABSTAIN']).toContain(degraded.nextAction.type);
+    expect(degraded.nextAction.reasonCodes).toContain('STRUCTURED_SKELETON_UNAVAILABLE');
+
+    const rebuilt = await new BuildSkeletonService(h.store).rebuild({
+      heroId: 10,
+      rulesetVersion,
+      catalogSha256,
+      statlockerPatchId: patchId,
+    });
+    expect(rebuilt?.groups.length).toBeGreaterThan(0);
+
+    const afterRebuild = h.evidence.getLocalEvidence({
+      heroId: 10,
+      rulesetVersion,
+      catalogSha256,
+      statlockerPatchId: patchId,
+    });
+    expect(afterRebuild.byDataset.CONSENSUS_SKELETON.freshness).toBe('FRESH');
+    expect(afterRebuild.byDataset.CONSENSUS_SKELETON.payload).toEqual(expect.objectContaining({
+      groups: expect.any(Array),
+    }));
+    expect(h.store.getActive({
+      dataset: 'CONSENSUS_SKELETON',
+      rulesetVersion,
+      catalogSha256,
+      statlockerPatchId: patchId,
+      scopeKey: 'hero:10:consensus',
+    })).toEqual(expect.objectContaining({
+      schemaVersion: 'statlocker-consensus-skeleton-v2',
+      normalizerVersion: 'consensus-builder-v2',
+    }));
+
+    const rebuiltRecommendation = await h.coordinator.recommend({
+      matchId: h.match.matchId,
+      localSteamId: 'local',
+    });
+    expect(rebuiltRecommendation.recommendedBuild.some((item) => item.itemId !== 1)).toBe(true);
+  });
+
   it('serves from deterministic local state/snapshots, persists a previous plan, and never lets evidence bypass legality', async () => {
     const h = await createFixture();
     const decision = await h.decisionState.build(h.match.matchId, 'local');
@@ -324,7 +406,7 @@ describe('Statlocker adaptive policy v1 integration', () => {
     expect(decision.state.economy.spendableSouls.value).toBe(2000);
     expect(decision.state.economy.spendableSouls.evidence).toBe('OBSERVED');
     expect(decision.itemGraph.getItem(9)?.directPurchaseCost).toBe(3000);
-    expect(h.skeletonResult.items.find((item) => item.itemId === 9)?.tier).toBe('CORE');
+    expect(h.skeletonResult?.items.find((item) => item.itemId === 9)?.tier).toBe('CORE');
 
     const result = await h.coordinator.recommend({ matchId: h.match.matchId, localSteamId: 'local' });
 
@@ -436,6 +518,7 @@ describe('Statlocker adaptive policy v1 integration', () => {
       'StatlockerEvidenceService',
       'AdaptiveBuildPlannerV1Service',
       'AdaptiveReplayV1Service',
+      'AdaptiveRecommendationObservabilityV1Service',
     ]);
     expect(names.join('|')).not.toMatch(
       /BrowserCollector|RecommendationBehavioral|RecommendationValue|RecommendationPolicy|RecommendationRealtimeCoordinatorV8|RecommendationEngineV8|RecommendationRealtimeStateV8/,

@@ -115,6 +115,12 @@ describe('AdaptiveDecisionStateV1Service', () => {
     expect(first.enemyHeroIds).toEqual([20, 30]);
     expect(first.ourTeamSouls).toBe(5000);
     expect(first.enemyTeamSouls).toBe(9000);
+    expect(first.slots.usedFlexSlots).toBe(0);
+    expect(first.slots.unlockedFlexSlots).toBeUndefined();
+    expect(first.slots.evidence).toBe('UNKNOWN');
+    expect(first.economyRules).toBeUndefined();
+    expect(first.economyRulesEvidence).toBe('UNKNOWN');
+    expect(first.investment.evidence).toBe('UNKNOWN');
     expect(first.stateRevision).toBe(second.stateRevision);
   });
 
@@ -128,13 +134,14 @@ describe('AdaptiveDecisionStateV1Service', () => {
     expect(unverified.state.economy.spendableSouls.evidence).toBe('UNKNOWN');
   });
 
-  it('keeps shop opportunity unknown and refuses partial team soul totals', async () => {
+  it('keeps shop opportunity and flex capacity unknown and refuses partial team soul totals', async () => {
     const state = structuredClone(matchState);
     delete state.playersBySteamId.ally.souls;
     const result = await createService(true, state).service.build('match-1');
 
     expect(result.state.economy.shopOpportunity.value).toBeUndefined();
     expect(result.state.economy.shopOpportunity.evidence).toBe('UNKNOWN');
+    expect(result.slots.evidence).toBe('UNKNOWN');
     expect(result.ourTeamSouls).toBeUndefined();
     expect(result.enemyTeamSouls).toBe(9000);
   });

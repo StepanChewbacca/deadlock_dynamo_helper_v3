@@ -5,11 +5,14 @@ import {
   ITEM_REFERENCE_SEED,
 } from '../deadlock-live/reference-data.seed';
 import {
+  ConsensusBuildGroupTypeV1,
+  ConsensusBuildPhaseV1,
   StatlockerFrequencyTierV1,
   StatlockerHeroLeaderboardV1,
   StatlockerNormalizedDatasetV1,
   StatlockerPatchControlV1,
   StatlockerProBuildAnalysisV1,
+  StatlockerProBuildExplicitGroupV1,
   StatlockerProBuildItemV1,
   StatlockerT4ChainV1,
   StatlockerT4ChainsV1,
@@ -435,13 +438,15 @@ function parseProBuildItem(raw: unknown): StatlockerProBuildItemV1 {
         };
       }).sort((a, b) => a.itemId - b.itemId)
     : [];
+  const explicitGroup = parseExplicitGroupV1(row);
   return {
     itemId: parsePositiveInt(row.item_id ?? row.itemId, 'PRO_BUILD_ANALYSIS', 'item id'),
     purchaseRate: parseFinite(row.purchaseRate ?? row.purchase_rate, 'PRO_BUILD_ANALYSIS', 'purchase rate'),
     medianBuyTimeS: parseNonNegativeFinite(row.medianBuyTimeS ?? row.median_buy_time_s, 'PRO_BUILD_ANALYSIS', 'median buy time'),
     frequencyTier,
-    phase: requireString(row.phase, 'PRO_BUILD_ANALYSIS', 'phase'),
+    phase: normalizeBuildPhaseV1(row.phase),
     relationships,
+    ...(explicitGroup ? { explicitGroup } : {}),
   };
 }
 
@@ -451,6 +456,70 @@ function normalizeFrequencyTier(value: string): StatlockerFrequencyTierV1 {
     return normalized;
   }
   throw new StatlockerDatasetValidationError('PRO_BUILD_ANALYSIS', `unsupported frequency tier ${value}`);
+}
+
+function normalizeBuildPhaseV1(value: unknown): ConsensusBuildPhaseV1 {
+  const text = String(value ?? '').trim().toUpperCase();
+  if (text === 'EARLY' || text === 'EARLY_GAME') return 'EARLY';
+  if (text === 'MID' || text === 'MID_GAME') return 'MID';
+  if (text === 'LATE' || text === 'LATE_GAME') return 'LATE';
+  throw new StatlockerDatasetValidationError('PRO_BUILD_ANALYSIS', `unknown phase ${String(value)}`);
+}
+
+function parseExplicitGroupV1(row: Record<string, unknown>): StatlockerProBuildExplicitGroupV1 | undefined {
+  const groupObject = isRecord(row.group) ? row.group : undefined;
+  const groupKey = optionalString(
+    groupObject?.key ?? groupObject?.id ?? groupObject?.name ??
+    row.group_key ?? row.groupKey ??
+    (typeof row.group === 'string' ? row.group : undefined) ??
+    row.category,
+  );
+  if (!groupKey) return undefined;
+
+  const explicitType = optionalString(
+    groupObject?.type ?? row.group_type ?? row.groupType ?? row.selection_type ?? row.selectionType,
+  );
+  const pick = parseSelectionCount(groupObject?.pick ?? row.pick);
+  const optional = groupObject?.optional === true || row.optional === true;
+  const required = groupObject?.required === true || row.required === true;
+
+  let type: ConsensusBuildGroupTypeV1 | undefined;
+  if (explicitType) {
+    const normalized = explicitType.toUpperCase();
+    if (normalized === 'CHOICE' || normalized === 'ONE_OF' || normalized === 'PICK') type = 'CHOICE';
+    else if (normalized === 'OPTIONAL') type = 'OPTIONAL';
+    else if (normalized === 'REQUIRED' || normalized === 'CORE') type = 'REQUIRED';
+    else throw new StatlockerDatasetValidationError('PRO_BUILD_ANALYSIS', `unsupported explicit group type ${explicitType}`);
+  } else if (optional) {
+    type = 'OPTIONAL';
+  } else if (required) {
+    type = 'REQUIRED';
+  } else if (pick !== undefined) {
+    type = 'CHOICE';
+  }
+  if (!type) return undefined;
+
+  const defaultMin = type === 'OPTIONAL' ? 0 : type === 'CHOICE' ? (pick ?? 1) : 1;
+  const defaultMax = type === 'CHOICE' ? (pick ?? 1) : 1;
+  const minSelect = optionalNonNegativeInt(groupObject?.min_select ?? groupObject?.minSelect ?? row.min_select ?? row.minSelect) ?? defaultMin;
+  const maxSelect = optionalNonNegativeInt(groupObject?.max_select ?? groupObject?.maxSelect ?? row.max_select ?? row.maxSelect) ?? defaultMax;
+  if (maxSelect < 1 || minSelect > maxSelect) {
+    throw new StatlockerDatasetValidationError('PRO_BUILD_ANALYSIS', `invalid explicit group selection bounds ${minSelect}/${maxSelect}`);
+  }
+  return { type, groupKey, minSelect, maxSelect };
+}
+
+function parseSelectionCount(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === 'number' && Number.isInteger(value) && value > 0) return value;
+  if (typeof value === 'string') {
+    const match = value.trim().match(/(?:pick\s*)?(\d+)/i);
+    if (match) {
+      const count = Number(match[1]);
+      if (Number.isInteger(count) && count > 0) return count;
+    }
+  }
+  throw new StatlockerDatasetValidationError('PRO_BUILD_ANALYSIS', `invalid pick count ${String(value)}`);
 }
 
 function wrap<T extends StatlockerWpaPatchDataV1 | StatlockerVsHeroWpaV1 | StatlockerT4ChainsV1 | StatlockerHeroLeaderboardV1 | StatlockerProBuildAnalysisV1 | StatlockerWpaFilteredItemsV1>(
@@ -534,6 +603,14 @@ function parsePositiveInt(value: unknown, dataset: string, label: string): numbe
 function optionalPositiveInt(value: unknown, dataset: string, label: string): number | undefined {
   if (value === undefined) return undefined;
   return parsePositiveInt(value, dataset, label);
+}
+
+function optionalNonNegativeInt(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    throw new StatlockerDatasetValidationError('PRO_BUILD_ANALYSIS', 'selection bound must be a non-negative integer');
+  }
+  return value;
 }
 
 function optionalNumericRecord(

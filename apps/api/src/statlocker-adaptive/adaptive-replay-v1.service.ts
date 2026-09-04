@@ -18,6 +18,17 @@ import {
   AdaptiveScoredActionV1,
 } from '@deadlock-live-probe/shared';
 import { AdaptiveRecommendationDecisionV1Entity } from '../deadlock-live/entities/adaptive-recommendation-decision-v1.entity';
+import {
+  ADAPTIVE_UNIVERSAL_SLOT_RULES_V1,
+  AdaptiveInvestmentStateV1,
+  AdaptiveSlotStateV1,
+  RecommendationEconomyRulesV1,
+  deriveAdaptiveInvestmentStateV1,
+  deriveAdaptiveSlotStateV1,
+  isCanonicalAdaptiveInvestmentStateV1,
+  ADAPTIVE_INVESTMENT_TYPES_V1,
+  unknownAdaptiveInvestmentStateV1,
+} from './adaptive-economy-v1';
 import { ADAPTIVE_POLICY_V1_CONFIG } from './statlocker-adaptive.config';
 import {
   AdaptiveBuildPlannerResultV1,
@@ -54,6 +65,11 @@ export interface AdaptiveReplayDecisionV1 {
   enemyHeroIds: readonly number[];
   ourTeamSouls?: number;
   enemyTeamSouls?: number;
+  slots?: AdaptiveSlotStateV1;
+  investment?: AdaptiveInvestmentStateV1;
+  economyRules?: RecommendationEconomyRulesV1;
+  /** Optional so previously persisted replay inputs remain readable. */
+  economyRulesEvidence?: 'RECONSTRUCTED' | 'UNKNOWN';
   stateRevision: string;
 }
 
@@ -233,6 +249,10 @@ function serializeDecision(decision: AdaptiveDecisionStateV1): AdaptiveReplayDec
     enemyHeroIds: [...decision.enemyHeroIds].sort((a, b) => a - b),
     ourTeamSouls: decision.ourTeamSouls,
     enemyTeamSouls: decision.enemyTeamSouls,
+    slots: cloneJson(decision.slots),
+    investment: cloneJson(decision.investment),
+    economyRules: decision.economyRules ? cloneJson(decision.economyRules) : undefined,
+    economyRulesEvidence: decision.economyRulesEvidence,
     stateRevision: decision.stateRevision,
   };
 }
@@ -260,6 +280,16 @@ function reconstructDecision(input: AdaptiveReplayDecisionV1): AdaptiveDecisionS
       shopOpportunity: { ...input.state.shopOpportunity },
     },
   };
+  const slots = input.slots
+    ? cloneJson(input.slots)
+    : deriveAdaptiveSlotStateV1(ownedItemIds, itemGraph, ADAPTIVE_UNIVERSAL_SLOT_RULES_V1, { evidence: 'UNKNOWN' });
+  const economyRules = exactReplayEconomyRulesV1(input);
+  const investment = normalizeReplayInvestmentStateV1(
+    input.investment,
+    ownedItemIds,
+    itemGraph,
+    economyRules,
+  );
   return {
     state,
     itemGraph,
@@ -270,8 +300,45 @@ function reconstructDecision(input: AdaptiveReplayDecisionV1): AdaptiveDecisionS
     enemyHeroIds: [...input.enemyHeroIds].sort((a, b) => a - b),
     ourTeamSouls: input.ourTeamSouls,
     enemyTeamSouls: input.enemyTeamSouls,
+    slots,
+    investment,
+    economyRules: economyRules ? cloneJson(economyRules) : undefined,
+    economyRulesEvidence: economyRules ? 'RECONSTRUCTED' : 'UNKNOWN',
     stateRevision: input.stateRevision,
   };
+}
+
+function normalizeReplayInvestmentStateV1(
+  supplied: unknown,
+  ownedItemIds: readonly number[],
+  itemGraph: ReturnType<typeof createRecommendationItemGraph>,
+  economyRules: RecommendationEconomyRulesV1 | undefined,
+): AdaptiveInvestmentStateV1 {
+  if (isCanonicalAdaptiveInvestmentStateV1(supplied)) return cloneJson(supplied);
+  if (economyRules) return deriveAdaptiveInvestmentStateV1(ownedItemIds, itemGraph, economyRules);
+  return unknownAdaptiveInvestmentStateV1();
+}
+
+function exactReplayEconomyRulesV1(input: AdaptiveReplayDecisionV1): RecommendationEconomyRulesV1 | undefined {
+  const rules = input.economyRules;
+  if (!isRecord(rules) || rules.rulesetId !== input.rulesetId || rules.catalogSha256 !== input.catalogSha256 ||
+    !isNonNegativeInteger(rules.baseSlots) || !isNonNegativeInteger(rules.maxFlexSlots) ||
+    !isRecord(rules.investmentBreakpoints)) return undefined;
+  const validBreakpoints = ADAPTIVE_INVESTMENT_TYPES_V1.every((type) => {
+    const values = rules.investmentBreakpoints[type];
+    return Array.isArray(values) && values.every((value) =>
+      typeof value === 'number' && Number.isFinite(value) && value > 0,
+    );
+  });
+  return validBreakpoints ? rules as RecommendationEconomyRulesV1 : undefined;
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 function validatePersistInput(input: PersistAdaptiveDecisionV1): void {
