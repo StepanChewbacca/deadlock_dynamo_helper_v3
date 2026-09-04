@@ -105,7 +105,7 @@ export function projectPlannerCandidateV1(
   if (input.skeleton) {
     const owned = new Set(projectedItemIds);
     for (const group of input.skeleton.groups) {
-      if (groupCompletedV1(group, owned)) completedGroupIds.add(group.groupId);
+      if (groupCompletedV1(group, owned, input.graph)) completedGroupIds.add(group.groupId);
     }
   }
 
