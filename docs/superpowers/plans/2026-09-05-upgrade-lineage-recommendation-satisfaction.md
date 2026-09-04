@@ -12,7 +12,22 @@
 
 ## Execution Status - 2026-09-05
 
-Implementation and regression coverage have been written on `agent/fix-upgrade-lineage-recommendations` and are tracked by draft PR #75. GitHub Actions currently fails before any workflow step executes, so none of the test/build commands below have fresh executable verification evidence yet. Do not mark RED/GREEN, full-suite, build, or CI steps complete until a working runner executes them.
+Implementation and regression coverage are tracked by draft PR #75 on `agent/fix-upgrade-lineage-recommendations`. Local executable verification was performed on 2026-09-04 UTC (see evidence below). GitHub Actions still fails before any workflow step executes; local PASS does not satisfy the required CI/runtime release gates.
+
+### Executable evidence — 2026-09-04 UTC
+
+- Focused build-domain: 4 suites / 34 tests PASS.
+- Focused API lineage: 4 suites / 27 tests PASS before the additional production-ID scenario.
+- Full regression initially reproduced a failure in the existing preparatory SELL test: beam search rewarded a WAIT followed by SELL/REPLACE without advancing time or income. Making WAIT terminal fixed the root cause; planner + structured replay rerun passed 27 tests.
+- Independent review identified missing sell protection for owned descendants satisfying REQUIRED/CHOICE targets. Both regression cases failed before the fix. Satisfaction-aware final-target protection and descendant commitment evidence fixed them; ancestor-only score comparisons cannot authorize selling a higher descendant as a CHOICE switch. Focused planner/choice/lineage rerun: 30 tests PASS.
+- Full `yarn test`: API 655 PASS / 3 skipped, Overwolf 123 PASS, build-domain 57 PASS, shared fixtures PASS. The opt-in production DB migration suite is among the skipped tests; it is not validated by this run.
+- `OVERWOLF_PUBLIC_TARGET=/tmp/lineage-overwolf/public yarn build`: PASS.
+- `node scripts/statlocker-adaptive-serving-audit.mjs` and `git diff --check`: PASS.
+- Read-only production SQL confirmed parent `2064029594` (Opening Rounds) -> component `3077079169` (High-Velocity Rounds) in catalog `deadlock-assets:052d9e976ce52545e77ebd3a82fc4deb565d0df9871ec30b3261e94dea8db8d4`. The incident screenshot does not include a catalog SHA, so exact historical catalog identity cannot be established.
+- Serving integration now also uses those real IDs, names, classes, prices, tiers and nullable flags with the observed edge. The reconstructed inventory owns Opening Rounds and the skeleton targets High-Velocity Rounds. No actionable lower BUY/WAIT or lower NEXT/PLANNED survives. This is a close reconstruction, not a captured live overlay replay.
+- CI run `33927716839` was retried: all four jobs again failed before steps. Logs endpoint returned BlobNotFound. GitGuardian passed for `47cece23c0bfe80960050eb506d7c0a072ef13c7`; security must be checked again for the final pushed head.
+- Local Docker runtime validation is unavailable (Docker is not enabled in this WSL distribution). Do not replace the required CI/runtime gate with local TypeScript build success.
+- Production is still running healthy image `deadlock-adaptive-production:0e0567b95af8f3dcb6a47ec747405f2d1cd7fe7a`; no PR deployment or main merge was performed.
 
 During implementation, a second root cause was found on the real serving path: `RecommendationRulesetCatalogV1` retained raw recipe edges, but strict graph compilation discarded the relationship whenever the exact upgrade transaction cost was unknown. The branch therefore separates known recipe topology from executable upgrade mechanics. This is an implementation amendment to the approved design: topology can establish deterministic lineage/satisfaction while executable `UPGRADE_ITEM` generation still requires verified transaction cost.
 
@@ -87,29 +102,29 @@ Non-Actions work completed in the branch:
 
 ## Verification Roadmap
 
-The implementation is written, but the following commands are still required before the fix can be called verified.
+Tasks 1–3 were executed locally as recorded above. CI/runtime and release gates remain mandatory before deployment.
 
 ### Task 1: Focused build-domain verification
 
-- [ ] Run lineage graph tests:
+- [x] Run lineage graph tests:
 
 ```bash
 yarn workspace @deadlock-live-probe/build-domain test --runTestsByPath test/recommendation-item-graph.spec.ts
 ```
 
-- [ ] Run catalog topology tests:
+- [x] Run catalog topology tests:
 
 ```bash
 yarn workspace @deadlock-live-probe/build-domain test --runTestsByPath test/recommendation-ruleset-catalog.spec.ts
 ```
 
-- [ ] Run candidate suppression tests:
+- [x] Run candidate suppression tests:
 
 ```bash
 yarn workspace @deadlock-live-probe/build-domain test --runTestsByPath test/recommendation-candidate-generator.spec.ts
 ```
 
-- [ ] Confirm `RecommendationDatasetCandidateV1` remains unchanged through the existing dataset suite:
+- [x] Confirm `RecommendationDatasetCandidateV1` remains unchanged through the existing dataset suite:
 
 ```bash
 yarn workspace @deadlock-live-probe/build-domain test --runTestsByPath test/recommendation-dataset-v8.spec.ts
@@ -117,25 +132,25 @@ yarn workspace @deadlock-live-probe/build-domain test --runTestsByPath test/reco
 
 ### Task 2: Focused adaptive verification
 
-- [ ] Run phase completion regression:
+- [x] Run phase completion regression:
 
 ```bash
 yarn workspace @deadlock-live-probe/api test --runTestsByPath test/adaptive-phase-eligibility-v1.spec.ts
 ```
 
-- [ ] Run planner lineage regressions:
+- [x] Run planner lineage regressions:
 
 ```bash
 yarn workspace @deadlock-live-probe/api test --runTestsByPath test/adaptive-upgrade-lineage-v1.spec.ts
 ```
 
-- [ ] Run real serving-boundary topology regression:
+- [x] Run real serving-boundary topology regression:
 
 ```bash
 yarn workspace @deadlock-live-probe/api test --runTestsByPath test/adaptive-upgrade-lineage-serving.integration.spec.ts
 ```
 
-- [ ] Run replay topology regression:
+- [x] Run replay topology regression:
 
 ```bash
 yarn workspace @deadlock-live-probe/api test --runTestsByPath test/adaptive-replay-upgrade-lineage-v1.spec.ts
@@ -143,37 +158,37 @@ yarn workspace @deadlock-live-probe/api test --runTestsByPath test/adaptive-repl
 
 ### Task 3: Broad regression verification
 
-- [ ] Run full build-domain suite:
+- [x] Run full build-domain suite:
 
 ```bash
 yarn workspace @deadlock-live-probe/build-domain test
 ```
 
-- [ ] Run full API suite:
+- [x] Run full API suite:
 
 ```bash
 yarn workspace @deadlock-live-probe/api test
 ```
 
-- [ ] Run serving-boundary audit:
+- [x] Run serving-boundary audit:
 
 ```bash
 node scripts/statlocker-adaptive-serving-audit.mjs
 ```
 
-- [ ] Run structured replay release gate:
+- [x] Run structured replay release gate:
 
 ```bash
 yarn workspace @deadlock-live-probe/api test adaptive-replay-structured-v1.spec.ts
 ```
 
-- [ ] Run workspace build:
+- [x] Run workspace build:
 
 ```bash
 yarn build
 ```
 
-- [ ] Run all workspace tests:
+- [x] Run all workspace tests:
 
 ```bash
 yarn test
@@ -181,11 +196,11 @@ yarn test
 
 ### Task 4: Real-data incident verification
 
-- [ ] Query the production/current catalog rows for the exact High-Velocity Rounds and Opening Rounds item IDs.
+- [x] Query the production/current catalog rows for the exact High-Velocity Rounds and Opening Rounds item IDs.
 - [ ] Confirm a recipe edge exists with Opening Rounds as parent and High-Velocity Rounds as component in the catalog version used by the affected match.
 - [ ] If that edge is absent, fix the catalog importer/source data separately; planner logic cannot infer a missing deterministic recipe edge.
-- [ ] Capture or reconstruct the affected inventory snapshot with Opening Rounds owned and replay it through the fixed branch.
-- [ ] Assert High-Velocity Rounds is absent from actionable BUY, targeted WAIT, NEXT, and PLANNED outputs.
+- [x] Capture or reconstruct the affected inventory snapshot with Opening Rounds owned and replay it through the fixed branch (close serving integration reconstruction, not an exact incident capture).
+- [x] Assert High-Velocity Rounds is absent from actionable BUY, targeted WAIT, NEXT, and PLANNED outputs.
 
 ### Task 5: CI and release gates
 

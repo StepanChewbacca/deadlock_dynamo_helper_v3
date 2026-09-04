@@ -207,8 +207,7 @@ export function choiceBranchCommitmentEvidenceItemIdsV1(
   itemGraph: RecommendationItemGraph,
 ): readonly number[] {
   const owned = new Set(ownedItemIds);
-  const result: number[] = [];
-  if (owned.has(targetItemId)) result.push(targetItemId);
+  const result: number[] = [...itemGraph.getSatisfyingOwnedItemIds(targetItemId, owned)];
 
   const closures = new Map<number, ReadonlySet<number>>();
   const componentOwners = new Map<number, number>();
@@ -253,6 +252,8 @@ function buildCommittedReplacementOptionsV1(
         itemGraph,
       );
       if (sellEvidenceItemIds.length === 0) continue;
+      // Ancestor scores cannot justify liquidating an owned higher upgrade.
+      if (sellEvidenceItemIds.some((itemId) => itemGraph.isComponentAncestor(replacedItemId, itemId))) continue;
       options.push({
         groupId: group.groupId,
         targetItemId: candidate.itemId,

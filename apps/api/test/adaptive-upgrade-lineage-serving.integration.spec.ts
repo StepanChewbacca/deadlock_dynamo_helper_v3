@@ -142,8 +142,21 @@ function evidence() {
 }
 
 describe('adaptive upgrade-lineage serving integration', () => {
-  it('carries DB recipe topology into the serving graph even when upgrade transaction cost is unknown', async () => {
+  it.each([
+    { label: 'synthetic catalog', componentId: 1, parentId: 2, production: false },
+    // Production DB projection verified 2026-09-04, catalog SHA
+    // 052d9e976ce52545e77ebd3a82fc4deb565d0df9871ec30b3261e94dea8db8d4.
+    { label: 'Opening Rounds production recipe', componentId: 3077079169, parentId: 2064029594, production: true },
+  ])('carries $label topology into serving even when upgrade transaction cost is unknown', async ({ componentId, parentId, production }) => {
     const liveMatch = match();
+    const items = catalogItems();
+    items[0].itemId = componentId;
+    items[1].itemId = parentId;
+    if (production) {
+      Object.assign(items[0], { name: 'High-Velocity Rounds', className: 'upgrade_high_velocity_mag', cost: 800, disabled: null, active: null });
+      Object.assign(items[1], { name: 'Opening Rounds', className: 'upgrade_pristine_emblem', cost: 1600, disabled: null, active: null });
+    }
+    liveMatch.playersBySteamId.local.items = [{ id: parentId, name: items[1].name, className: items[1].className, enhanced: false }];
     const liveState = { getState: jest.fn(() => liveMatch) } as any;
     const soulsEvidence = { canVerifyScope: jest.fn().mockResolvedValue(true) } as any;
     const versionRepo = {
@@ -155,12 +168,12 @@ describe('adaptive upgrade-lineage serving integration', () => {
         importedAt: new Date('2026-09-04T12:00:00.000Z'),
       }]),
     } as any;
-    const itemRepo = { find: jest.fn().mockResolvedValue(catalogItems()) } as any;
+    const itemRepo = { find: jest.fn().mockResolvedValue(items) } as any;
     const recipeRepo = {
       find: jest.fn().mockResolvedValue([{
         catalogVersionId: 'catalog-lineage',
-        parentItemId: 2,
-        componentItemId: 1,
+        parentItemId: parentId,
+        componentItemId: componentId,
         componentOrder: 0,
       }]),
     } as any;
@@ -173,9 +186,9 @@ describe('adaptive upgrade-lineage serving integration', () => {
     );
 
     const built = await decisionState.build(liveMatch.matchId, 'local');
-    expect(built.itemGraph.getItem(2)?.upgradeRecipes).toEqual([]);
-    expect(built.itemGraph.getDirectComponentIds(2)).toEqual([1]);
-    expect(built.itemGraph.isTargetSatisfied(1, built.state.inventory.heldByItemId.keys())).toBe(true);
+    expect(built.itemGraph.getItem(parentId)?.upgradeRecipes).toEqual([]);
+    expect(built.itemGraph.getDirectComponentIds(parentId)).toEqual([componentId]);
+    expect(built.itemGraph.isTargetSatisfied(componentId, built.state.inventory.heldByItemId.keys())).toBe(true);
 
     const decision = {
       ...built,
@@ -188,13 +201,15 @@ describe('adaptive upgrade-lineage serving integration', () => {
       },
     };
     const planner = new AdaptiveBuildPlannerV1Service(new AdaptiveEvidenceScorerV1Service());
-    const result = planner.plan({ decision, evidence: evidence() });
+    const plannerEvidence = evidence();
+    plannerEvidence.byDataset.CONSENSUS_SKELETON.payload.groups[0].candidates[0].itemId = componentId;
+    const result = planner.plan({ decision, evidence: plannerEvidence });
 
-    expect(result.nextAction.targetItemId).not.toBe(1);
+    expect(result.nextAction.targetItemId).not.toBe(componentId);
     expect(result.recommendedBuild.some((entry) =>
-      entry.itemId === 1 && (entry.status === 'NEXT' || entry.status === 'PLANNED'),
+      entry.itemId === componentId && (entry.status === 'NEXT' || entry.status === 'PLANNED'),
     )).toBe(false);
-    expect(result.rankedImmediateCandidates.some((entry) => entry.action.targetItemId === 1)).toBe(false);
+    expect(result.rankedImmediateCandidates.some((entry) => entry.action.targetItemId === componentId)).toBe(false);
     expect(result.recommendedBuild.find((entry) => entry.status === 'NEXT')?.itemId).toBe(3);
   });
 });

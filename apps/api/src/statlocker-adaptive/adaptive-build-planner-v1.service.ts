@@ -337,12 +337,12 @@ export class AdaptiveBuildPlannerV1Service {
       if (eligibility === 'COMPLETED') {
         if (group.type === 'CHOICE') {
           for (const selected of selectedChoiceItemIdsByGroup.get(group.groupId) ?? []) {
-            if (owned.has(selected)) selectedFinalItemIds.add(selected);
+            if (input.decision.itemGraph.isTargetSatisfied(selected, owned)) selectedFinalItemIds.add(selected);
           }
           enabledReplacementOptions.push(...(replacementOptionsByGroup.get(group.groupId) ?? []));
         } else {
           for (const candidate of group.candidates) {
-            if (owned.has(candidate.itemId)) selectedFinalItemIds.add(candidate.itemId);
+            if (input.decision.itemGraph.isTargetSatisfied(candidate.itemId, owned)) selectedFinalItemIds.add(candidate.itemId);
           }
         }
         continue;
@@ -379,7 +379,7 @@ export class AdaptiveBuildPlannerV1Service {
         .filter((candidate) => input.decision.itemGraph.isTargetSatisfied(candidate.itemId, owned))
         .map((candidate) => candidate.itemId);
       for (const itemId of satisfiedCandidates) {
-        if (owned.has(itemId)) selectedFinalItemIds.add(itemId);
+        selectedFinalItemIds.add(itemId);
       }
       const needed = Math.max(0, Math.max(1, group.minSelect) - satisfiedCandidates.length);
       const selected = group.candidates
@@ -552,6 +552,8 @@ export class AdaptiveBuildPlannerV1Service {
     for (let depth = 0; depth < config.planningDepth; depth += 1) {
       const expanded: AdaptivePlannerNodeV1[] = [];
       for (const node of beam) {
+        // WAIT does not project future income or time; it terminates this path.
+        if (node.actions[node.actions.length - 1]?.action.type === 'WAIT_SAVE') continue;
         const scored = this.evaluateNodeCandidates(
           input,
           skeleton,
@@ -603,7 +605,7 @@ export class AdaptiveBuildPlannerV1Service {
       .filter((candidate) => candidateTouchesSemanticTargets(candidate, semantic, node, skeleton))
       .filter((candidate) => !isProtectedSell(candidate, recentPurchased))
       .filter((candidate) =>
-        !sellsSelectedFinal(candidate, semantic.selectedFinalItemIds) ||
+        !sellsSelectedFinal(candidate, semantic.selectedFinalItemIds, input.decision.itemGraph) ||
         startsChoiceReplacement(candidate, semantic.choiceReplacementOptions, node),
       )
       .filter((candidate) =>
@@ -1069,10 +1071,15 @@ function isProtectedSell(candidate: RecommendationCandidate, recentPurchased: Re
   return false;
 }
 
-function sellsSelectedFinal(candidate: RecommendationCandidate, selectedFinals: ReadonlySet<number>): boolean {
-  if (candidate.action.type === 'SELL_ITEM') return selectedFinals.has(candidate.action.itemId);
-  if (candidate.action.type === 'REPLACE_ITEM') return selectedFinals.has(candidate.action.sellItemId);
-  return false;
+function sellsSelectedFinal(
+  candidate: RecommendationCandidate,
+  selectedFinals: ReadonlySet<number>,
+  itemGraph: RecommendationItemGraph,
+): boolean {
+  const soldItemId = candidate.action.type === 'SELL_ITEM' ? candidate.action.itemId
+    : candidate.action.type === 'REPLACE_ITEM' ? candidate.action.sellItemId : undefined;
+  if (soldItemId === undefined) return false;
+  return [...selectedFinals].some((itemId) => itemGraph.isTargetSatisfied(itemId, [soldItemId]));
 }
 
 function sellsProtectedChoiceEvidence(

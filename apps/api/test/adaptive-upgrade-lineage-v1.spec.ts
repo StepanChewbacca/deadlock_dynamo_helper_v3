@@ -216,6 +216,22 @@ function previousPlan(itemId: number) {
 describe('adaptive upgrade-lineage recommendation satisfaction', () => {
   const planner = new AdaptiveBuildPlannerV1Service(new AdaptiveEvidenceScorerV1Service());
 
+  it.each(['REQUIRED', 'CHOICE'] as const)('protects the owned descendant satisfying a %s target from unrelated sales', (type) => {
+    const result = planner.plan({
+      decision: decision({ owned: [11], wallet: 400 }),
+      evidence: evidence([
+        group('committed', 'EARLY', type, type === 'CHOICE' ? [1, 2] : [1]),
+        group('next', 'EARLY', 'REQUIRED', [3]),
+      ]),
+    });
+
+    expect(result.rankedImmediateCandidates.some((entry) =>
+      (entry.action.type === 'SELL' && entry.action.itemId === 11) ||
+      (entry.action.type === 'REPLACE' && entry.action.sellItemId === 11),
+    )).toBe(false);
+    expect(['SELL', 'REPLACE']).not.toContain(result.nextAction.type);
+  });
+
   it('treats a required lower component as completed when its upgrade descendant is owned', () => {
     const result = planner.plan({
       decision: decision({ owned: [11] }),
