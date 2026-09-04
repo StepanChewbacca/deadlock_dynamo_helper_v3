@@ -43,12 +43,16 @@ export class AdaptiveRecommendationV1Service {
     this.observability.recordDecisionState(initial);
     const previous = await this.replay.getPreviousPlan(initial.state.matchId, initial.localSteamId);
     const patchId = this.evidence.resolveLocalPatchId(initial.rulesetId, initial.catalogSha256) ?? 'UNKNOWN';
-    const localEvidence = this.evidence.getLocalEvidence({
+    const evidenceRequest = {
       heroId: initial.state.heroId,
       rulesetVersion: initial.rulesetId,
       catalogSha256: initial.catalogSha256,
       statlockerPatchId: patchId,
-    });
+    };
+    const getEvidence = (this.evidence as any).getEvidence;
+    const localEvidence = typeof getEvidence === 'function'
+      ? getEvidence.call(this.evidence, evidenceRequest)
+      : this.evidence.getLocalEvidence(evidenceRequest);
     this.observability.recordEvidence(localEvidence);
 
     let planned = localEvidence.usable

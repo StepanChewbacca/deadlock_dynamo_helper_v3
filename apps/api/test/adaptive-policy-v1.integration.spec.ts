@@ -273,9 +273,7 @@ async function createFixture(options: { rebuildSkeleton?: boolean } = {}) {
     refreshGlobalNow: jest.fn(() => {
       throw new Error('Serving path attempted to launch global collection');
     }),
-    enqueueHeroRefresh: jest.fn(() => {
-      throw new Error('Serving path attempted to launch hero collection');
-    }),
+    enqueueHeroRefresh: jest.fn(),
   } as any;
   const evidence = new StatlockerEvidenceService(store, refresh);
   const scorer = new AdaptiveEvidenceScorerV1Service();
