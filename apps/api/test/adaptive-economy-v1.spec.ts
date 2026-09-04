@@ -65,6 +65,24 @@ function graph() {
       upgradeRecipes: [{ recipeId: 'upgrade-7', consumedItemIds: [1], soulsCost: 800 }],
       sellTransition: { soulsRefund: 800, returnedItemIds: [1] },
     },
+    {
+      itemId: 8,
+      name: 'Upgrade Only Weapon',
+      slotType: 'weapon' as const,
+      active: false,
+      availableRulesetIds: ['ruleset-a'],
+      upgradeRecipes: [{ recipeId: 'upgrade-8', consumedItemIds: [1], soulsCost: 800 }],
+      sellTransition: { soulsRefund: 800, returnedItemIds: [1] },
+    },
+    {
+      itemId: 9,
+      name: 'Nested Upgrade Only Weapon',
+      slotType: 'weapon' as const,
+      active: false,
+      availableRulesetIds: ['ruleset-a'],
+      upgradeRecipes: [{ recipeId: 'upgrade-9', consumedItemIds: [8], soulsCost: 800 }],
+      sellTransition: { soulsRefund: 1200, returnedItemIds: [8] },
+    },
     ...[10, 11].map((itemId) => ({
       itemId,
       name: `Vitality ${itemId}`,
@@ -142,6 +160,15 @@ describe('adaptive economy v1', () => {
       soulsToNextBreakpoint: 1600,
     });
     expect(state.tracks.vitality.currentValue).toBe(0);
+  });
+
+  it('derives recursive investment value for upgrade-only owned items', () => {
+    const firstUpgrade = deriveAdaptiveInvestmentStateV1([8], graph(), rules);
+    const nestedUpgrade = deriveAdaptiveInvestmentStateV1([9], graph(), rules);
+
+    expect(firstUpgrade.tracks.weapon.currentValue).toBe(1600);
+    expect(firstUpgrade.tracks.weapon.achievedBreakpoint).toBe(1600);
+    expect(nestedUpgrade.tracks.weapon.currentValue).toBe(2400);
   });
 
   it('returns unknown investment evidence when exact rules are unavailable', () => {
