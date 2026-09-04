@@ -1,6 +1,6 @@
 # Task 27 Report
 
-Commit: `8bd9ea7e` (`Add adaptive observability counters`)
+Commit: `5cb8d809` (`Fix adaptive legality fallback counting`)
 
 ## Outcome
 
@@ -30,6 +30,29 @@ yarn workspace @deadlock-live-probe/api build
 ```
 
 Result: both commands passed.
+
+Round 1 fix verification:
+
+```bash
+yarn workspace @deadlock-live-probe/api test adaptive-recommendation-v1.spec.ts adaptive-recommendation-controller-v1.spec.ts
+yarn workspace @deadlock-live-probe/api build
+```
+
+Result: both commands passed after the selector fix.
+
+Round 1 red:
+
+```text
+AdaptiveRecommendationV1Service › records a final-legality fallback when a non-transaction action is rewritten
+Expected: 1
+Received: 0
+
+AdaptiveRecommendationV1Service › records SELL frequency and final-legality retargeting when the fresh target changes
+Expected: 1
+Received: 0
+```
+
+Fix: `selectFreshLegalAction()` now marks `changed` when the published action differs from the planner output, including non-transaction rebases and SELL retargets, so `finalLegalityFallbackCount` matches real rewrites.
 
 RED encountered and fixed:
 
