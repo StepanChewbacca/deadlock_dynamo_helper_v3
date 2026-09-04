@@ -274,6 +274,24 @@ describe('AdaptiveBuildPlannerV1Service structured planning', () => {
     expect(result.recommendedBuild.some((item) => item.itemId === 18)).toBe(false);
   });
 
+  it('projects only the selected future CHOICE branch inside the reachable planning horizon', () => {
+    const result = planner.plan({
+      decision: decision({ gameTimeSec: 120 }),
+      evidence: evidence({
+        groups: [
+          group('early-core', 'EARLY', 'REQUIRED', [1]),
+          group('mid-choice', 'MID', 'CHOICE', [2, 3]),
+        ],
+        exactWpa: { 1: 0, 2: 0.01, 3: 0.6 },
+      }),
+    });
+
+    expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(1);
+    expect(result.recommendedBuild.find((item) => item.itemId === 3)?.status).toBe('PLANNED');
+    expect(result.recommendedBuild.some((item) => item.itemId === 2)).toBe(false);
+    expect(result.nextAction.targetItemId).toBe(1);
+  });
+
   it('resolves a CHOICE with exact-enemy WPA and never emits both alternatives', () => {
     const result = planner.plan({
       decision: decision(),
