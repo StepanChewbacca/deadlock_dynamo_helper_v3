@@ -133,6 +133,20 @@ describe('BuildSkeletonService', () => {
     expect(choice?.candidates.map((candidate) => candidate.itemId).sort((a, b) => a - b)).toEqual([200, 201]);
   });
 
+  it('does not infer a choice between upgrade ancestors or required components', () => {
+    const profiles = [
+      ...Array.from({ length: 5 }, (_, index) => choiceProfile(`component-${index}`, 200)),
+      ...Array.from({ length: 5 }, (_, index) => choiceProfile(`upgrade-${index}`, 201)),
+    ];
+    const componentClosureByItemId = new Map<number, ReadonlySet<number>>([
+      [201, new Set([200])],
+    ]);
+
+    const result = (deriveSkeleton as any)(10, profiles, componentClosureByItemId);
+
+    expect(result.groups.filter((group: any) => group.type === 'CHOICE')).toHaveLength(0);
+  });
+
   it('does not infer a choice for items that are repeatedly purchased together', () => {
     const profiles = Array.from({ length: 10 }, (_, index) => ({
       accountId: String(index),
