@@ -197,7 +197,7 @@ describe('AdaptiveBuildPlannerV1Service committed choice replacement', () => {
     const group = choice([1, 2]);
     const result = planner.plan({
       decision: decision([1]),
-      evidence: evidence(group, { 1: 0, 2: 0.05 }),
+      evidence: evidence(group, { 1: 0, 2: 0.02 }),
     });
 
     expect(result.nextAction.type).not.toBe('REPLACE');
@@ -208,7 +208,7 @@ describe('AdaptiveBuildPlannerV1Service committed choice replacement', () => {
     const group = choice([11, 12]);
     const result = planner.plan({
       decision: decision([1]),
-      evidence: evidence(group, { 11: 0, 12: 0.05 }),
+      evidence: evidence(group, { 11: 0, 12: 0.02 }),
     });
 
     expect(result.nextAction.sellItemId).not.toBe(1);
