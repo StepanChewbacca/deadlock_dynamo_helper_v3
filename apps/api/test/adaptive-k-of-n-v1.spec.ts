@@ -125,7 +125,7 @@ function evidence() {
   } as any;
 }
 
-function decision() {
+function decision(owned: readonly number[] = []) {
   const itemGraph = graph();
   const state = {
     decisionId: 'decision',
@@ -136,9 +136,15 @@ function decision() {
     heroId: 10,
     inventory: {
       initializedFromSnapshot: true,
-      heldByItemId: new Map(),
-      lifecycleCountByItemId: new Map(),
-      nextInstanceSequence: 1,
+      heldByItemId: new Map(owned.map((itemId, index) => [itemId, {
+        itemId,
+        instanceId: `item-${itemId}`,
+        lifecycle: 1,
+        acquiredBy: 'RECONCILE' as const,
+        acquiredAtMs: index,
+      }])),
+      lifecycleCountByItemId: new Map(owned.map((itemId) => [itemId, 1])),
+      nextInstanceSequence: owned.length + 1,
     },
     economy: {
       spendableSouls: observedFact(5000, 'test'),
@@ -155,14 +161,14 @@ function decision() {
     enemyHeroIds: [20],
     ourTeamSouls: 100000,
     enemyTeamSouls: 100000,
-    slots: deriveAdaptiveSlotStateV1([], itemGraph, economyRules, { unlockedFlexSlots: 3, evidence: 'OBSERVED' }),
-    investment: deriveAdaptiveInvestmentStateV1([], itemGraph, economyRules),
+    slots: deriveAdaptiveSlotStateV1(owned, itemGraph, economyRules, { unlockedFlexSlots: 3, evidence: 'OBSERVED' }),
+    investment: deriveAdaptiveInvestmentStateV1(owned, itemGraph, economyRules),
     economyRules,
     stateRevision: 'revision-a',
   } as any;
 }
 
-function buyCandidate(state: any, itemId: number) {
+function candidateFor(state: any, actionId: string) {
   const candidate = generateRecommendationCandidates({
     state,
     itemGraph: graph(),
@@ -173,9 +179,13 @@ function buyCandidate(state: any, itemId: number) {
       unlockedFlexSlots: 3,
       flexCapacityEvidence: 'OBSERVED',
     },
-  }).find((entry) => entry.actionId === `BUY_ITEM:${itemId}`);
-  if (!candidate) throw new Error(`BUY_ITEM:${itemId} was not generated`);
+  }).find((entry) => entry.actionId === actionId);
+  if (!candidate) throw new Error(`${actionId} was not generated`);
   return candidate;
+}
+
+function buyCandidate(state: any, itemId: number) {
+  return candidateFor(state, `BUY_ITEM:${itemId}`);
 }
 
 describe('AdaptiveBuildPlannerV1Service explicit K-of-N choice', () => {
@@ -219,7 +229,24 @@ describe('AdaptiveBuildPlannerV1Service explicit K-of-N choice', () => {
     expect(plannerNodeKey(first)).toBe(plannerNodeKey(second));
   });
 
-  it('commits each purchased K-of-N branch without replacing a selected sibling or adding a third branch', () => {
+  it('distinguishes K-of-N state whose unrestricted group IDs contain legacy delimiters', () => {
+    const node = (selectedChoiceItemIdsByGroup: ReadonlyMap<string, readonly number[]>) =>
+      createAdaptivePlannerNodeV1({
+        decisionState: {
+          inventory: { heldByItemId: new Map() },
+          economy: { spendableSouls: { value: 5000 } },
+        } as any,
+        slots: {} as any,
+        investment: {} as any,
+        selectedChoiceItemIdsByGroup,
+      });
+
+    expect(plannerNodeKey(node(new Map([['a:1,b', [2]]])))).not.toBe(
+      plannerNodeKey(node(new Map([['a', [1]], ['b', [2]]]))),
+    );
+  });
+
+  it('commits each purchased K-of-N branch without replacing a selected sibling', () => {
     const initialDecision = decision();
     const initial = createAdaptivePlannerNodeV1({
       decisionState: initialDecision.state,
@@ -242,19 +269,55 @@ describe('AdaptiveBuildPlannerV1Service explicit K-of-N choice', () => {
       economyRules,
       skeleton,
     }).node;
-    const third = projectPlannerCandidateV1({
-      node: second,
-      candidate: buyCandidate(second.decisionState, 1),
+    expect(first.selectedChoiceItemIdsByGroup.get('pick-two')).toEqual([2, 3]);
+    expect(first.committedChoiceItemIdsByGroup.get('pick-two')).toEqual([3]);
+    expect(second.committedChoiceItemIdsByGroup.get('pick-two')).toEqual([2, 3]);
+  });
+
+  it('does not admit a BUY or REPLACE targeting a third sibling after one K-of-N branch is committed', () => {
+    const planner = new AdaptiveBuildPlannerV1Service(new AdaptiveEvidenceScorerV1Service());
+    const result = planner.plan({ decision: decision([3]), evidence: evidence() });
+    const targetsThirdSibling = result.rankedImmediateCandidates.some(({ action }) =>
+      (action.type === 'BUY' && action.itemId === 1) ||
+      (action.type === 'REPLACE' && action.buyItemId === 1),
+    );
+
+    expect(result.nextAction.targetItemId).toBe(2);
+    expect(targetsThirdSibling).toBe(false);
+    expect(result.recommendedBuild.some((item) => item.itemId === 1)).toBe(false);
+  });
+
+  it('preserves one K-of-N commitment through a SELL and commits a replacement only after its transaction', () => {
+    const initialDecision = decision([2, 3]);
+    const initial = createAdaptivePlannerNodeV1({
+      decisionState: initialDecision.state,
+      slots: initialDecision.slots,
+      investment: initialDecision.investment,
+      selectedChoiceItemIdsByGroup: new Map([['pick-two', [2, 3]]]),
+      committedChoiceItemIdsByGroup: new Map([['pick-two', [2, 3]]]),
+    });
+    const skeleton = { groups: [choiceGroup()] } as any;
+    const sold = projectPlannerCandidateV1({
+      node: initial,
+      candidate: candidateFor(initial.decisionState, 'SELL_ITEM:2'),
+      graph: initialDecision.itemGraph,
+      economyRules,
+      skeleton,
+    }).node;
+    const replacement = projectPlannerCandidateV1({
+      node: initial,
+      candidate: candidateFor(initial.decisionState, 'REPLACE_ITEM:2->1'),
       graph: initialDecision.itemGraph,
       economyRules,
       skeleton,
     }).node;
 
-    expect(first.selectedChoiceItemIdsByGroup.get('pick-two')).toEqual([2, 3]);
-    expect(first.committedChoiceItemIdsByGroup.get('pick-two')).toEqual([3]);
-    expect(second.committedChoiceItemIdsByGroup.get('pick-two')).toEqual([2, 3]);
-    expect(third.selectedChoiceItemIdsByGroup.get('pick-two')).toEqual([2, 3]);
-    expect(third.committedChoiceItemIdsByGroup.get('pick-two')).toEqual([2, 3]);
+    expect(sold.selectedChoiceItemIdsByGroup.get('pick-two')).toEqual([3]);
+    expect(sold.committedChoiceItemIdsByGroup.get('pick-two')).toEqual([3]);
+    expect(initial.selectedChoiceItemIdsByGroup.get('pick-two')).toEqual([2, 3]);
+    expect(initial.committedChoiceItemIdsByGroup.get('pick-two')).toEqual([2, 3]);
+    expect(replacement.selectedChoiceItemIdsByGroup.get('pick-two')).toEqual([1, 3]);
+    expect(replacement.committedChoiceItemIdsByGroup.get('pick-two')).toEqual([1, 3]);
   });
 
   it('selects exactly two best candidates from a pick-two group', () => {

@@ -1004,19 +1004,18 @@ function dedupePlannerNodes(nodes: readonly AdaptivePlannerNodeV1[]): AdaptivePl
 }
 
 export function plannerNodeKey(node: AdaptivePlannerNodeV1): string {
-  const inventory = [...node.decisionState.inventory.heldByItemId.keys()].sort((a, b) => a - b).join(',');
+  const inventory = [...node.decisionState.inventory.heldByItemId.keys()].sort((a, b) => a - b);
   const wallet = node.decisionState.economy.spendableSouls.value ?? 'UNKNOWN';
   const selected = serializeChoiceItemIdsByGroup(node.selectedChoiceItemIdsByGroup);
   const committed = serializeChoiceItemIdsByGroup(node.committedChoiceItemIdsByGroup);
-  const completed = [...node.completedGroupIds].sort().join(',');
-  return `${inventory}|${wallet}|${selected}|${committed}|${completed}`;
+  const completed = [...node.completedGroupIds].sort();
+  return JSON.stringify([inventory, wallet, selected, committed, completed]);
 }
 
-function serializeChoiceItemIdsByGroup(values: ReadonlyMap<string, readonly number[]>): string {
+function serializeChoiceItemIdsByGroup(values: ReadonlyMap<string, readonly number[]>): readonly (readonly [string, readonly number[]])[] {
   return [...values.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([groupId, itemIds]) => `${groupId}:${[...new Set(itemIds)].sort((a, b) => a - b).join('.')}`)
-    .join(',');
+    .map(([groupId, itemIds]) => [groupId, [...new Set(itemIds)].sort((a, b) => a - b)] as const);
 }
 
 function comparePlannerNodes(a: AdaptivePlannerNodeV1, b: AdaptivePlannerNodeV1): number {

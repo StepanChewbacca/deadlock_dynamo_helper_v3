@@ -28,6 +28,7 @@ function graph() {
   return createRecommendationItemGraph([
     directItem(1),
     directItem(2),
+    directItem(3),
     upgradeItem(11, 1),
     upgradeItem(12, 2),
   ]);
@@ -113,13 +114,13 @@ function decision(owned: readonly number[]) {
   } as any;
 }
 
-function choice(itemIds: readonly number[]): ConsensusBuildGroupV1 {
+function choice(itemIds: readonly number[], maxSelect = 1): ConsensusBuildGroupV1 {
   return {
     groupId: `choice:${itemIds.join(',')}`,
     phase: 'EARLY',
     type: 'CHOICE',
-    minSelect: 1,
-    maxSelect: 1,
+    minSelect: maxSelect,
+    maxSelect,
     candidates: itemIds.map((itemId) => ({
       itemId,
       strength: 0.8,
@@ -240,5 +241,21 @@ describe('AdaptiveBuildPlannerV1Service committed choice replacement', () => {
     expect(result.nextAction.sellItemId).toBe(1);
     expect(result.recommendedBuild.some((item) => item.itemId === 11 && item.status !== 'OWNED')).toBe(false);
     expect(result.recommendedBuild.some((item) => item.itemId === 12)).toBe(true);
+  });
+
+  it('above threshold, divests only one committed K-of-N branch and retains the other', () => {
+    const group = choice([1, 2, 3], 2);
+    const result = planner.plan({
+      decision: decision([1, 2]),
+      evidence: evidence(group, { 1: 0, 2: 0, 3: 0.9 }),
+    });
+    const soldItemId = result.nextAction.sellItemId;
+    const retainedItemId = soldItemId === 1 ? 2 : 1;
+
+    expect(['SELL', 'REPLACE']).toContain(result.nextAction.type);
+    expect([1, 2]).toContain(soldItemId);
+    expect(result.nextAction.targetItemId).toBe(3);
+    expect(result.recommendedBuild.find((item) => item.itemId === retainedItemId)?.status).toBe('OWNED');
+    expect(result.recommendedBuild.some((item) => item.itemId === 3)).toBe(true);
   });
 });

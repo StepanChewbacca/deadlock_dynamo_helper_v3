@@ -318,12 +318,12 @@ describe('AdaptiveBuildPlannerV1Service structured planning', () => {
     expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(3);
   });
 
-  it('does not switch a CHOICE after branch-unique component investment', () => {
+  it('does not switch a CHOICE after branch-unique component investment below the replacement threshold', () => {
     const result = planner.plan({
       decision: decision({ owned: [1] }),
       evidence: evidence({
         groups: [group('upgrade-choice', 'EARLY', 'CHOICE', [11, 12])],
-        exactWpa: { 11: 0, 12: 0.8 },
+        exactWpa: { 11: 0, 12: 0.02 },
       }),
     });
 
