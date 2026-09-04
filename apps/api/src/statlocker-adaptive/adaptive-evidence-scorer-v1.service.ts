@@ -73,9 +73,8 @@ export class AdaptiveEvidenceScorerV1Service {
     );
     const skeleton = asSkeleton(skeletonFamily.payload, context.heroId);
     const structuredCandidate = findConsensusCandidateV1(skeleton, itemId);
-    const legacySkeletonItem = skeleton?.items?.find((entry) => entry.itemId === itemId);
-    const skeletonStrength = structuredCandidate?.strength ?? legacySkeletonItem?.strength;
-    const skeletonMedianBuyTimeS = structuredCandidate?.medianBuyTimeS ?? legacySkeletonItem?.medianBuyTimeS;
+    const skeletonStrength = structuredCandidate?.strength;
+    const skeletonMedianBuyTimeS = structuredCandidate?.medianBuyTimeS;
     const components: AdaptiveScoreComponentV1[] = [];
 
     components.push(makeComponent(
@@ -402,7 +401,7 @@ function asT4Chains(value: unknown): StatlockerT4ChainsV1 | undefined {
 
 function asSkeleton(value: unknown, heroId: number): ConsensusSkeletonV1 | undefined {
   if (!isRecord(value) || value.heroId !== heroId) return undefined;
-  if (!Array.isArray(value.groups) && !Array.isArray(value.items)) return undefined;
+  if (!Array.isArray(value.groups)) return undefined;
   return value as unknown as ConsensusSkeletonV1;
 }
 

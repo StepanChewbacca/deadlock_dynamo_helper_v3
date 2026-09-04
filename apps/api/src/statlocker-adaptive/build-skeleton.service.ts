@@ -21,7 +21,11 @@ import {
 import { ADAPTIVE_POLICY_V1_CONFIG } from './statlocker-adaptive.config';
 import { stableJson } from './statlocker-normalizer.service';
 import { phaseOrderV1, stableConsensusGroupIdV1 } from './structured-build-v1';
-import { StatlockerSnapshotStoreService } from './statlocker-snapshot-store.service';
+import {
+  CONSENSUS_SKELETON_NORMALIZER_VERSION,
+  CONSENSUS_SKELETON_SCHEMA_VERSION,
+  StatlockerSnapshotStoreService,
+} from './statlocker-snapshot-store.service';
 
 export interface RebuildConsensusSkeletonInputV1 {
   heroId: number;
@@ -32,9 +36,7 @@ export interface RebuildConsensusSkeletonInputV1 {
 
 const DEFAULT_MIN_PROFILES = 6;
 const MAX_PROFILES = 10;
-const SKELETON_SCHEMA_VERSION = 'statlocker-consensus-skeleton-v2';
 const SKELETON_COLLECTOR_VERSION = 'internal-consensus-v1';
-const SKELETON_NORMALIZER_VERSION = 'consensus-builder-v2';
 
 const COMPONENT_WEIGHTS = {
   coverage: 0.35,
@@ -122,9 +124,9 @@ export class BuildSkeletonService {
       scopeKey,
       contentSha256,
       fetchedAt,
-      schemaVersion: SKELETON_SCHEMA_VERSION,
+      schemaVersion: CONSENSUS_SKELETON_SCHEMA_VERSION,
       collectorVersion: SKELETON_COLLECTOR_VERSION,
-      normalizerVersion: SKELETON_NORMALIZER_VERSION,
+      normalizerVersion: CONSENSUS_SKELETON_NORMALIZER_VERSION,
       payload: skeleton as unknown as Record<string, unknown>,
       metadata: {
         leaderboardSnapshotId: leaderboardSnapshot?.snapshotId,
@@ -518,8 +520,7 @@ function asSkeleton(value: unknown, heroId: number): BuiltConsensusSkeletonV1 | 
     !isRecord(value) ||
     value.heroId !== heroId ||
     !Number.isInteger(value.profileCount) ||
-    !Array.isArray(value.groups) ||
-    !Array.isArray(value.items)
+    !Array.isArray(value.groups)
   ) {
     return undefined;
   }

@@ -33,6 +33,9 @@ export interface StatlockerSnapshotPublishInputV1 extends StatlockerSnapshotIden
 
 export type StatlockerStoredSnapshotV1 = StatlockerEvidenceSnapshotV1Entity;
 
+export const CONSENSUS_SKELETON_SCHEMA_VERSION = 'statlocker-consensus-skeleton-v2';
+export const CONSENSUS_SKELETON_NORMALIZER_VERSION = 'consensus-builder-v2';
+
 type ValidatedStoredSnapshotV1 = StatlockerStoredSnapshotV1 & {
   dataset: StatlockerDatasetV1;
 };
@@ -61,7 +64,7 @@ export class StatlockerSnapshotStoreService implements OnModuleInit {
       order: { fetchedAt: 'DESC', snapshotId: 'DESC' },
     });
     for (const row of rows) {
-      if (!isValidStoredSnapshot(row)) continue;
+      if (!isValidStoredSnapshot(row) || !isSelectableSnapshot(row)) continue;
       const key = lookupKey(row);
       if (!this.active.has(key)) this.active.set(key, row);
     }
@@ -103,7 +106,7 @@ export class StatlockerSnapshotStoreService implements OnModuleInit {
       persisted = await this.repository.save(entity);
     }
 
-    this.active.set(key, persisted);
+    if (isSelectableSnapshot(persisted)) this.active.set(key, persisted);
     return persisted;
   }
 
@@ -177,10 +180,25 @@ function isValidStoredSnapshot(row: StatlockerStoredSnapshotV1): row is Validate
   );
 }
 
+export function isSelectableSnapshot(snapshot: Pick<
+  StatlockerStoredSnapshotV1,
+  'dataset' | 'schemaVersion' | 'normalizerVersion' | 'payload'
+>): boolean {
+  if (snapshot.dataset !== 'CONSENSUS_SKELETON') return true;
+  return snapshot.schemaVersion === CONSENSUS_SKELETON_SCHEMA_VERSION &&
+    snapshot.normalizerVersion === CONSENSUS_SKELETON_NORMALIZER_VERSION &&
+    isRecord(snapshot.payload) &&
+    Array.isArray(snapshot.payload.groups);
+}
+
 function isStatlockerDatasetV1(value: string): value is StatlockerDatasetV1 {
   return STATLOCKER_DATASETS_V1.has(value as StatlockerDatasetV1);
 }
 
 function isSha(value: string): boolean {
   return /^[a-f0-9]{64}$/i.test(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }

@@ -145,6 +145,22 @@ describe('AdaptiveEvidenceScorerV1Service', () => {
     expect(skeleton?.weighted ?? 0).toBeGreaterThan(Math.abs(exact?.weighted ?? 0));
   });
 
+  it('does not derive a skeleton prior from legacy flat compatibility items', () => {
+    const legacy = evidence();
+    legacy.byDataset.CONSENSUS_SKELETON.payload = {
+      heroId: 10,
+      profileCount: 10,
+      items: legacy.byDataset.CONSENSUS_SKELETON.payload.items,
+    };
+
+    const result = new AdaptiveEvidenceScorerV1Service().scoreItem(100, {
+      ...context,
+      evidence: legacy,
+    });
+
+    expect(result.components.find((component) => component.key === 'skeletonPrior')?.raw).toBe(0);
+  });
+
   it('reduces overall confidence when otherwise identical evidence becomes stale', () => {
     const scorer = new AdaptiveEvidenceScorerV1Service();
     const fresh = scorer.scoreItem(100, { ...context, evidence: evidence(600, 1) });
