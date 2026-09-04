@@ -197,6 +197,7 @@ function deriveGroups(
 ): readonly ConsensusBuildGroupV1[] {
   const groups: ConsensusBuildGroupV1[] = [];
   const assigned = new Set<number>();
+  const ambiguousChoiceLikeItemIds = new Set<number>();
   const explicitBuckets = new Map<string, DerivedItemV1[]>();
 
   for (const entry of derived) {
@@ -256,7 +257,10 @@ function deriveGroups(
       }
     }
     const confidence = average(confidences);
-    if (confidence < ADAPTIVE_POLICY_V1_CONFIG.choice.inferenceMinConfidence) continue;
+    if (confidence < ADAPTIVE_POLICY_V1_CONFIG.choice.inferenceMinConfidence) {
+      for (const entry of clique) ambiguousChoiceLikeItemIds.add(entry.candidate.itemId);
+      continue;
+    }
     const candidates = clique.map((entry) => entry.candidate).sort(compareCandidates);
     const phase = clique[0].phase;
     groups.push({
@@ -274,8 +278,9 @@ function deriveGroups(
 
   for (const entry of derived) {
     if (assigned.has(entry.candidate.itemId)) continue;
-    const type: ConsensusBuildGroupTypeV1 =
-      entry.candidate.frequencyTier === 'CORE' || entry.candidate.frequencyTier === 'FREQUENT'
+    const type: ConsensusBuildGroupTypeV1 = ambiguousChoiceLikeItemIds.has(entry.candidate.itemId)
+      ? 'OPTIONAL'
+      : entry.candidate.frequencyTier === 'CORE' || entry.candidate.frequencyTier === 'FREQUENT'
         ? 'REQUIRED'
         : 'OPTIONAL';
     groups.push({
@@ -377,8 +382,7 @@ function choicePairConfidence(
   const coverageScore = clamp01((a.candidate.coverage + b.candidate.coverage) / 2);
   const exclusivityScore = clamp01(1 - cooccurrenceRate);
   const timingScore = clamp01(1 - timeDelta / Math.max(1, config.inferenceMaxMedianTimeDeltaSec));
-  const confidence = (coverageScore + exclusivityScore + timingScore) / 3;
-  return confidence >= config.inferenceMinConfidence ? confidence : undefined;
+  return (coverageScore + exclusivityScore + timingScore) / 3;
 }
 
 function itemsAreUpgradeRelatives(
