@@ -10,6 +10,8 @@ import { ConsensusBuildGroupV1 } from './statlocker-adaptive.types';
 
 export interface AdaptiveChoiceStateV1 {
   groupId: string;
+  selectedItemIds: readonly number[];
+  committedItemIds: readonly number[];
   selectedItemId?: number;
   committedItemId?: number;
   committed: boolean;
@@ -21,6 +23,8 @@ export interface AdaptiveChoiceResolutionContextV1 {
   scorerContext: AdaptiveItemScoreContextV1;
   itemGraph: RecommendationItemGraph;
   ownedItemIds: readonly number[];
+  previousSelectedItemIds?: readonly number[];
+  previousCommittedItemIds?: readonly number[];
   previousSelectedItemId?: number;
   previousCommittedItemId?: number;
 }
@@ -47,47 +51,63 @@ export class AdaptiveChoiceResolverV1Service {
     context: AdaptiveChoiceResolutionContextV1,
   ): AdaptiveResolvedChoiceV1 {
     if (group.type !== 'CHOICE') throw new Error(`Group ${group.groupId} is not a CHOICE group`);
+    const previousCommittedItemIds = normalizeChoiceIds(
+      context.previousCommittedItemIds ?? optionalSingleton(context.previousCommittedItemId),
+      group,
+    );
+    const previousSelectedItemIds = normalizeChoiceIds(
+      context.previousSelectedItemIds ?? optionalSingleton(context.previousSelectedItemId),
+      group,
+    );
     const reconstructed = reconstructChoiceStateV1(
       group,
       context.ownedItemIds,
       context.itemGraph,
-      context.previousCommittedItemId,
+      previousCommittedItemIds,
     );
     const scores = group.candidates
       .map((candidate) => this.scorer.scoreItem(candidate.itemId, context.scorerContext))
-      .sort((a, b) => b.score - a.score || b.confidence - a.confidence || a.itemId - b.itemId);
-
-    if (reconstructed.committed && reconstructed.committedItemId !== undefined) {
-      const score = scores.find((entry) => entry.itemId === reconstructed.committedItemId);
-      return {
-        ...reconstructed,
-        selectedItemId: reconstructed.committedItemId,
-        confidence: score?.confidence ?? reconstructed.confidence,
-        scores,
-      };
-    }
+      .sort(compareScores);
 
     if (reconstructed.externallyDiverged) {
-      const selectedItemId = group.candidates.some((candidate) => candidate.itemId === context.previousSelectedItemId)
-        ? context.previousSelectedItemId
-        : undefined;
-      return { ...reconstructed, selectedItemId, scores };
+      const selectedItemIds = previousSelectedItemIds.length > 0
+        ? previousSelectedItemIds
+        : reconstructed.committedItemIds;
+      return withChoiceCompatibility({ ...reconstructed, selectedItemIds, scores });
     }
 
-    const best = scores[0];
-    if (!best) return { ...reconstructed, scores };
-    const previous = context.previousSelectedItemId === undefined
-      ? undefined
-      : scores.find((entry) => entry.itemId === context.previousSelectedItemId);
-    const selected = previous && best.score - previous.score < ADAPTIVE_POLICY_V1_CONFIG.choice.switchMinImprovement
-      ? previous
-      : best;
-    return {
+    const requiredCount = requiredChoiceCount(group);
+    const committedItemIds = reconstructed.committedItemIds.slice(0, group.maxSelect);
+    const remainingCount = Math.max(0, requiredCount - committedItemIds.length);
+    const previousUncommitted = new Set(
+      previousSelectedItemIds.filter((itemId) => !committedItemIds.includes(itemId)),
+    );
+    const available = scores
+      .filter((entry) => !committedItemIds.includes(entry.itemId))
+      .sort((a, b) => {
+        const adjustedA = a.score + (previousUncommitted.has(a.itemId) ? ADAPTIVE_POLICY_V1_CONFIG.choice.switchMinImprovement : 0);
+        const adjustedB = b.score + (previousUncommitted.has(b.itemId) ? ADAPTIVE_POLICY_V1_CONFIG.choice.switchMinImprovement : 0);
+        return adjustedB - adjustedA || compareScores(a, b);
+      });
+    const selectedItemIds = [
+      ...committedItemIds,
+      ...available.slice(0, remainingCount).map((entry) => entry.itemId),
+    ];
+    const selectedScores = selectedItemIds
+      .map((itemId) => scores.find((entry) => entry.itemId === itemId))
+      .filter((entry): entry is AdaptiveItemScoreV1 => entry !== undefined);
+    const confidence = selectedScores.length === 0
+      ? reconstructed.confidence
+      : selectedScores.reduce((sum, entry) => sum + entry.confidence, 0) / selectedScores.length;
+
+    return withChoiceCompatibility({
       ...reconstructed,
-      selectedItemId: selected.itemId,
-      confidence: selected.confidence,
+      selectedItemIds,
+      committedItemIds,
+      committed: committedItemIds.length > 0,
+      confidence,
       scores,
-    };
+    });
   }
 }
 
@@ -95,18 +115,17 @@ export function reconstructChoiceStateV1(
   group: ConsensusBuildGroupV1,
   ownedItemIds: readonly number[],
   itemGraph: RecommendationItemGraph,
-  previousCommittedItemId?: number,
+  previousCommittedItemIdsOrId?: readonly number[] | number,
 ): AdaptiveChoiceStateV1 {
   const owned = new Set(ownedItemIds);
   const alternativeIds = group.candidates.map((candidate) => candidate.itemId).sort((a, b) => a - b);
+  const previousCommittedItemIds = normalizeChoiceIds(
+    Array.isArray(previousCommittedItemIdsOrId)
+      ? previousCommittedItemIdsOrId
+      : optionalSingleton(previousCommittedItemIdsOrId),
+    group,
+  );
   const ownedTargets = alternativeIds.filter((itemId) => owned.has(itemId));
-  if (ownedTargets.length === 1) return committedState(group.groupId, ownedTargets[0]);
-  if (ownedTargets.length > 1) {
-    if (previousCommittedItemId !== undefined && ownedTargets.includes(previousCommittedItemId)) {
-      return committedState(group.groupId, previousCommittedItemId);
-    }
-    return divergedState(group.groupId);
-  }
 
   const closures = new Map<number, ReadonlySet<number>>();
   const componentOwners = new Map<number, number>();
@@ -123,21 +142,38 @@ export function reconstructChoiceStateV1(
     }
     return false;
   });
+  const evidencedItemIds = uniqueNumbers([...ownedTargets, ...investedBranches]).sort((a, b) => a - b);
 
-  if (investedBranches.length === 1) return committedState(group.groupId, investedBranches[0]);
-  if (investedBranches.length > 1) {
-    if (previousCommittedItemId !== undefined && investedBranches.includes(previousCommittedItemId)) {
-      return committedState(group.groupId, previousCommittedItemId);
+  if (evidencedItemIds.length > group.maxSelect) {
+    const validPrevious = previousCommittedItemIds.filter((itemId) => evidencedItemIds.includes(itemId));
+    if (validPrevious.length > 0 && validPrevious.length <= group.maxSelect) {
+      return withChoiceCompatibility({
+        groupId: group.groupId,
+        selectedItemIds: validPrevious,
+        committedItemIds: validPrevious,
+        committed: true,
+        confidence: 1,
+        externallyDiverged: false,
+      });
     }
-    return divergedState(group.groupId);
+    return withChoiceCompatibility({
+      groupId: group.groupId,
+      selectedItemIds: evidencedItemIds,
+      committedItemIds: evidencedItemIds,
+      committed: evidencedItemIds.length > 0,
+      confidence: evidencedItemIds.length > 0 ? 1 : 0,
+      externallyDiverged: true,
+    });
   }
 
-  return {
+  return withChoiceCompatibility({
     groupId: group.groupId,
-    committed: false,
-    confidence: 0,
+    selectedItemIds: evidencedItemIds,
+    committedItemIds: evidencedItemIds,
+    committed: evidencedItemIds.length > 0,
+    confidence: evidencedItemIds.length > 0 ? 1 : 0,
     externallyDiverged: false,
-  };
+  });
 }
 
 export function componentClosureV1(itemId: number, itemGraph: RecommendationItemGraph): ReadonlySet<number> {
@@ -150,27 +186,43 @@ export function componentClosureV1(itemId: number, itemGraph: RecommendationItem
       if (!result.has(componentId)) result.add(componentId);
       visit(componentId);
     }
+    visiting.delete(targetId);
   };
   visit(itemId);
   return result;
 }
 
-function committedState(groupId: string, itemId: number): AdaptiveChoiceStateV1 {
+function requiredChoiceCount(group: ConsensusBuildGroupV1): number {
+  const maxSelect = Math.max(1, Math.min(group.maxSelect, group.candidates.length));
+  return Math.max(1, Math.min(maxSelect, group.minSelect));
+}
+
+function normalizeChoiceIds(
+  itemIds: readonly number[],
+  group: ConsensusBuildGroupV1,
+): number[] {
+  const allowed = new Set(group.candidates.map((candidate) => candidate.itemId));
+  return uniqueNumbers(itemIds.filter((itemId) => allowed.has(itemId))).sort((a, b) => a - b);
+}
+
+function optionalSingleton(value: number | undefined): number[] {
+  return value === undefined ? [] : [value];
+}
+
+function compareScores(a: AdaptiveItemScoreV1, b: AdaptiveItemScoreV1): number {
+  return b.score - a.score || b.confidence - a.confidence || a.itemId - b.itemId;
+}
+
+function withChoiceCompatibility<T extends Omit<AdaptiveChoiceStateV1, 'selectedItemId' | 'committedItemId'>>(
+  state: T,
+): T & AdaptiveChoiceStateV1 {
   return {
-    groupId,
-    selectedItemId: itemId,
-    committedItemId: itemId,
-    committed: true,
-    confidence: 1,
-    externallyDiverged: false,
+    ...state,
+    selectedItemId: state.selectedItemIds[0],
+    committedItemId: state.committedItemIds[0],
   };
 }
 
-function divergedState(groupId: string): AdaptiveChoiceStateV1 {
-  return {
-    groupId,
-    committed: false,
-    confidence: 0,
-    externallyDiverged: true,
-  };
+function uniqueNumbers(values: readonly number[]): number[] {
+  return [...new Set(values)];
 }
