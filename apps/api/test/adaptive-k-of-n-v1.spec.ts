@@ -164,8 +164,9 @@ describe('AdaptiveBuildPlannerV1Service explicit K-of-N choice', () => {
       .map((item) => item.itemId)
       .filter((itemId) => [1, 2, 3].includes(itemId));
 
-    expect(selected).toEqual([2, 3]);
+    expect([...selected].sort((a, b) => a - b)).toEqual([2, 3]);
     expect(selected).toHaveLength(2);
+    expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(3);
     expect(result.recommendedBuild.some((item) => item.itemId === 1)).toBe(false);
   });
 });
