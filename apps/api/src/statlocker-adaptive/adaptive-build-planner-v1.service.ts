@@ -358,6 +358,7 @@ export class AdaptiveBuildPlannerV1Service {
       owned,
       completedGroupIds,
       targetItemIds,
+      selectedChoices,
     );
 
     return {
@@ -383,12 +384,13 @@ export class AdaptiveBuildPlannerV1Service {
     owned: ReadonlySet<number>,
     completedGroupIds: ReadonlySet<string>,
     activeTargetItemIds: ReadonlySet<number>,
+    selectedChoices: ReadonlyMap<string, number>,
   ): ReadonlySet<number> {
     let remainingDepth = ADAPTIVE_POLICY_V1_CONFIG.planningDepth - activeTargetItemIds.size;
     if (remainingDepth <= 0) return new Set<number>();
 
     const futureRequired = skeleton.groups.filter((group) => {
-      if (group.type !== 'REQUIRED') return false;
+      if (group.type !== 'REQUIRED' && group.type !== 'CHOICE') return false;
       return this.phaseEligibility.evaluateGroup(group, {
         skeleton,
         ownedItemIds: owned,
@@ -403,11 +405,15 @@ export class AdaptiveBuildPlannerV1Service {
     const result = new Set<number>();
     for (const group of futureRequired.filter((entry) => phaseOrderV1(entry.phase) === nextPhaseOrder)) {
       const ownedCount = group.candidates.filter((candidate) => owned.has(candidate.itemId)).length;
-      let needed = Math.max(0, Math.max(1, group.minSelect) - ownedCount);
+      let needed = group.type === 'CHOICE'
+        ? (selectedChoices.get(group.groupId) !== undefined && !owned.has(selectedChoices.get(group.groupId) as number) ? 1 : 0)
+        : Math.max(0, Math.max(1, group.minSelect) - ownedCount);
       if (needed === 0) continue;
 
+      const selectedChoiceItemId = group.type === 'CHOICE' ? selectedChoices.get(group.groupId) : undefined;
       const ranked = group.candidates
         .filter((candidate) => !owned.has(candidate.itemId))
+        .filter((candidate) => selectedChoiceItemId === undefined || candidate.itemId === selectedChoiceItemId)
         .map((candidate) => ({
           itemId: candidate.itemId,
           score: this.scorer.scoreItem(candidate.itemId, scorerContext).score,
