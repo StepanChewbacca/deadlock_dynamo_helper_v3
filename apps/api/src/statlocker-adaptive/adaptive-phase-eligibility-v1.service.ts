@@ -26,7 +26,7 @@ export interface AdaptivePhaseEligibilityContextV1 {
   gameTimeSec: number;
   gameState: AdaptiveGameStateV1;
   investment: AdaptiveInvestmentStateV1;
-  itemGraph?: RecommendationItemGraph;
+  itemGraph: RecommendationItemGraph;
 }
 
 @Injectable()
@@ -65,22 +65,19 @@ function investmentProgressAccelerationSec(investment: AdaptiveInvestmentStateV1
     : 0;
 }
 
-export function groupCompletedV1(group: ConsensusBuildGroupV1, ownedItemIds: ReadonlySet<number>, itemGraph?: RecommendationItemGraph): boolean {
-  const satisfies = (candidateId: number): boolean => ownedItemIds.has(candidateId) || Boolean(itemGraph && [...ownedItemIds].some((ownedId) => {
-    const closure = new Set<number>();
-    const visit = (id: number): void => {
-      for (const componentId of itemGraph.getDirectComponentIds(id)) {
-        if (closure.has(componentId)) continue;
-        closure.add(componentId);
-        visit(componentId);
-      }
-    };
-    visit(ownedId);
-    return closure.has(candidateId);
-  }));
-  const ownedCount = group.candidates.reduce((count, candidate) => count + (satisfies(candidate.itemId) ? 1 : 0), 0);
-  if (group.type === 'OPTIONAL') return ownedCount > 0;
-  return ownedCount >= Math.max(1, group.minSelect);
+export function groupCompletedV1(
+  group: ConsensusBuildGroupV1,
+  ownedItemIds: ReadonlySet<number>,
+  itemGraph: RecommendationItemGraph,
+): boolean {
+  const satisfiedCount = group.candidates.reduce(
+    (count, candidate) => count + (
+      itemGraph.isTargetSatisfied(candidate.itemId, ownedItemIds) ? 1 : 0
+    ),
+    0,
+  );
+  if (group.type === 'OPTIONAL') return satisfiedCount > 0;
+  return satisfiedCount >= Math.max(1, group.minSelect);
 }
 
 function requiredPriorGroupsComplete(

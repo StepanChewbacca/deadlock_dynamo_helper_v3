@@ -3,6 +3,7 @@ import {
   DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
   RecommendationCandidate,
   RecommendationCandidateGeneratorRules,
+  RecommendationItemGraph,
   generateRecommendationCandidates,
 } from '@deadlock-live-probe/build-domain';
 import {
@@ -269,7 +270,7 @@ export class AdaptiveBuildPlannerV1Service {
   ): SemanticPlanV1 {
     const completedGroupIds = new Set<string>();
     for (const group of skeleton.groups) {
-      if (groupCompletedV1(group, owned)) completedGroupIds.add(group.groupId);
+      if (groupCompletedV1(group, owned, input.decision.itemGraph)) completedGroupIds.add(group.groupId);
     }
 
     const selectedChoiceItemIdsByGroup = new Map<string, readonly number[]>();
@@ -336,12 +337,12 @@ export class AdaptiveBuildPlannerV1Service {
       if (eligibility === 'COMPLETED') {
         if (group.type === 'CHOICE') {
           for (const selected of selectedChoiceItemIdsByGroup.get(group.groupId) ?? []) {
-            if (owned.has(selected)) selectedFinalItemIds.add(selected);
+            if (input.decision.itemGraph.isTargetSatisfied(selected, owned)) selectedFinalItemIds.add(selected);
           }
           enabledReplacementOptions.push(...(replacementOptionsByGroup.get(group.groupId) ?? []));
         } else {
           for (const candidate of group.candidates) {
-            if (owned.has(candidate.itemId)) selectedFinalItemIds.add(candidate.itemId);
+            if (input.decision.itemGraph.isTargetSatisfied(candidate.itemId, owned)) selectedFinalItemIds.add(candidate.itemId);
           }
         }
         continue;
@@ -374,13 +375,15 @@ export class AdaptiveBuildPlannerV1Service {
         continue;
       }
 
-      const ownedCandidates = group.candidates
-        .filter((candidate) => owned.has(candidate.itemId))
+      const satisfiedCandidates = group.candidates
+        .filter((candidate) => input.decision.itemGraph.isTargetSatisfied(candidate.itemId, owned))
         .map((candidate) => candidate.itemId);
-      for (const itemId of ownedCandidates) selectedFinalItemIds.add(itemId);
-      const needed = Math.max(0, Math.max(1, group.minSelect) - ownedCandidates.length);
+      for (const itemId of satisfiedCandidates) {
+        selectedFinalItemIds.add(itemId);
+      }
+      const needed = Math.max(0, Math.max(1, group.minSelect) - satisfiedCandidates.length);
       const selected = group.candidates
-        .filter((candidate) => !owned.has(candidate.itemId))
+        .filter((candidate) => !input.decision.itemGraph.isTargetSatisfied(candidate.itemId, owned))
         .map((candidate) => ({
           itemId: candidate.itemId,
           score: this.scorer.scoreItem(candidate.itemId, scorerContext).score,
@@ -393,9 +396,9 @@ export class AdaptiveBuildPlannerV1Service {
     const targetItemIds = new Set<number>();
     const supportOwners = new Map<number, Set<number>>();
     for (const finalItemId of selectedFinalItemIds) {
-      if (!owned.has(finalItemId)) targetItemIds.add(finalItemId);
+      if (!input.decision.itemGraph.isTargetSatisfied(finalItemId, owned)) targetItemIds.add(finalItemId);
       for (const componentId of componentClosureV1(finalItemId, input.decision.itemGraph)) {
-        if (owned.has(componentId)) continue;
+        if (input.decision.itemGraph.isTargetSatisfied(componentId, owned)) continue;
         targetItemIds.add(componentId);
         const owners = supportOwners.get(componentId) ?? new Set<number>();
         owners.add(finalItemId);
@@ -404,6 +407,7 @@ export class AdaptiveBuildPlannerV1Service {
     }
     for (const option of enabledReplacementOptions) {
       for (const supportItemId of option.supportItemIds) {
+        if (input.decision.itemGraph.isTargetSatisfied(supportItemId, owned)) continue;
         const owners = supportOwners.get(supportItemId) ?? new Set<number>();
         owners.add(option.targetItemId);
         supportOwners.set(supportItemId, owners);
@@ -423,10 +427,10 @@ export class AdaptiveBuildPlannerV1Service {
     const activeTargetItemIds = new Set(targetItemIds);
     const futureOwners = new Map<number, Set<number>>();
     for (const finalItemId of futurePlannedFinalItemIds) {
-      if (!owned.has(finalItemId)) targetItemIds.add(finalItemId);
+      if (!input.decision.itemGraph.isTargetSatisfied(finalItemId, owned)) targetItemIds.add(finalItemId);
       futureOwners.set(finalItemId, new Set([finalItemId]));
       for (const componentId of componentClosureV1(finalItemId, input.decision.itemGraph)) {
-        if (owned.has(componentId)) continue;
+        if (input.decision.itemGraph.isTargetSatisfied(componentId, owned)) continue;
         targetItemIds.add(componentId);
         const futureTargetOwners = futureOwners.get(componentId) ?? new Set<number>();
         futureTargetOwners.add(finalItemId);
@@ -491,15 +495,19 @@ export class AdaptiveBuildPlannerV1Service {
       const selectedChoiceItemIds = group.type === 'CHOICE'
         ? selectedChoiceItemIdsByGroup.get(group.groupId) ?? []
         : [];
-      const ownedCount = group.candidates.filter((candidate) => owned.has(candidate.itemId)).length;
+      const satisfiedCount = group.candidates.filter((candidate) =>
+        input.decision.itemGraph.isTargetSatisfied(candidate.itemId, owned)
+      ).length;
       let needed = group.type === 'CHOICE'
-        ? selectedChoiceItemIds.filter((itemId) => !owned.has(itemId)).length
-        : Math.max(0, Math.max(1, group.minSelect) - ownedCount);
+        ? selectedChoiceItemIds.filter((itemId) =>
+            !input.decision.itemGraph.isTargetSatisfied(itemId, owned)
+          ).length
+        : Math.max(0, Math.max(1, group.minSelect) - satisfiedCount);
       if (needed === 0) continue;
 
       const selectedChoiceSet = new Set(selectedChoiceItemIds);
       const ranked = group.candidates
-        .filter((candidate) => !owned.has(candidate.itemId))
+        .filter((candidate) => !input.decision.itemGraph.isTargetSatisfied(candidate.itemId, owned))
         .filter((candidate) => group.type !== 'CHOICE' || selectedChoiceSet.has(candidate.itemId))
         .map((candidate) => ({
           itemId: candidate.itemId,
@@ -513,7 +521,7 @@ export class AdaptiveBuildPlannerV1Service {
         const stepIds = uniqueNumbers([
           entry.itemId,
           ...componentClosureV1(entry.itemId, input.decision.itemGraph),
-        ]).filter((itemId) => !owned.has(itemId));
+        ]).filter((itemId) => !input.decision.itemGraph.isTargetSatisfied(itemId, owned));
         const steps = Math.max(1, stepIds.length);
         if (stagedDepth + steps > remainingDepth) continue;
         staged.push({ itemId: entry.itemId, steps });
@@ -544,6 +552,8 @@ export class AdaptiveBuildPlannerV1Service {
     for (let depth = 0; depth < config.planningDepth; depth += 1) {
       const expanded: AdaptivePlannerNodeV1[] = [];
       for (const node of beam) {
+        // WAIT does not project future income or time; it terminates this path.
+        if (node.actions[node.actions.length - 1]?.action.type === 'WAIT_SAVE') continue;
         const scored = this.evaluateNodeCandidates(
           input,
           skeleton,
@@ -590,10 +600,12 @@ export class AdaptiveBuildPlannerV1Service {
       rules,
     })
       .filter((candidate) => candidate.feasible)
+      .filter((candidate) => candidate.recommendationEligible)
+      .filter((candidate) => !candidateTargetAlreadySatisfied(candidate, node, input.decision.itemGraph))
       .filter((candidate) => candidateTouchesSemanticTargets(candidate, semantic, node, skeleton))
       .filter((candidate) => !isProtectedSell(candidate, recentPurchased))
       .filter((candidate) =>
-        !sellsSelectedFinal(candidate, semantic.selectedFinalItemIds) ||
+        !sellsSelectedFinal(candidate, semantic.selectedFinalItemIds, input.decision.itemGraph) ||
         startsChoiceReplacement(candidate, semantic.choiceReplacementOptions, node),
       )
       .filter((candidate) =>
@@ -760,14 +772,18 @@ export class AdaptiveBuildPlannerV1Service {
       ...semantic.futurePlannedFinalItemIds,
       ...replacementTargetItemIds,
     ])
-      .filter((itemId) => !ownedItemIds.includes(itemId))
+      .filter((itemId) => !input.decision.itemGraph.isTargetSatisfied(itemId, ownedItemIds))
       .filter((itemId) => !replacedFinalItemIds.has(itemId))
       .sort((a, b) =>
         (semantic.orderByItemId.get(a) ?? Number.MAX_SAFE_INTEGER) -
           (semantic.orderByItemId.get(b) ?? Number.MAX_SAFE_INTEGER) ||
         a - b,
       );
-    const ordered = uniqueNumbers([...ownedItemIds, ...actionTargets, ...futureFinals]);
+    const ordered = uniqueNumbers([...ownedItemIds, ...actionTargets, ...futureFinals])
+      .filter((itemId) =>
+        ownedItemIds.includes(itemId) ||
+        !input.decision.itemGraph.isTargetSatisfied(itemId, ownedItemIds),
+      );
     const firstUnowned = ordered.find((itemId) => !ownedItemIds.includes(itemId));
     const nextTarget = preferredNextTarget !== undefined && ordered.includes(preferredNextTarget)
       ? preferredNextTarget
@@ -847,6 +863,16 @@ function generatorRulesForNode(node: AdaptivePlannerNodeV1): RecommendationCandi
     unlockedFlexSlots: node.slots.unlockedFlexSlots,
     flexCapacityEvidence: node.slots.evidence,
   };
+}
+
+function candidateTargetAlreadySatisfied(
+  candidate: RecommendationCandidate,
+  node: AdaptivePlannerNodeV1,
+  graph: RecommendationItemGraph,
+): boolean {
+  const targetItemId = candidateTargetItemId(candidate);
+  if (targetItemId === undefined) return false;
+  return graph.isTargetSatisfied(targetItemId, node.decisionState.inventory.heldByItemId.keys());
 }
 
 function candidateTouchesSemanticTargets(
@@ -1045,10 +1071,15 @@ function isProtectedSell(candidate: RecommendationCandidate, recentPurchased: Re
   return false;
 }
 
-function sellsSelectedFinal(candidate: RecommendationCandidate, selectedFinals: ReadonlySet<number>): boolean {
-  if (candidate.action.type === 'SELL_ITEM') return selectedFinals.has(candidate.action.itemId);
-  if (candidate.action.type === 'REPLACE_ITEM') return selectedFinals.has(candidate.action.sellItemId);
-  return false;
+function sellsSelectedFinal(
+  candidate: RecommendationCandidate,
+  selectedFinals: ReadonlySet<number>,
+  itemGraph: RecommendationItemGraph,
+): boolean {
+  const soldItemId = candidate.action.type === 'SELL_ITEM' ? candidate.action.itemId
+    : candidate.action.type === 'REPLACE_ITEM' ? candidate.action.sellItemId : undefined;
+  if (soldItemId === undefined) return false;
+  return [...selectedFinals].some((itemId) => itemGraph.isTargetSatisfied(itemId, [soldItemId]));
 }
 
 function sellsProtectedChoiceEvidence(

@@ -6,6 +6,7 @@ import {
   RecommendationDecisionState,
   RecommendationFeasibilityReason,
   RecommendationItemDefinition,
+  RecommendationSuppressionReason,
   recommendationActionId,
   reconstructedFact,
 } from './recommendation-action-domain';
@@ -68,6 +69,7 @@ export function generateRecommendationCandidates(
       applySlotReason(state, resulting, graph, rules, reasons);
       if (!checkActiveLimit(resulting, graph, rules)) reasons.push('ACTIVE_ITEM_LIMIT_EXCEEDED');
       const feasible = reasons.length === 0;
+      const suppression = recommendationSuppressionForTarget(state, graph, item.itemId);
       candidates.push(buildCandidate(
         state,
         buyAction,
@@ -78,8 +80,11 @@ export function generateRecommendationCandidates(
         feasible && state.economy.spendableSouls.value !== undefined
           ? state.economy.spendableSouls.value - item.directPurchaseCost
           : undefined,
+        suppression,
       ));
-      if (!feasible && shouldTargetWait(reasons)) waitTargets.add(item.itemId);
+      if (!feasible && shouldTargetWait(reasons) && !graph.isTargetSatisfied(item.itemId, state.inventory.heldByItemId.keys())) {
+        waitTargets.add(item.itemId);
+      }
     }
 
     for (const recipe of item.upgradeRecipes) {
@@ -112,7 +117,9 @@ export function generateRecommendationCandidates(
           ? state.economy.spendableSouls.value - recipe.soulsCost
           : undefined,
       ));
-      if (!feasible && shouldTargetWait(reasons)) waitTargets.add(item.itemId);
+      if (!feasible && shouldTargetWait(reasons) && !graph.isTargetSatisfied(item.itemId, state.inventory.heldByItemId.keys())) {
+        waitTargets.add(item.itemId);
+      }
     }
   }
 
@@ -125,12 +132,19 @@ export function generateRecommendationCandidates(
       if (target.itemId === held.itemId || target.directPurchaseCost === undefined) continue;
       const replacement = evaluateReplace(state, item, target, graph, rules);
       candidates.push(replacement);
-      if (!replacement.feasible && shouldTargetWait(replacement.reasons)) waitTargets.add(target.itemId);
+      if (
+        !replacement.feasible &&
+        shouldTargetWait(replacement.reasons) &&
+        !graph.isTargetSatisfied(target.itemId, state.inventory.heldByItemId.keys())
+      ) {
+        waitTargets.add(target.itemId);
+      }
     }
   }
 
   if (rules.generateTargetedWaitActions) {
     for (const targetItemId of [...waitTargets].sort((a, b) => a - b)) {
+      if (graph.isTargetSatisfied(targetItemId, state.inventory.heldByItemId.keys())) continue;
       candidates.push(buildCandidate(
         state,
         { type: 'WAIT_SAVE', targetItemId },
@@ -203,6 +217,15 @@ function evaluateReplace(
   const wallet = state.economy.spendableSouls.value;
   if (wallet !== undefined && wallet + refund < cost) reasons.push('UNAFFORDABLE');
   const feasible = reasons.length === 0;
+  const suppression: RecommendationSuppressionReason[] = [];
+  if (graph.isComponentAncestor(bought.itemId, sold.itemId)) {
+    suppression.push('LINEAGE_DOWNGRADE');
+  } else {
+    const satisfying = graph.getSatisfyingOwnedItemIds(bought.itemId, afterSell);
+    if (satisfying.some((ownedItemId) => ownedItemId !== bought.itemId)) {
+      suppression.push('TARGET_SATISFIED_BY_OWNED_UPGRADE');
+    }
+  }
   return buildCandidate(
     state,
     { type: 'REPLACE_ITEM', sellItemId: sold.itemId, buyItemId: bought.itemId },
@@ -211,7 +234,22 @@ function evaluateReplace(
     cost - refund,
     resulting,
     feasible && wallet !== undefined ? wallet + refund - cost : undefined,
+    suppression,
   );
+}
+
+function recommendationSuppressionForTarget(
+  state: RecommendationDecisionState,
+  graph: RecommendationItemGraph,
+  targetItemId: number,
+): RecommendationSuppressionReason[] {
+  const satisfying = graph.getSatisfyingOwnedItemIds(
+    targetItemId,
+    state.inventory.heldByItemId.keys(),
+  );
+  return satisfying.some((ownedItemId) => ownedItemId !== targetItemId)
+    ? ['TARGET_SATISFIED_BY_OWNED_UPGRADE']
+    : [];
 }
 
 function applyShopObservabilityReasons(
@@ -348,12 +386,15 @@ function buildCandidate(
   effectiveCostSouls: number,
   resultingItemIds: readonly number[],
   spendableSoulsAfter: number | undefined,
+  recommendationSuppressionReasons: readonly RecommendationSuppressionReason[] = [],
 ): RecommendationCandidate {
   return {
     actionId: recommendationActionId(action),
     action,
     feasible,
     reasons,
+    recommendationEligible: recommendationSuppressionReasons.length === 0,
+    recommendationSuppressionReasons: [...recommendationSuppressionReasons],
     effectiveCostSouls,
     spendableSoulsAfter,
     resultingItemIds: [...resultingItemIds].sort((a, b) => a - b),

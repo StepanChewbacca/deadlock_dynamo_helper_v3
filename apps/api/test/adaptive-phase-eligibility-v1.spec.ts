@@ -1,6 +1,51 @@
+import { createRecommendationItemGraph } from '@deadlock-live-probe/build-domain';
 import { AdaptivePhaseEligibilityV1Service } from '../src/statlocker-adaptive/adaptive-phase-eligibility-v1.service';
 import { AdaptiveInvestmentStateV1 } from '../src/statlocker-adaptive/adaptive-economy-v1';
 import { ConsensusBuildGroupV1, ConsensusSkeletonV1 } from '../src/statlocker-adaptive/statlocker-adaptive.types';
+
+function itemGraph() {
+  return createRecommendationItemGraph([
+    {
+      itemId: 1,
+      name: 'Item 1',
+      slotType: 'weapon',
+      active: false,
+      availableRulesetIds: ['r1'],
+      directPurchaseCost: 800,
+      upgradeRecipes: [],
+      maxCopies: 1,
+    },
+    {
+      itemId: 2,
+      name: 'Item 2',
+      slotType: 'vitality',
+      active: false,
+      availableRulesetIds: ['r1'],
+      directPurchaseCost: 800,
+      upgradeRecipes: [],
+      maxCopies: 1,
+    },
+    {
+      itemId: 3,
+      name: 'Item 3',
+      slotType: 'spirit',
+      active: false,
+      availableRulesetIds: ['r1'],
+      directPurchaseCost: 800,
+      upgradeRecipes: [],
+      maxCopies: 1,
+    },
+    {
+      itemId: 11,
+      name: 'Item 11',
+      slotType: 'weapon',
+      active: false,
+      availableRulesetIds: ['r1'],
+      upgradeRecipes: [{ recipeId: 'upgrade-11', consumedItemIds: [1], soulsCost: 800 }],
+      maxCopies: 1,
+    },
+  ]);
+}
 
 function candidate(itemId: number, rushEvidence = false) {
   return {
@@ -45,6 +90,7 @@ function context(
     gameTimeSec,
     gameState,
     investment: investmentState,
+    itemGraph: itemGraph(),
   };
 }
 
@@ -84,6 +130,7 @@ describe('AdaptivePhaseEligibilityV1Service', () => {
       gameTimeSec: 2_000,
       gameState: 'AHEAD',
       investment: investment('UNKNOWN', 0),
+      itemGraph: itemGraph(),
     })).toBe('ELIGIBLE');
   });
 
@@ -99,6 +146,11 @@ describe('AdaptivePhaseEligibilityV1Service', () => {
     const target = group('mid', 'MID', 2);
     expect(service.evaluateGroup(target, context(target, 700))).toBe('NOT_YET_ELIGIBLE');
     expect(service.evaluateGroup(target, context(target, 700, [1]))).toBe('ELIGIBLE');
+  });
+
+  it('treats a lower required target as completed when its upgrade descendant is owned', () => {
+    const target = group('early', 'EARLY', 1);
+    expect(service.evaluateGroup(target, context(target, 120, [11]))).toBe('COMPLETED');
   });
 
   it('accelerates MID only for reconstructed strong achieved investment breakpoints', () => {
@@ -161,6 +213,7 @@ describe('AdaptivePhaseEligibilityV1Service', () => {
       gameTimeSec: 1200,
       gameState: 'EVEN',
       investment: investment('UNKNOWN', 0),
+      itemGraph: itemGraph(),
     })).toBe('NOT_YET_ELIGIBLE');
   });
 

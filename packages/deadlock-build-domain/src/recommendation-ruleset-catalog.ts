@@ -6,7 +6,11 @@ import {
   reconstructedFact,
   unknownFact,
 } from './recommendation-action-domain';
-import { createRecommendationItemGraph, RecommendationItemGraph } from './recommendation-item-graph';
+import {
+  createRecommendationItemGraph,
+  RecommendationItemGraph,
+  RecommendationItemLineageEdge,
+} from './recommendation-item-graph';
 import { InventorySlotType } from './types';
 
 export const RECOMMENDATION_RULESET_CATALOG_SCHEMA_VERSION = 1 as const;
@@ -204,10 +208,20 @@ export function compileStrictRecommendationCatalogV1(
       maxCopies: hasValue(item.maxCopies) ? item.maxCopies.value : undefined,
     });
   }
+
+  const compiledIds = new Set(definitions.map((item) => item.itemId));
+  const lineageEdges: RecommendationItemLineageEdge[] = catalog.items
+    .filter((item) => compiledIds.has(item.itemId))
+    .flatMap((item) => item.upgradeRecipes.flatMap((recipe) =>
+      recipe.consumedItemIds
+        .filter((componentItemId) => compiledIds.has(componentItemId))
+        .map((componentItemId) => ({ parentItemId: item.itemId, componentItemId })),
+    ));
+
   return {
     catalogVersionId: catalog.catalogVersionId,
     rulesetId: catalog.rulesetId,
-    graph: createRecommendationItemGraph(definitions),
+    graph: createRecommendationItemGraph(definitions, lineageEdges),
     excludedItemIds,
     coverage: catalog.coverage,
   };

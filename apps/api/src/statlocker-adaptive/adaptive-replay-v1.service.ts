@@ -6,6 +6,7 @@ import {
   InventoryState,
   RecommendationDecisionState,
   RecommendationItemDefinition,
+  RecommendationItemLineageEdge,
   ShopOpportunity,
   buildInventoryInstancesForRecommendation,
   createRecommendationItemGraph,
@@ -58,6 +59,8 @@ export interface AdaptiveReplayStateV1 {
 export interface AdaptiveReplayDecisionV1 {
   state: AdaptiveReplayStateV1;
   itemDefinitions: readonly RecommendationItemDefinition[];
+  /** Optional so replay inputs persisted before topology-only lineage support remain readable. */
+  lineageEdges?: readonly RecommendationItemLineageEdge[];
   catalogVersionId: string;
   catalogSha256: string;
   rulesetId: string;
@@ -216,6 +219,27 @@ export class AdaptiveReplayV1Service {
 }
 
 function serializeDecision(decision: AdaptiveDecisionStateV1): AdaptiveReplayDecisionV1 {
+  const itemDefinitions = decision.itemGraph.getAllItems().map((item) => ({
+    ...item,
+    availableRulesetIds: [...item.availableRulesetIds],
+    upgradeRecipes: item.upgradeRecipes.map((recipe) => ({
+      ...recipe,
+      consumedItemIds: [...recipe.consumedItemIds],
+    })),
+    sellTransition: item.sellTransition
+      ? {
+          soulsRefund: item.sellTransition.soulsRefund,
+          returnedItemIds: [...item.sellTransition.returnedItemIds],
+        }
+      : undefined,
+  }));
+  const itemIds = new Set(itemDefinitions.map((item) => item.itemId));
+  const lineageEdges: RecommendationItemLineageEdge[] = itemDefinitions
+    .flatMap((item) => decision.itemGraph.getDirectComponentIds(item.itemId)
+      .filter((componentItemId) => itemIds.has(componentItemId))
+      .map((componentItemId) => ({ parentItemId: item.itemId, componentItemId })))
+    .sort((a, b) => a.parentItemId - b.parentItemId || a.componentItemId - b.componentItemId);
+
   return {
     state: {
       decisionId: decision.state.decisionId,
@@ -228,20 +252,8 @@ function serializeDecision(decision: AdaptiveDecisionStateV1): AdaptiveReplayDec
       spendableSouls: { ...decision.state.economy.spendableSouls },
       shopOpportunity: { ...decision.state.economy.shopOpportunity },
     },
-    itemDefinitions: decision.itemGraph.getAllItems().map((item) => ({
-      ...item,
-      availableRulesetIds: [...item.availableRulesetIds],
-      upgradeRecipes: item.upgradeRecipes.map((recipe) => ({
-        ...recipe,
-        consumedItemIds: [...recipe.consumedItemIds],
-      })),
-      sellTransition: item.sellTransition
-        ? {
-            soulsRefund: item.sellTransition.soulsRefund,
-            returnedItemIds: [...item.sellTransition.returnedItemIds],
-          }
-        : undefined,
-    })),
+    itemDefinitions,
+    lineageEdges,
     catalogVersionId: decision.catalogVersionId,
     catalogSha256: decision.catalogSha256,
     rulesetId: decision.rulesetId,
@@ -258,7 +270,7 @@ function serializeDecision(decision: AdaptiveDecisionStateV1): AdaptiveReplayDec
 }
 
 function reconstructDecision(input: AdaptiveReplayDecisionV1): AdaptiveDecisionStateV1 {
-  const itemGraph = createRecommendationItemGraph(input.itemDefinitions);
+  const itemGraph = createRecommendationItemGraph(input.itemDefinitions, input.lineageEdges ?? []);
   const ownedItemIds = [...input.state.ownedItemIds].sort((a, b) => a - b);
   const heldByItemId = buildInventoryInstancesForRecommendation(ownedItemIds, itemGraph);
   const inventory: InventoryState = {
