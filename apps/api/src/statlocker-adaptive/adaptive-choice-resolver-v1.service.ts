@@ -160,8 +160,8 @@ export function reconstructChoiceStateV1(
       groupId: group.groupId,
       selectedItemIds: evidencedItemIds,
       committedItemIds: evidencedItemIds,
-      committed: evidencedItemIds.length > 0,
-      confidence: evidencedItemIds.length > 0 ? 1 : 0,
+      committed: false,
+      confidence: 0,
       externallyDiverged: true,
     });
   }
@@ -219,7 +219,7 @@ function withChoiceCompatibility<T extends Omit<AdaptiveChoiceStateV1, 'selected
   return {
     ...state,
     selectedItemId: state.selectedItemIds[0],
-    committedItemId: state.committedItemIds[0],
+    committedItemId: state.committed ? state.committedItemIds[0] : undefined,
   };
 }
 
