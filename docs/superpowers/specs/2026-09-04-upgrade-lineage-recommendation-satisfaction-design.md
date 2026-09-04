@@ -53,6 +53,7 @@ Candidate generation still uses exact ownership only for direct BUY/REPLACE elig
 - Do not alter real inventory snapshots to include consumed components.
 - Do not claim that Deadlock itself forbids rebuying a lower component unless the authoritative ruleset explicitly says so.
 - Do not add hero-specific or item-specific hacks.
+- Do not mutate historical Dataset V1 schema as part of this serving correctness fix.
 
 ## Core Domain Semantics
 
@@ -111,7 +112,7 @@ From the perspective of `(target, owned)`:
 
 ### 1. RecommendationItemGraph becomes the single lineage source of truth
 
-Extend `RecommendationItemGraph` with transitive APIs. Suggested contract:
+Extend `RecommendationItemGraph` with transitive APIs:
 
 ```ts
 getTransitiveComponentIds(itemId: number): readonly number[];
@@ -129,29 +130,34 @@ Implementation requirements:
 - support multiple recipes and multiple components;
 - shared semantics used by domain and adaptive planner code.
 
-The local `componentClosureV1` logic in adaptive code should become a thin compatibility wrapper or be replaced by the graph API. There must not be multiple independent definitions of transitive component closure.
+The local `componentClosureV1` logic in adaptive code becomes a thin compatibility wrapper around `getTransitiveComponentIds` or is removed. There must not be multiple independent definitions of transitive component closure.
 
-### 2. Separate game feasibility from recommendation eligibility
+### 2. RecommendationCandidate explicitly separates feasibility from eligibility
 
-`RecommendationCandidate.feasible` should continue to mean the deterministic transaction can legally execute under known rules/economy/slots.
+`RecommendationCandidate.feasible` continues to mean the deterministic transaction can legally execute under known rules/economy/slots.
 
-A new recommendation-level suppression concept should prevent strategically redundant lineage actions without falsely claiming the game itself forbids them.
-
-Preferred shape:
+Add required serving fields:
 
 ```ts
 recommendationEligible: boolean;
 recommendationSuppressionReasons: readonly RecommendationSuppressionReason[];
 ```
 
-with at least:
+with:
 
 ```text
 TARGET_SATISFIED_BY_OWNED_UPGRADE
 LINEAGE_DOWNGRADE
 ```
 
-If changing the shared candidate contract creates excessive migration risk, an equivalent planner eligibility filter is acceptable for the first implementation, but the shared domain graph must still expose satisfaction and tests must prove that every serving path applies it. The preferred end state is explicit candidate eligibility because it improves telemetry and prevents downstream consumers from forgetting the invariant.
+Rules:
+
+- `feasible=false` is reserved for deterministic transaction/rules/economy/slot failure.
+- `feasible=true && recommendationEligible=false` means the game transaction may be executable but the recommender must not rank or display it.
+- every serving/planner consumer that currently filters only `candidate.feasible` must filter `candidate.feasible && candidate.recommendationEligible`.
+- generic WAIT remains eligible unless another existing rule suppresses it.
+
+`RecommendationDatasetCandidateV1` remains unchanged in this PR. It continues to represent historical transaction feasibility and does not silently gain a new schema meaning. If ML training later needs recommendation-suppression semantics, that requires an explicit dataset schema/version change rather than mutating V1.
 
 ### 3. Candidate generation rules
 
@@ -159,7 +165,7 @@ For `BUY_ITEM(target)`:
 
 - exact owned behavior stays unchanged;
 - if target is not exactly owned but is satisfied by an owned descendant, transaction feasibility is evaluated normally;
-- recommendation eligibility becomes false with `TARGET_SATISFIED_BY_OWNED_UPGRADE`.
+- `recommendationEligible=false` with `TARGET_SATISFIED_BY_OWNED_UPGRADE`.
 
 For `WAIT_SAVE(target)`:
 
@@ -168,8 +174,8 @@ For `WAIT_SAVE(target)`:
 
 For `REPLACE_ITEM(sold -> bought)`:
 
-- if `bought` is an ancestor component of `sold`, suppress as `LINEAGE_DOWNGRADE`;
-- if another retained owned item already satisfies `bought`, suppress as `TARGET_SATISFIED_BY_OWNED_UPGRADE`;
+- if `bought` is an ancestor component of `sold`, set `recommendationEligible=false` with `LINEAGE_DOWNGRADE`;
+- if another retained owned item already satisfies `bought`, set `recommendationEligible=false` with `TARGET_SATISFIED_BY_OWNED_UPGRADE`;
 - future explicit respec/downgrade behavior, if ever needed, requires a separately named policy path and cannot silently use normal replacement.
 
 For `UPGRADE_ITEM(target)`:
@@ -192,7 +198,7 @@ Specifically:
 - target/support closure construction;
 - previous-plan validity checks.
 
-The item graph must always be supplied when completion semantics depend on lineage. Optional graph parameters that silently degrade to exact ownership should be removed where practical or must not be used in serving code.
+The item graph is mandatory whenever completion semantics depend on lineage. Serving code must not call a completion helper that silently falls back to exact ownership.
 
 ### 5. Active and future target construction
 
@@ -218,17 +224,17 @@ The current structured planner already projects legal actions into `AdaptivePlan
 For every node, no generated recommendation target may already be satisfied by node.decisionState.inventory.
 ```
 
-Candidate generation and semantic-target filtering must both enforce the invariant so a later refactor cannot reintroduce the bug through a different path.
+Candidate generation and semantic-target filtering both enforce the invariant so a later refactor cannot reintroduce the bug through a different path.
 
 ### 7. Final build presentation
 
 `recommendedBuild` must not present a consumed ancestor as `NEXT` or `PLANNED` after an owned/projected descendant has satisfied it.
 
-Preferred presentation behavior:
+Presentation behavior:
 
 - exact current items stay `OWNED`;
 - consumed ancestors are omitted from actionable build rows;
-- if internal diagnostics need them, represent them as completed/satisfied metadata outside the actionable user build path, not as purchasable steps.
+- internal diagnostics may report them as satisfied milestones, but not as purchasable steps.
 
 `nextAction.targetItemId` and the first actionable build item must remain aligned.
 
@@ -269,15 +275,14 @@ Policy output
 
 ## Telemetry
 
-Add counters/reason codes where the current observability layer supports them:
+Expose suppression reasons through existing adaptive diagnostics when practical:
 
 ```text
 TARGET_SATISFIED_BY_OWNED_UPGRADE
 LINEAGE_DOWNGRADE
-TARGET_SATISFIED_BY_PROJECTED_UPGRADE
 ```
 
-Recommended aggregate metrics:
+Replay/test reports must compute these correctness invariants directly from output, even if production counters are added later:
 
 ```text
 redundantAncestorRecommendationRate
@@ -286,11 +291,11 @@ satisfiedTargetAsNextRate
 satisfiedTargetAsWaitRate
 ```
 
-All release-gate values above must be zero.
+Release-gate values are zero.
 
 ## Testing Strategy
 
-Implementation must follow TDD with failing regressions before production code changes.
+Implementation follows TDD with failing regressions before production code changes.
 
 ### Domain item-graph tests
 
@@ -303,8 +308,8 @@ Implementation must follow TDD with failing regressions before production code c
 
 ### Candidate generator tests
 
-1. inventory `[A]` -> upgrade `B` remains eligible;
-2. inventory `[B]` -> `BUY A` is not recommendation-eligible;
+1. inventory `[A]` -> upgrade `B` remains recommendation-eligible;
+2. inventory `[B]` -> `BUY A` is feasible if the rules allow it but is not recommendation-eligible;
 3. inventory `[B]` -> no `WAIT_SAVE:A`;
 4. inventory `[B]` -> `REPLACE B -> A` is suppressed as lineage downgrade;
 5. inventory `[C]` for `A -> B -> C` -> both `A` and `B` are satisfied;
@@ -336,7 +341,7 @@ High-Velocity Rounds != selected BUY
 High-Velocity Rounds != targeted WAIT
 ```
 
-The fixture should use stable item IDs from the current catalog rather than item-name matching in production logic.
+The fixture uses stable item IDs from the current catalog rather than item-name matching in production logic.
 
 ### Integration/replay gates
 
