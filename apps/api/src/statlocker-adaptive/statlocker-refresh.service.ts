@@ -254,6 +254,17 @@ export class StatlockerRefreshService {
       )
       .sort((a, b) => b.fetchedAt.getTime() - a.fetchedAt.getTime())[0];
 
+    const latestConsensusSnapshot = rows
+      .filter((row) =>
+        row.dataset === 'CONSENSUS_SKELETON' &&
+        row.scopeKey === `hero:${heroId}:consensus` &&
+        (!currentPatchId || row.statlockerPatchId === currentPatchId),
+      )
+      .sort((a, b) => b.fetchedAt.getTime() - a.fetchedAt.getTime())[0];
+
+    if (!latestConsensusSnapshot) return true;
+    if (latestHeroSnapshot && latestConsensusSnapshot.fetchedAt < latestHeroSnapshot.fetchedAt) return true;
+
     return !latestHeroSnapshot || nowMs - latestHeroSnapshot.fetchedAt.getTime() >= HERO_REFRESH_TTL_MS;
   }
 
