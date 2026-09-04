@@ -38,8 +38,10 @@ jobs:
       - name: Build shared package
         run: yarn workspace @deadlock-live-probe/shared build
 
-      - name: Build API
-        run: yarn workspace @deadlock-live-probe/api build
+      - name: Build all workspaces
+        env:
+          OVERWOLF_PUBLIC_TARGET: ${{ runner.temp }}/overwolf-client/public
+        run: yarn build
 
   build-overwolf:
     name: Build Overwolf client
@@ -135,6 +137,9 @@ jobs:
             exit "$status"
           fi
           tail -n 20 "$RUNNER_TEMP/api-tests.log"
+
+      - name: Run structured replay release gate
+        run: yarn workspace @deadlock-live-probe/api test adaptive-replay-structured-v1.spec.ts
 
       - name: Upload failed API test log
         if: failure()
