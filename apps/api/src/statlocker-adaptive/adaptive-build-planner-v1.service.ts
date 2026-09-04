@@ -16,6 +16,7 @@ import {
 import {
   AdaptiveChoiceReplacementOptionV1,
   AdaptiveChoiceResolverV1Service,
+  choiceBranchCommitmentEvidenceItemIdsV1,
   componentClosureV1,
   reconstructChoiceStateV1,
 } from './adaptive-choice-resolver-v1.service';
@@ -81,6 +82,7 @@ interface SemanticPlanV1 {
   committedChoices: ReadonlyMap<string, number>;
   selectedChoiceItemIdsByGroup: ReadonlyMap<string, readonly number[]>;
   committedChoiceItemIdsByGroup: ReadonlyMap<string, readonly number[]>;
+  committedChoiceEvidenceItemIds: ReadonlySet<number>;
   choiceReplacementOptions: readonly AdaptiveChoiceReplacementOptionV1[];
   completedGroupIds: ReadonlySet<string>;
   externallyDivergedGroupIds: ReadonlySet<string>;
@@ -268,6 +270,7 @@ export class AdaptiveBuildPlannerV1Service {
     const committedChoices = new Map<string, number>();
     const selectedChoiceItemIdsByGroup = new Map<string, readonly number[]>();
     const committedChoiceItemIdsByGroup = new Map<string, readonly number[]>();
+    const committedChoiceEvidenceItemIds = new Set<number>();
     const replacementOptionsByGroup = new Map<string, readonly AdaptiveChoiceReplacementOptionV1[]>();
     const externallyDivergedGroupIds = new Set<string>();
     for (const group of skeleton.groups.filter((entry) => entry.type === 'CHOICE')) {
@@ -283,6 +286,16 @@ export class AdaptiveBuildPlannerV1Service {
       }
       if (resolved.committedItemIds.length > 0) {
         committedChoiceItemIdsByGroup.set(group.groupId, resolved.committedItemIds);
+        for (const committedItemId of resolved.committedItemIds) {
+          for (const evidenceItemId of choiceBranchCommitmentEvidenceItemIdsV1(
+            group,
+            committedItemId,
+            [...owned],
+            input.decision.itemGraph,
+          )) {
+            committedChoiceEvidenceItemIds.add(evidenceItemId);
+          }
+        }
       }
       if (resolved.replacementOptions.length > 0) {
         replacementOptionsByGroup.set(group.groupId, resolved.replacementOptions);
@@ -404,6 +417,7 @@ export class AdaptiveBuildPlannerV1Service {
       committedChoices,
       selectedChoiceItemIdsByGroup,
       committedChoiceItemIdsByGroup,
+      committedChoiceEvidenceItemIds,
       choiceReplacementOptions: enabledReplacementOptions.sort(compareReplacementOptions),
       completedGroupIds,
       externallyDivergedGroupIds,
@@ -545,6 +559,10 @@ export class AdaptiveBuildPlannerV1Service {
       .filter((candidate) => !isProtectedSell(candidate, recentPurchased))
       .filter((candidate) =>
         !sellsSelectedFinal(candidate, semantic.selectedFinalItemIds) ||
+        startsChoiceReplacement(candidate, semantic.choiceReplacementOptions, node),
+      )
+      .filter((candidate) =>
+        !sellsProtectedChoiceEvidence(candidate, semantic.committedChoiceEvidenceItemIds) ||
         startsChoiceReplacement(candidate, semantic.choiceReplacementOptions, node),
       );
 
@@ -972,6 +990,15 @@ function isProtectedSell(candidate: RecommendationCandidate, recentPurchased: Re
 function sellsSelectedFinal(candidate: RecommendationCandidate, selectedFinals: ReadonlySet<number>): boolean {
   if (candidate.action.type === 'SELL_ITEM') return selectedFinals.has(candidate.action.itemId);
   if (candidate.action.type === 'REPLACE_ITEM') return selectedFinals.has(candidate.action.sellItemId);
+  return false;
+}
+
+function sellsProtectedChoiceEvidence(
+  candidate: RecommendationCandidate,
+  protectedItemIds: ReadonlySet<number>,
+): boolean {
+  if (candidate.action.type === 'SELL_ITEM') return protectedItemIds.has(candidate.action.itemId);
+  if (candidate.action.type === 'REPLACE_ITEM') return protectedItemIds.has(candidate.action.sellItemId);
   return false;
 }
 
