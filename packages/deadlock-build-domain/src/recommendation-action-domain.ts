@@ -75,6 +75,10 @@ export type RecommendationFeasibilityReason =
   | 'SELL_TRANSITION_UNKNOWN'
   | 'SELL_RETURN_ITEM_UNKNOWN';
 
+export type RecommendationSuppressionReason =
+  | 'TARGET_SATISFIED_BY_OWNED_UPGRADE'
+  | 'LINEAGE_DOWNGRADE';
+
 export interface RecommendationCandidateEvidence {
   spendableSouls: FactEvidence;
   shopOpportunity: FactEvidence;
@@ -88,6 +92,8 @@ export interface RecommendationCandidate {
   action: RecommendationAction;
   feasible: boolean;
   reasons: readonly RecommendationFeasibilityReason[];
+  recommendationEligible: boolean;
+  recommendationSuppressionReasons: readonly RecommendationSuppressionReason[];
   effectiveCostSouls: number;
   spendableSoulsAfter?: number;
   resultingItemIds: readonly number[];
