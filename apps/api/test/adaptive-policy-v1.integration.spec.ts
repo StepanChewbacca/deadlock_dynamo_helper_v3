@@ -518,6 +518,7 @@ describe('Statlocker adaptive policy v1 integration', () => {
       'StatlockerEvidenceService',
       'AdaptiveBuildPlannerV1Service',
       'AdaptiveReplayV1Service',
+      'AdaptiveRecommendationObservabilityV1Service',
     ]);
     expect(names.join('|')).not.toMatch(
       /BrowserCollector|RecommendationBehavioral|RecommendationValue|RecommendationPolicy|RecommendationRealtimeCoordinatorV8|RecommendationEngineV8|RecommendationRealtimeStateV8/,
