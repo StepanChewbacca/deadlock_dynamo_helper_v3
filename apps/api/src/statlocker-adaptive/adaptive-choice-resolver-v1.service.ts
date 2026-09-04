@@ -144,12 +144,7 @@ export function reconstructChoiceStateV1(
 ): AdaptiveChoiceStateV1 {
   const owned = new Set(ownedItemIds);
   const alternativeIds = group.candidates.map((candidate) => candidate.itemId).sort((a, b) => a - b);
-  const previousCommittedItemIds = normalizeChoiceIds(
-    Array.isArray(previousCommittedItemIdsOrId)
-      ? previousCommittedItemIdsOrId
-      : optionalSingleton(previousCommittedItemIdsOrId),
-    group,
-  );
+  const previousCommittedItemIds = normalizeLegacyChoiceIds(previousCommittedItemIdsOrId, group);
   const ownedTargets = alternativeIds.filter((itemId) => owned.has(itemId));
 
   const closures = new Map<number, ReadonlySet<number>>();
@@ -308,6 +303,15 @@ function normalizeChoiceIds(
 ): number[] {
   const allowed = new Set(group.candidates.map((candidate) => candidate.itemId));
   return uniqueNumbers(itemIds.filter((itemId) => allowed.has(itemId))).sort((a, b) => a - b);
+}
+
+function normalizeLegacyChoiceIds(
+  itemIdsOrId: readonly number[] | number | undefined,
+  group: ConsensusBuildGroupV1,
+): number[] {
+  if (typeof itemIdsOrId === 'number') return normalizeChoiceIds([itemIdsOrId], group);
+  if (itemIdsOrId === undefined) return [];
+  return normalizeChoiceIds(itemIdsOrId, group);
 }
 
 function optionalSingleton(value: number | undefined): number[] {

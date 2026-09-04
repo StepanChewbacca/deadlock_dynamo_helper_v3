@@ -18,7 +18,6 @@ import {
   AdaptiveChoiceResolverV1Service,
   choiceBranchCommitmentEvidenceItemIdsV1,
   componentClosureV1,
-  reconstructChoiceStateV1,
 } from './adaptive-choice-resolver-v1.service';
 import { AdaptiveDecisionStateV1 } from './adaptive-decision-state-v1.service';
 import {
@@ -32,6 +31,7 @@ import {
   ProjectPlannerCandidateResultV1,
   createAdaptivePlannerNodeV1,
   projectPlannerCandidateV1,
+  refreshPlannerChoiceStateV1,
 } from './adaptive-planner-transition-v1';
 import { ADAPTIVE_POLICY_V1_CONFIG } from './statlocker-adaptive.config';
 import { StatlockerEvidenceBundleV1 } from './statlocker-evidence.service';
@@ -78,8 +78,6 @@ interface SemanticPlanV1 {
   futurePlannedFinalItemIds: ReadonlySet<number>;
   targetItemIds: ReadonlySet<number>;
   supportOwnersByItemId: ReadonlyMap<number, readonly number[]>;
-  selectedChoices: ReadonlyMap<string, number>;
-  committedChoices: ReadonlyMap<string, number>;
   selectedChoiceItemIdsByGroup: ReadonlyMap<string, readonly number[]>;
   committedChoiceItemIdsByGroup: ReadonlyMap<string, readonly number[]>;
   committedChoiceEvidenceItemIds: ReadonlySet<number>;
@@ -177,8 +175,8 @@ export class AdaptiveBuildPlannerV1Service {
       decisionState: input.decision.state,
       slots: input.decision.slots,
       investment: input.decision.investment,
-      selectedChoices: semantic.selectedChoices,
-      committedChoices: semantic.committedChoices,
+      selectedChoiceItemIdsByGroup: semantic.selectedChoiceItemIdsByGroup,
+      committedChoiceItemIdsByGroup: semantic.committedChoiceItemIdsByGroup,
       completedGroupIds: semantic.completedGroupIds,
     });
     const recentPurchased = new Set(input.recentPurchasedItemIds ?? []);
@@ -266,8 +264,6 @@ export class AdaptiveBuildPlannerV1Service {
       if (groupCompletedV1(group, owned)) completedGroupIds.add(group.groupId);
     }
 
-    const selectedChoices = new Map<string, number>();
-    const committedChoices = new Map<string, number>();
     const selectedChoiceItemIdsByGroup = new Map<string, readonly number[]>();
     const committedChoiceItemIdsByGroup = new Map<string, readonly number[]>();
     const committedChoiceEvidenceItemIds = new Set<number>();
@@ -300,8 +296,6 @@ export class AdaptiveBuildPlannerV1Service {
       if (resolved.replacementOptions.length > 0) {
         replacementOptionsByGroup.set(group.groupId, resolved.replacementOptions);
       }
-      if (resolved.selectedItemId !== undefined) selectedChoices.set(group.groupId, resolved.selectedItemId);
-      if (resolved.committedItemId !== undefined) committedChoices.set(group.groupId, resolved.committedItemId);
       if (resolved.externallyDiverged) externallyDivergedGroupIds.add(group.groupId);
     }
 
@@ -413,8 +407,6 @@ export class AdaptiveBuildPlannerV1Service {
       supportOwnersByItemId: new Map(
         [...supportOwners.entries()].map(([itemId, owners]) => [itemId, [...owners].sort((a, b) => a - b)]),
       ),
-      selectedChoices,
-      committedChoices,
       selectedChoiceItemIdsByGroup,
       committedChoiceItemIdsByGroup,
       committedChoiceEvidenceItemIds,
@@ -695,22 +687,7 @@ export class AdaptiveBuildPlannerV1Service {
     skeleton: ConsensusSkeletonV1,
     input: AdaptiveBuildPlannerInputV1,
   ): AdaptivePlannerNodeV1 {
-    const ownedItemIds = [...node.decisionState.inventory.heldByItemId.keys()].sort((a, b) => a - b);
-    const committedChoices = new Map(node.committedChoices);
-    for (const group of skeleton.groups.filter((entry) => entry.type === 'CHOICE')) {
-      const reconstructed = reconstructChoiceStateV1(
-        group,
-        ownedItemIds,
-        input.decision.itemGraph,
-        committedChoices.get(group.groupId),
-      );
-      if (reconstructed.committedItemId !== undefined) {
-        committedChoices.set(group.groupId, reconstructed.committedItemId);
-      } else if (!reconstructed.externallyDiverged) {
-        committedChoices.delete(group.groupId);
-      }
-    }
-    return { ...node, committedChoices };
+    return refreshPlannerChoiceStateV1(node, skeleton, input.decision.itemGraph);
   }
 
   private buildRecommendedBuild(
@@ -1026,13 +1003,20 @@ function dedupePlannerNodes(nodes: readonly AdaptivePlannerNodeV1[]): AdaptivePl
   return [...byKey.values()];
 }
 
-function plannerNodeKey(node: AdaptivePlannerNodeV1): string {
+export function plannerNodeKey(node: AdaptivePlannerNodeV1): string {
   const inventory = [...node.decisionState.inventory.heldByItemId.keys()].sort((a, b) => a - b).join(',');
   const wallet = node.decisionState.economy.spendableSouls.value ?? 'UNKNOWN';
-  const selected = [...node.selectedChoices.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `${key}:${value}`).join(',');
-  const committed = [...node.committedChoices.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `${key}:${value}`).join(',');
+  const selected = serializeChoiceItemIdsByGroup(node.selectedChoiceItemIdsByGroup);
+  const committed = serializeChoiceItemIdsByGroup(node.committedChoiceItemIdsByGroup);
   const completed = [...node.completedGroupIds].sort().join(',');
   return `${inventory}|${wallet}|${selected}|${committed}|${completed}`;
+}
+
+function serializeChoiceItemIdsByGroup(values: ReadonlyMap<string, readonly number[]>): string {
+  return [...values.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([groupId, itemIds]) => `${groupId}:${[...new Set(itemIds)].sort((a, b) => a - b).join('.')}`)
+    .join(',');
 }
 
 function comparePlannerNodes(a: AdaptivePlannerNodeV1, b: AdaptivePlannerNodeV1): number {

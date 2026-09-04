@@ -1,8 +1,15 @@
 import {
+  DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
   createRecommendationItemGraph,
+  generateRecommendationCandidates,
   observedFact,
 } from '@deadlock-live-probe/build-domain';
 import { AdaptiveBuildPlannerV1Service } from '../src/statlocker-adaptive/adaptive-build-planner-v1.service';
+import { plannerNodeKey } from '../src/statlocker-adaptive/adaptive-build-planner-v1.service';
+import {
+  createAdaptivePlannerNodeV1,
+  projectPlannerCandidateV1,
+} from '../src/statlocker-adaptive/adaptive-planner-transition-v1';
 import {
   RecommendationEconomyRulesV1,
   deriveAdaptiveInvestmentStateV1,
@@ -155,7 +162,101 @@ function decision() {
   } as any;
 }
 
+function buyCandidate(state: any, itemId: number) {
+  const candidate = generateRecommendationCandidates({
+    state,
+    itemGraph: graph(),
+    rules: {
+      ...DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
+      baseSlots: economyRules.baseSlots,
+      maxFlexSlots: economyRules.maxFlexSlots,
+      unlockedFlexSlots: 3,
+      flexCapacityEvidence: 'OBSERVED',
+    },
+  }).find((entry) => entry.actionId === `BUY_ITEM:${itemId}`);
+  if (!candidate) throw new Error(`BUY_ITEM:${itemId} was not generated`);
+  return candidate;
+}
+
 describe('AdaptiveBuildPlannerV1Service explicit K-of-N choice', () => {
+  it('stores normalized K-of-N selections as authoritative node state and derives scalar compatibility projections', () => {
+    const node = createAdaptivePlannerNodeV1({
+      decisionState: {} as any,
+      slots: {} as any,
+      investment: {} as any,
+      selectedChoiceItemIdsByGroup: new Map([['pick-two', [30, 20, 20]]]),
+      committedChoiceItemIdsByGroup: new Map([['pick-two', [30, 20, 20]]]),
+    } as any);
+
+    expect(node.selectedChoiceItemIdsByGroup.get('pick-two')).toEqual([20, 30]);
+    expect(node.committedChoiceItemIdsByGroup.get('pick-two')).toEqual([20, 30]);
+    expect([...node.selectedChoices.entries()]).toEqual([['pick-two', 20]]);
+    expect([...node.committedChoices.entries()]).toEqual([['pick-two', 20]]);
+  });
+
+  it('serializes semantically identical K-of-N state deterministically', () => {
+    const first = createAdaptivePlannerNodeV1({
+      decisionState: {
+        inventory: { heldByItemId: new Map([[20, {}], [10, {}]]) },
+        economy: { spendableSouls: { value: 5000 } },
+      } as any,
+      slots: {} as any,
+      investment: {} as any,
+      selectedChoiceItemIdsByGroup: new Map([['pick-two', [30, 20]]]),
+      committedChoiceItemIdsByGroup: new Map([['pick-two', [30, 20]]]),
+    } as any);
+    const second = createAdaptivePlannerNodeV1({
+      decisionState: {
+        inventory: { heldByItemId: new Map([[10, {}], [20, {}]]) },
+        economy: { spendableSouls: { value: 5000 } },
+      } as any,
+      slots: {} as any,
+      investment: {} as any,
+      selectedChoiceItemIdsByGroup: new Map([['pick-two', [20, 30, 20]]]),
+      committedChoiceItemIdsByGroup: new Map([['pick-two', [20, 30, 20]]]),
+    } as any);
+
+    expect(plannerNodeKey(first)).toBe(plannerNodeKey(second));
+  });
+
+  it('commits each purchased K-of-N branch without replacing a selected sibling or adding a third branch', () => {
+    const initialDecision = decision();
+    const initial = createAdaptivePlannerNodeV1({
+      decisionState: initialDecision.state,
+      slots: initialDecision.slots,
+      investment: initialDecision.investment,
+      selectedChoiceItemIdsByGroup: new Map([['pick-two', [2, 3]]]),
+    });
+    const skeleton = { groups: [choiceGroup()] } as any;
+    const first = projectPlannerCandidateV1({
+      node: initial,
+      candidate: buyCandidate(initial.decisionState, 3),
+      graph: initialDecision.itemGraph,
+      economyRules,
+      skeleton,
+    }).node;
+    const second = projectPlannerCandidateV1({
+      node: first,
+      candidate: buyCandidate(first.decisionState, 2),
+      graph: initialDecision.itemGraph,
+      economyRules,
+      skeleton,
+    }).node;
+    const third = projectPlannerCandidateV1({
+      node: second,
+      candidate: buyCandidate(second.decisionState, 1),
+      graph: initialDecision.itemGraph,
+      economyRules,
+      skeleton,
+    }).node;
+
+    expect(first.selectedChoiceItemIdsByGroup.get('pick-two')).toEqual([2, 3]);
+    expect(first.committedChoiceItemIdsByGroup.get('pick-two')).toEqual([3]);
+    expect(second.committedChoiceItemIdsByGroup.get('pick-two')).toEqual([2, 3]);
+    expect(third.selectedChoiceItemIdsByGroup.get('pick-two')).toEqual([2, 3]);
+    expect(third.committedChoiceItemIdsByGroup.get('pick-two')).toEqual([2, 3]);
+  });
+
   it('selects exactly two best candidates from a pick-two group', () => {
     const planner = new AdaptiveBuildPlannerV1Service(new AdaptiveEvidenceScorerV1Service());
     const result = planner.plan({ decision: decision(), evidence: evidence() });

@@ -16,13 +16,18 @@ import {
   AdaptiveSlotDeltaV1,
 } from './adaptive-evidence-scorer-v1.service';
 import { groupCompletedV1 } from './adaptive-phase-eligibility-v1.service';
-import { ConsensusSkeletonV1 } from './statlocker-adaptive.types';
+import { reconstructChoiceStateV1 } from './adaptive-choice-resolver-v1.service';
+import { ConsensusBuildGroupV1, ConsensusSkeletonV1 } from './statlocker-adaptive.types';
 
 export interface AdaptivePlannerNodeV1 {
   decisionState: RecommendationDecisionState;
   slots: AdaptiveSlotStateV1;
   investment: AdaptiveInvestmentStateV1;
+  selectedChoiceItemIdsByGroup: ReadonlyMap<string, readonly number[]>;
+  committedChoiceItemIdsByGroup: ReadonlyMap<string, readonly number[]>;
+  /** @deprecated Compatibility projection of selectedChoiceItemIdsByGroup. */
   selectedChoices: ReadonlyMap<string, number>;
+  /** @deprecated Compatibility projection of committedChoiceItemIdsByGroup. */
   committedChoices: ReadonlyMap<string, number>;
   completedGroupIds: ReadonlySet<string>;
   actions: readonly RecommendationCandidate[];
@@ -48,16 +53,24 @@ export function createAdaptivePlannerNodeV1(input: {
   decisionState: RecommendationDecisionState;
   slots: AdaptiveSlotStateV1;
   investment: AdaptiveInvestmentStateV1;
-  selectedChoices?: ReadonlyMap<string, number>;
-  committedChoices?: ReadonlyMap<string, number>;
+  selectedChoiceItemIdsByGroup?: ReadonlyMap<string, readonly number[]>;
+  committedChoiceItemIdsByGroup?: ReadonlyMap<string, readonly number[]>;
   completedGroupIds?: ReadonlySet<string>;
 }): AdaptivePlannerNodeV1 {
+  const selectedChoiceItemIdsByGroup = normalizeChoiceItemIdsByGroup(
+    input.selectedChoiceItemIdsByGroup ?? new Map(),
+  );
+  const committedChoiceItemIdsByGroup = normalizeChoiceItemIdsByGroup(
+    input.committedChoiceItemIdsByGroup ?? new Map(),
+  );
   return {
     decisionState: input.decisionState,
     slots: input.slots,
     investment: input.investment,
-    selectedChoices: new Map(input.selectedChoices ?? []),
-    committedChoices: new Map(input.committedChoices ?? []),
+    selectedChoiceItemIdsByGroup,
+    committedChoiceItemIdsByGroup,
+    selectedChoices: choiceCompatibilityProjection(selectedChoiceItemIdsByGroup),
+    committedChoices: choiceCompatibilityProjection(committedChoiceItemIdsByGroup),
     completedGroupIds: new Set(input.completedGroupIds ?? []),
     actions: [],
     utility: 0,
@@ -96,18 +109,108 @@ export function projectPlannerCandidateV1(
     }
   }
 
+  const projectedNode = {
+    ...input.node,
+    decisionState: projectedDecision,
+    slots,
+    investment,
+    completedGroupIds,
+    actions: [...input.node.actions, input.candidate],
+  };
+  const node = input.skeleton
+    ? refreshPlannerChoiceStateV1(projectedNode, input.skeleton, input.graph)
+    : projectedNode;
+
   return {
-    node: {
-      ...input.node,
-      decisionState: projectedDecision,
-      slots,
-      investment,
-      completedGroupIds,
-      actions: [...input.node.actions, input.candidate],
-    },
+    node,
     investmentDelta: derivePlannerInvestmentDeltaV1(input.node.investment, investment),
     slotDelta: derivePlannerSlotDeltaV1(input.node, slots, projectedDecision),
   };
+}
+
+export function refreshPlannerChoiceStateV1(
+  node: AdaptivePlannerNodeV1,
+  skeleton: ConsensusSkeletonV1,
+  graph: RecommendationItemGraph,
+): AdaptivePlannerNodeV1 {
+  const ownedItemIds = [...node.decisionState.inventory.heldByItemId.keys()].sort((a, b) => a - b);
+  const selectedChoiceItemIdsByGroup = new Map(node.selectedChoiceItemIdsByGroup);
+  const committedChoiceItemIdsByGroup = new Map(node.committedChoiceItemIdsByGroup);
+
+  for (const group of skeleton.groups.filter((entry) => entry.type === 'CHOICE')) {
+    const previousSelected = selectedChoiceItemIdsByGroup.get(group.groupId) ?? [];
+    const previousCommitted = committedChoiceItemIdsByGroup.get(group.groupId) ?? [];
+    const reconstructed = reconstructChoiceStateV1(group, ownedItemIds, graph, previousCommitted);
+    const committed = normalizeChoiceItemIds(reconstructed.committedItemIds);
+    const selected = reconstructed.externallyDiverged
+      ? normalizeChoiceItemIds(reconstructed.selectedItemIds)
+      : reconcileSelectedChoiceItemIds(group, previousSelected, previousCommitted, committed);
+
+    setChoiceItemIds(selectedChoiceItemIdsByGroup, group.groupId, selected);
+    setChoiceItemIds(committedChoiceItemIdsByGroup, group.groupId, committed);
+  }
+
+  const normalizedSelected = normalizeChoiceItemIdsByGroup(selectedChoiceItemIdsByGroup);
+  const normalizedCommitted = normalizeChoiceItemIdsByGroup(committedChoiceItemIdsByGroup);
+  return {
+    ...node,
+    selectedChoiceItemIdsByGroup: normalizedSelected,
+    committedChoiceItemIdsByGroup: normalizedCommitted,
+    selectedChoices: choiceCompatibilityProjection(normalizedSelected),
+    committedChoices: choiceCompatibilityProjection(normalizedCommitted),
+  };
+}
+
+function reconcileSelectedChoiceItemIds(
+  group: ConsensusBuildGroupV1,
+  previousSelectedItemIds: readonly number[],
+  previousCommittedItemIds: readonly number[],
+  committedItemIds: readonly number[],
+): number[] {
+  const previousCommitted = new Set(previousCommittedItemIds);
+  const committed = normalizeChoiceItemIds(committedItemIds);
+  const retained = normalizeChoiceItemIds(previousSelectedItemIds).filter((itemId) =>
+    !previousCommitted.has(itemId) || committed.includes(itemId),
+  );
+  const selected = [...committed];
+  for (const itemId of retained) {
+    if (!selected.includes(itemId) && selected.length < group.maxSelect) selected.push(itemId);
+  }
+  return normalizeChoiceItemIds(selected);
+}
+
+function normalizeChoiceItemIdsByGroup(
+  values: ReadonlyMap<string, readonly number[]>,
+): ReadonlyMap<string, readonly number[]> {
+  return new Map(
+    [...values.entries()]
+      .map(([groupId, itemIds]) => [groupId, normalizeChoiceItemIds(itemIds)] as const)
+      .filter(([, itemIds]) => itemIds.length > 0)
+      .sort(([a], [b]) => a.localeCompare(b)),
+  );
+}
+
+function normalizeChoiceItemIds(itemIds: readonly number[]): number[] {
+  return [...new Set(itemIds.filter(Number.isFinite))].sort((a, b) => a - b);
+}
+
+function choiceCompatibilityProjection(
+  values: ReadonlyMap<string, readonly number[]>,
+): ReadonlyMap<string, number> {
+  return new Map(
+    [...values.entries()]
+      .filter(([, itemIds]) => itemIds.length > 0)
+      .map(([groupId, itemIds]) => [groupId, itemIds[0]] as const),
+  );
+}
+
+function setChoiceItemIds(
+  values: Map<string, readonly number[]>,
+  groupId: string,
+  itemIds: readonly number[],
+): void {
+  if (itemIds.length === 0) values.delete(groupId);
+  else values.set(groupId, itemIds);
 }
 
 export function derivePlannerInvestmentDeltaV1(
