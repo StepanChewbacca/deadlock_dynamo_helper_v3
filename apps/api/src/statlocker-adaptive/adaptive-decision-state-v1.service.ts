@@ -3,7 +3,6 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
-  DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
   InventoryState,
   RecommendationDecisionState,
   RecommendationItemGraph,
@@ -21,6 +20,7 @@ import { RecommendationItemCatalogItemV1 } from '../deadlock-live/entities/recom
 import { RecommendationItemCatalogRecipeV1 } from '../deadlock-live/entities/recommendation-item-catalog-recipe-v1.entity';
 import { resolveRecommendationCatalogAssetSemantics } from '../deadlock-live/recommendation-catalog-asset-semantics';
 import {
+  ADAPTIVE_UNIVERSAL_SLOT_RULES_V1,
   AdaptiveInvestmentStateV1,
   AdaptiveSlotStateV1,
   RecommendationEconomyRulesV1,
@@ -42,6 +42,7 @@ export interface AdaptiveDecisionStateV1 {
   slots: AdaptiveSlotStateV1;
   investment: AdaptiveInvestmentStateV1;
   economyRules?: RecommendationEconomyRulesV1;
+  economyRulesEvidence: 'RECONSTRUCTED' | 'UNKNOWN';
   stateRevision: string;
 }
 
@@ -136,11 +137,12 @@ export class AdaptiveDecisionStateV1Service {
     };
 
     const exactEconomyRules = resolveRecommendationEconomyRulesV1(compiled.rulesetId, version.payloadSha256);
-    const slotRules = exactEconomyRules ?? {
-      baseSlots: DEFAULT_RECOMMENDATION_CANDIDATE_RULES.baseSlots ?? 9,
-      maxFlexSlots: DEFAULT_RECOMMENDATION_CANDIDATE_RULES.maxFlexSlots,
-    };
-    const slots = deriveAdaptiveSlotStateV1(ownedItemIds, compiled.graph, slotRules, { evidence: 'UNKNOWN' });
+    const slots = deriveAdaptiveSlotStateV1(
+      ownedItemIds,
+      compiled.graph,
+      ADAPTIVE_UNIVERSAL_SLOT_RULES_V1,
+      { evidence: 'UNKNOWN' },
+    );
     const investment = deriveAdaptiveInvestmentStateV1(ownedItemIds, compiled.graph, exactEconomyRules);
 
     const canVerifySpendable = await this.soulsEvidence.canVerifyScope(
@@ -186,6 +188,7 @@ export class AdaptiveDecisionStateV1Service {
       slots,
       investment,
       economyRules: exactEconomyRules,
+      economyRulesEvidence: exactEconomyRules ? 'RECONSTRUCTED' : 'UNKNOWN',
       stateRevision,
     };
   }

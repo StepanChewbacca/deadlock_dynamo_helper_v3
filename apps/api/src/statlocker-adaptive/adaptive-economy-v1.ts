@@ -82,6 +82,11 @@ export interface AdaptiveSlotRulesV1 {
   maxFlexSlots: number;
 }
 
+export const ADAPTIVE_UNIVERSAL_SLOT_RULES_V1: AdaptiveSlotRulesV1 = {
+  baseSlots: 9,
+  maxFlexSlots: 3,
+};
+
 const VERIFIED_RECOMMENDATION_ECONOMY_RULES_V1: readonly RecommendationEconomyRulesV1[] = [];
 
 export function resolveRecommendationEconomyRulesV1(
@@ -102,7 +107,7 @@ export function deriveAdaptiveSlotStateV1(
   const maxFlexSlots = Math.max(0, Math.floor(slotRules.maxFlexSlots));
   const usedSlots = new Set(itemIds).size;
   const usedFlexSlots = Math.max(0, usedSlots - baseSlots);
-  const unlocked = capacity.unlockedFlexSlots === undefined
+  const unlocked = capacity.evidence === 'UNKNOWN' || capacity.unlockedFlexSlots === undefined
     ? undefined
     : Math.min(maxFlexSlots, Math.max(0, Math.floor(capacity.unlockedFlexSlots)));
 

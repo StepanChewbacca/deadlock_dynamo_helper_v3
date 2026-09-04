@@ -264,8 +264,7 @@ function slotFailureReason(
   if (resultingUsed > rules.maxFlexSlots) return 'SLOT_LIMIT_EXCEEDED';
 
   if (rules.flexCapacityEvidence === 'UNKNOWN') {
-    const provenCapacity = Math.max(currentUsed, rules.unlockedFlexSlots ?? 0);
-    return resultingUsed > provenCapacity ? 'FLEX_SLOT_CAPACITY_UNKNOWN' : undefined;
+    return resultingUsed > currentUsed ? 'FLEX_SLOT_CAPACITY_UNKNOWN' : undefined;
   }
 
   const unlocked = Math.min(rules.maxFlexSlots, Math.max(0, rules.unlockedFlexSlots ?? 0));

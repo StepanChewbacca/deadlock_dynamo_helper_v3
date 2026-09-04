@@ -153,6 +153,21 @@ describe('recommendation candidate generator', () => {
     expect(candidates.find((entry) => entry.actionId === 'REPLACE_ITEM:1->11')?.feasible).toBe(true);
   });
 
+  it('does not treat an unverified flex unlock count as capacity', () => {
+    const definitions = Array.from({ length: 11 }, (_, index) => item(index + 1));
+    const input = decision(definitions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 5_000);
+    const rules = {
+      ...DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
+      baseSlots: 9,
+      flexCapacityEvidence: 'UNKNOWN' as const,
+      unlockedFlexSlots: 3,
+    };
+    const candidates = generateRecommendationCandidates({ state: input.state, itemGraph: input.graph, rules });
+
+    expect(candidates.find((entry) => entry.actionId === 'BUY_ITEM:11')?.reasons)
+      .toContain('FLEX_SLOT_CAPACITY_UNKNOWN');
+  });
+
   it('never allows more than three flex slots', () => {
     const definitions = Array.from({ length: 13 }, (_, index) => item(index + 1));
     const input = decision(definitions, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], 20_000);

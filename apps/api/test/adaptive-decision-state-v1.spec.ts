@@ -118,6 +118,8 @@ describe('AdaptiveDecisionStateV1Service', () => {
     expect(first.slots.usedFlexSlots).toBe(0);
     expect(first.slots.unlockedFlexSlots).toBeUndefined();
     expect(first.slots.evidence).toBe('UNKNOWN');
+    expect(first.economyRules).toBeUndefined();
+    expect(first.economyRulesEvidence).toBe('UNKNOWN');
     expect(first.investment.evidence).toBe('UNKNOWN');
     expect(first.stateRevision).toBe(second.stateRevision);
   });

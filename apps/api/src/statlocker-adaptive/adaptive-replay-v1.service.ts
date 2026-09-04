@@ -2,7 +2,6 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
-  DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
   FactEvidence,
   InventoryState,
   RecommendationDecisionState,
@@ -20,6 +19,7 @@ import {
 } from '@deadlock-live-probe/shared';
 import { AdaptiveRecommendationDecisionV1Entity } from '../deadlock-live/entities/adaptive-recommendation-decision-v1.entity';
 import {
+  ADAPTIVE_UNIVERSAL_SLOT_RULES_V1,
   AdaptiveInvestmentStateV1,
   AdaptiveSlotStateV1,
   RecommendationEconomyRulesV1,
@@ -68,6 +68,8 @@ export interface AdaptiveReplayDecisionV1 {
   slots?: AdaptiveSlotStateV1;
   investment?: AdaptiveInvestmentStateV1;
   economyRules?: RecommendationEconomyRulesV1;
+  /** Optional so previously persisted replay inputs remain readable. */
+  economyRulesEvidence?: 'RECONSTRUCTED' | 'UNKNOWN';
   stateRevision: string;
 }
 
@@ -250,6 +252,7 @@ function serializeDecision(decision: AdaptiveDecisionStateV1): AdaptiveReplayDec
     slots: cloneJson(decision.slots),
     investment: cloneJson(decision.investment),
     economyRules: decision.economyRules ? cloneJson(decision.economyRules) : undefined,
+    economyRulesEvidence: decision.economyRulesEvidence,
     stateRevision: decision.stateRevision,
   };
 }
@@ -277,13 +280,9 @@ function reconstructDecision(input: AdaptiveReplayDecisionV1): AdaptiveDecisionS
       shopOpportunity: { ...input.state.shopOpportunity },
     },
   };
-  const fallbackSlotRules = {
-    baseSlots: DEFAULT_RECOMMENDATION_CANDIDATE_RULES.baseSlots ?? 9,
-    maxFlexSlots: DEFAULT_RECOMMENDATION_CANDIDATE_RULES.maxFlexSlots,
-  };
   const slots = input.slots
     ? cloneJson(input.slots)
-    : deriveAdaptiveSlotStateV1(ownedItemIds, itemGraph, fallbackSlotRules, { evidence: 'UNKNOWN' });
+    : deriveAdaptiveSlotStateV1(ownedItemIds, itemGraph, ADAPTIVE_UNIVERSAL_SLOT_RULES_V1, { evidence: 'UNKNOWN' });
   const economyRules = exactReplayEconomyRulesV1(input);
   const investment = normalizeReplayInvestmentStateV1(
     input.investment,
@@ -304,6 +303,7 @@ function reconstructDecision(input: AdaptiveReplayDecisionV1): AdaptiveDecisionS
     slots,
     investment,
     economyRules: economyRules ? cloneJson(economyRules) : undefined,
+    economyRulesEvidence: economyRules ? 'RECONSTRUCTED' : 'UNKNOWN',
     stateRevision: input.stateRevision,
   };
 }

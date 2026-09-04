@@ -182,6 +182,11 @@ describe('adaptive economy v1', () => {
     expect(resolveRecommendationEconomyRulesV1('ruleset-a', catalogSha256, [rules])).toBe(rules);
     expect(resolveRecommendationEconomyRulesV1('ruleset-b', catalogSha256, [rules])).toBeUndefined();
     expect(resolveRecommendationEconomyRulesV1('ruleset-a', 'b'.repeat(64), [rules])).toBeUndefined();
+    expect(resolveRecommendationEconomyRulesV1('ruleset-a', catalogSha256, [{
+      ...rules,
+      rulesetId: '*',
+      catalogSha256: '*',
+    }])).toBeUndefined();
   });
 
   it('derives flex usage from universal occupied slots, not category counts', () => {
@@ -197,6 +202,36 @@ describe('adaptive economy v1', () => {
     expect(state.evidence).toBe('UNKNOWN');
   });
 
+  it('treats an unverified flex unlock count as unknown capacity', () => {
+    const state = deriveAdaptiveSlotStateV1(
+      [1, 2, 3, 4, 5, 6, 10, 11, 20, 21],
+      graph(),
+      rules,
+      { unlockedFlexSlots: 3, evidence: 'UNKNOWN' },
+    );
+
+    expect(state.provedFlexLowerBound).toBe(1);
+    expect(state.unlockedFlexSlots).toBeUndefined();
+    expect(state.freeFlexSlots).toBeUndefined();
+    expect(state.totalCapacity).toBeUndefined();
+  });
+
+  it.each([
+    [9, 0],
+    [10, 1],
+    [11, 2],
+    [12, 3],
+  ])('uses %i held items only as the unknown flex lower bound of %i', (heldCount, lowerBound) => {
+    const held = Array.from({ length: heldCount }, (_, index) => index + 1);
+    const state = deriveAdaptiveSlotStateV1(held, graph(), rules, { evidence: 'UNKNOWN' });
+
+    expect(state.usedFlexSlots).toBe(lowerBound);
+    expect(state.provedFlexLowerBound).toBe(lowerBound);
+    expect(state.unlockedFlexSlots).toBeUndefined();
+    expect(state.freeFlexSlots).toBeUndefined();
+    expect(state.totalCapacity).toBeUndefined();
+  });
+
   it('reports exact free slots when flex capacity is observed', () => {
     const held = [1, 2, 3, 4, 5, 6, 10, 11, 20, 21];
     const state = deriveAdaptiveSlotStateV1(
@@ -207,6 +242,20 @@ describe('adaptive economy v1', () => {
     );
 
     expect(state.freeBaseSlots).toBe(0);
+    expect(state.freeFlexSlots).toBe(1);
+    expect(state.totalCapacity).toBe(11);
+  });
+
+  it('keeps reconstructed capacity available for a future deterministic upstream source', () => {
+    const state = deriveAdaptiveSlotStateV1(
+      [1, 2, 3, 4, 5, 6, 10, 11, 20, 21],
+      graph(),
+      rules,
+      { unlockedFlexSlots: 2, evidence: 'RECONSTRUCTED' },
+    );
+
+    expect(state.evidence).toBe('RECONSTRUCTED');
+    expect(state.unlockedFlexSlots).toBe(2);
     expect(state.freeFlexSlots).toBe(1);
     expect(state.totalCapacity).toBe(11);
   });
