@@ -312,12 +312,12 @@ function transactionTargetsNextItem(action: AdaptiveActionV1): boolean {
 }
 
 function selectedActionServesFreshNext(action: AdaptiveActionV1, targetItemId: number | undefined): boolean {
-  if (action.type === 'SELL') return true;
+  if (action.type === 'SELL') return targetItemId !== undefined;
   return !transactionTargetsNextItem(action) || action.targetItemId === targetItemId;
 }
 
 function fallbackActionServesFreshNext(action: AdaptiveActionV1, targetItemId: number | undefined): boolean {
-  if (action.type === 'SELL') return action.targetItemId === targetItemId;
+  if (action.type === 'SELL') return targetItemId !== undefined && action.targetItemId === targetItemId;
   return !transactionTargetsNextItem(action) || action.targetItemId === targetItemId;
 }
 

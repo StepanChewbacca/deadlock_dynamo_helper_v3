@@ -298,6 +298,62 @@ describe('AdaptiveRecommendationV1Service structured serving invariants', () => 
     expect(result.nextTargetItemId).toBe(3);
   });
 
+  it('does not publish a preparatory SELL when fresh state has no semantic NEXT target', async () => {
+    const initial = decision('revision-a', itemGraph(500, 500), [1]);
+    const fresh = decision('revision-b', itemGraph(500, 500), [1, 2]);
+    const stateService = {
+      build: jest.fn().mockResolvedValueOnce(initial).mockResolvedValueOnce(fresh),
+    };
+    const evidenceService = {
+      resolveLocalPatchId: jest.fn(() => '15-1'),
+      getLocalEvidence: jest.fn(() => evidence()),
+    };
+    const planner = {
+      version: 'adaptive-build-planner-v1',
+      plan: jest.fn(() => ({
+        ...plan(),
+        nextAction: {
+          actionKey: 'SELL_ITEM:1',
+          type: 'SELL',
+          itemId: 1,
+          sellItemId: 1,
+          targetItemId: 2,
+          reasonCodes: ['PREPARE_NEXT'],
+        },
+        recommendedBuild: [{ ...plan().recommendedBuild[0], itemId: 2, status: 'NEXT' }],
+        rankedImmediateCandidates: [{
+          ...plan().rankedImmediateCandidates[0],
+          action: {
+            actionKey: 'SELL_ITEM:1',
+            type: 'SELL',
+            itemId: 1,
+            sellItemId: 1,
+            targetItemId: 2,
+            reasonCodes: ['PREPARE_NEXT'],
+          },
+        }],
+      })),
+    };
+    const replay = {
+      getPreviousPlan: jest.fn().mockResolvedValue(undefined),
+      toReplayInput: jest.fn(() => ({ snapshotIds: ['snapshot-wpa'] })),
+      persist: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new AdaptiveRecommendationV1Service(
+      stateService as any,
+      evidenceService as any,
+      planner as any,
+      replay as any,
+    );
+
+    const result = await service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
+
+    expect(result.recommendedBuild.some((item) => item.status === 'NEXT')).toBe(false);
+    expect(result.nextAction).toMatchObject({ type: 'WAIT' });
+    expect(result.nextAction.targetItemId).toBeUndefined();
+    expect(result.nextTargetItemId).toBeUndefined();
+  });
+
   it('does not publish a legal BUY sibling when it disagrees with the semantic NEXT', async () => {
     const initial = decision('revision-a');
     const fresh = decision('revision-b');
