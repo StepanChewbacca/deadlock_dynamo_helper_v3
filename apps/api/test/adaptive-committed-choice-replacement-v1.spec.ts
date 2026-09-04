@@ -204,6 +204,18 @@ describe('AdaptiveBuildPlannerV1Service committed choice replacement', () => {
     expect(result.recommendedBuild.some((item) => item.itemId === 2)).toBe(false);
   });
 
+  it('does not sell branch-unique commitment evidence below the replacement threshold', () => {
+    const group = choice([11, 12]);
+    const result = planner.plan({
+      decision: decision([1]),
+      evidence: evidence(group, { 11: 0, 12: 0.05 }),
+    });
+
+    expect(result.nextAction.sellItemId).not.toBe(1);
+    expect(result.nextAction.targetItemId).toBe(11);
+    expect(result.recommendedBuild.some((item) => item.itemId === 12)).toBe(false);
+  });
+
   it('can explicitly REPLACE a committed direct branch when contextual improvement clears the threshold', () => {
     const group = choice([1, 2]);
     const result = planner.plan({
