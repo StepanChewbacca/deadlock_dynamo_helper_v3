@@ -145,9 +145,7 @@ export function reconstructChoiceStateV1(
   const owned = new Set(ownedItemIds);
   const alternativeIds = group.candidates.map((candidate) => candidate.itemId).sort((a, b) => a - b);
   const previousCommittedItemIds = normalizeLegacyChoiceIds(previousCommittedItemIdsOrId, group);
-  const ownedTargets = alternativeIds.filter((itemId) => owned.has(itemId) || [...owned].some((ownedId) =>
-    componentClosureV1(ownedId, itemGraph).has(itemId),
-  ));
+  const ownedTargets = alternativeIds.filter((itemId) => itemGraph.isTargetSatisfied(itemId, owned));
 
   const closures = new Map<number, ReadonlySet<number>>();
   const componentOwners = new Map<number, number>();
@@ -199,19 +197,7 @@ export function reconstructChoiceStateV1(
 }
 
 export function componentClosureV1(itemId: number, itemGraph: RecommendationItemGraph): ReadonlySet<number> {
-  const result = new Set<number>();
-  const visiting = new Set<number>();
-  const visit = (targetId: number): void => {
-    if (visiting.has(targetId)) return;
-    visiting.add(targetId);
-    for (const componentId of itemGraph.getDirectComponentIds(targetId)) {
-      if (!result.has(componentId)) result.add(componentId);
-      visit(componentId);
-    }
-    visiting.delete(targetId);
-  };
-  visit(itemId);
-  return result;
+  return new Set(itemGraph.getTransitiveComponentIds(itemId));
 }
 
 export function choiceBranchCommitmentEvidenceItemIdsV1(
