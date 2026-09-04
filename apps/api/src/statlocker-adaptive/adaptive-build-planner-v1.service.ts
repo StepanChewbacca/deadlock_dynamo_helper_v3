@@ -69,6 +69,7 @@ export interface AdaptiveBuildPlannerResultV1 {
 
 interface SemanticPlanV1 {
   selectedFinalItemIds: ReadonlySet<number>;
+  futurePlannedFinalItemIds: ReadonlySet<number>;
   targetItemIds: ReadonlySet<number>;
   supportOwnersByItemId: ReadonlyMap<number, readonly number[]>;
   selectedChoices: ReadonlyMap<string, number>;
@@ -213,7 +214,7 @@ export class AdaptiveBuildPlannerV1Service {
     const previous = input.previousResult;
     const preservePrevious = Boolean(
       previous &&
-      this.previousPlanStillValid(previous.recommendedBuild, owned, semantic) &&
+      this.previousPlanStillValid(previous.recommendedBuild, owned, semantic, immediate) &&
       proposedScore - previous.totalScore < config.minPlanSwitchImprovement,
     );
     if (preservePrevious && previous) {
@@ -349,8 +350,19 @@ export class AdaptiveBuildPlannerV1Service {
       }
     }
 
+    const futurePlannedFinalItemIds = this.selectNearFutureRequiredTargets(
+      input,
+      skeleton,
+      gameState,
+      scorerContext,
+      owned,
+      completedGroupIds,
+      targetItemIds,
+    );
+
     return {
       selectedFinalItemIds,
+      futurePlannedFinalItemIds,
       targetItemIds,
       supportOwnersByItemId: new Map(
         [...supportOwners.entries()].map(([itemId, owners]) => [itemId, [...owners].sort((a, b) => a - b)]),
@@ -361,6 +373,66 @@ export class AdaptiveBuildPlannerV1Service {
       externallyDivergedGroupIds,
       orderByItemId,
     };
+  }
+
+  private selectNearFutureRequiredTargets(
+    input: AdaptiveBuildPlannerInputV1,
+    skeleton: ConsensusSkeletonV1,
+    gameState: AdaptiveGameStateV1,
+    scorerContext: AdaptiveItemScoreContextV1,
+    owned: ReadonlySet<number>,
+    completedGroupIds: ReadonlySet<string>,
+    activeTargetItemIds: ReadonlySet<number>,
+  ): ReadonlySet<number> {
+    let remainingDepth = ADAPTIVE_POLICY_V1_CONFIG.planningDepth - activeTargetItemIds.size;
+    if (remainingDepth <= 0) return new Set<number>();
+
+    const futureRequired = skeleton.groups.filter((group) => {
+      if (group.type !== 'REQUIRED') return false;
+      return this.phaseEligibility.evaluateGroup(group, {
+        skeleton,
+        ownedItemIds: owned,
+        completedGroupIds,
+        gameTimeSec: input.decision.state.gameTimeSec,
+        gameState,
+      }) === 'NOT_YET_ELIGIBLE';
+    });
+    if (futureRequired.length === 0) return new Set<number>();
+
+    const nextPhaseOrder = Math.min(...futureRequired.map((group) => phaseOrderV1(group.phase)));
+    const result = new Set<number>();
+    for (const group of futureRequired.filter((entry) => phaseOrderV1(entry.phase) === nextPhaseOrder)) {
+      const ownedCount = group.candidates.filter((candidate) => owned.has(candidate.itemId)).length;
+      let needed = Math.max(0, Math.max(1, group.minSelect) - ownedCount);
+      if (needed === 0) continue;
+
+      const ranked = group.candidates
+        .filter((candidate) => !owned.has(candidate.itemId))
+        .map((candidate) => ({
+          itemId: candidate.itemId,
+          score: this.scorer.scoreItem(candidate.itemId, scorerContext).score,
+        }))
+        .sort((a, b) => b.score - a.score || a.itemId - b.itemId);
+      const staged: Array<{ itemId: number; steps: number }> = [];
+      let stagedDepth = 0;
+      for (const entry of ranked) {
+        if (needed <= 0) break;
+        const stepIds = uniqueNumbers([
+          entry.itemId,
+          ...componentClosureV1(entry.itemId, input.decision.itemGraph),
+        ]).filter((itemId) => !owned.has(itemId));
+        const steps = Math.max(1, stepIds.length);
+        if (stagedDepth + steps > remainingDepth) continue;
+        staged.push({ itemId: entry.itemId, steps });
+        stagedDepth += steps;
+        needed -= 1;
+      }
+      if (needed > 0) break;
+      for (const entry of staged) result.add(entry.itemId);
+      remainingDepth -= stagedDepth;
+      if (remainingDepth <= 0) break;
+    }
+    return result;
   }
 
   private searchBestPath(
@@ -497,6 +569,20 @@ export class AdaptiveBuildPlannerV1Service {
         score -= Math.max(0, sold.score) * 0.55 + 0.10;
         confidence = Math.min(confidence, sold.confidence || confidence);
       }
+    } else if (candidate.action.type === 'SELL_ITEM') {
+      const sold = this.scorer.scoreItem(candidate.action.itemId, {
+        ...baseScorerContext,
+        ownedItemIds,
+        plannedPrefixItemIds,
+        transactionPenalty: 0,
+        churnPenalty: 0,
+      });
+      score = -(
+        Math.max(0, sold.score) * 0.55 +
+        0.10 +
+        projected.investmentDelta.achievedBreakpointsLost * ADAPTIVE_POLICY_V1_CONFIG.investment.achievedBreakpointDropPenalty
+      );
+      confidence = sold.confidence;
     }
 
     const adaptiveAction = mapCandidateAction(candidate, targetItemId, skeleton);
@@ -577,7 +663,10 @@ export class AdaptiveBuildPlannerV1Service {
     const actionTargets = node.actions
       .map(candidateTargetItemId)
       .filter((itemId): itemId is number => itemId !== undefined);
-    const futureFinals = [...semantic.selectedFinalItemIds]
+    const futureFinals = uniqueNumbers([
+      ...semantic.selectedFinalItemIds,
+      ...semantic.futurePlannedFinalItemIds,
+    ])
       .filter((itemId) => !ownedItemIds.includes(itemId))
       .sort((a, b) =>
         (semantic.orderByItemId.get(a) ?? Number.MAX_SAFE_INTEGER) -
@@ -629,14 +718,28 @@ export class AdaptiveBuildPlannerV1Service {
     previousBuild: readonly AdaptivePlannedItemV1[],
     owned: ReadonlySet<number>,
     semantic: SemanticPlanV1,
+    immediate: readonly ScoredPlannerCandidateV1[],
   ): boolean {
     if (semantic.externallyDivergedGroupIds.size > 0) return false;
     const allowed = new Set<number>([
       ...owned,
       ...semantic.selectedFinalItemIds,
+      ...semantic.futurePlannedFinalItemIds,
       ...semantic.targetItemIds,
     ]);
-    return previousBuild.every((item) => allowed.has(item.itemId));
+    if (!previousBuild.every((item) => allowed.has(item.itemId))) return false;
+
+    const previousNext = [...previousBuild]
+      .sort((a, b) => a.position - b.position || a.itemId - b.itemId)
+      .find((item) => item.status === 'NEXT' && !owned.has(item.itemId));
+    if (!previousNext) return true;
+
+    const hasMissingSupport = [...semantic.supportOwnersByItemId.entries()].some(([componentId, owners]) =>
+      !owned.has(componentId) && owners.includes(previousNext.itemId),
+    );
+    if (hasMissingSupport) return false;
+
+    return immediate.some((entry) => candidateTargetItemId(entry.candidate) === previousNext.itemId);
   }
 }
 
@@ -654,6 +757,7 @@ function candidateTouchesTargets(
   candidate: RecommendationCandidate,
   targets: ReadonlySet<number>,
 ): boolean {
+  if (candidate.action.type === 'SELL_ITEM') return targets.size > 0;
   if (candidate.action.type === 'WAIT_SAVE') {
     return candidate.action.targetItemId === undefined || targets.has(candidate.action.targetItemId);
   }
@@ -776,6 +880,7 @@ function mapCandidateAction(
       type: 'SELL',
       itemId: action.itemId,
       sellItemId: action.itemId,
+      targetItemId: targetOverride,
       reasonCodes: [...candidate.reasons],
     };
   }
