@@ -209,6 +209,20 @@ describe('AdaptiveChoiceResolverV1Service', () => {
     expect(result.selectedItemId).toBe(10);
   });
 
+  it('does not promote an uncommitted previous selection when inventory has conflicting branch investment', () => {
+    const service = new AdaptiveChoiceResolverV1Service(new AdaptiveEvidenceScorerV1Service());
+    const result = service.resolveChoice(choiceGroup(), {
+      scorerContext: scorerContext(),
+      itemGraph: graph(),
+      ownedItemIds: [2, 3],
+      previousSelectedItemId: 10,
+    });
+
+    expect(result.committed).toBe(false);
+    expect(result.committedItemId).toBeUndefined();
+    expect(result.externallyDiverged).toBe(true);
+  });
+
   it('never switches a committed branch during normal contextual resolution', () => {
     const service = new AdaptiveChoiceResolverV1Service(new AdaptiveEvidenceScorerV1Service());
     const result = service.resolveChoice(choiceGroup(), {
