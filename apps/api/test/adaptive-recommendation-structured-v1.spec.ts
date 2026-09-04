@@ -2,6 +2,7 @@ import {
   createRecommendationItemGraph,
   observedFact,
 } from '@deadlock-live-probe/build-domain';
+import { AdaptiveRecommendationObservabilityV1Service } from '../src/statlocker-adaptive/adaptive-recommendation-observability-v1.service';
 import { AdaptiveRecommendationV1Service } from '../src/statlocker-adaptive/adaptive-recommendation-v1.service';
 
 const catalogSha256 = 'a'.repeat(64);
@@ -393,5 +394,38 @@ describe('AdaptiveRecommendationV1Service structured serving invariants', () => 
 
     expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(1);
     expect(result.nextAction).toMatchObject({ type: 'BUY', targetItemId: 1 });
+  });
+
+  it('treats partial decision fakes without slots or investment as non-crashing test doubles', async () => {
+    const initial = decision('revision-a');
+    const fresh = decision('revision-b');
+    const stateService = {
+      build: jest.fn().mockResolvedValueOnce(initial).mockResolvedValueOnce(fresh),
+    };
+    const evidenceService = {
+      resolveLocalPatchId: jest.fn(() => '15-1'),
+      getLocalEvidence: jest.fn(() => evidence()),
+    };
+    const planner = {
+      version: 'adaptive-build-planner-v1',
+      plan: jest.fn(() => plan()),
+    };
+    const replay = {
+      getPreviousPlan: jest.fn().mockResolvedValue(undefined),
+      toReplayInput: jest.fn(() => ({ snapshotIds: ['snapshot-wpa'] })),
+      persist: jest.fn().mockResolvedValue(undefined),
+    };
+    const observability = new AdaptiveRecommendationObservabilityV1Service();
+    const service = new AdaptiveRecommendationV1Service(
+      stateService as any,
+      evidenceService as any,
+      planner as any,
+      replay as any,
+      observability,
+    );
+
+    await expect(service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' })).resolves.toHaveProperty('nextAction');
+    expect(observability.getStatus().counters.flexCapacityUnknownCount).toBe(0);
+    expect(observability.getStatus().counters.investmentRulesUnknownCount).toBe(0);
   });
 });

@@ -72,11 +72,13 @@ export class AdaptiveRecommendationObservabilityV1Service {
     reasonCodeCounts: {},
   };
 
-  recordDecisionState(decision: Pick<AdaptiveDecisionStateV1, 'slots' | 'investment'>): void {
-    if (decision.slots.evidence === 'UNKNOWN' || decision.slots.unlockedFlexSlots === undefined) {
+  recordDecisionState(decision: Partial<Pick<AdaptiveDecisionStateV1, 'slots' | 'investment'>>): void {
+    const slots = decision.slots;
+    const investment = decision.investment;
+    if (slots && (slots.evidence === 'UNKNOWN' || slots.unlockedFlexSlots === undefined)) {
       this.status.counters.flexCapacityUnknownCount += 1;
     }
-    if (decision.investment.evidence === 'UNKNOWN') {
+    if (investment && investment.evidence === 'UNKNOWN') {
       this.status.counters.investmentRulesUnknownCount += 1;
     }
     this.touch();
