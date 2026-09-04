@@ -224,12 +224,85 @@ describe('recommendation candidate generator', () => {
     expect(projected.economy.spendableSouls.evidence).toBe('RECONSTRUCTED');
   });
 
+  it('suppresses a lower component when an owned upgrade already satisfies it', () => {
+    const input = decision([
+      item(1),
+      item(2, {
+        directPurchaseCost: 1_600,
+        upgradeRecipes: [{ recipeId: 'u2', consumedItemIds: [1], soulsCost: 800 }],
+      }),
+    ], [2], 5_000);
+
+    expect(candidate(input, 'BUY_ITEM:1')).toMatchObject({
+      feasible: true,
+      recommendationEligible: false,
+      recommendationSuppressionReasons: ['TARGET_SATISFIED_BY_OWNED_UPGRADE'],
+    });
+  });
+
+  it('suppresses transitive lower components when a higher descendant is owned', () => {
+    const input = decision([
+      item(1),
+      item(2, {
+        directPurchaseCost: 1_600,
+        upgradeRecipes: [{ recipeId: 'u2', consumedItemIds: [1], soulsCost: 800 }],
+      }),
+      item(3, {
+        directPurchaseCost: 2_400,
+        upgradeRecipes: [{ recipeId: 'u3', consumedItemIds: [2], soulsCost: 800 }],
+      }),
+    ], [3], 5_000);
+
+    expect(candidate(input, 'BUY_ITEM:1').recommendationEligible).toBe(false);
+    expect(candidate(input, 'BUY_ITEM:2').recommendationEligible).toBe(false);
+  });
+
+  it('does not emit targeted wait for a target already satisfied by an owned upgrade', () => {
+    const input = decision([
+      item(1, { directPurchaseCost: 6_400 }),
+      item(2, {
+        directPurchaseCost: 1_600,
+        upgradeRecipes: [{ recipeId: 'u2', consumedItemIds: [1], soulsCost: 800 }],
+      }),
+    ], [2], 1_000);
+
+    const candidates = generateRecommendationCandidates({ state: input.state, itemGraph: input.graph });
+    expect(candidates.some((entry) => entry.actionId === 'WAIT_SAVE:1')).toBe(false);
+  });
+
+  it('suppresses a normal replacement that downgrades a descendant into its ancestor', () => {
+    const input = decision([
+      item(1),
+      item(2, {
+        directPurchaseCost: 1_600,
+        upgradeRecipes: [{ recipeId: 'u2', consumedItemIds: [1], soulsCost: 800 }],
+      }),
+    ], [2], 5_000);
+
+    expect(candidate(input, 'REPLACE_ITEM:2->1')).toMatchObject({
+      feasible: true,
+      recommendationEligible: false,
+      recommendationSuppressionReasons: ['LINEAGE_DOWNGRADE'],
+    });
+  });
+
+  it('keeps unrelated legal purchases recommendation-eligible', () => {
+    const input = decision([item(1), item(2)], [2], 5_000);
+    expect(candidate(input, 'BUY_ITEM:1')).toMatchObject({
+      feasible: true,
+      recommendationEligible: true,
+      recommendationSuppressionReasons: [],
+    });
+  });
+
   it('preserves the no observed-action injection invariant in dataset rows', () => {
     const input = decision([item(1)]);
     const row = toRecommendationDatasetCandidateV1(input.state, candidate(input, 'BUY_ITEM:1'));
     expect(row.observedActionInjected).toBe(false);
     expect(row.actionId).toBe('BUY_ITEM:1');
     expect(row.evidence.spendableSouls).toBe('OBSERVED');
+    expect('recommendationEligible' in row).toBe(false);
+    expect('recommendationSuppressionReasons' in row).toBe(false);
   });
 
   it('is deterministic independent of item definition order', () => {
