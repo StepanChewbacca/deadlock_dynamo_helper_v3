@@ -1,4 +1,5 @@
 import { AdaptivePhaseEligibilityV1Service } from '../src/statlocker-adaptive/adaptive-phase-eligibility-v1.service';
+import { AdaptiveInvestmentStateV1 } from '../src/statlocker-adaptive/adaptive-economy-v1';
 import { ConsensusBuildGroupV1, ConsensusSkeletonV1 } from '../src/statlocker-adaptive/statlocker-adaptive.types';
 
 function candidate(itemId: number, rushEvidence = false) {
@@ -33,6 +34,7 @@ function context(
   gameTimeSec: number,
   owned: number[] = [],
   gameState: 'AHEAD' | 'EVEN' | 'BEHIND' | 'UNKNOWN' = 'EVEN',
+  investmentState: AdaptiveInvestmentStateV1 = investment('UNKNOWN', 0),
 ) {
   const early = group('early', 'EARLY', 1);
   const groups = target.groupId === 'early' ? [target] : [early, target];
@@ -42,6 +44,19 @@ function context(
     ownedItemIds: new Set(owned),
     gameTimeSec,
     gameState,
+    investment: investmentState,
+  };
+}
+
+function investment(evidence: 'OBSERVED' | 'RECONSTRUCTED' | 'UNKNOWN', achievedBreakpointCount: number): AdaptiveInvestmentStateV1 {
+  const achieved = (index: number) => index < achievedBreakpointCount ? 1_600 : undefined;
+  return {
+    evidence,
+    tracks: {
+      weapon: { type: 'weapon', currentValue: 1_600, achievedBreakpoint: achieved(0) },
+      vitality: { type: 'vitality', currentValue: 1_600, achievedBreakpoint: achieved(1) },
+      spirit: { type: 'spirit', currentValue: 1_600, achievedBreakpoint: achieved(2) },
+    },
   };
 }
 
@@ -58,15 +73,47 @@ describe('AdaptivePhaseEligibilityV1Service', () => {
     expect(service.evaluateGroup(target, context(target, 120, [1]))).toBe('NOT_YET_ELIGIBLE');
   });
 
-  it('allows explicit rush evidence without using contextual WPA', () => {
-    const target = group('mid', 'MID', 2, true);
-    expect(service.evaluateGroup(target, context(target, 120))).toBe('ELIGIBLE');
+  it('keeps rushed LATE gated behind an unfinished required MID group', () => {
+    const early = group('early', 'EARLY', 1);
+    const mid = group('mid', 'MID', 2);
+    const target = group('late', 'LATE', 3, true);
+    const skeleton: ConsensusSkeletonV1 = { heroId: 10, profileCount: 10, groups: [early, mid, target] };
+    expect(service.evaluateGroup(target, {
+      skeleton,
+      ownedItemIds: new Set([1]),
+      gameTimeSec: 2_000,
+      gameState: 'AHEAD',
+      investment: investment('UNKNOWN', 0),
+    })).toBe('NOT_YET_ELIGIBLE');
   });
+
+  it.each(['AHEAD', 'EVEN', 'BEHIND', 'UNKNOWN'] as const)(
+    'allows rushed MID with completed prerequisites regardless of %s game state',
+    (gameState) => {
+      const target = group('mid', 'MID', 2, true);
+      expect(service.evaluateGroup(target, context(target, 1, [1], gameState))).toBe('ELIGIBLE');
+    },
+  );
 
   it('requires prior REQUIRED phases to be completed after the time floor', () => {
     const target = group('mid', 'MID', 2);
     expect(service.evaluateGroup(target, context(target, 700))).toBe('NOT_YET_ELIGIBLE');
     expect(service.evaluateGroup(target, context(target, 700, [1]))).toBe('ELIGIBLE');
+  });
+
+  it('accelerates MID only for reconstructed strong achieved investment breakpoints', () => {
+    const target = group('mid', 'MID', 2);
+    expect(service.evaluateGroup(target, context(target, 480, [1], 'EVEN', investment('RECONSTRUCTED', 2)))).toBe('ELIGIBLE');
+  });
+
+  it('does not accelerate MID from identical UNKNOWN investment tracks', () => {
+    const target = group('mid', 'MID', 2);
+    expect(service.evaluateGroup(target, context(target, 480, [1], 'EVEN', investment('UNKNOWN', 2)))).toBe('NOT_YET_ELIGIBLE');
+  });
+
+  it('does not accelerate MID from non-reconstructed investment tracks', () => {
+    const target = group('mid', 'MID', 2);
+    expect(service.evaluateGroup(target, context(target, 480, [1], 'EVEN', investment('OBSERVED', 2)))).toBe('NOT_YET_ELIGIBLE');
   });
 
   it('keeps LATE gated before its own floor', () => {
@@ -79,13 +126,14 @@ describe('AdaptivePhaseEligibilityV1Service', () => {
       ownedItemIds: new Set([1, 2]),
       gameTimeSec: 1200,
       gameState: 'EVEN',
+      investment: investment('UNKNOWN', 0),
     })).toBe('NOT_YET_ELIGIBLE');
   });
 
-  it('accelerates only the deterministic time floor when confidently ahead', () => {
+  it('does not accelerate the time floor from AHEAD contextual evidence', () => {
     const target = group('mid', 'MID', 2);
     expect(service.evaluateGroup(target, context(target, 500, [1], 'EVEN'))).toBe('NOT_YET_ELIGIBLE');
-    expect(service.evaluateGroup(target, context(target, 500, [1], 'AHEAD'))).toBe('ELIGIBLE');
+    expect(service.evaluateGroup(target, context(target, 500, [1], 'AHEAD'))).toBe('NOT_YET_ELIGIBLE');
   });
 
   it('returns structural terminal states before phase checks', () => {

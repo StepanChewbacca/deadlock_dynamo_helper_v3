@@ -685,6 +685,25 @@ describe('AdaptiveReplayV1Service structured replay invariants', () => {
     expect(result.recommendedBuild.some((item) => item.itemId === 2 && item.status === 'NEXT')).toBe(false);
   });
 
+  it('replays persisted reconstructed investment into accelerated MID eligibility', () => {
+    const replay = replayService();
+    const input = clone(replayInput());
+    input.decision.state.gameTimeSec = 480;
+    input.decision.state.ownedItemIds = [1];
+    input.decision.investment = {
+      evidence: 'RECONSTRUCTED',
+      tracks: {
+        weapon: { type: 'weapon', currentValue: 1600, achievedBreakpoint: 1600 },
+        vitality: { type: 'vitality', currentValue: 1600, achievedBreakpoint: 1600 },
+        spirit: { type: 'spirit', currentValue: 0 },
+      },
+    };
+
+    const result = replay.run(input);
+
+    expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(2);
+  });
+
   it('does not flag a valid fully committed pick-two group as branch churn', () => {
     const replay = replayService();
     const input = pickTwoCommittedReplayInput();

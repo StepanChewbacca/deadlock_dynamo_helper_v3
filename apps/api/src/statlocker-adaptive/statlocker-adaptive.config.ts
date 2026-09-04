@@ -14,7 +14,8 @@ export interface AdaptivePolicyV1Config {
   phase: {
     midMinTimeSec: number;
     lateMinTimeSec: number;
-    aheadProgressAccelerationSec: number;
+    strongInvestmentMinAchievedBreakpoints: number;
+    strongInvestmentProgressAccelerationSec: number;
   };
   choice: {
     switchMinImprovement: number;
@@ -58,7 +59,7 @@ export interface AdaptivePolicyV1Config {
 }
 
 export const ADAPTIVE_POLICY_V1_CONFIG: AdaptivePolicyV1Config = {
-  version: 'statlocker-adaptive-v1.1.0',
+  version: 'statlocker-adaptive-v1.2.0',
   gameStateThreshold: 0.08,
   gameStateBlendWidth: 0.03,
   exactEnemyMaxMatchups: 3,
@@ -73,7 +74,8 @@ export const ADAPTIVE_POLICY_V1_CONFIG: AdaptivePolicyV1Config = {
   phase: {
     midMinTimeSec: 600,
     lateMinTimeSec: 1500,
-    aheadProgressAccelerationSec: 120,
+    strongInvestmentMinAchievedBreakpoints: 2,
+    strongInvestmentProgressAccelerationSec: 120,
   },
   choice: {
     switchMinImprovement: 0.08,

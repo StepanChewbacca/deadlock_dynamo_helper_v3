@@ -274,6 +274,20 @@ describe('AdaptiveBuildPlannerV1Service structured planning', () => {
     expect(result.recommendedBuild.some((item) => item.itemId === 18)).toBe(false);
   });
 
+  it('opens MID from reconstructed strong investment passed through the planner context', () => {
+    const result = planner.plan({
+      decision: decision({ gameTimeSec: 480, owned: [1, 2, 4, 5] }),
+      evidence: evidence({
+        groups: [
+          group('early-core', 'EARLY', 'REQUIRED', [1]),
+          group('mid-core', 'MID', 'REQUIRED', [9]),
+        ],
+      }),
+    });
+
+    expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(9);
+  });
+
   it('projects only the selected future CHOICE branch inside the reachable planning horizon', () => {
     const result = planner.plan({
       decision: decision({ gameTimeSec: 120 }),

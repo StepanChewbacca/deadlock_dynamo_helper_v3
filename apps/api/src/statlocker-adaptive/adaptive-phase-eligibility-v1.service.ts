@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { AdaptiveInvestmentStateV1 } from './adaptive-economy-v1';
 import { AdaptiveGameStateV1 } from './adaptive-game-state';
 import { ADAPTIVE_POLICY_V1_CONFIG } from './statlocker-adaptive.config';
 import { ConsensusBuildGroupV1, ConsensusSkeletonV1 } from './statlocker-adaptive.types';
@@ -19,6 +20,7 @@ export interface AdaptivePhaseEligibilityContextV1 {
   committedOtherGroupIds?: ReadonlySet<string>;
   gameTimeSec: number;
   gameState: AdaptiveGameStateV1;
+  investment: AdaptiveInvestmentStateV1;
 }
 
 @Injectable()
@@ -31,15 +33,24 @@ export class AdaptivePhaseEligibilityV1Service {
     if (context.completedGroupIds?.has(group.groupId) || groupCompletedV1(group, context.ownedItemIds)) return 'COMPLETED';
     if (context.committedOtherGroupIds?.has(group.groupId)) return 'COMMITTED_OTHER_BRANCH';
     if (group.phase === 'EARLY') return 'ELIGIBLE';
-    if (group.candidates.some((candidate) => candidate.rushEvidence)) return 'ELIGIBLE';
     if (!requiredPriorGroupsComplete(group, context)) return 'NOT_YET_ELIGIBLE';
+    if (group.candidates.some((candidate) => candidate.rushEvidence)) return 'ELIGIBLE';
 
-    const effectiveTimeSec = Math.max(0, context.gameTimeSec) +
-      (context.gameState === 'AHEAD' ? ADAPTIVE_POLICY_V1_CONFIG.phase.aheadProgressAccelerationSec : 0);
+    const effectiveTimeSec = Math.max(0, context.gameTimeSec) + investmentProgressAccelerationSec(context.investment);
     if (group.phase === 'MID' && effectiveTimeSec >= ADAPTIVE_POLICY_V1_CONFIG.phase.midMinTimeSec) return 'ELIGIBLE';
     if (group.phase === 'LATE' && effectiveTimeSec >= ADAPTIVE_POLICY_V1_CONFIG.phase.lateMinTimeSec) return 'ELIGIBLE';
     return 'NOT_YET_ELIGIBLE';
   }
+}
+
+function investmentProgressAccelerationSec(investment: AdaptiveInvestmentStateV1): number {
+  if (investment.evidence !== 'RECONSTRUCTED') return 0;
+  const achievedBreakpointCount = Object.values(investment.tracks)
+    .filter((track) => track.achievedBreakpoint !== undefined)
+    .length;
+  return achievedBreakpointCount >= ADAPTIVE_POLICY_V1_CONFIG.phase.strongInvestmentMinAchievedBreakpoints
+    ? ADAPTIVE_POLICY_V1_CONFIG.phase.strongInvestmentProgressAccelerationSec
+    : 0;
 }
 
 export function groupCompletedV1(group: ConsensusBuildGroupV1, ownedItemIds: ReadonlySet<number>): boolean {

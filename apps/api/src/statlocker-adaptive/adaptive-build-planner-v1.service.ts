@@ -315,6 +315,7 @@ export class AdaptiveBuildPlannerV1Service {
         completedGroupIds,
         gameTimeSec: input.decision.state.gameTimeSec,
         gameState,
+        investment: input.decision.investment,
       });
 
       if (eligibility === 'COMPLETED') {
@@ -438,6 +439,7 @@ export class AdaptiveBuildPlannerV1Service {
         completedGroupIds,
         gameTimeSec: input.decision.state.gameTimeSec,
         gameState,
+        investment: input.decision.investment,
       }) === 'NOT_YET_ELIGIBLE';
     });
     if (futureRequired.length === 0) return new Set<number>();
