@@ -232,11 +232,11 @@ function deriveGroups(
 
   for (let index = 0; index < available.length; index += 1) {
     const seed = available[index];
-    if (assigned.has(seed.candidate.itemId)) continue;
+    if (assigned.has(seed.candidate.itemId) || ambiguousChoiceLikeItemIds.has(seed.candidate.itemId)) continue;
     const clique: DerivedItemV1[] = [seed];
     for (let candidateIndex = index + 1; candidateIndex < available.length; candidateIndex += 1) {
       const candidate = available[candidateIndex];
-      if (assigned.has(candidate.candidate.itemId)) continue;
+      if (assigned.has(candidate.candidate.itemId) || ambiguousChoiceLikeItemIds.has(candidate.candidate.itemId)) continue;
       if (clique.every((member) =>
         choicePairConfidence(member, candidate, profiles, componentClosureByItemId) !== undefined,
       )) {
