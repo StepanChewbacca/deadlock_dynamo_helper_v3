@@ -35,6 +35,19 @@ The item graph already has direct component and upgrade edges and validates the 
 
 Candidate generation still uses exact ownership only for direct BUY/REPLACE eligibility, so an upgraded descendant does not suppress a redundant lower-tier recommendation.
 
+### Implementation amendment: topology and transaction mechanics were coupled
+
+During implementation, the real serving path exposed a second deterministic root cause. `RecommendationRulesetCatalogV1` retained raw recipe edges, but `compileStrictRecommendationCatalogV1()` only copied a recipe into `RecommendationItemDefinition.upgradeRecipes` when the exact upgrade transaction cost was known. If cost evidence was unknown, the component relationship disappeared from the runtime graph even though the catalog topology itself was known.
+
+The corrected contract is:
+
+```text
+known recipe edge => may establish lineage/satisfaction
+verified upgrade transaction cost => required for executable UPGRADE_ITEM
+```
+
+Topology must never invent a transaction cost, and missing transaction mechanics must not erase a known deterministic component relationship.
+
 ## Goals
 
 1. A lower-tier component already satisfied by an owned upgrade descendant must never be recommended as the next build target.
@@ -45,6 +58,7 @@ Candidate generation still uses exact ownership only for direct BUY/REPLACE elig
 6. Exact inventory remains exact. We do not fake ownership of consumed components.
 7. Game legality and recommendation eligibility remain separate concepts.
 8. The fix must be generic for arbitrary acyclic multi-level and multi-component recipe graphs. No item-name special cases.
+9. Runtime catalog compilation must preserve known recipe topology even when executable upgrade transaction cost is unknown.
 
 ## Non-Goals
 
@@ -54,6 +68,7 @@ Candidate generation still uses exact ownership only for direct BUY/REPLACE elig
 - Do not claim that Deadlock itself forbids rebuying a lower component unless the authoritative ruleset explicitly says so.
 - Do not add hero-specific or item-specific hacks.
 - Do not mutate historical Dataset V1 schema as part of this serving correctness fix.
+- Do not fabricate upgrade transaction cost from item total cost or recipe topology.
 
 ## Core Domain Semantics
 
@@ -130,6 +145,8 @@ Implementation requirements:
 - support multiple recipes and multiple components;
 - shared semantics used by domain and adaptive planner code.
 
+The graph accepts topology-only lineage edges in addition to executable recipe definitions. The union is used for direct/transitive component relationships and cycle validation. Only executable recipe definitions are used to generate `UPGRADE_ITEM` transactions.
+
 The local `componentClosureV1` logic in adaptive code becomes a thin compatibility wrapper around `getTransitiveComponentIds` or is removed. There must not be multiple independent definitions of transitive component closure.
 
 ### 2. RecommendationCandidate explicitly separates feasibility from eligibility
@@ -181,7 +198,8 @@ For `REPLACE_ITEM(sold -> bought)`:
 For `UPGRADE_ITEM(target)`:
 
 - normal descendant progression remains valid when required components are present;
-- exact target ownership/max-copy behavior remains unchanged.
+- exact target ownership/max-copy behavior remains unchanged;
+- the action exists only when its transaction cost/mechanics are verified; topology-only lineage cannot create it.
 
 ### 4. Planner semantic completion must use shared satisfaction
 
@@ -238,12 +256,41 @@ Presentation behavior:
 
 `nextAction.targetItemId` and the first actionable build item must remain aligned.
 
+### 8. Catalog compilation preserves topology independently of executable mechanics
+
+`RecommendationRulesetCatalogV1.upgradeRecipes[].consumedItemIds` represent known recipe topology. `soulsCost` evidence controls whether the recipe is executable.
+
+Strict compilation therefore produces two outputs for graph construction:
+
+```text
+RecommendationItemDefinition.upgradeRecipes
+  -> only recipes with verified transaction cost
+
+RecommendationItemLineageEdge[]
+  -> all known parent/component edges whose item definitions are compilable
+```
+
+`RecommendationItemGraph` uses both for lineage. Candidate generation uses only executable recipes for `UPGRADE_ITEM`.
+
+This keeps deterministic knowledge without violating fail-closed transaction semantics.
+
+### 9. Replay preserves topology-only lineage
+
+Replay must serialize direct graph lineage separately because a runtime graph can know a parent/component edge that is absent from executable `upgradeRecipes`.
+
+The new replay topology field is optional so old persisted replay inputs remain readable. Old inputs still derive lineage from executable recipes when present.
+
 ## Data Flow
 
 ```text
-Catalog recipes
-    -> RecommendationItemGraph
-       -> transitive lineage closures
+Catalog recipe edges
+    -> topology lineage edges --------------------+
+                                                    |
+Verified transaction mechanics                    |
+    -> executable upgrade recipes                 |
+                                                    v
+                                      RecommendationItemGraph
+                                      -> transitive lineage closures
 
 Live exact inventory
     -> exact ownership
@@ -272,6 +319,8 @@ Policy output
 4. Missing lineage data must never invent an upgrade relationship.
 5. If a target has no known graph definition, existing fail-closed serving behavior applies.
 6. Recommendation suppression is deterministic and must not depend on model confidence.
+7. Unknown upgrade transaction cost must suppress executable upgrade generation but must not erase known recipe topology.
+8. Topology must never be converted into a guessed transaction cost.
 
 ## Telemetry
 
@@ -305,6 +354,13 @@ Implementation follows TDD with failing regressions before production code chang
 4. shared component branches: `A -> B`, `A -> C`;
 5. deterministic sorted closure output;
 6. target satisfaction for exact and descendant ownership.
+
+### Catalog topology tests
+
+1. known recipe topology with unknown transaction cost remains visible in graph lineage;
+2. topology-only data does not create executable `UPGRADE_ITEM`;
+3. verified upgrade mechanics create both executable recipe and lineage;
+4. invalid/missing component IDs still fail graph/catalog construction.
 
 ### Candidate generator tests
 
@@ -345,6 +401,10 @@ The fixture uses stable item IDs from the current catalog rather than item-name 
 
 ### Integration/replay gates
 
+The real serving-boundary regression must build `AdaptiveDecisionStateV1Service` from catalog item rows plus recipe DB rows, with upgrade transaction cost unavailable, and prove the resulting graph still satisfies the lower component from the owned parent.
+
+Replay must preserve and reconstruct the same topology-only relation.
+
 Existing structured planner domain, API, integration, and replay suites remain mandatory.
 
 Additional replay invariants:
@@ -364,20 +424,23 @@ Primary files expected to change:
 
 ```text
 packages/deadlock-build-domain/src/recommendation-item-graph.ts
+packages/deadlock-build-domain/src/recommendation-ruleset-catalog.ts
 packages/deadlock-build-domain/src/recommendation-action-domain.ts
 packages/deadlock-build-domain/src/recommendation-candidate-generator.ts
+packages/deadlock-build-domain/test/recommendation-item-graph.spec.ts
+packages/deadlock-build-domain/test/recommendation-ruleset-catalog.spec.ts
 packages/deadlock-build-domain/test/recommendation-candidate-generator.spec.ts
 
 apps/api/src/statlocker-adaptive/adaptive-choice-resolver-v1.service.ts
 apps/api/src/statlocker-adaptive/adaptive-phase-eligibility-v1.service.ts
 apps/api/src/statlocker-adaptive/adaptive-build-planner-v1.service.ts
 apps/api/src/statlocker-adaptive/adaptive-planner-transition-v1.ts
-apps/api/test/adaptive-build-planner-v1.spec.ts
-apps/api/test/adaptive-policy-v1.integration.spec.ts
-apps/api/test/adaptive-replay-v1.spec.ts
+apps/api/src/statlocker-adaptive/adaptive-replay-v1.service.ts
+apps/api/test/adaptive-phase-eligibility-v1.spec.ts
+apps/api/test/adaptive-upgrade-lineage-v1.spec.ts
+apps/api/test/adaptive-upgrade-lineage-serving.integration.spec.ts
+apps/api/test/adaptive-replay-upgrade-lineage-v1.spec.ts
 ```
-
-Exact file set may shrink if the shared graph API removes the need for local changes.
 
 ## Rollout
 
@@ -385,13 +448,14 @@ This is a deterministic correctness fix, not a model experiment.
 
 Merge/deploy gate:
 
-1. new RED regressions reproduced on pre-fix code;
+1. new regressions execute against the implementation and pass;
 2. domain tests green;
 3. API/adaptive unit tests green;
 4. integration tests green;
 5. replay regression gates green;
 6. full existing Recommendation CI/security checks green on the exact head;
-7. no change to training, FUTURE_TEST, randomized traffic, or Value/Behavioral models.
+7. real affected catalog version is verified to contain the expected recipe edge;
+8. no change to training, FUTURE_TEST, randomized traffic, or Value/Behavioral models.
 
 ## Acceptance Criteria
 
@@ -403,6 +467,9 @@ satisfied target => cannot be actionable NEXT
 satisfied target => cannot be targeted WAIT
 normal replacement => cannot downgrade descendant to ancestor
 projected upgrade => recomputes target satisfaction
+known topology survives unknown upgrade transaction cost
+unknown transaction cost => no fabricated executable upgrade
+replay preserves topology-only lineage
 all planner completion checks use shared graph semantics
 no item-specific hardcoded exceptions
 all regression and replay gates pass
