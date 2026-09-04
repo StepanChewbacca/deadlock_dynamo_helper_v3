@@ -1,5 +1,9 @@
 import { createHash } from 'crypto';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { RecommendationItemCatalogRecipeV1 } from '../deadlock-live/entities/recommendation-item-catalog-recipe-v1.entity';
+import { RecommendationItemCatalogVersionV1 } from '../deadlock-live/entities/recommendation-item-catalog-version-v1.entity';
 import {
   BuiltConsensusSkeletonV1,
   ConsensusBuildCandidateV1,
@@ -56,7 +60,15 @@ export class BuildSkeletonService {
     MAX_PROFILES,
   );
 
-  constructor(private readonly store: StatlockerSnapshotStoreService) {}
+  constructor(
+    private readonly store: StatlockerSnapshotStoreService,
+    @Optional()
+    @InjectRepository(RecommendationItemCatalogVersionV1)
+    private readonly catalogVersionRepo?: Repository<RecommendationItemCatalogVersionV1>,
+    @Optional()
+    @InjectRepository(RecommendationItemCatalogRecipeV1)
+    private readonly catalogRecipeRepo?: Repository<RecommendationItemCatalogRecipeV1>,
+  ) {}
 
   async rebuild(input: RebuildConsensusSkeletonInputV1): Promise<BuiltConsensusSkeletonV1 | undefined> {
     validateInput(input);
@@ -90,7 +102,12 @@ export class BuildSkeletonService {
 
     if (profileSnapshots.length < this.minProfiles) return this.getCurrentSkeleton(input);
 
-    const skeleton = deriveSkeleton(input.heroId, profileSnapshots.map((entry) => entry.payload));
+    const componentClosureByItemId = await this.loadComponentClosures(input);
+    const skeleton = deriveSkeleton(
+      input.heroId,
+      profileSnapshots.map((entry) => entry.payload),
+      componentClosureByItemId,
+    );
     const contentSha256 = createHash('sha256').update(stableJson(skeleton)).digest('hex');
     const scopeKey = `hero:${input.heroId}:consensus`;
     const fetchedAt = newestDate([
@@ -127,11 +144,31 @@ export class BuildSkeletonService {
     });
     return asSkeleton(current?.payload, input.heroId);
   }
+
+  private async loadComponentClosures(
+    input: RebuildConsensusSkeletonInputV1,
+  ): Promise<ReadonlyMap<number, ReadonlySet<number>>> {
+    if (!this.catalogVersionRepo || !this.catalogRecipeRepo) return new Map<number, ReadonlySet<number>>();
+    const [version] = await this.catalogVersionRepo.find({
+      where: {
+        payloadSha256: input.catalogSha256,
+        rulesetKey: input.rulesetVersion,
+      },
+      take: 1,
+    });
+    if (!version) return new Map<number, ReadonlySet<number>>();
+    const recipes = await this.catalogRecipeRepo.find({
+      where: { catalogVersionId: version.catalogVersionId },
+      order: { parentItemId: 'ASC', componentOrder: 'ASC', componentItemId: 'ASC' },
+    });
+    return componentClosureMapFromRecipes(recipes);
+  }
 }
 
 export function deriveSkeleton(
   heroId: number,
   profiles: readonly StatlockerProBuildAnalysisV1[],
+  componentClosureByItemId: ReadonlyMap<number, ReadonlySet<number>> = new Map<number, ReadonlySet<number>>(),
 ): BuiltConsensusSkeletonV1 {
   const selected = [...profiles]
     .filter((profile) => profile.heroId === heroId)
@@ -139,7 +176,7 @@ export function deriveSkeleton(
     .slice(0, MAX_PROFILES);
   const itemIds = [...new Set(selected.flatMap((profile) => profile.items.map((item) => item.itemId)))].sort((a, b) => a - b);
   const derived = itemIds.map((itemId) => deriveItem(itemId, selected));
-  const groups = deriveGroups(heroId, derived, selected);
+  const groups = deriveGroups(heroId, derived, selected, componentClosureByItemId);
   const items: ConsensusSkeletonItemV1[] = derived
     .map((entry) => ({
       itemId: entry.candidate.itemId,
@@ -156,6 +193,7 @@ function deriveGroups(
   heroId: number,
   derived: readonly DerivedItemV1[],
   profiles: readonly StatlockerProBuildAnalysisV1[],
+  componentClosureByItemId: ReadonlyMap<number, ReadonlySet<number>>,
 ): readonly ConsensusBuildGroupV1[] {
   const groups: ConsensusBuildGroupV1[] = [];
   const assigned = new Set<number>();
@@ -198,7 +236,9 @@ function deriveGroups(
     for (let candidateIndex = index + 1; candidateIndex < available.length; candidateIndex += 1) {
       const candidate = available[candidateIndex];
       if (assigned.has(candidate.candidate.itemId)) continue;
-      if (clique.every((member) => choicePairConfidence(member, candidate, profiles) !== undefined)) {
+      if (clique.every((member) =>
+        choicePairConfidence(member, candidate, profiles, componentClosureByItemId) !== undefined,
+      )) {
         clique.push(candidate);
       }
     }
@@ -206,7 +246,12 @@ function deriveGroups(
     const confidences: number[] = [];
     for (let left = 0; left < clique.length; left += 1) {
       for (let right = left + 1; right < clique.length; right += 1) {
-        const confidence = choicePairConfidence(clique[left], clique[right], profiles);
+        const confidence = choicePairConfidence(
+          clique[left],
+          clique[right],
+          profiles,
+          componentClosureByItemId,
+        );
         if (confidence !== undefined) confidences.push(confidence);
       }
     }
@@ -305,9 +350,11 @@ function choicePairConfidence(
   a: DerivedItemV1,
   b: DerivedItemV1,
   profiles: readonly StatlockerProBuildAnalysisV1[],
+  componentClosureByItemId: ReadonlyMap<number, ReadonlySet<number>>,
 ): number | undefined {
   const config = ADAPTIVE_POLICY_V1_CONFIG.choice;
   if (a.phase !== b.phase) return undefined;
+  if (itemsAreUpgradeRelatives(a.candidate.itemId, b.candidate.itemId, componentClosureByItemId)) return undefined;
   if (a.candidate.coverage < config.inferenceMinCoverage || b.candidate.coverage < config.inferenceMinCoverage) return undefined;
   const timeDelta = Math.abs(a.candidate.medianBuyTimeS - b.candidate.medianBuyTimeS);
   if (timeDelta > config.inferenceMaxMedianTimeDeltaSec) return undefined;
@@ -332,6 +379,48 @@ function choicePairConfidence(
   const timingScore = clamp01(1 - timeDelta / Math.max(1, config.inferenceMaxMedianTimeDeltaSec));
   const confidence = (coverageScore + exclusivityScore + timingScore) / 3;
   return confidence >= config.inferenceMinConfidence ? confidence : undefined;
+}
+
+function itemsAreUpgradeRelatives(
+  aItemId: number,
+  bItemId: number,
+  componentClosureByItemId: ReadonlyMap<number, ReadonlySet<number>>,
+): boolean {
+  return componentClosureByItemId.get(aItemId)?.has(bItemId) === true ||
+    componentClosureByItemId.get(bItemId)?.has(aItemId) === true;
+}
+
+function componentClosureMapFromRecipes(
+  recipes: readonly RecommendationItemCatalogRecipeV1[],
+): ReadonlyMap<number, ReadonlySet<number>> {
+  const direct = new Map<number, number[]>();
+  for (const recipe of recipes) {
+    const parentItemId = Number(recipe.parentItemId);
+    const componentItemId = Number(recipe.componentItemId);
+    if (!Number.isInteger(parentItemId) || parentItemId <= 0 || !Number.isInteger(componentItemId) || componentItemId <= 0) continue;
+    const components = direct.get(parentItemId) ?? [];
+    if (!components.includes(componentItemId)) components.push(componentItemId);
+    direct.set(parentItemId, components);
+  }
+
+  const memo = new Map<number, ReadonlySet<number>>();
+  const visit = (itemId: number, visiting: Set<number>): ReadonlySet<number> => {
+    const cached = memo.get(itemId);
+    if (cached) return cached;
+    if (visiting.has(itemId)) return new Set<number>();
+    visiting.add(itemId);
+    const result = new Set<number>();
+    for (const componentId of (direct.get(itemId) ?? []).sort((a, b) => a - b)) {
+      result.add(componentId);
+      for (const nestedId of visit(componentId, visiting)) result.add(nestedId);
+    }
+    visiting.delete(itemId);
+    memo.set(itemId, result);
+    return result;
+  };
+
+  for (const itemId of [...direct.keys()].sort((a, b) => a - b)) visit(itemId, new Set<number>());
+  return memo;
 }
 
 function dominantPhase(observed: readonly StatlockerProBuildItemV1[]): ConsensusBuildPhaseV1 {
