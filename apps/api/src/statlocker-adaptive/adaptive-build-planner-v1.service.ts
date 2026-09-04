@@ -74,6 +74,8 @@ interface SemanticPlanV1 {
   supportOwnersByItemId: ReadonlyMap<number, readonly number[]>;
   selectedChoices: ReadonlyMap<string, number>;
   committedChoices: ReadonlyMap<string, number>;
+  selectedChoiceItemIdsByGroup: ReadonlyMap<string, readonly number[]>;
+  committedChoiceItemIdsByGroup: ReadonlyMap<string, readonly number[]>;
   completedGroupIds: ReadonlySet<string>;
   externallyDivergedGroupIds: ReadonlySet<string>;
   orderByItemId: ReadonlyMap<number, number>;
@@ -258,15 +260,23 @@ export class AdaptiveBuildPlannerV1Service {
 
     const selectedChoices = new Map<string, number>();
     const committedChoices = new Map<string, number>();
+    const selectedChoiceItemIdsByGroup = new Map<string, readonly number[]>();
+    const committedChoiceItemIdsByGroup = new Map<string, readonly number[]>();
     const externallyDivergedGroupIds = new Set<string>();
     for (const group of skeleton.groups.filter((entry) => entry.type === 'CHOICE')) {
-      const previousSelectedItemId = previousSelectedChoiceItem(input.previousResult?.recommendedBuild, group);
+      const previousSelectedItemIds = previousSelectedChoiceItems(input.previousResult?.recommendedBuild, group);
       const resolved = this.choiceResolver.resolveChoice(group, {
         scorerContext,
         itemGraph: input.decision.itemGraph,
         ownedItemIds: [...owned],
-        previousSelectedItemId,
+        previousSelectedItemIds,
       });
+      if (resolved.selectedItemIds.length > 0) {
+        selectedChoiceItemIdsByGroup.set(group.groupId, resolved.selectedItemIds);
+      }
+      if (resolved.committedItemIds.length > 0) {
+        committedChoiceItemIdsByGroup.set(group.groupId, resolved.committedItemIds);
+      }
       if (resolved.selectedItemId !== undefined) selectedChoices.set(group.groupId, resolved.selectedItemId);
       if (resolved.committedItemId !== undefined) committedChoices.set(group.groupId, resolved.committedItemId);
       if (resolved.externallyDiverged) externallyDivergedGroupIds.add(group.groupId);
@@ -291,8 +301,9 @@ export class AdaptiveBuildPlannerV1Service {
 
       if (eligibility === 'COMPLETED') {
         if (group.type === 'CHOICE') {
-          const selected = selectedChoices.get(group.groupId);
-          if (selected !== undefined && owned.has(selected)) selectedFinalItemIds.add(selected);
+          for (const selected of selectedChoiceItemIdsByGroup.get(group.groupId) ?? []) {
+            if (owned.has(selected)) selectedFinalItemIds.add(selected);
+          }
         } else {
           for (const candidate of group.candidates) {
             if (owned.has(candidate.itemId)) selectedFinalItemIds.add(candidate.itemId);
@@ -303,8 +314,9 @@ export class AdaptiveBuildPlannerV1Service {
       if (eligibility !== 'ELIGIBLE') continue;
 
       if (group.type === 'CHOICE') {
-        const selected = selectedChoices.get(group.groupId);
-        if (selected !== undefined) selectedFinalItemIds.add(selected);
+        for (const selected of selectedChoiceItemIdsByGroup.get(group.groupId) ?? []) {
+          selectedFinalItemIds.add(selected);
+        }
         continue;
       }
 
@@ -358,7 +370,7 @@ export class AdaptiveBuildPlannerV1Service {
       owned,
       completedGroupIds,
       targetItemIds,
-      selectedChoices,
+      selectedChoiceItemIdsByGroup,
     );
 
     return {
@@ -370,6 +382,8 @@ export class AdaptiveBuildPlannerV1Service {
       ),
       selectedChoices,
       committedChoices,
+      selectedChoiceItemIdsByGroup,
+      committedChoiceItemIdsByGroup,
       completedGroupIds,
       externallyDivergedGroupIds,
       orderByItemId,
@@ -384,7 +398,7 @@ export class AdaptiveBuildPlannerV1Service {
     owned: ReadonlySet<number>,
     completedGroupIds: ReadonlySet<string>,
     activeTargetItemIds: ReadonlySet<number>,
-    selectedChoices: ReadonlyMap<string, number>,
+    selectedChoiceItemIdsByGroup: ReadonlyMap<string, readonly number[]>,
   ): ReadonlySet<number> {
     let remainingDepth = ADAPTIVE_POLICY_V1_CONFIG.planningDepth - activeTargetItemIds.size;
     if (remainingDepth <= 0) return new Set<number>();
@@ -404,16 +418,19 @@ export class AdaptiveBuildPlannerV1Service {
     const nextPhaseOrder = Math.min(...futureRequired.map((group) => phaseOrderV1(group.phase)));
     const result = new Set<number>();
     for (const group of futureRequired.filter((entry) => phaseOrderV1(entry.phase) === nextPhaseOrder)) {
+      const selectedChoiceItemIds = group.type === 'CHOICE'
+        ? selectedChoiceItemIdsByGroup.get(group.groupId) ?? []
+        : [];
       const ownedCount = group.candidates.filter((candidate) => owned.has(candidate.itemId)).length;
       let needed = group.type === 'CHOICE'
-        ? (selectedChoices.get(group.groupId) !== undefined && !owned.has(selectedChoices.get(group.groupId) as number) ? 1 : 0)
+        ? selectedChoiceItemIds.filter((itemId) => !owned.has(itemId)).length
         : Math.max(0, Math.max(1, group.minSelect) - ownedCount);
       if (needed === 0) continue;
 
-      const selectedChoiceItemId = group.type === 'CHOICE' ? selectedChoices.get(group.groupId) : undefined;
+      const selectedChoiceSet = new Set(selectedChoiceItemIds);
       const ranked = group.candidates
         .filter((candidate) => !owned.has(candidate.itemId))
-        .filter((candidate) => selectedChoiceItemId === undefined || candidate.itemId === selectedChoiceItemId)
+        .filter((candidate) => group.type !== 'CHOICE' || selectedChoiceSet.has(candidate.itemId))
         .map((candidate) => ({
           itemId: candidate.itemId,
           score: this.scorer.scoreItem(candidate.itemId, scorerContext).score,
@@ -643,7 +660,7 @@ export class AdaptiveBuildPlannerV1Service {
         group,
         ownedItemIds,
         input.decision.itemGraph,
-        committedChoices.get(group.groupId) ?? node.selectedChoices.get(group.groupId),
+        committedChoices.get(group.groupId),
       );
       if (reconstructed.committedItemId !== undefined) {
         committedChoices.set(group.groupId, reconstructed.committedItemId);
@@ -798,15 +815,18 @@ function sellsSelectedFinal(candidate: RecommendationCandidate, selectedFinals: 
   return false;
 }
 
-function previousSelectedChoiceItem(
+function previousSelectedChoiceItems(
   previousBuild: readonly AdaptivePlannedItemV1[] | undefined,
   group: ConsensusBuildGroupV1,
-): number | undefined {
-  if (!previousBuild) return undefined;
+): number[] {
+  if (!previousBuild) return [];
   const candidates = new Set(group.candidates.map((candidate) => candidate.itemId));
-  return [...previousBuild]
-    .sort((a, b) => a.position - b.position || a.itemId - b.itemId)
-    .find((item) => candidates.has(item.itemId))?.itemId;
+  return uniqueNumbers(
+    [...previousBuild]
+      .sort((a, b) => a.position - b.position || a.itemId - b.itemId)
+      .filter((item) => candidates.has(item.itemId))
+      .map((item) => item.itemId),
+  ).slice(0, Math.max(1, group.maxSelect));
 }
 
 function dedupePlannerNodes(nodes: readonly AdaptivePlannerNodeV1[]): AdaptivePlannerNodeV1[] {
