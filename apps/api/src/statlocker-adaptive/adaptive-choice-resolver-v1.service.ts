@@ -47,8 +47,12 @@ export class AdaptiveChoiceResolverV1Service {
     context: AdaptiveChoiceResolutionContextV1,
   ): AdaptiveResolvedChoiceV1 {
     if (group.type !== 'CHOICE') throw new Error(`Group ${group.groupId} is not a CHOICE group`);
-    const previousCommit = context.previousCommittedItemId ?? context.previousSelectedItemId;
-    const reconstructed = reconstructChoiceStateV1(group, context.ownedItemIds, context.itemGraph, previousCommit);
+    const reconstructed = reconstructChoiceStateV1(
+      group,
+      context.ownedItemIds,
+      context.itemGraph,
+      context.previousCommittedItemId,
+    );
     const scores = group.candidates
       .map((candidate) => this.scorer.scoreItem(candidate.itemId, context.scorerContext))
       .sort((a, b) => b.score - a.score || b.confidence - a.confidence || a.itemId - b.itemId);
