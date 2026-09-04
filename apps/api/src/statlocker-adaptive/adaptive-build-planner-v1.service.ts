@@ -50,6 +50,7 @@ import {
   findConsensusGroupByItemV1,
   phaseOrderV1,
 } from './structured-build-v1';
+import { AdaptiveRecommendationObservabilityV1Service } from './adaptive-recommendation-observability-v1.service';
 
 export interface AdaptiveBuildPlannerInputV1 {
   decision: AdaptiveDecisionStateV1;
@@ -106,6 +107,7 @@ export class AdaptiveBuildPlannerV1Service {
     private readonly scorer: AdaptiveEvidenceScorerV1Service,
     phaseEligibility?: AdaptivePhaseEligibilityV1Service,
     choiceResolver?: AdaptiveChoiceResolverV1Service,
+    private readonly observability?: AdaptiveRecommendationObservabilityV1Service,
   ) {
     this.phaseEligibility = phaseEligibility ?? new AdaptivePhaseEligibilityV1Service();
     this.choiceResolver = choiceResolver ?? new AdaptiveChoiceResolverV1Service(scorer);
@@ -218,6 +220,9 @@ export class AdaptiveBuildPlannerV1Service {
     const proposedConfidence = bestNode.actions.length > 0
       ? clamp01(bestNode.confidenceSum / bestNode.actions.length)
       : aggregateImmediateConfidence(immediate);
+    const postCommitReplacement = proposedAction.type === 'REPLACE' &&
+      semantic.choiceReplacementOptions.some((option) => choiceReplacementStarted(option, bestNode));
+    if (postCommitReplacement) this.observability?.recordPostCommitReplacement();
 
     const previous = input.previousResult;
     const preservePrevious = Boolean(
@@ -296,7 +301,11 @@ export class AdaptiveBuildPlannerV1Service {
       if (resolved.replacementOptions.length > 0) {
         replacementOptionsByGroup.set(group.groupId, resolved.replacementOptions);
       }
-      if (resolved.externallyDiverged) externallyDivergedGroupIds.add(group.groupId);
+      if (resolved.externallyDiverged) {
+        externallyDivergedGroupIds.add(group.groupId);
+        this.observability?.recordChoiceGroupViolationPrevented();
+        this.observability?.recordExternallyDivergedChoiceState();
+      }
     }
 
     const selectedFinalItemIds = new Set<number>();
@@ -331,7 +340,12 @@ export class AdaptiveBuildPlannerV1Service {
         }
         continue;
       }
-      if (eligibility !== 'ELIGIBLE') continue;
+      if (eligibility !== 'ELIGIBLE') {
+        if (eligibility === 'NOT_YET_ELIGIBLE' && group.phase !== 'EARLY') {
+          this.observability?.recordPhaseViolationPrevented();
+        }
+        continue;
+      }
 
       if (group.type === 'CHOICE') {
         for (const selected of selectedChoiceItemIdsByGroup.get(group.groupId) ?? []) {

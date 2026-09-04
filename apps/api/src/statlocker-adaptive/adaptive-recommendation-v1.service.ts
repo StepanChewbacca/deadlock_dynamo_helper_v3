@@ -15,6 +15,7 @@ import {
   AdaptiveDecisionStateV1,
   AdaptiveDecisionStateV1Service,
 } from './adaptive-decision-state-v1.service';
+import { AdaptiveRecommendationObservabilityV1Service } from './adaptive-recommendation-observability-v1.service';
 import { AdaptiveReplayV1Service } from './adaptive-replay-v1.service';
 import {
   AdaptiveScoringDatasetV1,
@@ -33,11 +34,13 @@ export class AdaptiveRecommendationV1Service {
     private readonly evidence: StatlockerEvidenceService,
     private readonly planner: AdaptiveBuildPlannerV1Service,
     private readonly replay: AdaptiveReplayV1Service,
+    private readonly observability: AdaptiveRecommendationObservabilityV1Service = new AdaptiveRecommendationObservabilityV1Service(),
   ) {}
 
   async recommend(request: AdaptiveRecommendationRequestV1): Promise<AdaptiveRecommendationResultV1> {
     validateRequest(request);
     const initial = await this.decisionState.build(request.matchId, request.localSteamId);
+    this.observability.recordDecisionState(initial);
     const previous = await this.replay.getPreviousPlan(initial.state.matchId, initial.localSteamId);
     const patchId = this.evidence.resolveLocalPatchId(initial.rulesetId, initial.catalogSha256) ?? 'UNKNOWN';
     const localEvidence = this.evidence.getLocalEvidence({
@@ -46,15 +49,21 @@ export class AdaptiveRecommendationV1Service {
       catalogSha256: initial.catalogSha256,
       statlockerPatchId: patchId,
     });
+    this.observability.recordEvidence(localEvidence);
 
     const planned = localEvidence.usable
-      ? this.planner.plan({
-          decision: initial,
-          evidence: localEvidence,
-          previousResult: previous,
-          recentPurchasedItemIds: [],
-          recentSoldItemIds: [],
-        })
+      ? (() => {
+          const plannerStartedAt = Date.now();
+          const result = this.planner.plan({
+            decision: initial,
+            evidence: localEvidence,
+            previousResult: previous,
+            recentPurchasedItemIds: [],
+            recentSoldItemIds: [],
+          });
+          this.observability.recordPlannerLatency(Date.now() - plannerStartedAt);
+          return result;
+        })()
       : undefined;
 
     const fresh = await this.decisionState.build(request.matchId, request.localSteamId);
@@ -71,6 +80,8 @@ export class AdaptiveRecommendationV1Service {
 
     const blockers = new Set<string>(localEvidence.degradedReasons);
     let result: AdaptiveRecommendationResultV1;
+    let legalityFallback = false;
+    let legalityFallbackReasonCodes: readonly string[] = [];
 
     if (!localEvidence.usable) {
       blockers.add('STATLOCKER_EVIDENCE_UNAVAILABLE');
@@ -90,6 +101,8 @@ export class AdaptiveRecommendationV1Service {
       if (legality.changed || fresh.stateRevision !== initial.stateRevision) {
         blockers.add('STATE_CHANGED_LEGALITY_RECHECK');
       }
+      legalityFallback = legality.changed;
+      legalityFallbackReasonCodes = legality.action.reasonCodes ?? [];
       result = {
         ready: true,
         blockers: [...blockers].sort(),
@@ -111,6 +124,15 @@ export class AdaptiveRecommendationV1Service {
     } else {
       throw new Error('Adaptive planner did not produce a result');
     }
+
+    this.observability.recordRecommendationOutcome({
+      evidence: localEvidence,
+      decision: fresh,
+      previousResult: previous,
+      result,
+      legalityFallback,
+      legalityFallbackReasonCodes,
+    });
 
     const replayInput = this.replay.toReplayInput(initial, localEvidence, {
       previousResult: previous,

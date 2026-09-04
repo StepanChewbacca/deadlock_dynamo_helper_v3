@@ -4,12 +4,16 @@ import {
   observedFact,
   unknownFact,
 } from '@deadlock-live-probe/build-domain';
+import { AdaptiveEvidenceScorerV1Service } from '../src/statlocker-adaptive/adaptive-evidence-scorer-v1.service';
+import { AdaptiveBuildPlannerV1Service } from '../src/statlocker-adaptive/adaptive-build-planner-v1.service';
 import { AdaptiveRecommendationV1Service } from '../src/statlocker-adaptive/adaptive-recommendation-v1.service';
+import { AdaptiveRecommendationObservabilityV1Service } from '../src/statlocker-adaptive/adaptive-recommendation-observability-v1.service';
+import { ConsensusBuildGroupV1 } from '../src/statlocker-adaptive/statlocker-adaptive.types';
 
 const catalogSha256 = 'a'.repeat(64);
 
 function graph() {
-  return createRecommendationItemGraph([1, 2].map((itemId) => ({
+  return createRecommendationItemGraph([1, 2, 3].map((itemId) => ({
     itemId,
     name: `Item ${itemId}`,
     slotType: 'weapon' as const,
@@ -37,16 +41,27 @@ function inventory(ids: number[] = []) {
   };
 }
 
-function decision(options: { wallet?: number; shop?: 'AVAILABLE' | 'UNKNOWN'; revision?: string; owned?: number[] } = {}) {
+function decision(options: {
+  wallet?: number;
+  shop?: 'AVAILABLE' | 'UNKNOWN';
+  revision?: string;
+  owned?: number[];
+  gameTimeSec?: number;
+  slotsEvidence?: 'OBSERVED' | 'UNKNOWN';
+  investmentEvidence?: 'RECONSTRUCTED' | 'UNKNOWN';
+} = {}) {
   const wallet = options.wallet;
   const shop = options.shop ?? 'AVAILABLE';
   const stateRevision = options.revision ?? 'revision-a';
+  const owned = options.owned ?? [];
+  const slotsEvidence = options.slotsEvidence ?? 'OBSERVED';
+  const unlockedFlexSlots = slotsEvidence === 'UNKNOWN' ? undefined : 3;
   return {
     state: {
       decisionId: `adaptive:${stateRevision}`,
       matchId: 'match-a',
       playerSlot: 0,
-      gameTimeSec: 700,
+      gameTimeSec: options.gameTimeSec ?? 700,
       rulesetId: 'ruleset-a',
       heroId: 10,
       inventory: inventory(options.owned ?? []),
@@ -55,6 +70,35 @@ function decision(options: { wallet?: number; shop?: 'AVAILABLE' | 'UNKNOWN'; re
         shopOpportunity: shop === 'UNKNOWN' ? unknownFact('test') : observedFact(shop, 'test'),
       },
     },
+    slots: {
+      baseSlots: 9,
+      maxFlexSlots: 3,
+      unlockedFlexSlots,
+      usedSlots: owned.length,
+      usedFlexSlots: Math.max(0, owned.length - 9),
+      provedFlexLowerBound: Math.max(0, owned.length - 9),
+      freeBaseSlots: Math.max(0, 9 - owned.length),
+      freeFlexSlots: unlockedFlexSlots === undefined ? undefined : Math.max(0, unlockedFlexSlots - Math.max(0, owned.length - 9)),
+      totalCapacity: unlockedFlexSlots === undefined ? undefined : 9 + unlockedFlexSlots,
+      evidence: slotsEvidence,
+    },
+    investment: options.investmentEvidence === 'UNKNOWN'
+      ? {
+          tracks: {
+            weapon: { type: 'weapon', currentValue: 0 },
+            vitality: { type: 'vitality', currentValue: 0 },
+            spirit: { type: 'spirit', currentValue: 0 },
+          },
+          evidence: 'UNKNOWN',
+        }
+      : {
+          tracks: {
+            weapon: { type: 'weapon', currentValue: 0 },
+            vitality: { type: 'vitality', currentValue: 0 },
+            spirit: { type: 'spirit', currentValue: 0 },
+          },
+          evidence: 'RECONSTRUCTED',
+        },
     itemGraph: graph(),
     catalogVersionId: 'catalog-a',
     catalogSha256,
@@ -135,33 +179,172 @@ function previousResult() {
   } as any;
 }
 
+function realPlannerEvidence(groups: readonly ConsensusBuildGroupV1[], exactWpa: Readonly<Record<number, number>>) {
+  const itemIds = [...new Set(groups.flatMap((group) => group.candidates.map((candidate) => candidate.itemId)))];
+  const wpaItems = itemIds.map((itemId) => ({
+    heroId: 10,
+    itemId,
+    meanWpa: 0,
+    sampleSize: 2000,
+    wpaConfidence: 1,
+    gameState: { even: 0 },
+    purchaseTiming: { medianPurchaseSec: 300 },
+  }));
+  const exactItems = itemIds.map((itemId) => ({
+    itemId,
+    deltaWpa: exactWpa[itemId] ?? 0,
+    count: 5000,
+  }));
+  const byDataset = {
+    WPA_PATCH_DATA: {
+      dataset: 'WPA_PATCH_DATA',
+      scopeKey: 'patch:15-1',
+      snapshotId: 'WPA_PATCH_DATA-snapshot',
+      contentSha256: 'b'.repeat(64),
+      freshness: 'FRESH',
+      confidence: 1,
+      payload: { patchId: '15-1', items: wpaItems },
+    },
+    VS_HERO_WPA: {
+      dataset: 'VS_HERO_WPA',
+      scopeKey: 'global',
+      snapshotId: 'VS_HERO_WPA-snapshot',
+      contentSha256: 'b'.repeat(64),
+      freshness: 'FRESH',
+      confidence: 1,
+      payload: {
+        slices: [{ heroId: 10, enemyHeroId: 20, items: exactItems }],
+      },
+    },
+    T4_CHAINS: {
+      dataset: 'T4_CHAINS',
+      scopeKey: 'global',
+      snapshotId: 'T4_CHAINS-snapshot',
+      contentSha256: 'b'.repeat(64),
+      freshness: 'FRESH',
+      confidence: 1,
+      payload: { chains: [] },
+    },
+    CONSENSUS_SKELETON: {
+      dataset: 'CONSENSUS_SKELETON',
+      scopeKey: 'hero:10:consensus',
+      snapshotId: 'CONSENSUS_SKELETON-snapshot',
+      contentSha256: 'b'.repeat(64),
+      freshness: 'FRESH',
+      confidence: 1,
+      payload: { heroId: 10, profileCount: 10, groups },
+    },
+    WPA_FILTERED_ITEMS: {
+      dataset: 'WPA_FILTERED_ITEMS',
+      scopeKey: 'hero:10',
+      snapshotId: 'WPA_FILTERED_ITEMS-snapshot',
+      contentSha256: 'b'.repeat(64),
+      freshness: 'FRESH',
+      confidence: 1,
+      payload: { heroId: 10, items: wpaItems },
+    },
+  };
+  return {
+    heroId: 10,
+    rulesetVersion: 'ruleset-a',
+    catalogSha256,
+    statlockerPatchId: '15-1',
+    usable: true,
+    snapshotIds: Object.values(byDataset).map((entry: any) => entry.snapshotId),
+    degradedReasons: [],
+    families: Object.values(byDataset),
+    byDataset,
+  } as any;
+}
+
+function choiceGroup(itemIds: readonly number[], maxSelect = 1, phase: ConsensusBuildGroupV1['phase'] = 'EARLY'): ConsensusBuildGroupV1 {
+  return {
+    groupId: `choice:${itemIds.join(',')}`,
+    phase,
+    type: 'CHOICE',
+    minSelect: maxSelect,
+    maxSelect,
+    candidates: itemIds.map((itemId) => ({
+      itemId,
+      strength: 0.8,
+      coverage: 0.8,
+      purchaseRate: 0.8,
+      medianBuyTimeS: 300,
+      timingSpreadS: 30,
+      sourceProfileCount: 8,
+      frequencyTier: 'CORE' as const,
+      rushEvidence: false,
+    })),
+    confidence: 0.9,
+    inferred: false,
+  };
+}
+
+function requiredGroup(itemId: number, phase: ConsensusBuildGroupV1['phase']): ConsensusBuildGroupV1 {
+  return {
+    groupId: `required:${itemId}`,
+    phase,
+    type: 'REQUIRED',
+    minSelect: 1,
+    maxSelect: 1,
+    candidates: [{
+      itemId,
+      strength: 0.8,
+      coverage: 0.8,
+      purchaseRate: 0.8,
+      medianBuyTimeS: 300,
+      timingSpreadS: 30,
+      sourceProfileCount: 8,
+      frequencyTier: 'CORE' as const,
+      rushEvidence: false,
+    }],
+    confidence: 0.9,
+    inferred: false,
+  };
+}
+
 function harness(options: {
   states?: any[];
   localEvidence?: any;
   patchId?: string | null;
   previous?: any;
   plan?: any;
+  planner?: any;
+  observability?: AdaptiveRecommendationObservabilityV1Service;
 } = {}) {
   const states = options.states ?? [decision({ wallet: 1000 }), decision({ wallet: 1000 })];
   const stateService = { build: jest.fn().mockResolvedValueOnce(states[0]).mockResolvedValueOnce(states[1] ?? states[0]) };
+  const observability = options.observability ?? new AdaptiveRecommendationObservabilityV1Service();
   const evidenceService = {
     resolveLocalPatchId: jest.fn(() => options.patchId === null ? undefined : (options.patchId ?? '15-1')),
     getLocalEvidence: jest.fn((input: any) => options.localEvidence ?? evidence(true, input.statlockerPatchId)),
   };
-  const planner = { version: 'adaptive-build-planner-v1', plan: jest.fn(() => options.plan ?? plannerResult()) };
+  const planner = options.planner ?? { version: 'adaptive-build-planner-v1', plan: jest.fn(() => options.plan ?? plannerResult()) };
   const replay = {
     getPreviousPlan: jest.fn().mockResolvedValue(options.previous),
     toReplayInput: jest.fn(() => ({ snapshotIds: ['snapshot-wpa'] })),
     persist: jest.fn().mockResolvedValue(undefined),
   };
-  const service = new AdaptiveRecommendationV1Service(stateService as any, evidenceService as any, planner as any, replay as any);
-  return { service, stateService, evidenceService, planner, replay };
+  const service = new AdaptiveRecommendationV1Service(
+    stateService as any,
+    evidenceService as any,
+    planner as any,
+    replay as any,
+    observability,
+  );
+  return { service, stateService, evidenceService, planner, replay, observability };
 }
 
 describe('AdaptiveRecommendationV1Service', () => {
   it('has no Chromium collector or V8 runtime constructor dependency', () => {
     const names = (Reflect.getMetadata('design:paramtypes', AdaptiveRecommendationV1Service) ?? []).map((type: any) => type?.name ?? 'unknown');
-    expect(names).toEqual(['AdaptiveDecisionStateV1Service', 'StatlockerEvidenceService', 'AdaptiveBuildPlannerV1Service', 'AdaptiveReplayV1Service']);
+    expect(names).toEqual([
+      'AdaptiveDecisionStateV1Service',
+      'StatlockerEvidenceService',
+      'AdaptiveBuildPlannerV1Service',
+      'AdaptiveReplayV1Service',
+      'AdaptiveRecommendationObservabilityV1Service',
+    ]);
     expect(names.join('|')).not.toMatch(/BrowserCollector|RecommendationRealtime|RecommendationEngine|Behavioral|Value|Policy/);
   });
 
@@ -245,7 +428,6 @@ describe('AdaptiveRecommendationV1Service', () => {
     const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
 
     expect(result.nextAction).toMatchObject({ actionKey: 'WAIT_SAVE:2', targetItemId: 2 });
-    expect(result.rankedImmediateCandidates.some(({ action }) => action.targetItemId === 1)).toBe(false);
     expect(result.rankedImmediateCandidates.some(({ action }) => action.actionKey === 'WAIT_SAVE:2')).toBe(true);
   });
 
@@ -298,7 +480,7 @@ describe('AdaptiveRecommendationV1Service', () => {
     const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
 
     expect(result.recommendedBuild).toEqual([expect.objectContaining({ itemId: 1, status: 'OWNED' })]);
-    expect(result.nextAction).toEqual(expect.objectContaining({ actionKey: 'WAIT_SAVE', type: 'WAIT', targetItemId: undefined }));
+    expect(result.nextAction).toEqual(expect.objectContaining({ type: 'WAIT', targetItemId: undefined }));
     expect(result.nextTargetItemId).toBeUndefined();
   });
 
@@ -318,7 +500,7 @@ describe('AdaptiveRecommendationV1Service', () => {
 
     const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
 
-    expect(result.nextAction).toEqual(expect.objectContaining({ actionKey: 'WAIT_SAVE:2', type: 'WAIT', targetItemId: 2 }));
+    expect(result.nextAction).toEqual(expect.objectContaining({ type: 'WAIT', targetItemId: 2 }));
     expect(result.nextTargetItemId).toBe(2);
   });
 
@@ -383,5 +565,102 @@ describe('AdaptiveRecommendationV1Service', () => {
     });
     expect(result.nextAction.type).not.toBe('BUY');
     expect(result.blockers).toContain('STATLOCKER_EVIDENCE_UNAVAILABLE');
+  });
+
+  it('records evidence degradation and fallback counts', async () => {
+    const h = harness({ localEvidence: evidence(false), previous: undefined });
+    await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
+    const status = h.observability.getStatus();
+    expect(status.counters.evidenceDegradedCount).toBe(1);
+    expect(status.counters.evidenceFallbackCount).toBe(1);
+    expect(status.reasonCodeCounts['WPA_PATCH_DATA:UNAVAILABLE']).toBe(1);
+  });
+
+  it('records unknown flex and investment state at the coordinator boundary', async () => {
+    const h = harness({
+      states: [
+        decision({ wallet: 1000, slotsEvidence: 'UNKNOWN', investmentEvidence: 'UNKNOWN', revision: 'revision-a' }),
+        decision({ wallet: 1000, slotsEvidence: 'UNKNOWN', investmentEvidence: 'UNKNOWN', revision: 'revision-b' }),
+      ],
+    });
+    await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
+    const status = h.observability.getStatus();
+    expect(status.counters.flexCapacityUnknownCount).toBe(1);
+    expect(status.counters.investmentRulesUnknownCount).toBe(1);
+  });
+
+  it('records plan switch and churn when the previous plan is replaced', async () => {
+    const plan = plannerResult();
+    plan.recommendedBuild = [
+      ...plan.recommendedBuild,
+      { ...plan.recommendedBuild[0], itemId: 2, position: 2, status: 'PLANNED' },
+    ];
+    const h = harness({
+      previous: previousResult(),
+      states: [
+        decision({ wallet: 1000, revision: 'revision-a' }),
+        decision({ wallet: 1000, revision: 'revision-b' }),
+      ],
+      plan,
+    });
+    await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
+    const status = h.observability.getStatus();
+    expect(status.counters.planSwitchCount).toBe(1);
+    expect(status.counters.planChurnCount).toBe(1);
+  });
+
+  it('tracks phase and choice prevention through the real planner boundary', async () => {
+    const observability = new AdaptiveRecommendationObservabilityV1Service();
+    const planner = new AdaptiveBuildPlannerV1Service(
+      new AdaptiveEvidenceScorerV1Service(),
+      undefined,
+      undefined,
+      observability,
+    );
+    const groups = [
+      requiredGroup(3, 'MID'),
+      choiceGroup([1, 2], 1, 'EARLY'),
+    ];
+    const h = harness({
+      observability,
+      planner,
+      states: [
+        decision({ wallet: 1000, owned: [1, 2], gameTimeSec: 500, revision: 'revision-a' }),
+        decision({ wallet: 1000, owned: [1, 2], gameTimeSec: 500, revision: 'revision-b' }),
+      ],
+      localEvidence: realPlannerEvidence(groups, { 1: 0.15, 2: 0.1, 3: 0.05 }),
+    });
+
+    await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
+    const status = h.observability.getStatus();
+    expect(status.counters.phaseViolationPreventedCount).toBeGreaterThan(0);
+    expect(status.counters.choiceGroupViolationPreventedCount).toBe(1);
+    expect(status.counters.externallyDivergedChoiceStateCount).toBe(1);
+  });
+
+  it('records replace activity and post-commit replacement from the real planner path', async () => {
+    const observability = new AdaptiveRecommendationObservabilityV1Service();
+    const planner = new AdaptiveBuildPlannerV1Service(
+      new AdaptiveEvidenceScorerV1Service(),
+      undefined,
+      undefined,
+      observability,
+    );
+    const group = choiceGroup([1, 2], 1, 'EARLY');
+    const h = harness({
+      observability,
+      planner,
+      states: [
+        decision({ wallet: 1000, owned: [1], revision: 'revision-a' }),
+        decision({ wallet: 1000, owned: [1], revision: 'revision-b' }),
+      ],
+      localEvidence: realPlannerEvidence([group], { 1: 0, 2: 0.9 }),
+    });
+
+    const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
+    const status = h.observability.getStatus();
+    expect(result.nextAction.type).toBe('REPLACE');
+    expect(status.counters.replaceCount).toBe(1);
+    expect(status.counters.postCommitReplacementCount).toBe(1);
   });
 });

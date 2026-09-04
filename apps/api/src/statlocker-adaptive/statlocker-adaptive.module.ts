@@ -13,6 +13,7 @@ import { AdaptiveChoiceResolverV1Service } from './adaptive-choice-resolver-v1.s
 import { AdaptiveDecisionStateV1Service } from './adaptive-decision-state-v1.service';
 import { AdaptiveEvidenceScorerV1Service } from './adaptive-evidence-scorer-v1.service';
 import { AdaptivePhaseEligibilityV1Service } from './adaptive-phase-eligibility-v1.service';
+import { AdaptiveRecommendationObservabilityV1Service } from './adaptive-recommendation-observability-v1.service';
 import { AdaptiveRecommendationV1Controller } from './adaptive-recommendation-v1.controller';
 import { AdaptiveRecommendationV1Service } from './adaptive-recommendation-v1.service';
 import { AdaptiveReplayV1Service } from './adaptive-replay-v1.service';
@@ -53,11 +54,17 @@ import { StatlockerSnapshotStoreService } from './statlocker-snapshot-store.serv
     AdaptiveDecisionStateV1Service,
     AdaptiveEvidenceScorerV1Service,
     AdaptivePhaseEligibilityV1Service,
+    AdaptiveRecommendationObservabilityV1Service,
     AdaptiveChoiceResolverV1Service,
     AdaptiveBuildPlannerV1Service,
     AdaptiveReplayV1Service,
     AdaptiveRecommendationV1Service,
   ],
-  exports: [AdaptiveRecommendationV1Service, StatlockerRefreshService, StatlockerEvidenceService],
+  exports: [
+    AdaptiveRecommendationV1Service,
+    AdaptiveRecommendationObservabilityV1Service,
+    StatlockerRefreshService,
+    StatlockerEvidenceService,
+  ],
 })
 export class StatlockerAdaptiveModule {}

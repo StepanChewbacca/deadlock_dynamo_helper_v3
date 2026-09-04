@@ -2,12 +2,14 @@ import { BadRequestException, Body, Controller, Get, Post } from '@nestjs/common
 import { AdaptiveRecommendationRequestV1, AdaptiveRecommendationResultV1 } from '@deadlock-live-probe/shared';
 import { AdaptiveRecommendationV1Service } from './adaptive-recommendation-v1.service';
 import { AdaptiveLiveStateNotReadyError } from './adaptive-decision-state-v1.service';
+import { AdaptiveRecommendationObservabilityV1Service } from './adaptive-recommendation-observability-v1.service';
 import { StatlockerEvidenceService } from './statlocker-evidence.service';
 import { StatlockerRefreshService, StatlockerRefreshStatusV1 } from './statlocker-refresh.service';
 import { ADAPTIVE_POLICY_V1_CONFIG } from './statlocker-adaptive.config';
 
 export interface AdaptiveRecommendationStatusV1 {
   refresh: StatlockerRefreshStatusV1;
+  observability: ReturnType<AdaptiveRecommendationObservabilityV1Service['getStatus']>;
   rulesetVersion?: string;
   catalogSha256?: string;
   statlockerPatchId?: string;
@@ -21,6 +23,7 @@ export class AdaptiveRecommendationV1Controller {
     private readonly recommendation: AdaptiveRecommendationV1Service,
     private readonly refresh: StatlockerRefreshService,
     private readonly evidence: StatlockerEvidenceService,
+    private readonly observability: AdaptiveRecommendationObservabilityV1Service,
   ) {}
 
   @Post('recommend')
@@ -46,6 +49,7 @@ export class AdaptiveRecommendationV1Controller {
     const local = this.evidence.getLocalStatus(refresh.identity);
     return {
       refresh,
+      observability: this.observability.getStatus(),
       rulesetVersion: refresh.identity?.rulesetVersion,
       catalogSha256: refresh.identity?.catalogSha256,
       statlockerPatchId: local.statlockerPatchId,

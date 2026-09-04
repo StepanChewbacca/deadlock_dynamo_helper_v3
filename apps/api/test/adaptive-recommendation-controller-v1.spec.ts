@@ -1,6 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { AdaptiveRecommendationV1Controller } from '../src/statlocker-adaptive/adaptive-recommendation-v1.controller';
 import { AdaptiveLiveStateNotReadyError } from '../src/statlocker-adaptive/adaptive-decision-state-v1.service';
+import { AdaptiveRecommendationObservabilityV1Service } from '../src/statlocker-adaptive/adaptive-recommendation-observability-v1.service';
 
 const recommendation = {
   ready: true,
@@ -29,6 +30,7 @@ const recommendation = {
 
 function harness() {
   const service = { recommend: jest.fn().mockResolvedValue(recommendation) };
+  const observability = new AdaptiveRecommendationObservabilityV1Service();
   const refresh = {
     getStatus: jest.fn(() => ({
       activeHeroIds: [10],
@@ -52,10 +54,11 @@ function harness() {
     })),
   };
   return {
-    controller: new AdaptiveRecommendationV1Controller(service as any, refresh as any, evidence as any),
+    controller: new AdaptiveRecommendationV1Controller(service as any, refresh as any, evidence as any, observability),
     service,
     refresh,
     evidence,
+    observability,
   };
 }
 
@@ -92,6 +95,7 @@ describe('AdaptiveRecommendationV1Controller', () => {
     const h = harness();
     const status = h.controller.status();
     expect(status.refresh.activeHeroIds).toEqual([10]);
+    expect(status.observability.counters.evidenceFallbackCount).toBe(0);
     expect(status.rulesetVersion).toBe('ruleset-a');
     expect(status.catalogSha256).toBe('a'.repeat(64));
     expect(status.statlockerPatchId).toBe('15-1');
