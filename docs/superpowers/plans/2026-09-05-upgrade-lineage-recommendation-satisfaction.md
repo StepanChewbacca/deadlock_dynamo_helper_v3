@@ -14,6 +14,8 @@
 
 Implementation and regression coverage have been written on `agent/fix-upgrade-lineage-recommendations` and are tracked by draft PR #75. GitHub Actions currently fails before any workflow step executes, so none of the test/build commands below have fresh executable verification evidence yet. Do not mark RED/GREEN, full-suite, build, or CI steps complete until a working runner executes them.
 
+During implementation, a second root cause was found on the real serving path: `RecommendationRulesetCatalogV1` retained raw recipe edges, but strict graph compilation discarded the relationship whenever the exact upgrade transaction cost was unknown. The branch therefore separates known recipe topology from executable upgrade mechanics. This is an implementation amendment to the approved design: topology can establish deterministic lineage/satisfaction while executable `UPGRADE_ITEM` generation still requires verified transaction cost.
+
 Non-Actions work completed in the branch:
 
 - Shared transitive lineage and satisfaction API.
@@ -24,8 +26,6 @@ Non-Actions work completed in the branch:
 - Replay serialization/reconstruction of topology-only lineage.
 - Focused domain, planner, replay, and real serving-boundary regression tests.
 - Static scope review of the changed implementation.
-
-The remaining executable verification commands and release gates are intentionally left unchecked in the task sections below.
 
 ## Global Constraints
 
