@@ -13,7 +13,12 @@ import {
   AdaptiveScoredActionV1,
   AdaptiveScoreComponentV1,
 } from '@deadlock-live-probe/shared';
-import { AdaptiveChoiceResolverV1Service, componentClosureV1, reconstructChoiceStateV1 } from './adaptive-choice-resolver-v1.service';
+import {
+  AdaptiveChoiceReplacementOptionV1,
+  AdaptiveChoiceResolverV1Service,
+  componentClosureV1,
+  reconstructChoiceStateV1,
+} from './adaptive-choice-resolver-v1.service';
 import { AdaptiveDecisionStateV1 } from './adaptive-decision-state-v1.service';
 import {
   AdaptiveEvidenceScorerV1Service,
@@ -76,6 +81,7 @@ interface SemanticPlanV1 {
   committedChoices: ReadonlyMap<string, number>;
   selectedChoiceItemIdsByGroup: ReadonlyMap<string, readonly number[]>;
   committedChoiceItemIdsByGroup: ReadonlyMap<string, readonly number[]>;
+  choiceReplacementOptions: readonly AdaptiveChoiceReplacementOptionV1[];
   completedGroupIds: ReadonlySet<string>;
   externallyDivergedGroupIds: ReadonlySet<string>;
   orderByItemId: ReadonlyMap<number, number>;
@@ -262,6 +268,7 @@ export class AdaptiveBuildPlannerV1Service {
     const committedChoices = new Map<string, number>();
     const selectedChoiceItemIdsByGroup = new Map<string, readonly number[]>();
     const committedChoiceItemIdsByGroup = new Map<string, readonly number[]>();
+    const replacementOptionsByGroup = new Map<string, readonly AdaptiveChoiceReplacementOptionV1[]>();
     const externallyDivergedGroupIds = new Set<string>();
     for (const group of skeleton.groups.filter((entry) => entry.type === 'CHOICE')) {
       const previousSelectedItemIds = previousSelectedChoiceItems(input.previousResult?.recommendedBuild, group);
@@ -277,12 +284,16 @@ export class AdaptiveBuildPlannerV1Service {
       if (resolved.committedItemIds.length > 0) {
         committedChoiceItemIdsByGroup.set(group.groupId, resolved.committedItemIds);
       }
+      if (resolved.replacementOptions.length > 0) {
+        replacementOptionsByGroup.set(group.groupId, resolved.replacementOptions);
+      }
       if (resolved.selectedItemId !== undefined) selectedChoices.set(group.groupId, resolved.selectedItemId);
       if (resolved.committedItemId !== undefined) committedChoices.set(group.groupId, resolved.committedItemId);
       if (resolved.externallyDiverged) externallyDivergedGroupIds.add(group.groupId);
     }
 
     const selectedFinalItemIds = new Set<number>();
+    const enabledReplacementOptions: AdaptiveChoiceReplacementOptionV1[] = [];
     const orderByItemId = new Map<number, number>();
     skeleton.groups.forEach((group, groupIndex) => {
       group.candidates.forEach((candidate, candidateIndex) => {
@@ -304,6 +315,7 @@ export class AdaptiveBuildPlannerV1Service {
           for (const selected of selectedChoiceItemIdsByGroup.get(group.groupId) ?? []) {
             if (owned.has(selected)) selectedFinalItemIds.add(selected);
           }
+          enabledReplacementOptions.push(...(replacementOptionsByGroup.get(group.groupId) ?? []));
         } else {
           for (const candidate of group.candidates) {
             if (owned.has(candidate.itemId)) selectedFinalItemIds.add(candidate.itemId);
@@ -317,6 +329,7 @@ export class AdaptiveBuildPlannerV1Service {
         for (const selected of selectedChoiceItemIdsByGroup.get(group.groupId) ?? []) {
           selectedFinalItemIds.add(selected);
         }
+        enabledReplacementOptions.push(...(replacementOptionsByGroup.get(group.groupId) ?? []));
         continue;
       }
 
@@ -361,6 +374,13 @@ export class AdaptiveBuildPlannerV1Service {
         supportOwners.set(componentId, owners);
       }
     }
+    for (const option of enabledReplacementOptions) {
+      for (const supportItemId of option.supportItemIds) {
+        const owners = supportOwners.get(supportItemId) ?? new Set<number>();
+        owners.add(option.targetItemId);
+        supportOwners.set(supportItemId, owners);
+      }
+    }
 
     const futurePlannedFinalItemIds = this.selectNearFutureRequiredTargets(
       input,
@@ -384,6 +404,7 @@ export class AdaptiveBuildPlannerV1Service {
       committedChoices,
       selectedChoiceItemIdsByGroup,
       committedChoiceItemIdsByGroup,
+      choiceReplacementOptions: enabledReplacementOptions.sort(compareReplacementOptions),
       completedGroupIds,
       externallyDivergedGroupIds,
       orderByItemId,
@@ -520,9 +541,12 @@ export class AdaptiveBuildPlannerV1Service {
       rules,
     })
       .filter((candidate) => candidate.feasible)
-      .filter((candidate) => candidateTouchesTargets(candidate, semantic.targetItemIds))
+      .filter((candidate) => candidateTouchesSemanticTargets(candidate, semantic, node))
       .filter((candidate) => !isProtectedSell(candidate, recentPurchased))
-      .filter((candidate) => !sellsSelectedFinal(candidate, semantic.selectedFinalItemIds));
+      .filter((candidate) =>
+        !sellsSelectedFinal(candidate, semantic.selectedFinalItemIds) ||
+        startsChoiceReplacement(candidate, semantic.choiceReplacementOptions, node),
+      );
 
     return candidates
       .map((candidate) => this.scorePlannerCandidate(
@@ -664,6 +688,8 @@ export class AdaptiveBuildPlannerV1Service {
       );
       if (reconstructed.committedItemId !== undefined) {
         committedChoices.set(group.groupId, reconstructed.committedItemId);
+      } else if (!reconstructed.externallyDiverged) {
+        committedChoices.delete(group.groupId);
       }
     }
     return { ...node, committedChoices };
@@ -686,11 +712,18 @@ export class AdaptiveBuildPlannerV1Service {
     const actionTargets = node.actions
       .map(candidateTargetItemId)
       .filter((itemId): itemId is number => itemId !== undefined);
+    const startedReplacements = semantic.choiceReplacementOptions.filter((option) =>
+      choiceReplacementStarted(option, node),
+    );
+    const replacedFinalItemIds = new Set(startedReplacements.map((option) => option.replacedItemId));
+    const replacementTargetItemIds = startedReplacements.map((option) => option.targetItemId);
     const futureFinals = uniqueNumbers([
       ...semantic.selectedFinalItemIds,
       ...semantic.futurePlannedFinalItemIds,
+      ...replacementTargetItemIds,
     ])
       .filter((itemId) => !ownedItemIds.includes(itemId))
+      .filter((itemId) => !replacedFinalItemIds.has(itemId))
       .sort((a, b) =>
         (semantic.orderByItemId.get(a) ?? Number.MAX_SAFE_INTEGER) -
           (semantic.orderByItemId.get(b) ?? Number.MAX_SAFE_INTEGER) ||
@@ -744,11 +777,13 @@ export class AdaptiveBuildPlannerV1Service {
     immediate: readonly ScoredPlannerCandidateV1[],
   ): boolean {
     if (semantic.externallyDivergedGroupIds.size > 0) return false;
+    const replacementAllowed = semantic.choiceReplacementOptions.flatMap((option) => option.supportItemIds);
     const allowed = new Set<number>([
       ...owned,
       ...semantic.selectedFinalItemIds,
       ...semantic.futurePlannedFinalItemIds,
       ...semantic.targetItemIds,
+      ...replacementAllowed,
     ]);
     if (!previousBuild.every((item) => allowed.has(item.itemId))) return false;
 
@@ -776,6 +811,36 @@ function generatorRulesForNode(node: AdaptivePlannerNodeV1): RecommendationCandi
   };
 }
 
+function candidateTouchesSemanticTargets(
+  candidate: RecommendationCandidate,
+  semantic: SemanticPlanV1,
+  node: AdaptivePlannerNodeV1,
+): boolean {
+  const startedReplacements = semantic.choiceReplacementOptions.filter((option) =>
+    choiceReplacementStarted(option, node),
+  );
+  if (
+    candidateTouchesTargets(candidate, semantic.targetItemIds) &&
+    !startedReplacements.some((option) => candidateTouchesReplacedBranch(candidate, option))
+  ) {
+    return true;
+  }
+
+  for (const option of semantic.choiceReplacementOptions) {
+    const started = choiceReplacementStarted(option, node);
+    if (!started && candidateStartsReplacementOption(candidate, option, node)) return true;
+    if (!started) continue;
+
+    if (!choiceReplacementDivested(option, node)) {
+      if (candidateContinuesReplacementDivest(candidate, option, node)) return true;
+      continue;
+    }
+
+    if (candidateTouchesReplacementSupport(candidate, option)) return true;
+  }
+  return false;
+}
+
 function candidateTouchesTargets(
   candidate: RecommendationCandidate,
   targets: ReadonlySet<number>,
@@ -786,6 +851,101 @@ function candidateTouchesTargets(
   }
   const target = candidateTargetItemId(candidate);
   return target !== undefined && targets.has(target);
+}
+
+function candidateStartsReplacementOption(
+  candidate: RecommendationCandidate,
+  option: AdaptiveChoiceReplacementOptionV1,
+  node: AdaptivePlannerNodeV1,
+): boolean {
+  const heldEvidence = heldReplacementEvidence(option, node);
+  if (heldEvidence.length === 0) return false;
+  if (candidate.action.type === 'SELL_ITEM') return heldEvidence.includes(candidate.action.itemId);
+  if (candidate.action.type !== 'REPLACE_ITEM') return false;
+  return heldEvidence.length === 1 &&
+    candidate.action.sellItemId === heldEvidence[0] &&
+    option.supportItemIds.includes(candidate.action.buyItemId);
+}
+
+function candidateContinuesReplacementDivest(
+  candidate: RecommendationCandidate,
+  option: AdaptiveChoiceReplacementOptionV1,
+  node: AdaptivePlannerNodeV1,
+): boolean {
+  const heldEvidence = heldReplacementEvidence(option, node);
+  if (heldEvidence.length === 0) return false;
+  if (candidate.action.type === 'SELL_ITEM') return heldEvidence.includes(candidate.action.itemId);
+  if (candidate.action.type !== 'REPLACE_ITEM') return false;
+  return heldEvidence.length === 1 &&
+    candidate.action.sellItemId === heldEvidence[0] &&
+    option.supportItemIds.includes(candidate.action.buyItemId);
+}
+
+function candidateTouchesReplacementSupport(
+  candidate: RecommendationCandidate,
+  option: AdaptiveChoiceReplacementOptionV1,
+): boolean {
+  if (candidate.action.type === 'WAIT_SAVE') {
+    return candidate.action.targetItemId === undefined ||
+      (candidate.action.targetItemId !== undefined && option.supportItemIds.includes(candidate.action.targetItemId));
+  }
+  const targetItemId = candidateTargetItemId(candidate);
+  if (targetItemId === undefined) return false;
+  return option.supportItemIds.includes(targetItemId);
+}
+
+function candidateTouchesReplacedBranch(
+  candidate: RecommendationCandidate,
+  option: AdaptiveChoiceReplacementOptionV1,
+): boolean {
+  const targetItemId = candidateTargetItemId(candidate);
+  return targetItemId !== undefined && option.replacedSupportItemIds.includes(targetItemId);
+}
+
+function startsChoiceReplacement(
+  candidate: RecommendationCandidate,
+  options: readonly AdaptiveChoiceReplacementOptionV1[],
+  node: AdaptivePlannerNodeV1,
+): boolean {
+  return options.some((option) =>
+    candidateStartsReplacementOption(candidate, option, node) ||
+    (choiceReplacementStarted(option, node) && candidateContinuesReplacementDivest(candidate, option, node)),
+  );
+}
+
+function choiceReplacementStarted(
+  option: AdaptiveChoiceReplacementOptionV1,
+  node: AdaptivePlannerNodeV1,
+): boolean {
+  return node.actions.some((candidate) => {
+    if (candidate.action.type === 'SELL_ITEM') return option.sellEvidenceItemIds.includes(candidate.action.itemId);
+    if (candidate.action.type === 'REPLACE_ITEM') return option.sellEvidenceItemIds.includes(candidate.action.sellItemId);
+    return false;
+  });
+}
+
+function choiceReplacementDivested(
+  option: AdaptiveChoiceReplacementOptionV1,
+  node: AdaptivePlannerNodeV1,
+): boolean {
+  return heldReplacementEvidence(option, node).length === 0;
+}
+
+function heldReplacementEvidence(
+  option: AdaptiveChoiceReplacementOptionV1,
+  node: AdaptivePlannerNodeV1,
+): number[] {
+  return option.sellEvidenceItemIds.filter((itemId) => node.decisionState.inventory.heldByItemId.has(itemId));
+}
+
+function compareReplacementOptions(
+  a: AdaptiveChoiceReplacementOptionV1,
+  b: AdaptiveChoiceReplacementOptionV1,
+): number {
+  return b.contextualImprovement - a.contextualImprovement ||
+    a.groupId.localeCompare(b.groupId) ||
+    a.targetItemId - b.targetItemId ||
+    a.replacedItemId - b.replacedItemId;
 }
 
 function candidateTargetItemId(candidate: RecommendationCandidate): number | undefined {
