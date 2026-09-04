@@ -29,8 +29,18 @@ export interface AdaptiveChoiceResolutionContextV1 {
   previousCommittedItemId?: number;
 }
 
+export interface AdaptiveChoiceReplacementOptionV1 {
+  groupId: string;
+  targetItemId: number;
+  replacedItemId: number;
+  sellEvidenceItemIds: readonly number[];
+  supportItemIds: readonly number[];
+  contextualImprovement: number;
+}
+
 export interface AdaptiveResolvedChoiceV1 extends AdaptiveChoiceStateV1 {
   scores: readonly AdaptiveItemScoreV1[];
+  replacementOptions: readonly AdaptiveChoiceReplacementOptionV1[];
 }
 
 @Injectable()
@@ -73,7 +83,12 @@ export class AdaptiveChoiceResolverV1Service {
       const selectedItemIds = previousSelectedItemIds.length > 0
         ? previousSelectedItemIds
         : reconstructed.committedItemIds;
-      return withChoiceCompatibility({ ...reconstructed, selectedItemIds, scores });
+      return withChoiceCompatibility({
+        ...reconstructed,
+        selectedItemIds,
+        scores,
+        replacementOptions: [],
+      });
     }
 
     const requiredCount = requiredChoiceCount(group);
@@ -99,6 +114,14 @@ export class AdaptiveChoiceResolverV1Service {
     const confidence = selectedScores.length === 0
       ? reconstructed.confidence
       : selectedScores.reduce((sum, entry) => sum + entry.confidence, 0) / selectedScores.length;
+    const replacementOptions = buildCommittedReplacementOptionsV1(
+      group,
+      selectedItemIds,
+      committedItemIds,
+      scores,
+      context.ownedItemIds,
+      context.itemGraph,
+    );
 
     return withChoiceCompatibility({
       ...reconstructed,
@@ -107,6 +130,7 @@ export class AdaptiveChoiceResolverV1Service {
       committed: committedItemIds.length > 0,
       confidence,
       scores,
+      replacementOptions,
     });
   }
 }
@@ -190,6 +214,82 @@ export function componentClosureV1(itemId: number, itemGraph: RecommendationItem
   };
   visit(itemId);
   return result;
+}
+
+export function choiceBranchCommitmentEvidenceItemIdsV1(
+  group: ConsensusBuildGroupV1,
+  targetItemId: number,
+  ownedItemIds: readonly number[],
+  itemGraph: RecommendationItemGraph,
+): readonly number[] {
+  const owned = new Set(ownedItemIds);
+  const result: number[] = [];
+  if (owned.has(targetItemId)) result.push(targetItemId);
+
+  const closures = new Map<number, ReadonlySet<number>>();
+  const componentOwners = new Map<number, number>();
+  for (const candidate of group.candidates) {
+    const closure = componentClosureV1(candidate.itemId, itemGraph);
+    closures.set(candidate.itemId, closure);
+    for (const componentId of closure) componentOwners.set(componentId, (componentOwners.get(componentId) ?? 0) + 1);
+  }
+  for (const componentId of closures.get(targetItemId) ?? []) {
+    if ((componentOwners.get(componentId) ?? 0) === 1 && owned.has(componentId)) result.push(componentId);
+  }
+  return uniqueNumbers(result).sort((a, b) => a - b);
+}
+
+function buildCommittedReplacementOptionsV1(
+  group: ConsensusBuildGroupV1,
+  selectedItemIds: readonly number[],
+  committedItemIds: readonly number[],
+  scores: readonly AdaptiveItemScoreV1[],
+  ownedItemIds: readonly number[],
+  itemGraph: RecommendationItemGraph,
+): readonly AdaptiveChoiceReplacementOptionV1[] {
+  if (committedItemIds.length === 0) return [];
+  const selected = new Set(selectedItemIds);
+  const scoreByItemId = new Map(scores.map((entry) => [entry.itemId, entry.score]));
+  const options: AdaptiveChoiceReplacementOptionV1[] = [];
+
+  for (const candidate of group.candidates) {
+    if (selected.has(candidate.itemId)) continue;
+    const targetScore = scoreByItemId.get(candidate.itemId);
+    if (targetScore === undefined) continue;
+
+    for (const replacedItemId of committedItemIds) {
+      const replacedScore = scoreByItemId.get(replacedItemId);
+      if (replacedScore === undefined) continue;
+      const contextualImprovement = targetScore - replacedScore;
+      if (contextualImprovement < ADAPTIVE_POLICY_V1_CONFIG.choice.committedReplaceMinImprovement) continue;
+      const sellEvidenceItemIds = choiceBranchCommitmentEvidenceItemIdsV1(
+        group,
+        replacedItemId,
+        ownedItemIds,
+        itemGraph,
+      );
+      if (sellEvidenceItemIds.length === 0) continue;
+      options.push({
+        groupId: group.groupId,
+        targetItemId: candidate.itemId,
+        replacedItemId,
+        sellEvidenceItemIds,
+        supportItemIds: uniqueNumbers([
+          candidate.itemId,
+          ...componentClosureV1(candidate.itemId, itemGraph),
+        ]).sort((a, b) => a - b),
+        contextualImprovement,
+      });
+    }
+  }
+
+  return options
+    .sort((a, b) =>
+      b.contextualImprovement - a.contextualImprovement ||
+      a.targetItemId - b.targetItemId ||
+      a.replacedItemId - b.replacedItemId,
+    )
+    .slice(0, Math.max(1, group.maxSelect));
 }
 
 function requiredChoiceCount(group: ConsensusBuildGroupV1): number {
