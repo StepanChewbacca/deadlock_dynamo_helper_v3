@@ -96,10 +96,11 @@ export function deriveAdaptiveInvestmentStateV1(
   if (!rules) return unknownAdaptiveInvestmentStateV1();
 
   const totals: Record<AdaptiveInvestmentTypeV1, number> = { weapon: 0, vitality: 0, spirit: 0 };
+  const valueMemo = new Map<number, number>();
   for (const itemId of itemIds) {
     const item = graph.getItem(itemId);
     if (!item) continue;
-    totals[item.slotType] += Math.max(0, item.directPurchaseCost ?? 0);
+    totals[item.slotType] += investmentValueForItemV1(itemId, graph, valueMemo, new Set<number>());
   }
 
   return {
@@ -110,6 +111,39 @@ export function deriveAdaptiveInvestmentStateV1(
     },
     evidence: 'RECONSTRUCTED',
   };
+}
+
+function investmentValueForItemV1(
+  itemId: number,
+  graph: RecommendationItemGraph,
+  memo: Map<number, number>,
+  visiting: Set<number>,
+): number {
+  const cached = memo.get(itemId);
+  if (cached !== undefined) return cached;
+  if (visiting.has(itemId)) return 0;
+
+  const item = graph.getItem(itemId);
+  if (!item) return 0;
+  const directValue = item.directPurchaseCost;
+  if (directValue !== undefined) {
+    const value = Math.max(0, directValue);
+    memo.set(itemId, value);
+    return value;
+  }
+
+  visiting.add(itemId);
+  const recipeValues = item.upgradeRecipes.map((recipe) =>
+    Math.max(0, recipe.soulsCost) + recipe.consumedItemIds.reduce(
+      (sum, componentId) => sum + investmentValueForItemV1(componentId, graph, memo, visiting),
+      0,
+    ),
+  );
+  visiting.delete(itemId);
+
+  const value = recipeValues.length === 0 ? 0 : Math.min(...recipeValues);
+  memo.set(itemId, value);
+  return value;
 }
 
 export function unknownAdaptiveInvestmentStateV1(): AdaptiveInvestmentStateV1 {
