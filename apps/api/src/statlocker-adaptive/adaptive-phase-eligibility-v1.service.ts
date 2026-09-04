@@ -8,6 +8,7 @@ import { AdaptiveGameStateV1 } from './adaptive-game-state';
 import { ADAPTIVE_POLICY_V1_CONFIG } from './statlocker-adaptive.config';
 import { ConsensusBuildGroupV1, ConsensusSkeletonV1 } from './statlocker-adaptive.types';
 import { phaseOrderV1 } from './structured-build-v1';
+import { RecommendationItemGraph } from '@deadlock-live-probe/build-domain';
 
 export type AdaptiveGroupEligibilityV1 =
   | 'ELIGIBLE'
@@ -25,6 +26,7 @@ export interface AdaptivePhaseEligibilityContextV1 {
   gameTimeSec: number;
   gameState: AdaptiveGameStateV1;
   investment: AdaptiveInvestmentStateV1;
+  itemGraph?: RecommendationItemGraph;
 }
 
 @Injectable()
@@ -34,11 +36,11 @@ export class AdaptivePhaseEligibilityV1Service {
     context: AdaptivePhaseEligibilityContextV1,
   ): AdaptiveGroupEligibilityV1 {
     if (context.skippedGroupIds?.has(group.groupId)) return 'SKIPPED';
-    if (context.completedGroupIds?.has(group.groupId) || groupCompletedV1(group, context.ownedItemIds)) return 'COMPLETED';
+    if (context.completedGroupIds?.has(group.groupId) || groupCompletedV1(group, context.ownedItemIds, context.itemGraph)) return 'COMPLETED';
     if (context.committedOtherGroupIds?.has(group.groupId)) return 'COMMITTED_OTHER_BRANCH';
     if (group.phase === 'EARLY') return 'ELIGIBLE';
-    if (!requiredPriorGroupsComplete(group, context)) return 'NOT_YET_ELIGIBLE';
     if (group.candidates.some((candidate) => candidate.rushEvidence)) return 'ELIGIBLE';
+    if (!requiredPriorGroupsComplete(group, context)) return 'NOT_YET_ELIGIBLE';
 
     const effectiveTimeSec = Math.max(0, context.gameTimeSec) + investmentProgressAccelerationSec(context.investment);
     if (group.phase === 'MID' && effectiveTimeSec >= ADAPTIVE_POLICY_V1_CONFIG.phase.midMinTimeSec) return 'ELIGIBLE';
@@ -63,8 +65,20 @@ function investmentProgressAccelerationSec(investment: AdaptiveInvestmentStateV1
     : 0;
 }
 
-export function groupCompletedV1(group: ConsensusBuildGroupV1, ownedItemIds: ReadonlySet<number>): boolean {
-  const ownedCount = group.candidates.reduce((count, candidate) => count + (ownedItemIds.has(candidate.itemId) ? 1 : 0), 0);
+export function groupCompletedV1(group: ConsensusBuildGroupV1, ownedItemIds: ReadonlySet<number>, itemGraph?: RecommendationItemGraph): boolean {
+  const satisfies = (candidateId: number): boolean => ownedItemIds.has(candidateId) || Boolean(itemGraph && [...ownedItemIds].some((ownedId) => {
+    const closure = new Set<number>();
+    const visit = (id: number): void => {
+      for (const componentId of itemGraph.getDirectComponentIds(id)) {
+        if (closure.has(componentId)) continue;
+        closure.add(componentId);
+        visit(componentId);
+      }
+    };
+    visit(ownedId);
+    return closure.has(candidateId);
+  }));
+  const ownedCount = group.candidates.reduce((count, candidate) => count + (satisfies(candidate.itemId) ? 1 : 0), 0);
   if (group.type === 'OPTIONAL') return ownedCount > 0;
   return ownedCount >= Math.max(1, group.minSelect);
 }
@@ -79,6 +93,6 @@ function requiredPriorGroupsComplete(
     .every((candidate) =>
       context.completedGroupIds?.has(candidate.groupId) ||
       context.skippedGroupIds?.has(candidate.groupId) ||
-      groupCompletedV1(candidate, context.ownedItemIds),
+      groupCompletedV1(candidate, context.ownedItemIds, context.itemGraph),
     );
 }

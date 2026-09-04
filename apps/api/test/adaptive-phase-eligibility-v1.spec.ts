@@ -73,7 +73,7 @@ describe('AdaptivePhaseEligibilityV1Service', () => {
     expect(service.evaluateGroup(target, context(target, 120, [1]))).toBe('NOT_YET_ELIGIBLE');
   });
 
-  it('keeps rushed LATE gated behind an unfinished required MID group', () => {
+  it('treats rush evidence as an independent route past unfinished prior REQUIRED groups', () => {
     const early = group('early', 'EARLY', 1);
     const mid = group('mid', 'MID', 2);
     const target = group('late', 'LATE', 3, true);
@@ -84,7 +84,7 @@ describe('AdaptivePhaseEligibilityV1Service', () => {
       gameTimeSec: 2_000,
       gameState: 'AHEAD',
       investment: investment('UNKNOWN', 0),
-    })).toBe('NOT_YET_ELIGIBLE');
+    })).toBe('ELIGIBLE');
   });
 
   it.each(['AHEAD', 'EVEN', 'BEHIND', 'UNKNOWN'] as const)(

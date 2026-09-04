@@ -61,6 +61,7 @@ export interface AdaptiveBuildPlannerInputV1 {
   >;
   recentPurchasedItemIds?: readonly number[];
   recentSoldItemIds?: readonly number[];
+  suppressObservability?: boolean;
 }
 
 export interface AdaptiveBuildPlannerResultV1 {
@@ -77,7 +78,9 @@ export interface AdaptiveBuildPlannerResultV1 {
 interface SemanticPlanV1 {
   selectedFinalItemIds: ReadonlySet<number>;
   futurePlannedFinalItemIds: ReadonlySet<number>;
+  activeTargetItemIds: ReadonlySet<number>;
   targetItemIds: ReadonlySet<number>;
+  futureOwnersByTargetItemId: ReadonlyMap<number, readonly number[]>;
   supportOwnersByItemId: ReadonlyMap<number, readonly number[]>;
   selectedChoiceItemIdsByGroup: ReadonlyMap<string, readonly number[]>;
   committedChoiceItemIdsByGroup: ReadonlyMap<string, readonly number[]>;
@@ -222,7 +225,7 @@ export class AdaptiveBuildPlannerV1Service {
       : aggregateImmediateConfidence(immediate);
     const postCommitReplacement = proposedAction.type === 'REPLACE' &&
       semantic.choiceReplacementOptions.some((option) => choiceReplacementStarted(option, bestNode));
-    if (postCommitReplacement) this.observability?.recordPostCommitReplacement();
+    if (postCommitReplacement && !input.suppressObservability) this.observability?.recordPostCommitReplacement();
 
     const previous = input.previousResult;
     const preservePrevious = Boolean(
@@ -303,8 +306,10 @@ export class AdaptiveBuildPlannerV1Service {
       }
       if (resolved.externallyDiverged) {
         externallyDivergedGroupIds.add(group.groupId);
-        this.observability?.recordChoiceGroupViolationPrevented();
-        this.observability?.recordExternallyDivergedChoiceState();
+        if (!input.suppressObservability) {
+          this.observability?.recordChoiceGroupViolationPrevented();
+          this.observability?.recordExternallyDivergedChoiceState();
+        }
       }
     }
 
@@ -325,6 +330,7 @@ export class AdaptiveBuildPlannerV1Service {
         gameTimeSec: input.decision.state.gameTimeSec,
         gameState,
         investment: input.decision.investment,
+        itemGraph: input.decision.itemGraph,
       });
 
       if (eligibility === 'COMPLETED') {
@@ -342,7 +348,7 @@ export class AdaptiveBuildPlannerV1Service {
       }
       if (eligibility !== 'ELIGIBLE') {
         if (eligibility === 'NOT_YET_ELIGIBLE' && group.phase !== 'EARLY') {
-          this.observability?.recordPhaseViolationPrevented();
+          if (!input.suppressObservability) this.observability?.recordPhaseViolationPrevented();
         }
         continue;
       }
@@ -414,11 +420,31 @@ export class AdaptiveBuildPlannerV1Service {
       targetItemIds,
       selectedChoiceItemIdsByGroup,
     );
+    const activeTargetItemIds = new Set(targetItemIds);
+    const futureOwners = new Map<number, Set<number>>();
+    for (const finalItemId of futurePlannedFinalItemIds) {
+      if (!owned.has(finalItemId)) targetItemIds.add(finalItemId);
+      futureOwners.set(finalItemId, new Set([finalItemId]));
+      for (const componentId of componentClosureV1(finalItemId, input.decision.itemGraph)) {
+        if (owned.has(componentId)) continue;
+        targetItemIds.add(componentId);
+        const futureTargetOwners = futureOwners.get(componentId) ?? new Set<number>();
+        futureTargetOwners.add(finalItemId);
+        futureOwners.set(componentId, futureTargetOwners);
+        const owners = supportOwners.get(componentId) ?? new Set<number>();
+        owners.add(finalItemId);
+        supportOwners.set(componentId, owners);
+      }
+    }
 
     return {
       selectedFinalItemIds,
       futurePlannedFinalItemIds,
+      activeTargetItemIds,
       targetItemIds,
+      futureOwnersByTargetItemId: new Map(
+        [...futureOwners.entries()].map(([itemId, owners]) => [itemId, [...owners].sort((a, b) => a - b)]),
+      ),
       supportOwnersByItemId: new Map(
         [...supportOwners.entries()].map(([itemId, owners]) => [itemId, [...owners].sort((a, b) => a - b)]),
       ),
@@ -454,6 +480,7 @@ export class AdaptiveBuildPlannerV1Service {
         gameTimeSec: input.decision.state.gameTimeSec,
         gameState,
         investment: input.decision.investment,
+        itemGraph: input.decision.itemGraph,
       }) === 'NOT_YET_ELIGIBLE';
     });
     if (futureRequired.length === 0) return new Set<number>();
@@ -563,7 +590,7 @@ export class AdaptiveBuildPlannerV1Service {
       rules,
     })
       .filter((candidate) => candidate.feasible)
-      .filter((candidate) => candidateTouchesSemanticTargets(candidate, semantic, node))
+      .filter((candidate) => candidateTouchesSemanticTargets(candidate, semantic, node, skeleton))
       .filter((candidate) => !isProtectedSell(candidate, recentPurchased))
       .filter((candidate) =>
         !sellsSelectedFinal(candidate, semantic.selectedFinalItemIds) ||
@@ -826,12 +853,16 @@ function candidateTouchesSemanticTargets(
   candidate: RecommendationCandidate,
   semantic: SemanticPlanV1,
   node: AdaptivePlannerNodeV1,
+  skeleton: ConsensusSkeletonV1,
 ): boolean {
   const startedReplacements = semantic.choiceReplacementOptions.filter((option) =>
     choiceReplacementStarted(option, node),
   );
   if (
-    candidateTouchesTargets(candidate, semantic.targetItemIds) &&
+    (
+      candidateTouchesTargets(candidate, semantic.activeTargetItemIds) ||
+      candidateTouchesReadyFutureTarget(candidate, semantic, node, skeleton)
+    ) &&
     !startedReplacements.some((option) => candidateTouchesReplacedBranch(candidate, option))
   ) {
     return true;
@@ -850,6 +881,40 @@ function candidateTouchesSemanticTargets(
     if (candidateTouchesReplacementSupport(candidate, option)) return true;
   }
   return false;
+}
+
+function candidateTouchesReadyFutureTarget(
+  candidate: RecommendationCandidate,
+  semantic: SemanticPlanV1,
+  node: AdaptivePlannerNodeV1,
+  skeleton: ConsensusSkeletonV1,
+): boolean {
+  if (candidate.action.type === 'SELL_ITEM') {
+    return [...semantic.futurePlannedFinalItemIds].some((itemId) =>
+      futureOwnerReadyAtNode(itemId, node, skeleton),
+    );
+  }
+  if (candidate.action.type === 'WAIT_SAVE' && candidate.action.targetItemId === undefined) {
+    return semantic.futurePlannedFinalItemIds.size > 0;
+  }
+  const targetItemId = candidateTargetItemId(candidate);
+  if (targetItemId === undefined) return false;
+  return (semantic.futureOwnersByTargetItemId.get(targetItemId) ?? []).some((itemId) =>
+    futureOwnerReadyAtNode(itemId, node, skeleton),
+  );
+}
+
+function futureOwnerReadyAtNode(
+  futureItemId: number,
+  node: AdaptivePlannerNodeV1,
+  skeleton: ConsensusSkeletonV1,
+): boolean {
+  const group = findConsensusGroupByItemV1(skeleton, futureItemId);
+  if (!group) return false;
+  const targetPhaseOrder = phaseOrderV1(group.phase);
+  return skeleton.groups
+    .filter((candidate) => candidate.type === 'REQUIRED' && phaseOrderV1(candidate.phase) < targetPhaseOrder)
+    .every((candidate) => node.completedGroupIds.has(candidate.groupId));
 }
 
 function candidateTouchesTargets(

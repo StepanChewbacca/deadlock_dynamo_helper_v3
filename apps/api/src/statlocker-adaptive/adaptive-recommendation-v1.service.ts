@@ -51,7 +51,7 @@ export class AdaptiveRecommendationV1Service {
     });
     this.observability.recordEvidence(localEvidence);
 
-    const planned = localEvidence.usable
+    let planned = localEvidence.usable
       ? (() => {
           const plannerStartedAt = Date.now();
           const result = this.planner.plan({
@@ -67,6 +67,18 @@ export class AdaptiveRecommendationV1Service {
       : undefined;
 
     const fresh = await this.decisionState.build(request.matchId, request.localSteamId);
+    if (localEvidence.usable && planned && fresh.stateRevision !== initial.stateRevision) {
+      const plannerStartedAt = Date.now();
+      planned = this.planner.plan({
+        decision: fresh,
+        evidence: localEvidence,
+        previousResult: previous,
+        recentPurchasedItemIds: [],
+        recentSoldItemIds: [],
+        suppressObservability: true,
+      });
+      this.observability.recordPlannerLatency(Date.now() - plannerStartedAt);
+    }
     const freshCandidates = generateRecommendationCandidates({
       state: fresh.state,
       itemGraph: fresh.itemGraph,
@@ -134,7 +146,7 @@ export class AdaptiveRecommendationV1Service {
       legalityFallbackReasonCodes,
     });
 
-    const replayInput = this.replay.toReplayInput(initial, localEvidence, {
+    const replayInput = this.replay.toReplayInput(fresh, localEvidence, {
       previousResult: previous,
       recentPurchasedItemIds: [],
       recentSoldItemIds: [],

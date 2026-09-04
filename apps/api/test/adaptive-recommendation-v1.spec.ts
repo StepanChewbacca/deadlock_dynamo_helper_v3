@@ -322,7 +322,10 @@ function harness(options: {
   const planner = options.planner ?? { version: 'adaptive-build-planner-v1', plan: jest.fn(() => options.plan ?? plannerResult()) };
   const replay = {
     getPreviousPlan: jest.fn().mockResolvedValue(options.previous),
-    toReplayInput: jest.fn(() => ({ snapshotIds: ['snapshot-wpa'] })),
+    toReplayInput: jest.fn((builtDecision: any) => ({
+      decision: { stateRevision: builtDecision.stateRevision },
+      snapshotIds: ['snapshot-wpa'],
+    })),
     persist: jest.fn().mockResolvedValue(undefined),
   };
   const service = new AdaptiveRecommendationV1Service(
@@ -359,6 +362,21 @@ describe('AdaptiveRecommendationV1Service', () => {
     expect(h.replay.persist.mock.calls[0][0].result.nextAction.type).toBe('WAIT');
   });
 
+  it('persists replay input from the same fresh state revision as the published result', async () => {
+    const h = harness({
+      states: [
+        decision({ wallet: 1000, revision: 'revision-a' }),
+        decision({ wallet: 1000, revision: 'revision-b' }),
+      ],
+    });
+
+    await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
+
+    const persisted = h.replay.persist.mock.calls[0][0];
+    expect(persisted.replayInput.decision.stateRevision).toBe(persisted.result.stateRevision);
+    expect(persisted.replayInput.decision.stateRevision).toBe('revision-b');
+  });
+
   it('publishes a planned build rebased to an item purchased before the fresh state read', async () => {
     const plan = plannerResult();
     plan.recommendedBuild = [
@@ -380,6 +398,50 @@ describe('AdaptiveRecommendationV1Service', () => {
       expect.objectContaining({ itemId: 2, status: 'NEXT' }),
     ]);
     expect(result.nextTargetItemId).toBe(2);
+  });
+
+  it('replans a changed revision instead of resurrecting sold or consumed prior inventory as NEXT', async () => {
+    const initialPlan = plannerResult();
+    initialPlan.recommendedBuild = [
+      { ...initialPlan.recommendedBuild[0], itemId: 1, position: 1, status: 'OWNED' },
+      { ...initialPlan.recommendedBuild[0], itemId: 2, position: 2, status: 'NEXT' },
+    ];
+    initialPlan.nextAction = {
+      actionKey: 'BUY_ITEM:2',
+      type: 'BUY',
+      itemId: 2,
+      targetItemId: 2,
+      reasonCodes: ['FEASIBLE'],
+    };
+    const freshPlan = plannerResult();
+    freshPlan.recommendedBuild = [
+      { ...freshPlan.recommendedBuild[0], itemId: 2, position: 1, status: 'NEXT' },
+    ];
+    freshPlan.nextAction = {
+      actionKey: 'BUY_ITEM:2',
+      type: 'BUY',
+      itemId: 2,
+      targetItemId: 2,
+      reasonCodes: ['FEASIBLE'],
+    };
+    const planner = {
+      version: 'adaptive-build-planner-v1',
+      plan: jest.fn(({ decision: builtDecision }: any) =>
+        builtDecision.stateRevision === 'revision-a' ? initialPlan : freshPlan,
+      ),
+    };
+    const h = harness({
+      planner,
+      states: [
+        decision({ wallet: 1000, owned: [1], revision: 'revision-a' }),
+        decision({ wallet: 1000, owned: [], revision: 'revision-b' }),
+      ],
+    });
+
+    const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
+
+    expect(result.recommendedBuild.some((item) => item.itemId === 1)).toBe(false);
+    expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(2);
   });
 
   it('rebases a feasible HOLD action target when its planned item becomes owned', async () => {

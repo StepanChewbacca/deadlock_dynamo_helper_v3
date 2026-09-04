@@ -306,6 +306,22 @@ describe('AdaptiveBuildPlannerV1Service structured planning', () => {
     expect(result.nextAction.targetItemId).toBe(1);
   });
 
+  it('searches the component path of a reachable future-phase required target', () => {
+    const result = planner.plan({
+      decision: decision({ gameTimeSec: 120, owned: [4] }),
+      evidence: evidence({
+        groups: [
+          group('early-core', 'EARLY', 'REQUIRED', [4]),
+          group('mid-upgrade', 'MID', 'REQUIRED', [11]),
+        ],
+      }),
+    });
+
+    expect(result.nextAction).toMatchObject({ type: 'BUY', targetItemId: 1 });
+    expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(1);
+    expect(result.recommendedBuild.find((item) => item.itemId === 11)?.status).toBe('PLANNED');
+  });
+
   it('resolves a CHOICE with exact-enemy WPA and never emits both alternatives', () => {
     const result = planner.plan({
       decision: decision(),

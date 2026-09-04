@@ -145,7 +145,9 @@ export function reconstructChoiceStateV1(
   const owned = new Set(ownedItemIds);
   const alternativeIds = group.candidates.map((candidate) => candidate.itemId).sort((a, b) => a - b);
   const previousCommittedItemIds = normalizeLegacyChoiceIds(previousCommittedItemIdsOrId, group);
-  const ownedTargets = alternativeIds.filter((itemId) => owned.has(itemId));
+  const ownedTargets = alternativeIds.filter((itemId) => owned.has(itemId) || [...owned].some((ownedId) =>
+    componentClosureV1(ownedId, itemGraph).has(itemId),
+  ));
 
   const closures = new Map<number, ReadonlySet<number>>();
   const componentOwners = new Map<number, number>();
