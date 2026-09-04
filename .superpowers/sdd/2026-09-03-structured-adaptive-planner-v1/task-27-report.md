@@ -1,6 +1,6 @@
 # Task 27 Report
 
-Commit: `5cb8d809` (`Fix adaptive legality fallback counting`)
+Commit: `23d5a392` (`Handle partial adaptive decision fakes`)
 
 ## Outcome
 
@@ -53,6 +53,16 @@ Received: 0
 ```
 
 Fix: `selectFreshLegalAction()` now marks `changed` when the published action differs from the planner output, including non-transaction rebases and SELL retargets, so `finalLegalityFallbackCount` matches real rewrites.
+
+Round 2 red:
+
+```text
+AdaptiveRecommendationV1Service structured serving invariants › treats partial decision fakes without slots or investment as non-crashing test doubles
+Expected: toHaveProperty('nextAction')
+Received: TypeError before resolution
+```
+
+Fix: `recordDecisionState()` now tolerates partial test doubles that omit `slots` and `investment`, while still counting explicit UNKNOWN production state when those fields are present.
 
 RED encountered and fixed:
 
