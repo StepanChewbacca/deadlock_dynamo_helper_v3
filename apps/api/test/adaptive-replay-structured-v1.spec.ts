@@ -770,6 +770,34 @@ describe('AdaptiveReplayV1Service structured replay invariants', () => {
     expect(hasPostCommitBranchChurn(input, output)).toBe(false);
   });
 
+  it('counts an ordinary BUY into a committed choice sibling before divest as churn', () => {
+    const replay = replayService();
+    const input = committedChoiceReplayInput();
+    const output = replay.run(input);
+    const siblingBuy = {
+      ...output,
+      nextAction: {
+        actionKey: 'BUY_ITEM:12',
+        type: 'BUY' as const,
+        itemId: 12,
+        targetItemId: 12,
+        reasonCodes: ['FEASIBLE'],
+      },
+      recommendedBuild: [{
+        itemId: 12,
+        position: 1,
+        status: 'NEXT' as const,
+        score: 1,
+        confidence: 1,
+        skeletonStrength: 1,
+        contextualSupport: 1,
+        reasonCodes: ['TEST_SIBLING'],
+      }],
+    };
+
+    expect(hasPostCommitBranchChurn(input, siblingBuy)).toBe(true);
+  });
+
   it('replays identical structured input deterministically', () => {
     const replay = replayService();
     const input = replayInput();

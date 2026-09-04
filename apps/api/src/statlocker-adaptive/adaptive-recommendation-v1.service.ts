@@ -84,8 +84,7 @@ export class AdaptiveRecommendationV1Service {
         [...freshOwnedItemIds],
       );
       const freshRanked = planned.rankedImmediateCandidates.filter(({ action }) =>
-        feasibleByActionKey.has(action.actionKey)
-        && !targetsOwnedItem(action, freshOwnedItemIds),
+        feasibleByActionKey.has(action.actionKey),
       );
       const legality = selectFreshLegalAction(planned.nextAction, freshRanked, feasibleByActionKey, freshBuild);
       if (legality.changed || fresh.stateRevision !== initial.stateRevision) {
@@ -148,26 +147,24 @@ function selectFreshLegalAction(
   feasibleByActionKey: ReadonlyMap<string, RecommendationCandidate>,
   build: AdaptiveRecommendationResultV1['recommendedBuild'],
 ): { action: AdaptiveActionV1; changed: boolean } {
+  const targetItemId = firstNextTarget(build);
   if (!isTransactionAction(selected)) {
     if (selected.actionKey === 'WAIT' || selected.actionKey === 'HOLD' || selected.actionKey === 'CONTINUE_CORE' || selected.actionKey === 'ABSTAIN') {
       return { action: rebasePlanTarget(selected, build, feasibleByActionKey), changed: false };
     }
     if (feasibleByActionKey.has(selected.actionKey)) return { action: rebasePlanTarget(selected, build, feasibleByActionKey), changed: false };
-  } else if (feasibleByActionKey.has(selected.actionKey)) {
-    return { action: selected, changed: false };
+  } else {
+    const candidate = feasibleByActionKey.get(selected.actionKey);
+    if (candidate && selectedActionServesFreshNext(selected, targetItemId)) {
+      return { action: canonicalFreshAction(selected, candidate, targetItemId), changed: false };
+    }
   }
 
-  const targetItemId = firstNextTarget(build);
   for (const scored of ranked) {
-    if (!feasibleByActionKey.has(scored.action.actionKey)) continue;
-    if (transactionTargetsNextItem(scored.action) && scored.action.targetItemId !== targetItemId) continue;
+    const candidate = feasibleByActionKey.get(scored.action.actionKey);
+    if (!candidate || !fallbackActionServesFreshNext(scored.action, targetItemId)) continue;
     return {
-      action: scored.action.type === 'WAIT'
-        ? withFreshLegalityFallback(rebasePlanTarget(scored.action, build, feasibleByActionKey))
-        : {
-            ...scored.action,
-            reasonCodes: unique([...scored.action.reasonCodes, 'FRESH_LEGALITY_FALLBACK']),
-          },
+      action: withFreshLegalityFallback(canonicalFreshAction(scored.action, candidate, targetItemId)),
       changed: true,
     };
   }
@@ -314,8 +311,66 @@ function transactionTargetsNextItem(action: AdaptiveActionV1): boolean {
   return action.type === 'BUY' || action.type === 'UPGRADE' || action.type === 'REPLACE';
 }
 
-function targetsOwnedItem(action: AdaptiveActionV1, ownedItemIds: ReadonlySet<number>): boolean {
-  return action.targetItemId !== undefined && ownedItemIds.has(action.targetItemId);
+function selectedActionServesFreshNext(action: AdaptiveActionV1, targetItemId: number | undefined): boolean {
+  if (action.type === 'SELL') return true;
+  return !transactionTargetsNextItem(action) || action.targetItemId === targetItemId;
+}
+
+function fallbackActionServesFreshNext(action: AdaptiveActionV1, targetItemId: number | undefined): boolean {
+  if (action.type === 'SELL') return action.targetItemId === targetItemId;
+  return !transactionTargetsNextItem(action) || action.targetItemId === targetItemId;
+}
+
+function canonicalFreshAction(
+  planned: AdaptiveActionV1,
+  candidate: RecommendationCandidate,
+  semanticNextTargetItemId: number | undefined,
+): AdaptiveActionV1 {
+  const action = candidate.action;
+  if (action.type === 'BUY_ITEM') {
+    return {
+      ...planned,
+      actionKey: candidate.actionId,
+      type: 'BUY',
+      itemId: action.itemId,
+      targetItemId: action.itemId,
+    };
+  }
+  if (action.type === 'UPGRADE_ITEM') {
+    return {
+      ...planned,
+      actionKey: candidate.actionId,
+      type: 'UPGRADE',
+      itemId: action.itemId,
+      targetItemId: action.itemId,
+    };
+  }
+  if (action.type === 'REPLACE_ITEM') {
+    return {
+      ...planned,
+      actionKey: candidate.actionId,
+      type: 'REPLACE',
+      sellItemId: action.sellItemId,
+      buyItemId: action.buyItemId,
+      targetItemId: action.buyItemId,
+    };
+  }
+  if (action.type === 'SELL_ITEM') {
+    return {
+      ...planned,
+      actionKey: candidate.actionId,
+      type: 'SELL',
+      itemId: action.itemId,
+      sellItemId: action.itemId,
+      targetItemId: semanticNextTargetItemId,
+    };
+  }
+  return {
+    ...planned,
+    actionKey: candidate.actionId,
+    type: 'WAIT',
+    targetItemId: semanticNextTargetItemId,
+  };
 }
 
 function firstNextTarget(build: AdaptiveRecommendationResultV1['recommendedBuild']): number | undefined {

@@ -39,7 +39,7 @@ function inventory() {
   };
 }
 
-function decision(revision: string) {
+function decision(revision: string, unlockedFlexSlots = 1) {
   return {
     state: {
       decisionId: `adaptive:${revision}`,
@@ -63,13 +63,13 @@ function decision(revision: string) {
     slots: {
       baseSlots: 9,
       maxFlexSlots: 3,
-      unlockedFlexSlots: 1,
+      unlockedFlexSlots,
       usedSlots: 9,
       usedFlexSlots: 0,
       provedFlexLowerBound: 0,
       freeBaseSlots: 0,
-      freeFlexSlots: 1,
-      totalCapacity: 10,
+      freeFlexSlots: unlockedFlexSlots,
+      totalCapacity: 9 + unlockedFlexSlots,
       evidence: 'OBSERVED',
     },
     investment: {
@@ -186,5 +186,34 @@ describe('AdaptiveRecommendationV1Service flex-aware fresh legality', () => {
     expect(result.nextAction).toMatchObject({ type: 'BUY', targetItemId: 10 });
     expect(result.nextTargetItemId).toBe(10);
     expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(10);
+  });
+
+  it('does not publish a planned BUY after fresh state shows the flex slot is locked', async () => {
+    const initial = decision('revision-a', 1);
+    const fresh = decision('revision-b', 0);
+    const stateService = {
+      build: jest.fn().mockResolvedValueOnce(initial).mockResolvedValueOnce(fresh),
+    };
+    const evidenceService = {
+      resolveLocalPatchId: jest.fn(() => '15-1'),
+      getLocalEvidence: jest.fn(() => evidence()),
+    };
+    const planner = { version: 'adaptive-build-planner-v1', plan: jest.fn(() => plannerResult()) };
+    const replay = {
+      getPreviousPlan: jest.fn().mockResolvedValue(undefined),
+      toReplayInput: jest.fn(() => ({ snapshotIds: ['snapshot-wpa'] })),
+      persist: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new AdaptiveRecommendationV1Service(
+      stateService as any,
+      evidenceService as any,
+      planner as any,
+      replay as any,
+    );
+
+    const result = await service.recommend({ matchId: 'match-flex', localSteamId: 'steam-a' });
+
+    expect(result.nextAction).toMatchObject({ type: 'WAIT', targetItemId: 10 });
+    expect(result.nextAction.reasonCodes).toContain('NO_FRESH_LEGAL_TRANSACTION');
   });
 });

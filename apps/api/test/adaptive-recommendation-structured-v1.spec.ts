@@ -30,10 +30,39 @@ function itemGraph(cost1: number, cost2: number) {
       sellTransition: { soulsRefund: Math.floor(cost2 / 2), returnedItemIds: [] },
       maxCopies: 1,
     },
+    {
+      itemId: 3,
+      name: 'Item 3',
+      slotType: 'weapon' as const,
+      active: false,
+      availableRulesetIds: ['ruleset-a'],
+      directPurchaseCost: 500,
+      upgradeRecipes: [],
+      sellTransition: { soulsRefund: 250, returnedItemIds: [] },
+      maxCopies: 1,
+    },
+    {
+      itemId: 4,
+      name: 'Item 4',
+      slotType: 'weapon' as const,
+      active: false,
+      availableRulesetIds: ['ruleset-a'],
+      upgradeRecipes: [{
+        recipeId: 'upgrade-4',
+        consumedItemIds: [1],
+        soulsCost: 500,
+      }],
+      sellTransition: { soulsRefund: 250, returnedItemIds: [] },
+      maxCopies: 1,
+    },
   ]);
 }
 
-function decision(revision: string, graph = itemGraph(500, 500)) {
+function decision(
+  revision: string,
+  graph = itemGraph(500, 500),
+  ownedItemIds: readonly number[] = [],
+) {
   return {
     state: {
       decisionId: `adaptive:${revision}`,
@@ -44,9 +73,15 @@ function decision(revision: string, graph = itemGraph(500, 500)) {
       heroId: 10,
       inventory: {
         initializedFromSnapshot: true,
-        heldByItemId: new Map(),
-        lifecycleCountByItemId: new Map(),
-        nextInstanceSequence: 1,
+        heldByItemId: new Map(ownedItemIds.map((itemId) => [itemId, {
+          itemId,
+          instanceId: `item-${itemId}`,
+          lifecycle: 1,
+          acquiredBy: 'RECONCILE' as const,
+          acquiredAtMs: 0,
+        }])),
+        lifecycleCountByItemId: new Map(ownedItemIds.map((itemId) => [itemId, 1])),
+        nextInstanceSequence: ownedItemIds.length + 1,
       },
       economy: {
         spendableSouls: observedFact(1000, 'test'),
@@ -203,5 +238,104 @@ describe('AdaptiveRecommendationV1Service structured serving invariants', () => 
     expect(result.nextTargetItemId).toBe(1);
     expect(result.nextAction.targetItemId).toBe(1);
     expect(result.nextAction.type).toBe('WAIT');
+  });
+
+  it('rebases a preparatory component SELL onto the fresh semantic NEXT target', async () => {
+    const initial = decision('revision-a', itemGraph(500, 500), [1]);
+    const fresh = decision('revision-b', itemGraph(500, 500), [1, 2]);
+    const stateService = {
+      build: jest.fn().mockResolvedValueOnce(initial).mockResolvedValueOnce(fresh),
+    };
+    const evidenceService = {
+      resolveLocalPatchId: jest.fn(() => '15-1'),
+      getLocalEvidence: jest.fn(() => evidence()),
+    };
+    const planner = {
+      version: 'adaptive-build-planner-v1',
+      plan: jest.fn(() => ({
+        ...plan(),
+        nextAction: {
+          actionKey: 'SELL_ITEM:1',
+          type: 'SELL',
+          itemId: 1,
+          sellItemId: 1,
+          targetItemId: 2,
+          reasonCodes: ['PREPARE_NEXT'],
+        },
+        recommendedBuild: [
+          { ...plan().recommendedBuild[0], itemId: 2, status: 'NEXT' },
+          { ...plan().recommendedBuild[0], itemId: 3, position: 2, status: 'PLANNED' },
+        ],
+        rankedImmediateCandidates: [{
+          ...plan().rankedImmediateCandidates[0],
+          action: {
+            actionKey: 'SELL_ITEM:1',
+            type: 'SELL',
+            itemId: 1,
+            sellItemId: 1,
+            targetItemId: 2,
+            reasonCodes: ['PREPARE_NEXT'],
+          },
+        }],
+      })),
+    };
+    const replay = {
+      getPreviousPlan: jest.fn().mockResolvedValue(undefined),
+      toReplayInput: jest.fn(() => ({ snapshotIds: ['snapshot-wpa'] })),
+      persist: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new AdaptiveRecommendationV1Service(
+      stateService as any,
+      evidenceService as any,
+      planner as any,
+      replay as any,
+    );
+
+    const result = await service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
+
+    expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(3);
+    expect(result.nextAction).toMatchObject({ type: 'SELL', sellItemId: 1, targetItemId: 3 });
+    expect(result.nextTargetItemId).toBe(3);
+  });
+
+  it('does not publish a legal BUY sibling when it disagrees with the semantic NEXT', async () => {
+    const initial = decision('revision-a');
+    const fresh = decision('revision-b');
+    const stateService = {
+      build: jest.fn().mockResolvedValueOnce(initial).mockResolvedValueOnce(fresh),
+    };
+    const evidenceService = {
+      resolveLocalPatchId: jest.fn(() => '15-1'),
+      getLocalEvidence: jest.fn(() => evidence()),
+    };
+    const planner = {
+      version: 'adaptive-build-planner-v1',
+      plan: jest.fn(() => ({
+        ...plan(),
+        nextAction: {
+          actionKey: 'BUY_ITEM:2',
+          type: 'BUY',
+          itemId: 2,
+          targetItemId: 2,
+          reasonCodes: ['FEASIBLE'],
+        },
+      })),
+    };
+    const replay = {
+      getPreviousPlan: jest.fn().mockResolvedValue(undefined),
+      toReplayInput: jest.fn(() => ({ snapshotIds: ['snapshot-wpa'] })),
+      persist: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new AdaptiveRecommendationV1Service(
+      stateService as any,
+      evidenceService as any,
+      planner as any,
+      replay as any,
+    );
+
+    const result = await service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
+
+    expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(1);
+    expect(result.nextAction).toMatchObject({ type: 'BUY', targetItemId: 1 });
   });
 });
