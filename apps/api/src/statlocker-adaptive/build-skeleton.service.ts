@@ -256,7 +256,7 @@ function deriveGroups(
         if (confidence !== undefined) confidences.push(confidence);
       }
     }
-    const confidence = average(confidences);
+    const confidence = confidences.length === 0 ? 0 : Math.min(...confidences);
     if (confidence < ADAPTIVE_POLICY_V1_CONFIG.choice.inferenceMinConfidence) {
       for (const entry of clique) ambiguousChoiceLikeItemIds.add(entry.candidate.itemId);
       continue;
