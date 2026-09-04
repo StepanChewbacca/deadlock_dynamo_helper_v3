@@ -5,6 +5,11 @@ export interface RecommendationItemGraph {
   getAllItems(): readonly RecommendationItemDefinition[];
   getDirectComponentIds(itemId: number): readonly number[];
   getDirectUpgradeIds(itemId: number): readonly number[];
+  getTransitiveComponentIds(itemId: number): readonly number[];
+  getTransitiveUpgradeIds(itemId: number): readonly number[];
+  isComponentAncestor(componentItemId: number, upgradedItemId: number): boolean;
+  isTargetSatisfied(targetItemId: number, ownedItemIds: Iterable<number>): boolean;
+  getSatisfyingOwnedItemIds(targetItemId: number, ownedItemIds: Iterable<number>): readonly number[];
 }
 
 export function createRecommendationItemGraph(
@@ -49,6 +54,45 @@ export function createRecommendationItemGraph(
   }
   for (const values of directUpgrades.values()) values.sort((a, b) => a - b);
 
+  const transitiveComponents = new Map<number, readonly number[]>();
+  const transitiveUpgrades = new Map<number, readonly number[]>();
+
+  const resolveComponents = (itemId: number): readonly number[] => {
+    const cached = transitiveComponents.get(itemId);
+    if (cached) return cached;
+
+    const result = new Set<number>();
+    const item = byId.get(itemId);
+    for (const recipe of item?.upgradeRecipes ?? []) {
+      for (const componentId of recipe.consumedItemIds) {
+        result.add(componentId);
+        for (const ancestorId of resolveComponents(componentId)) result.add(ancestorId);
+      }
+    }
+    const sorted = [...result].sort((a, b) => a - b);
+    transitiveComponents.set(itemId, sorted);
+    return sorted;
+  };
+
+  const resolveUpgrades = (itemId: number): readonly number[] => {
+    const cached = transitiveUpgrades.get(itemId);
+    if (cached) return cached;
+
+    const result = new Set<number>();
+    for (const upgradeId of directUpgrades.get(itemId) ?? []) {
+      result.add(upgradeId);
+      for (const descendantId of resolveUpgrades(upgradeId)) result.add(descendantId);
+    }
+    const sorted = [...result].sort((a, b) => a - b);
+    transitiveUpgrades.set(itemId, sorted);
+    return sorted;
+  };
+
+  for (const itemId of byId.keys()) {
+    resolveComponents(itemId);
+    resolveUpgrades(itemId);
+  }
+
   const allItems = [...byId.values()].sort((a, b) => a.itemId - b.itemId);
   return {
     getItem: (itemId) => byId.get(itemId),
@@ -59,6 +103,22 @@ export function createRecommendationItemGraph(
       return [...new Set(item.upgradeRecipes.flatMap((recipe) => recipe.consumedItemIds))].sort((a, b) => a - b);
     },
     getDirectUpgradeIds: (itemId) => directUpgrades.get(itemId) ?? [],
+    getTransitiveComponentIds: (itemId) => transitiveComponents.get(itemId) ?? [],
+    getTransitiveUpgradeIds: (itemId) => transitiveUpgrades.get(itemId) ?? [],
+    isComponentAncestor: (componentItemId, upgradedItemId) =>
+      (transitiveComponents.get(upgradedItemId) ?? []).includes(componentItemId),
+    isTargetSatisfied: (targetItemId, ownedItemIds) => {
+      for (const ownedItemId of ownedItemIds) {
+        if (ownedItemId === targetItemId) return true;
+        if ((transitiveComponents.get(ownedItemId) ?? []).includes(targetItemId)) return true;
+      }
+      return false;
+    },
+    getSatisfyingOwnedItemIds: (targetItemId, ownedItemIds) => [...new Set(ownedItemIds)]
+      .filter((ownedItemId) =>
+        ownedItemId === targetItemId || (transitiveComponents.get(ownedItemId) ?? []).includes(targetItemId),
+      )
+      .sort((a, b) => a - b),
   };
 }
 
