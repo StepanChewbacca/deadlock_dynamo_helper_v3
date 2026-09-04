@@ -35,6 +35,7 @@ export interface AdaptiveChoiceReplacementOptionV1 {
   replacedItemId: number;
   sellEvidenceItemIds: readonly number[];
   supportItemIds: readonly number[];
+  replacedSupportItemIds: readonly number[];
   contextualImprovement: number;
 }
 
@@ -277,6 +278,10 @@ function buildCommittedReplacementOptionsV1(
         supportItemIds: uniqueNumbers([
           candidate.itemId,
           ...componentClosureV1(candidate.itemId, itemGraph),
+        ]).sort((a, b) => a - b),
+        replacedSupportItemIds: uniqueNumbers([
+          replacedItemId,
+          ...componentClosureV1(replacedItemId, itemGraph),
         ]).sort((a, b) => a - b),
         contextualImprovement,
       });
