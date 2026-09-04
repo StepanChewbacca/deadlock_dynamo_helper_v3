@@ -576,6 +576,27 @@ describe('AdaptiveRecommendationV1Service', () => {
     expect(status.reasonCodeCounts['WPA_PATCH_DATA:UNAVAILABLE']).toBe(1);
   });
 
+  it('records a final-legality fallback when a non-transaction action is rewritten', async () => {
+    const plan = plannerResult();
+    plan.nextAction = { actionKey: 'HOLD', type: 'HOLD', targetItemId: 1, reasonCodes: ['PLAN_HYSTERESIS'] };
+    plan.recommendedBuild = [
+      { ...plan.recommendedBuild[0], itemId: 1, position: 1, status: 'OWNED' },
+      { ...plan.recommendedBuild[0], itemId: 2, position: 2, status: 'PLANNED' },
+    ];
+    const h = harness({
+      states: [
+        decision({ wallet: 1000, revision: 'revision-a' }),
+        decision({ wallet: 1000, owned: [1], revision: 'revision-b' }),
+      ],
+      plan,
+    });
+
+    const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
+    const status = h.observability.getStatus();
+    expect(result.nextAction).toEqual(expect.objectContaining({ type: 'HOLD', targetItemId: 2 }));
+    expect(status.counters.finalLegalityFallbackCount).toBe(1);
+  });
+
   it('records unknown flex and investment state at the coordinator boundary', async () => {
     const h = harness({
       states: [
@@ -607,6 +628,51 @@ describe('AdaptiveRecommendationV1Service', () => {
     const status = h.observability.getStatus();
     expect(status.counters.planSwitchCount).toBe(1);
     expect(status.counters.planChurnCount).toBe(1);
+  });
+
+  it('records SELL frequency and final-legality retargeting when the fresh target changes', async () => {
+    const plan = plannerResult();
+    plan.nextAction = {
+      actionKey: 'SELL_ITEM:1',
+      type: 'SELL',
+      itemId: 1,
+      sellItemId: 1,
+      targetItemId: 1,
+      reasonCodes: ['PREPARE_NEXT'],
+    };
+    plan.recommendedBuild = [
+      { ...plan.recommendedBuild[0], itemId: 1, position: 1, status: 'OWNED' },
+      { ...plan.recommendedBuild[0], itemId: 2, position: 2, status: 'PLANNED' },
+    ];
+    plan.rankedImmediateCandidates = [
+      {
+        action: {
+          actionKey: 'SELL_ITEM:1',
+          type: 'SELL',
+          itemId: 1,
+          sellItemId: 1,
+          targetItemId: 1,
+          reasonCodes: ['PREPARE_NEXT'],
+        },
+        score: 0.7,
+        confidence: 0.6,
+        components: [],
+        reasonCodes: ['PREPARE_NEXT'],
+      },
+    ];
+    const h = harness({
+      states: [
+        decision({ wallet: 1000, owned: [1], revision: 'revision-a' }),
+        decision({ wallet: 1000, owned: [1], revision: 'revision-b' }),
+      ],
+      plan,
+    });
+
+    const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
+    const status = h.observability.getStatus();
+    expect(result.nextAction).toMatchObject({ type: 'SELL', sellItemId: 1, targetItemId: 2 });
+    expect(status.counters.sellCount).toBe(1);
+    expect(status.counters.finalLegalityFallbackCount).toBe(1);
   });
 
   it('tracks phase and choice prevention through the real planner boundary', async () => {

@@ -172,13 +172,18 @@ function selectFreshLegalAction(
   const targetItemId = firstNextTarget(build);
   if (!isTransactionAction(selected)) {
     if (selected.actionKey === 'WAIT' || selected.actionKey === 'HOLD' || selected.actionKey === 'CONTINUE_CORE' || selected.actionKey === 'ABSTAIN') {
-      return { action: rebasePlanTarget(selected, build, feasibleByActionKey), changed: false };
+      const action = rebasePlanTarget(selected, build, feasibleByActionKey);
+      return { action, changed: actionWasRewritten(selected, action) };
     }
-    if (feasibleByActionKey.has(selected.actionKey)) return { action: rebasePlanTarget(selected, build, feasibleByActionKey), changed: false };
+    if (feasibleByActionKey.has(selected.actionKey)) {
+      const action = rebasePlanTarget(selected, build, feasibleByActionKey);
+      return { action, changed: actionWasRewritten(selected, action) };
+    }
   } else {
     const candidate = feasibleByActionKey.get(selected.actionKey);
     if (candidate && selectedActionServesFreshNext(selected, targetItemId)) {
-      return { action: canonicalFreshAction(selected, candidate, targetItemId), changed: false };
+      const action = canonicalFreshAction(selected, candidate, targetItemId);
+      return { action, changed: actionWasRewritten(selected, action) };
     }
   }
 
@@ -200,6 +205,15 @@ function selectFreshLegalAction(
     },
     changed: true,
   };
+}
+
+function actionWasRewritten(before: AdaptiveActionV1, after: AdaptiveActionV1): boolean {
+  return before.actionKey !== after.actionKey ||
+    before.type !== after.type ||
+    before.targetItemId !== after.targetItemId ||
+    before.itemId !== after.itemId ||
+    before.sellItemId !== after.sellItemId ||
+    before.buyItemId !== after.buyItemId;
 }
 
 function previousEvidenceFallback(
