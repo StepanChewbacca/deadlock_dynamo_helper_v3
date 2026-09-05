@@ -1,4 +1,5 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import {
@@ -19,6 +20,8 @@ import {
   PublishRecommendationEconomyRulesV1Input,
   RecommendationEconomyRulesStoreV1Service,
 } from './recommendation-economy-rules-store-v1.service';
+import { StatlockerEvidenceService } from './statlocker-evidence.service';
+import { StatlockerRefreshService } from './statlocker-refresh.service';
 
 export interface MineStrategyForIdentityV1Input {
   heroId: number;
@@ -55,11 +58,22 @@ interface EconomyRulesBootstrapEntryV1 {
   rules: RecommendationEconomyRulesV1;
 }
 
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DEFAULT_MINING_TTL_MS = 6 * HOUR;
+
 @Injectable()
 export class StrategyFirstOperationsV1Service implements OnModuleInit {
   private readonly logger = new Logger(StrategyFirstOperationsV1Service.name);
   private readonly inFlight = new Map<string, Promise<MineStrategyForIdentityV1Result>>();
   private readonly lastMineByHero = new Map<string, MineStrategyForIdentityV1Result>();
+  private readonly lastSuccessByKey = new Map<string, number>();
+  private readonly miningTtlMs = readBoundedMs(
+    process.env.ADAPTIVE_STRATEGY_MINING_TTL_MS,
+    DEFAULT_MINING_TTL_MS,
+    15 * MINUTE,
+    7 * 24 * HOUR,
+  );
   private lastAttemptAt?: string;
   private lastSuccessAt?: string;
   private lastError?: string;
@@ -74,6 +88,8 @@ export class StrategyFirstOperationsV1Service implements OnModuleInit {
     private readonly recipeRepo: Repository<RecommendationItemCatalogRecipeV1>,
     private readonly economyRulesStore: RecommendationEconomyRulesStoreV1Service,
     private readonly miningPipeline: BuildStrategyMiningPipelineV1Service,
+    @Optional() private readonly refresh?: StatlockerRefreshService,
+    @Optional() private readonly evidence?: StatlockerEvidenceService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -99,7 +115,7 @@ export class StrategyFirstOperationsV1Service implements OnModuleInit {
       ...input,
       catalogSha256: input.catalogSha256.toLowerCase(),
     };
-    const key = `${normalized.heroId}:${normalized.patchId}:${normalized.rulesetId}:${normalized.catalogSha256}`;
+    const key = mineKey(normalized);
     const current = this.inFlight.get(key);
     if (current) return current;
 
@@ -109,6 +125,33 @@ export class StrategyFirstOperationsV1Service implements OnModuleInit {
       });
     this.inFlight.set(key, promise);
     return promise;
+  }
+
+  @Cron('*/5 * * * *')
+  async scheduledTick(nowMs = Date.now()): Promise<void> {
+    const refresh = this.refresh?.getStatus();
+    const identity = refresh?.identity;
+    if (!identity || !this.evidence) return;
+    const local = this.evidence.getLocalStatus(identity);
+    const patchId = local.statlockerPatchId;
+    if (!patchId) return;
+
+    const heroId = [...(refresh?.activeHeroIds ?? [])]
+      .sort((a, b) => a - b)
+      .find((candidate) => this.isDue({
+        heroId: candidate,
+        patchId,
+        rulesetId: identity.rulesetVersion,
+        catalogSha256: identity.catalogSha256,
+      }, nowMs));
+    if (heroId === undefined) return;
+
+    await this.mineHeroForIdentity({
+      heroId,
+      patchId,
+      rulesetId: identity.rulesetVersion,
+      catalogSha256: identity.catalogSha256,
+    });
   }
 
   getStatus(): StrategyFirstOperationsStatusV1 {
@@ -126,9 +169,15 @@ export class StrategyFirstOperationsV1Service implements OnModuleInit {
     };
   }
 
+  private isDue(input: MineStrategyForIdentityV1Input, nowMs: number): boolean {
+    const lastSuccess = this.lastSuccessByKey.get(mineKey(input));
+    return lastSuccess === undefined || nowMs - lastSuccess >= this.miningTtlMs;
+  }
+
   private async mineSingle(input: MineStrategyForIdentityV1Input): Promise<MineStrategyForIdentityV1Result> {
     this.lastAttemptAt = new Date().toISOString();
     this.lastError = undefined;
+    const key = mineKey(input);
     const statusKey = `${input.heroId}:${input.rulesetId}:${input.catalogSha256}`;
     try {
       const economyRules = await this.economyRulesStore.resolveExact(input.rulesetId, input.catalogSha256);
@@ -168,7 +217,11 @@ export class StrategyFirstOperationsV1Service implements OnModuleInit {
         reasonCodes: [...pipeline.reasonCodes],
         pipeline,
       };
-      if (pipeline.published) this.lastSuccessAt = new Date().toISOString();
+      if (pipeline.published) {
+        const now = Date.now();
+        this.lastSuccessAt = new Date(now).toISOString();
+        this.lastSuccessByKey.set(key, now);
+      }
       return this.remember(statusKey, result);
     } catch (error) {
       this.lastError = describeError(error);
@@ -247,6 +300,10 @@ export class StrategyFirstOperationsV1Service implements OnModuleInit {
   }
 }
 
+function mineKey(input: MineStrategyForIdentityV1Input): string {
+  return `${input.heroId}:${input.patchId}:${input.rulesetId}:${input.catalogSha256.toLowerCase()}`;
+}
+
 function parseEconomyBootstrap(raw: string | undefined): EconomyRulesBootstrapEntryV1[] {
   if (!raw || raw.trim() === '') return [];
   const parsed = JSON.parse(raw) as unknown;
@@ -279,6 +336,12 @@ function parseDate(value: string): Date {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) throw new Error(`Invalid economy verifiedAt: ${value}`);
   return date;
+}
+
+function readBoundedMs(raw: string | undefined, fallback: number, min: number, max: number): number {
+  const value = Number(raw);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(value)));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
