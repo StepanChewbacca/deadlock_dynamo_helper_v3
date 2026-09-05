@@ -5,10 +5,15 @@ import {
   observedFact,
 } from '@deadlock-live-probe/build-domain';
 import { AdaptiveDecisionStateV1 } from '../src/statlocker-adaptive/adaptive-decision-state-v1.service';
-import { deriveAdaptiveSlotStateV1, unknownAdaptiveInvestmentStateV1 } from '../src/statlocker-adaptive/adaptive-economy-v1';
+import {
+  deriveAdaptiveInvestmentStateV1,
+  deriveAdaptiveSlotStateV1,
+  unknownAdaptiveInvestmentStateV1,
+} from '../src/statlocker-adaptive/adaptive-economy-v1';
 import { StrategyFirstBuildPlannerV1Service } from '../src/statlocker-adaptive/strategy-first-build-planner-v1.service';
 import { BuildStrategySpecV1 } from '../src/statlocker-adaptive/build-strategy-v1';
 
+const catalogSha256 = 'a'.repeat(64);
 const items: RecommendationItemDefinition[] = [1, 2, 3, 4, 5].map((itemId) => ({
   itemId, name: `Item ${itemId}`, slotType: itemId === 3 ? 'vitality' : 'weapon', active: false,
   availableRulesetIds: ['r1'], directPurchaseCost: itemId === 2 ? 1600 : 800, upgradeRecipes: [],
@@ -16,6 +21,16 @@ const items: RecommendationItemDefinition[] = [1, 2, 3, 4, 5].map((itemId) => ({
 }));
 const graph = createRecommendationItemGraph(items);
 const slotRules = { baseSlots: 12, baseSlotsByType: { weapon: 4, vitality: 4, spirit: 4 } as const, maxFlexSlots: 4, maxActiveItems: 4 };
+const economyRules = {
+  rulesetId: 'r1',
+  catalogSha256,
+  ...slotRules,
+  investmentBreakpoints: {
+    weapon: [800, 2400, 3200],
+    vitality: [800, 1600, 3200],
+    spirit: [800, 1600, 3200],
+  },
+};
 
 function decision(ownedItemIds: readonly number[], souls: number, unlockedFlexSlots = 0): AdaptiveDecisionStateV1 {
   const held = buildInventoryInstancesForRecommendation(ownedItemIds, graph);
@@ -25,10 +40,19 @@ function decision(ownedItemIds: readonly number[], souls: number, unlockedFlexSl
       inventory: { initializedFromSnapshot: true, heldByItemId: held, lifecycleCountByItemId: new Map(ownedItemIds.map((id) => [id, 1])), nextInstanceSequence: held.size + 1 },
       economy: { spendableSouls: observedFact(souls, 'test'), shopOpportunity: observedFact('AVAILABLE', 'test') },
     },
-    itemGraph: graph, catalogVersionId: 'c', catalogSha256: 'a'.repeat(64), rulesetId: 'r1', localSteamId: 'p',
+    itemGraph: graph, catalogVersionId: 'c', catalogSha256, rulesetId: 'r1', localSteamId: 'p',
     allyHeroIds: [], enemyHeroIds: [9], allyItemIds: [], enemyItemIds: [],
     slots: deriveAdaptiveSlotStateV1(ownedItemIds, graph, slotRules, { unlockedFlexSlots, evidence: 'OBSERVED' }),
     investment: unknownAdaptiveInvestmentStateV1(), economyRulesEvidence: 'UNKNOWN', stateRevision: 'revision-test',
+  };
+}
+
+function decisionWithEconomy(ownedItemIds: readonly number[], souls: number): AdaptiveDecisionStateV1 {
+  return {
+    ...decision(ownedItemIds, souls),
+    investment: deriveAdaptiveInvestmentStateV1(ownedItemIds, graph, economyRules),
+    economyRules,
+    economyRulesEvidence: 'RECONSTRUCTED',
   };
 }
 
@@ -49,6 +73,13 @@ function goal(id: string, itemId: number, prerequisiteGoalIds: readonly string[]
   };
 }
 
+function optionalGoal(id: string, itemId: number) {
+  return {
+    goalId: id, type: 'CORE' as const, phase: 'MID' as const, targetItemIds: [itemId], minSelect: 0, maxSelect: 1,
+    prerequisiteGoalIds: ['core'], hard: false, lifecycleByItemId: { [itemId]: 'SITUATIONAL' as const }, rationaleCodes: ['OPTIONAL'],
+  };
+}
+
 const fakeScorer = {
   scoreItem(itemId: number) {
     const score = itemId === 3 ? 0.9 : itemId === 2 ? 0.7 : 0.5;
@@ -57,7 +88,7 @@ const fakeScorer = {
 } as any;
 
 const emptyEvidence = {
-  heroId: 1, rulesetVersion: 'r1', catalogSha256: 'a'.repeat(64), statlockerPatchId: 'p', usable: true,
+  heroId: 1, rulesetVersion: 'r1', catalogSha256, statlockerPatchId: 'p', usable: true,
   snapshotIds: [], degradedReasons: [], families: [], byDataset: {
     WPA_PATCH_DATA: { dataset: 'WPA_PATCH_DATA', scopeKey: 'global', freshness: 'UNAVAILABLE', confidence: 0 },
     VS_HERO_WPA: { dataset: 'VS_HERO_WPA', scopeKey: 'global', freshness: 'UNAVAILABLE', confidence: 0 },
@@ -102,5 +133,34 @@ describe('strategy-first build planner v1', () => {
     const plannedIds = result.recommendedBuild.filter((entry) => entry.status !== 'OWNED').map((entry) => entry.itemId);
     expect(plannedIds).toContain(3);
     expect(plannedIds).not.toContain(2);
+  });
+
+  it('prioritizes a hard investment objective over a higher-scored optional item', () => {
+    const base = strategy([goal('core', 1), optionalGoal('weapon-investment', 2), optionalGoal('minor-vitality', 3)]);
+    const spec: BuildStrategySpecV1 = {
+      ...base,
+      investmentPolicy: {
+        ...base.investmentPolicy,
+        objectives: [{
+          objectiveId: 'weapon-2400',
+          type: 'weapon',
+          hard: true,
+          minimumValue: 2400,
+          activateAfterGoalIds: ['core'],
+          deactivateAfterGoalIds: [],
+          reasonCodes: ['ARCHETYPE_INVESTMENT_MILESTONE'],
+        }],
+      },
+    };
+
+    const result = planner.plan({
+      decision: decisionWithEconomy([1], 5000),
+      evidence: emptyEvidence,
+      strategies: [spec],
+    });
+
+    expect(result.nextAction).toMatchObject({ type: 'BUY', itemId: 2, targetItemId: 2 });
+    expect(result.nextAction.itemId).not.toBe(3);
+    expect(result.strategyPlan.remainingHardInvestmentObjectiveIds).toContain('weapon-2400');
   });
 });
