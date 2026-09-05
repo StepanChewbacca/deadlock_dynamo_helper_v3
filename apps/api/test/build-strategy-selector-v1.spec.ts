@@ -48,6 +48,22 @@ describe('build strategy selector/session v1', () => {
     expect(result.reasonCodes).toContain('NO_STRATEGY_CONFORMANCE');
   });
 
+  it('filters candidates to the exact live hero and ruleset instead of trusting array order', () => {
+    const foreignHero = { ...strategy('foreign-hero', [1, 2, 3]), heroId: 99, support: 1 };
+    const foreignRuleset = { ...strategy('foreign-ruleset', [1, 2, 3]), rulesetId: 'r2', support: 1 };
+    const result = selector.select({
+      strategies: [foreignHero, foreignRuleset, a],
+      heroId: 1,
+      rulesetId: 'r1',
+      itemGraph: graph,
+      ownedItemIds: [1, 2],
+      purchaseHistory: [{ itemId: 1, gameTimeSec: 100 }, { itemId: 2, gameTimeSec: 250 }],
+    });
+
+    expect(result.selectedStrategyId).toBe('A');
+    expect(result.posteriors.map((entry) => entry.strategyId)).toEqual(['A']);
+  });
+
   it('does not switch an already committed strategy for a small posterior fluctuation', () => {
     const session = new BuildStrategySessionV1Service();
     const result = session.reconcile({
