@@ -125,4 +125,26 @@ describe('build contract v1', () => {
     expect(contract.status).toBe('COMPLETE');
     expect(contract.remainingHardGoalIds).toEqual([]);
   });
+
+  it('keeps optional goals READY instead of letting them replace the mandatory current path', () => {
+    const optionalFirst: BuildStrategySpecV1 = {
+      ...strategy,
+      goals: [
+        {
+          goalId: 'optional', type: 'CORE', phase: 'EARLY', targetItemIds: [4], minSelect: 0, maxSelect: 1,
+          prerequisiteGoalIds: [], hard: false, lifecycleByItemId: { 4: 'SITUATIONAL' }, rationaleCodes: ['OPTIONAL'],
+        },
+        ...strategy.goals,
+      ],
+    };
+    const contract = service.resolve({
+      strategy: optionalFirst,
+      itemGraph: graph,
+      ownedItemIds: [],
+      selectedBranches: { defense: 'branch-a' },
+    });
+
+    expect(contract.goalStates.optional).toBe('READY');
+    expect(contract.currentGoalId).toBe('core');
+  });
 });
