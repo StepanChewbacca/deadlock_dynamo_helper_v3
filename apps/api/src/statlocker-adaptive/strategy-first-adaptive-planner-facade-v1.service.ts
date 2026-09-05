@@ -61,6 +61,9 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
       strategies,
       previousSession,
       previousContract,
+      previousRecommendedBuild: input.previousResult?.recommendedBuild,
+      recentPurchasedItemIds: input.recentPurchasedItemIds ?? [],
+      recentSoldItemIds: input.recentSoldItemIds ?? [],
     });
     const result = this.situational?.apply({
       result: planned,
