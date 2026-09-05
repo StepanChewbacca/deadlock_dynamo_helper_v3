@@ -1,0 +1,240 @@
+import {
+  AdaptiveRecommendationStrategyV1,
+  AdaptiveRecommendationResultV1,
+} from '@deadlock-live-probe/shared';
+import { buildInventoryInstancesForRecommendation, createRecommendationItemGraph, observedFact } from '@deadlock-live-probe/build-domain';
+import { deriveAdaptiveSlotStateV1, unknownAdaptiveInvestmentStateV1 } from '../src/statlocker-adaptive/adaptive-economy-v1';
+import { BuildStrategyRegistryV1Service } from '../src/statlocker-adaptive/build-strategy-registry-v1.service';
+import { ConsensusStrategyFallbackV1Service } from '../src/statlocker-adaptive/consensus-strategy-fallback-v1.service';
+import { StrategyFirstAdaptivePlannerFacadeV1Service } from '../src/statlocker-adaptive/strategy-first-adaptive-planner-facade-v1.service';
+import {
+  toAdaptiveRecommendationStrategyV1,
+} from '../src/statlocker-adaptive/strategy-first-legacy-planner-adapter-v1.service';
+
+const graph = createRecommendationItemGraph([
+  {
+    itemId: 1,
+    name: 'Core',
+    slotType: 'weapon',
+    active: false,
+    availableRulesetIds: ['r1'],
+    directPurchaseCost: 800,
+    upgradeRecipes: [],
+    sellTransition: { soulsRefund: 400, returnedItemIds: [] },
+  },
+]);
+
+const slots = deriveAdaptiveSlotStateV1(
+  [],
+  graph,
+  {
+    baseSlots: 12,
+    baseSlotsByType: { weapon: 4, vitality: 4, spirit: 4 },
+    maxFlexSlots: 4,
+    maxActiveItems: 4,
+  },
+  { unlockedFlexSlots: 0, evidence: 'OBSERVED' },
+);
+
+const decision: any = {
+  state: {
+    decisionId: 'd',
+    matchId: 'm',
+    playerSlot: 0,
+    gameTimeSec: 420,
+    rulesetId: 'r1',
+    heroId: 1,
+    inventory: {
+      initializedFromSnapshot: true,
+      heldByItemId: buildInventoryInstancesForRecommendation([], graph),
+      lifecycleCountByItemId: new Map(),
+      nextInstanceSequence: 1,
+    },
+    economy: {
+      spendableSouls: observedFact(2_000, 'test'),
+      shopOpportunity: observedFact('AVAILABLE', 'test'),
+    },
+  },
+  itemGraph: graph,
+  catalogVersionId: 'catalog',
+  catalogSha256: 'a'.repeat(64),
+  rulesetId: 'r1',
+  localSteamId: 'player',
+  allyHeroIds: [],
+  enemyHeroIds: [],
+  allyItemIds: [],
+  enemyItemIds: [],
+  slots,
+  investment: unknownAdaptiveInvestmentStateV1(),
+  economyRulesEvidence: 'UNKNOWN',
+  stateRevision: 'revision-test',
+};
+
+const skeleton: any = {
+  heroId: 1,
+  profileCount: 10,
+  groups: [{
+    groupId: 'required',
+    phase: 'EARLY',
+    type: 'REQUIRED',
+    minSelect: 1,
+    maxSelect: 1,
+    confidence: 0.9,
+    inferred: false,
+    candidates: [{
+      itemId: 1,
+      strength: 0.9,
+      coverage: 0.9,
+      purchaseRate: 0.9,
+      medianBuyTimeS: 100,
+      timingSpreadS: 10,
+      sourceProfileCount: 9,
+      frequencyTier: 'CORE',
+      rushEvidence: false,
+    }],
+  }],
+};
+
+const evidence: any = {
+  heroId: 1,
+  rulesetVersion: 'r1',
+  catalogSha256: 'a'.repeat(64),
+  statlockerPatchId: 'patch',
+  usable: true,
+  snapshotIds: [],
+  degradedReasons: [],
+  families: [],
+  byDataset: {
+    CONSENSUS_SKELETON: { dataset: 'CONSENSUS_SKELETON', freshness: 'FRESH', confidence: 1, payload: skeleton },
+  },
+};
+
+const previousStrategy: AdaptiveRecommendationStrategyV1 = {
+  strategyId: 'sticky-strategy',
+  commitment: 'COMMITTED',
+  selectedAtGameTimeSec: 180,
+  posterior: 0.91,
+  reasonCodes: ['DISTINCTIVE_PREFIX_COMMITMENT'],
+  selectedBranches: { boots: 'boots-a' },
+  committedBranches: { boots: 'boots-a' },
+  buildStatus: 'IN_PROGRESS',
+  progress: { satisfiedHardGoals: 1, totalHardGoals: 3 },
+  remainingGoalIds: ['g2', 'g3'],
+  slotPlan: {
+    currentUsedSlots: 1,
+    currentFlexUsed: 0,
+    reservedSituationalSlots: 0,
+    feasible: true,
+    reasonCodes: [],
+  },
+  investmentObjectives: [],
+};
+
+function previousResult(): Pick<
+  AdaptiveRecommendationResultV1,
+  'recommendedBuild' | 'totalScore' | 'nextAction' | 'confidence' | 'strategy'
+> {
+  return {
+    recommendedBuild: [],
+    totalScore: 1,
+    nextAction: { actionKey: 'HOLD', type: 'HOLD', reasonCodes: [] },
+    confidence: 0.8,
+    strategy: previousStrategy,
+  };
+}
+
+describe('strategy-first runtime continuity v1', () => {
+  it('rehydrates sticky strategy session and branch contract from the previous recommendation', () => {
+    let captured: any;
+    const planner = {
+      plan(input: any) {
+        captured = input;
+        return {} as any;
+      },
+    } as any;
+    const facade = new StrategyFirstAdaptivePlannerFacadeV1Service(
+      planner,
+      new BuildStrategyRegistryV1Service(),
+      new ConsensusStrategyFallbackV1Service(),
+    );
+
+    facade.plan({
+      decision,
+      evidence,
+      previousResult: previousResult(),
+      recentPurchasedItemIds: [1],
+      recentSoldItemIds: [],
+    });
+
+    expect(captured.previousSession).toEqual({
+      strategyId: 'sticky-strategy',
+      commitment: 'COMMITTED',
+      selectedAtGameTimeSec: 180,
+      posterior: 0.91,
+      reasonCodes: ['DISTINCTIVE_PREFIX_COMMITMENT'],
+    });
+    expect(captured.previousContract).toMatchObject({
+      strategyId: 'sticky-strategy',
+      selectedBranches: { boots: 'boots-a' },
+      committedBranches: { boots: 'boots-a' },
+    });
+    expect(captured.previousRecommendedBuild).toEqual([]);
+    expect(captured.recentPurchasedItemIds).toEqual([1]);
+  });
+
+  it('projects strategy selection and contract state into the public API contract', () => {
+    const strategy = toAdaptiveRecommendationStrategyV1({
+      strategy: { strategyId: 's1' },
+      strategySession: {
+        strategyId: 's1',
+        commitment: 'COMMITTED',
+        selectedAtGameTimeSec: 120,
+        posterior: 0.88,
+        reasonCodes: ['STICKY_COMMITTED_STRATEGY'],
+      },
+      contract: {
+        selectedBranches: { branch: 'a' },
+        committedBranches: { branch: 'a' },
+      },
+      strategyPlan: {
+        buildStatus: 'WAITING',
+        progress: { satisfiedHardGoals: 2, totalHardGoals: 4 },
+        currentGoal: { goalId: 'g3', type: 'UPGRADE', reasonCodes: ['CURRENT_GOAL'] },
+        remainingGoalIds: ['g3', 'g4'],
+        slotPlan: {
+          currentUsedSlots: 8,
+          currentFlexUsed: 1,
+          unlockedFlexSlots: 2,
+          reservedSituationalSlots: 1,
+          feasible: true,
+          reasonCodes: ['SLOT_PLAN_FEASIBLE'],
+          futureTransitions: [],
+        },
+        investmentPlan: {
+          activeObjectiveIds: ['weapon-3200'],
+          objectives: [{
+            objectiveId: 'weapon-3200',
+            type: 'weapon',
+            state: 'ACTIVE',
+            currentValue: 2400,
+            targetValue: 3200,
+            distance: 800,
+            reasonCodes: ['INVESTMENT_OBJECTIVE_ACTIVE'],
+          }],
+        },
+      },
+    } as any);
+
+    expect(strategy).toMatchObject({
+      strategyId: 's1',
+      commitment: 'COMMITTED',
+      selectedAtGameTimeSec: 120,
+      posterior: 0.88,
+      selectedBranches: { branch: 'a' },
+      committedBranches: { branch: 'a' },
+      buildStatus: 'WAITING',
+      currentGoal: { goalId: 'g3', type: 'UPGRADE' },
+    });
+    expect(strategy.investmentObjectives[0]).toMatchObject({ targetValue: 3200, distance: 800 });
+  });
+});
