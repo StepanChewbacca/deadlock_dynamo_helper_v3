@@ -2,6 +2,7 @@ import type { AdaptiveRecommendationResultV1 } from '@deadlock-live-probe/shared
 import type {
   AdaptivePresentedAlternative,
   AdaptivePresentedPlanItem,
+  AdaptivePresentedStrategy,
 } from './adaptive-recommendation-presentation';
 import { buildAdaptiveRecommendationPresentation } from './adaptive-recommendation-presentation';
 
@@ -111,6 +112,7 @@ export function showAdaptiveRecommendation(data: AdaptiveRecommendationResultV1)
     ? view.plan.items.filter((item) => item.status !== 'OWNED')
     : view.plan.items;
 
+  renderStrategy(view.strategy);
   renderReasons(view.reasons);
   renderPlan(planItems, view.plan.remainingCount);
   renderAlternatives(view.alternatives);
@@ -123,7 +125,7 @@ export function showAdaptiveError(message = 'Recommendation is updating'): void 
     setText('rec-health', 'Updating');
     setTone('rec-health', 'health-waiting');
     if (note) {
-      note.textContent = 'Connection interrupted — showing the last safe recommendation.';
+      note.textContent = 'Connection interrupted - showing the last safe recommendation.';
       note.style.display = 'flex';
       note.title = message;
     }
@@ -156,6 +158,67 @@ export function hideSituationalPanel(): void {
   setText('guide-empty-copy', 'Your Statlocker recommendation will appear automatically when the match is detected.');
   hasAdaptiveRecommendation = false;
   clearAdaptiveError();
+}
+
+function renderStrategy(strategy: AdaptivePresentedStrategy | undefined): void {
+  const secondary = document.querySelector('.adaptive-secondary');
+  if (!secondary) return;
+  let section = document.getElementById('rec-strategy-section');
+  if (!strategy) {
+    if (section) section.style.display = 'none';
+    return;
+  }
+  if (!section) {
+    section = document.createElement('section');
+    section.id = 'rec-strategy-section';
+    section.className = 'section-card';
+    section.setAttribute('data-strategy-card', 'true');
+    secondary.insertBefore(section, secondary.firstChild);
+  }
+  section.style.display = 'block';
+  section.replaceChildren();
+
+  const header = document.createElement('div');
+  header.className = 'section-header';
+  const title = document.createElement('span');
+  title.className = 'section-title';
+  title.textContent = 'Selected strategy';
+  const commitment = document.createElement('span');
+  commitment.className = 'strategy-commitment';
+  commitment.textContent = `${strategy.commitmentLabel} · ${strategy.buildStatusLabel}`;
+  header.append(title, commitment);
+
+  const name = document.createElement('strong');
+  name.className = 'strategy-name';
+  name.textContent = strategy.idLabel;
+
+  const progress = document.createElement('div');
+  progress.className = 'strategy-progress';
+  const progressCopy = document.createElement('span');
+  progressCopy.textContent = strategy.progressLabel;
+  const track = document.createElement('span');
+  track.className = 'strategy-progress-track';
+  const fill = document.createElement('span');
+  fill.className = 'strategy-progress-fill';
+  fill.style.width = `${strategy.progressValue}%`;
+  track.appendChild(fill);
+  progress.append(progressCopy, track);
+
+  const details = document.createElement('div');
+  details.className = 'strategy-details';
+  [
+    strategy.currentGoalLabel,
+    strategy.branchLabel,
+    strategy.slotLabel,
+    strategy.investmentLabel,
+    strategy.situationalLabel,
+  ].filter((value): value is string => Boolean(value)).forEach((value) => {
+    const row = document.createElement('div');
+    row.textContent = value;
+    details.appendChild(row);
+  });
+
+  section.append(header, name, progress, details);
 }
 
 function renderReasons(reasons: readonly string[]): void {
