@@ -1,7 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { AdaptiveDecisionStateV1 } from './adaptive-decision-state-v1.service';
 import { AdaptiveRecommendationResultV1 } from '@deadlock-live-probe/shared';
+import { AdaptiveDecisionStateV1 } from './adaptive-decision-state-v1.service';
 import { StatlockerEvidenceBundleV1 } from './statlocker-evidence.service';
+import {
+  StrategyFirstInvariantCheckV1,
+  StrategyFirstInvariantSummaryV1,
+  StrategyFirstInvariantViolationCodeV1,
+} from './strategy-first-invariants-v1';
 
 export interface AdaptiveRecommendationObservabilityLatencyV1 {
   count: number;
@@ -30,6 +35,7 @@ export interface AdaptiveRecommendationObservabilityStatusV1 {
   updatedAt: string;
   plannerLatencyMs: AdaptiveRecommendationObservabilityLatencyV1;
   counters: AdaptiveRecommendationObservabilityCountersV1;
+  strategyFirstRelease: StrategyFirstInvariantSummaryV1;
   reasonCodeCounts: Record<string, number>;
 }
 
@@ -43,10 +49,26 @@ export interface AdaptiveRecommendationOutcomeV1 {
   legalityFallbackReasonCodes?: readonly string[];
 }
 
+const RELEASE_CODES: readonly StrategyFirstInvariantViolationCodeV1[] = [
+  'ILLEGAL_NEXT_ACTION',
+  'SLOT_STATE_INVALID',
+  'UNREACHABLE_PLAN',
+  'REDUNDANT_ANCESTOR_IN_PLAN',
+  'FALSE_BUILD_COMPLETE',
+  'MANDATORY_GOAL_LOST',
+  'BRANCH_CONTRADICTION',
+  'UNEXPECTED_COMMITTED_STRATEGY_SWITCH',
+  'CORE_WITHOUT_EXIT_SLOT',
+  'UNEXPLAINED_SITUATIONAL',
+  'NEXT_ACTION_BUILD_MISMATCH',
+];
+
 @Injectable()
 export class AdaptiveRecommendationObservabilityV1Service {
   private readonly logger = new Logger(AdaptiveRecommendationObservabilityV1Service.name);
-  private readonly status: AdaptiveRecommendationObservabilityStatusV1 = {
+  private readonly invariantViolationDecisionCounts = new Map<StrategyFirstInvariantViolationCodeV1, number>();
+  private evaluatedStrategyDecisions = 0;
+  private readonly status = {
     updatedAt: new Date(0).toISOString(),
     plannerLatencyMs: {
       count: 0,
@@ -68,8 +90,8 @@ export class AdaptiveRecommendationObservabilityV1Service {
       replaceCount: 0,
       postCommitReplacementCount: 0,
       externallyDivergedChoiceStateCount: 0,
-    },
-    reasonCodeCounts: {},
+    } satisfies AdaptiveRecommendationObservabilityCountersV1,
+    reasonCodeCounts: {} as Record<string, number>,
   };
 
   recordDecisionState(decision: Partial<Pick<AdaptiveDecisionStateV1, 'slots' | 'investment'>>): void {
@@ -120,6 +142,16 @@ export class AdaptiveRecommendationObservabilityV1Service {
     this.touch();
   }
 
+  recordStrategyInvariantCheck(check: StrategyFirstInvariantCheckV1): void {
+    this.evaluatedStrategyDecisions += 1;
+    const codes = new Set(check.violations.map((violation) => violation.code));
+    for (const code of codes) {
+      this.invariantViolationDecisionCounts.set(code, (this.invariantViolationDecisionCounts.get(code) ?? 0) + 1);
+    }
+    this.recordReasonCodes([...codes].map((code) => `STRATEGY_INVARIANT:${code}`));
+    this.touch();
+  }
+
   recordRecommendationOutcome(outcome: AdaptiveRecommendationOutcomeV1): void {
     if (outcome.result.nextAction.type === 'SELL') this.status.counters.sellCount += 1;
     if (outcome.result.nextAction.type === 'REPLACE') this.status.counters.replaceCount += 1;
@@ -158,7 +190,32 @@ export class AdaptiveRecommendationObservabilityV1Service {
       updatedAt: this.status.updatedAt,
       plannerLatencyMs: { ...this.status.plannerLatencyMs },
       counters: { ...this.status.counters },
+      strategyFirstRelease: this.strategyFirstReleaseSummary(),
       reasonCodeCounts: { ...this.status.reasonCodeCounts },
+    };
+  }
+
+  private strategyFirstReleaseSummary(): StrategyFirstInvariantSummaryV1 {
+    const rate = (code: StrategyFirstInvariantViolationCodeV1): number => {
+      if (this.evaluatedStrategyDecisions === 0) return 0;
+      return (this.invariantViolationDecisionCounts.get(code) ?? 0) / this.evaluatedStrategyDecisions;
+    };
+    for (const code of RELEASE_CODES) {
+      if (!this.invariantViolationDecisionCounts.has(code)) this.invariantViolationDecisionCounts.set(code, 0);
+    }
+    return {
+      evaluatedDecisions: this.evaluatedStrategyDecisions,
+      illegalActionRate: rate('ILLEGAL_NEXT_ACTION'),
+      slotViolationRate: rate('SLOT_STATE_INVALID'),
+      unreachablePlanRate: rate('UNREACHABLE_PLAN'),
+      redundantAncestorRate: rate('REDUNDANT_ANCESTOR_IN_PLAN'),
+      falseBuildCompleteRate: rate('FALSE_BUILD_COMPLETE'),
+      mandatoryGoalLostRate: rate('MANDATORY_GOAL_LOST'),
+      branchContradictionRate: rate('BRANCH_CONTRADICTION'),
+      archetypeUnexpectedSwitchRate: rate('UNEXPECTED_COMMITTED_STRATEGY_SWITCH'),
+      coreWithoutExitSlotRate: rate('CORE_WITHOUT_EXIT_SLOT'),
+      unexplainedSituationalRate: rate('UNEXPLAINED_SITUATIONAL'),
+      nextActionBuildMismatchRate: rate('NEXT_ACTION_BUILD_MISMATCH'),
     };
   }
 
