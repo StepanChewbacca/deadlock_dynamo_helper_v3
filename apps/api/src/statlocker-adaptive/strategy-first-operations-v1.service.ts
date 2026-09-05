@@ -58,6 +58,20 @@ interface EconomyRulesBootstrapEntryV1 {
   rules: RecommendationEconomyRulesV1;
 }
 
+interface ExactStrategyCatalogIdentityV1 {
+  graph: RecommendationItemGraph;
+  clientVersion: number;
+}
+
+type ExactStrategyCatalogIdentityResultV1 =
+  | { identity: ExactStrategyCatalogIdentityV1 }
+  | {
+    reasonCode:
+      | 'EXACT_ITEM_CATALOG_UNAVAILABLE'
+      | 'EXACT_CATALOG_CLIENT_VERSION_UNAVAILABLE'
+      | 'AMBIGUOUS_CATALOG_CLIENT_VERSION';
+  };
+
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DEFAULT_MINING_TTL_MS = 6 * HOUR;
@@ -189,12 +203,12 @@ export class StrategyFirstOperationsV1Service implements OnModuleInit {
         });
       }
 
-      const graph = await this.loadExactGraph(input.rulesetId, input.catalogSha256);
-      if (!graph) {
+      const catalog = await this.loadExactCatalogIdentity(input.rulesetId, input.catalogSha256);
+      if ('reasonCode' in catalog) {
         return this.remember(statusKey, {
           attempted: false,
           published: false,
-          reasonCodes: ['EXACT_ITEM_CATALOG_UNAVAILABLE'],
+          reasonCodes: [catalog.reasonCode],
         });
       }
 
@@ -203,7 +217,8 @@ export class StrategyFirstOperationsV1Service implements OnModuleInit {
         patchId: input.patchId,
         rulesetId: input.rulesetId,
         catalogSha256: input.catalogSha256,
-        itemGraph: graph,
+        catalogClientVersion: catalog.identity.clientVersion,
+        itemGraph: catalog.identity.graph,
         economyRules,
         limit: input.limit,
         minClusterSize: input.minClusterSize,
@@ -240,15 +255,36 @@ export class StrategyFirstOperationsV1Service implements OnModuleInit {
     return stable;
   }
 
-  private async loadExactGraph(rulesetId: string, catalogSha256: string): Promise<RecommendationItemGraph | undefined> {
+  private async loadExactCatalogIdentity(
+    rulesetId: string,
+    catalogSha256: string,
+  ): Promise<ExactStrategyCatalogIdentityResultV1> {
     const versions = await this.versionRepo.find({
       where: { payloadSha256: catalogSha256 },
       order: { importedAt: 'DESC', catalogVersionId: 'DESC' },
-      take: 1,
     });
-    const version = versions[0];
+    const version = versions.find((candidate) =>
+      candidate.rulesetKey === rulesetId &&
+      candidate.payloadSha256.toLowerCase() === catalogSha256.toLowerCase(),
+    );
     if (!version || version.rulesetKey !== rulesetId || version.payloadSha256.toLowerCase() !== catalogSha256) {
-      return undefined;
+      return { reasonCode: 'EXACT_ITEM_CATALOG_UNAVAILABLE' };
+    }
+    const clientVersion = parseExactCatalogClientVersion(version.clientVersion);
+    if (clientVersion === undefined) {
+      return { reasonCode: 'EXACT_CATALOG_CLIENT_VERSION_UNAVAILABLE' };
+    }
+    const sameClientVersions = await this.versionRepo.find({
+      where: { rulesetKey: rulesetId },
+      order: { importedAt: 'DESC', catalogVersionId: 'DESC' },
+    });
+    const sha256s = new Set(
+      sameClientVersions
+        .filter((candidate) => parseExactCatalogClientVersion(candidate.clientVersion) === clientVersion)
+        .map((candidate) => candidate.payloadSha256.toLowerCase()),
+    );
+    if (sha256s.size > 1) {
+      return { reasonCode: 'AMBIGUOUS_CATALOG_CLIENT_VERSION' };
     }
 
     const [itemRows, recipeRows] = await Promise.all([
@@ -296,8 +332,16 @@ export class StrategyFirstOperationsV1Service implements OnModuleInit {
       })),
     });
     const compiled = compileStrictRecommendationCatalogV1(catalog);
-    return compiled.rulesetId === rulesetId ? compiled.graph : undefined;
+    return compiled.rulesetId === rulesetId
+      ? { identity: { graph: compiled.graph, clientVersion } }
+      : { reasonCode: 'EXACT_ITEM_CATALOG_UNAVAILABLE' };
   }
+}
+
+function parseExactCatalogClientVersion(value: string | undefined): number | undefined {
+  if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value)) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function mineKey(input: MineStrategyForIdentityV1Input): string {

@@ -28,6 +28,7 @@ describe('build strategy mining pipeline v1', () => {
       patchId: 'p1',
       rulesetId: 'r1',
       catalogSha256: 'a'.repeat(64),
+      catalogClientVersion: 123,
       itemGraph: graph,
       economyRules,
       minClusterSize: 3,
@@ -58,6 +59,7 @@ describe('build strategy mining pipeline v1', () => {
       patchId: 'p1',
       rulesetId: 'r1',
       catalogSha256: 'a'.repeat(64),
+      catalogClientVersion: 123,
       itemGraph: graph,
       economyRules,
     });
@@ -65,5 +67,32 @@ describe('build strategy mining pipeline v1', () => {
     expect(result.published).toBe(false);
     expect(result.reasonCodes).toContain('COMPILED_STRATEGY_UNREACHABLE');
     expect(store.publish).not.toHaveBeenCalled();
+  });
+
+  it('forwards the exact catalog client version to historical trajectory provenance checks', async () => {
+    const source = { load: jest.fn(async () => ({ trajectories: [], rejected: [] })) } as any;
+    const pipeline = new BuildStrategyMiningPipelineV1Service(
+      source,
+      { mine: jest.fn() } as any,
+      { compile: jest.fn() } as any,
+      { validate: jest.fn() } as any,
+      { publish: jest.fn() } as any,
+    );
+
+    await pipeline.run({
+      heroId: 1,
+      patchId: 'p1',
+      rulesetId: 'r1',
+      catalogSha256: 'a'.repeat(64),
+      catalogClientVersion: 123,
+      itemGraph: graph,
+      economyRules,
+    });
+
+    expect(source.load).toHaveBeenCalledWith(expect.objectContaining({
+      rulesetId: 'r1',
+      catalogSha256: 'a'.repeat(64),
+      catalogClientVersion: 123,
+    }));
   });
 });

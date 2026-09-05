@@ -16,6 +16,7 @@ export interface BuildStrategyMiningPipelineV1Input {
   patchId: string;
   rulesetId: string;
   catalogSha256: string;
+  catalogClientVersion: number;
   itemGraph: RecommendationItemGraph;
   economyRules: RecommendationEconomyRulesV1;
   limit?: number;
@@ -52,6 +53,7 @@ export class BuildStrategyMiningPipelineV1Service {
       patchId: input.patchId,
       rulesetId: input.rulesetId,
       catalogSha256: input.catalogSha256,
+      catalogClientVersion: input.catalogClientVersion,
       itemGraph: input.itemGraph,
       economyRules: input.economyRules,
       limit: input.limit,
@@ -150,7 +152,8 @@ function trajectorySourceHash(traceHashes: readonly string[]): string {
 }
 
 function validateInput(input: BuildStrategyMiningPipelineV1Input): void {
-  if (!Number.isInteger(input.heroId) || input.heroId <= 0 || !input.patchId || !input.rulesetId) {
+  if (!Number.isInteger(input.heroId) || input.heroId <= 0 || !input.patchId || !input.rulesetId ||
+    !Number.isSafeInteger(input.catalogClientVersion) || input.catalogClientVersion <= 0) {
     throw new Error('Build strategy mining scope is invalid');
   }
   if (!/^[a-f0-9]{64}$/i.test(input.catalogSha256)) {

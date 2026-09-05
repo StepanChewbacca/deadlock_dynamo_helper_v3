@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { RecommendationItemGraph } from '@deadlock-live-probe/build-domain';
 import { MatchPlayer } from '../deadlock-live/entities/match-player.entity';
+import { RulesetResolverService } from '../deadlock-live/ruleset-resolver.service';
 import { RecommendationEconomyRulesV1 } from './adaptive-economy-v1';
 import {
   HistoricalPlannerTrajectoryExtractorV2Service,
@@ -14,6 +15,7 @@ export interface HistoricalBuildTrajectorySourceV2Input {
   patchId: string;
   rulesetId: string;
   catalogSha256: string;
+  catalogClientVersion: number;
   itemGraph: RecommendationItemGraph;
   economyRules: RecommendationEconomyRulesV1;
   limit?: number;
@@ -36,6 +38,7 @@ export class HistoricalBuildTrajectorySourceV2Service {
     @InjectRepository(MatchPlayer)
     private readonly players: Repository<MatchPlayer>,
     private readonly extractor: HistoricalPlannerTrajectoryExtractorV2Service,
+    private readonly rulesetResolver: RulesetResolverService,
   ) {}
 
   async load(input: HistoricalBuildTrajectorySourceV2Input): Promise<HistoricalBuildTrajectorySourceV2Result> {
@@ -50,6 +53,16 @@ export class HistoricalBuildTrajectorySourceV2Service {
     const rejected: HistoricalBuildTrajectoryRejectionV2[] = [];
 
     for (const player of targets) {
+      const playerKey = `${player.matchId}:player:${player.id}`;
+      const provenanceDiagnostic = await this.validateProvenance(Number(player.matchId), input);
+      if (provenanceDiagnostic) {
+        rejected.push({
+          matchId: String(player.matchId),
+          playerKey,
+          diagnostics: [provenanceDiagnostic],
+        });
+        continue;
+      }
       let peers = peerCache.get(Number(player.matchId));
       if (!peers) {
         peers = await this.players.find({
@@ -58,7 +71,6 @@ export class HistoricalBuildTrajectorySourceV2Service {
         });
         peerCache.set(Number(player.matchId), peers);
       }
-      const playerKey = `${player.matchId}:player:${player.id}`;
       const result = this.extractor.extract({
         matchId: String(player.matchId),
         playerKey,
@@ -99,6 +111,29 @@ export class HistoricalBuildTrajectorySourceV2Service {
       trajectories: trajectories.sort((a, b) => a.traceId.localeCompare(b.traceId)),
       rejected: rejected.sort((a, b) => a.matchId.localeCompare(b.matchId) || a.playerKey.localeCompare(b.playerKey)),
     };
+  }
+
+  private async validateProvenance(
+    matchId: number,
+    input: HistoricalBuildTrajectorySourceV2Input,
+  ): Promise<string | undefined> {
+    let resolved;
+    try {
+      resolved = await this.rulesetResolver.getLatestForMatch(matchId);
+    } catch {
+      return 'HISTORICAL_PROVENANCE_MISSING';
+    }
+
+    if (resolved.method !== 'OBSERVED' && resolved.method !== 'DEMO_METADATA') {
+      return 'HISTORICAL_PROVENANCE_NOT_EXACT';
+    }
+    if (resolved.rulesetKey !== input.rulesetId) {
+      return 'HISTORICAL_RULESET_MISMATCH';
+    }
+    if (resolved.clientVersion !== input.catalogClientVersion) {
+      return 'HISTORICAL_CLIENT_VERSION_MISMATCH';
+    }
+    return undefined;
   }
 }
 
