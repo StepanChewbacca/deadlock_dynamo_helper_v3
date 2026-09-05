@@ -216,7 +216,8 @@ export interface AdaptiveStrategyPlanV1 {
     reasonCodes: readonly string[];
   };
   remainingGoalIds: readonly string[];
-  remainingHardInvestmentObjectiveIds: readonly string[];
+  /** Optional so persisted V1 plan payloads written before investment obligations remain readable. */
+  remainingHardInvestmentObjectiveIds?: readonly string[];
   slotPlan: BuildSlotPlanV1;
   investmentPlan: BuildInvestmentPlanV1;
   situationalDecision?: BuildSituationalDecisionV1;
