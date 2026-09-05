@@ -42,10 +42,12 @@ describe('build strategy selector/session v1', () => {
     expect(distinct.commitment).toBe('COMMITTED');
   });
 
-  it('marks a state OOD when purchases conform to no strategy', () => {
+  it('marks a state OOD and keeps the nearest coherent strategy identity', () => {
     const result = selector.select({ strategies: [a, b], itemGraph: graph, ownedItemIds: [99], purchaseHistory: [{ itemId: 99, gameTimeSec: 100 }] });
     expect(result.commitment).toBe('OOD');
+    expect(result.selectedStrategyId).toBeDefined();
     expect(result.reasonCodes).toContain('NO_STRATEGY_CONFORMANCE');
+    expect(result.reasonCodes).toContain('NEAREST_STRATEGY_REBASE');
   });
 
   it('filters candidates to the exact live hero and ruleset instead of trusting array order', () => {
@@ -81,5 +83,27 @@ describe('build strategy selector/session v1', () => {
 
     expect(result.strategyId).toBe('A');
     expect(result.replanReasons).toContain('SWITCH_IMPROVEMENT_BELOW_COMMITTED_THRESHOLD');
+  });
+
+  it('rebases an OOD committed session to the nearest single strategy instead of mixing archetypes', () => {
+    const session = new BuildStrategySessionV1Service();
+    const result = session.reconcile({
+      previous: { strategyId: 'A', commitment: 'COMMITTED', posterior: 0.8, selectedAtGameTimeSec: 200, replanReasons: [] },
+      selection: {
+        selectedStrategyId: 'B',
+        commitment: 'OOD',
+        posteriors: [
+          { strategyId: 'B', probability: 0.6, conformance: 0.1, evidenceCount: 0 },
+          { strategyId: 'A', probability: 0.4, conformance: 0.05, evidenceCount: 0 },
+        ],
+        reasonCodes: ['NO_STRATEGY_CONFORMANCE', 'NEAREST_STRATEGY_REBASE'],
+      },
+      gameTimeSec: 400,
+    });
+
+    expect(result.strategyId).toBe('B');
+    expect(result.commitment).toBe('OOD');
+    expect(result.selectedAtGameTimeSec).toBe(400);
+    expect(result.replanReasons).toContain('OOD_NEAREST_STRATEGY_REBASE');
   });
 });
