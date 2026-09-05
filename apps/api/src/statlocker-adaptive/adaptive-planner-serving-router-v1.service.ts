@@ -56,6 +56,14 @@ export class AdaptivePlannerServingRouterV1Service {
       return legacyResult;
     }
 
+    if (input.decision.economyRulesEvidence !== 'RECONSTRUCTED') {
+      const legacyResult = this.legacy.plan(input);
+      this.promotion.recordShadowSuccess();
+      this.promotion.recordPromotionBlocked();
+      this.logShadowComparison(input, strategyResult, legacyResult, 'EXACT_ECONOMY_RULES_BLOCKED');
+      return legacyResult;
+    }
+
     if (!this.promotion.canServeStrategy()) {
       const legacyResult = this.legacy.plan(input);
       this.promotion.recordShadowSuccess();
@@ -72,7 +80,7 @@ export class AdaptivePlannerServingRouterV1Service {
     input: AdaptiveBuildPlannerInputV1,
     strategyResult: AdaptivePlannerServingResultV1,
     legacyResult: AdaptiveBuildPlannerResultV1,
-    mode: 'SHADOW' | 'PROMOTION_BLOCKED',
+    mode: 'SHADOW' | 'PROMOTION_BLOCKED' | 'EXACT_ECONOMY_RULES_BLOCKED',
   ): void {
     this.logger.debug(`strategy-shadow ${JSON.stringify({
       mode,
@@ -99,6 +107,7 @@ function strategyDiagnostics(
   return {
     decisionId: input.decision.state.decisionId,
     stateRevision: input.decision.stateRevision,
+    economyRulesEvidence: input.decision.economyRulesEvidence,
     strategyId: strategy?.strategyId,
     strategyStability: strategy?.stability,
     commitment: strategy?.commitment,
