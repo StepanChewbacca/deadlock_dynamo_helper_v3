@@ -87,7 +87,7 @@ export class StrategyFirstSituationalOverlayV1Service {
       }
     }
 
-    const coreScore = coreContinuationScore(input.result);
+    const coreScore = coreContinuationScore(input.result, this.scorer, input);
     const selected = this.resolver.resolve({
       strategy: input.result.strategy,
       contract: input.result.contract,
@@ -178,7 +178,16 @@ function exactEnemySupport(score: AdaptiveItemScoreV1): number {
   return Math.max(0, component?.normalized ?? component?.raw ?? 0);
 }
 
-function coreContinuationScore(result: StrategyFirstBuildPlannerV1Result): number {
+function coreContinuationScore(
+  result: StrategyFirstBuildPlannerV1Result,
+  scorer: AdaptiveEvidenceScorerV1Service,
+  input: StrategyFirstSituationalOverlayV1Input,
+): number {
+  const targetItemId = result.nextAction.targetItemId;
+  if (targetItemId !== undefined) {
+    const score = safeScore(scorer, targetItemId, input);
+    if (score?.score !== undefined) return score.score;
+  }
   const selected = result.rankedImmediateCandidates.find((entry) => entry.action.actionKey === result.nextAction.actionKey);
   if (selected) return selected.score;
   return result.rankedImmediateCandidates[0]?.score ?? Math.max(0, result.totalScore);

@@ -14,7 +14,7 @@ import { StrategyFirstBuildPlannerV1Service } from '../src/statlocker-adaptive/s
 import { BuildStrategySpecV1 } from '../src/statlocker-adaptive/build-strategy-v1';
 
 const catalogSha256 = 'a'.repeat(64);
-const items: RecommendationItemDefinition[] = [1, 2, 3, 4, 5].map((itemId) => ({
+const items: RecommendationItemDefinition[] = [1, 2, 3, 4, 5, 6].map((itemId) => ({
   itemId, name: `Item ${itemId}`, slotType: itemId === 3 ? 'vitality' : 'weapon', active: false,
   availableRulesetIds: ['r1'], directPurchaseCost: itemId === 2 ? 1600 : 800, upgradeRecipes: [],
   sellTransition: { soulsRefund: 400, returnedItemIds: [] }, maxCopies: 1,
@@ -120,8 +120,8 @@ describe('strategy-first build planner v1', () => {
 
   it('plans a temporary sell before a full-slot core purchase and keeps the core as semantic NEXT', () => {
     const temp = goal('temp', 4, [], 'TEMPORARY_EARLY');
-    const spec = strategy([temp, goal('target', 5)]);
-    const result = planner.plan({ decision: decision([1, 2, 4, 5].filter((id) => id !== 5).concat([3]), 5000), evidence: emptyEvidence, strategies: [spec] });
+    const spec = strategy([goal('g1', 1), goal('g2', 2), goal('g6', 6), temp, goal('target', 5)]);
+    const result = planner.plan({ decision: decision([1, 2, 4, 6], 5000), evidence: emptyEvidence, strategies: [spec] });
     expect(result.nextAction).toMatchObject({ type: 'SELL', itemId: 4, sellItemId: 4, targetItemId: 5 });
     expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(5);
   });

@@ -19,9 +19,10 @@ export interface ReconcileBuildStrategySessionV1Input {
 @Injectable()
 export class BuildStrategySessionV1Service {
   reconcile(input: ReconcileBuildStrategySessionV1Input): BuildStrategySessionV1 {
-    const top = input.selection.posteriors[0];
     const proposedId = input.selection.selectedStrategyId;
-    const proposedPosterior = top?.strategyId === proposedId ? top.probability : 0;
+    const proposedPosterior = proposedId
+      ? input.selection.posteriors.find((entry) => entry.strategyId === proposedId)?.probability ?? 0
+      : 0;
     const previous = input.previous;
 
     if (!previous?.strategyId) {

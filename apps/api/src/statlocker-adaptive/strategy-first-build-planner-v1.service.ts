@@ -589,7 +589,7 @@ export class StrategyFirstBuildPlannerV1Service {
       rows.push({
         itemId: nextTransactionTarget,
         position: rows.length + 1,
-        status: nextAction.type === 'BUY' || nextAction.type === 'UPGRADE' || nextAction.type === 'REPLACE' ? 'NEXT' : 'PLANNED',
+        status: nextAction.targetItemId === nextTransactionTarget ? 'NEXT' : 'PLANNED',
         score: score?.score ?? 0,
         confidence: score?.confidence ?? 0,
         skeletonStrength: 0,

@@ -14,8 +14,7 @@ const graph = createRecommendationItemGraph([
     upgradeRecipes: [],
     sellTransition: { soulsRefund: 400, returnedItemIds: [] },
   })),
-  {
-    itemId: 6,
+  {    itemId: 6,
     name: 'Upgrade 1',
     slotType: 'weapon' as const,
     active: false,
@@ -94,17 +93,29 @@ function explicitOwnedCoreStrategy(softItemId?: number): BuildStrategySpecV1 {
   };
 }
 
-function contract(owned: readonly number[], strategyId = 's1', softItemId?: number): BuildContractV1 {
+function contract(
+  owned: readonly number[],
+  strategyId = 's1',
+  softItemId?: number,
+  temporaryItemIds: readonly number[] = [],
+): BuildContractV1 {
   const goalStates: Record<string, any> = { target: 'ACTIVE' };
   const remainingHardGoalIds = ['target'];
   if (strategyId === 'full-core') {
     for (const itemId of [1, 2, 3, 4]) goalStates[`owned-${itemId}`] = itemId === softItemId ? 'READY' : 'SATISFIED';
   }
   return {
-    strategyId, status: 'IN_PROGRESS', commitment: 'COMMITTED', currentGoalId: 'target',
-    goalStates, selectedBranches: {}, committedBranches: {},
-    temporaryItemIds: owned.filter((itemId) => itemId === 4 && strategyId === 's1'), reservedSituationalWindowIds: [],
-    remainingHardGoalIds, completionReasonCodes: ['MANDATORY_GOALS_REMAIN'],
+    strategyId,
+    status: 'IN_PROGRESS',
+    commitment: 'COMMITTED',
+    currentGoalId: 'target',
+    goalStates,
+    selectedBranches: {},
+    committedBranches: {},
+    temporaryItemIds: owned.filter((itemId) => temporaryItemIds.includes(itemId)),
+    reservedSituationalWindowIds: [],
+    remainingHardGoalIds,
+    completionReasonCodes: ['MANDATORY_GOALS_REMAIN'],
   };
 }
 
@@ -133,7 +144,7 @@ describe('build slot planner v1', () => {
   it('plans a temporary item exit before a new core purchase under slot pressure', () => {
     const owned = [1, 2, 3, 4];
     const slots = deriveAdaptiveSlotStateV1(owned, graph, slotRules, { unlockedFlexSlots: 0, evidence: 'OBSERVED' });
-    const plan = service.plan({ strategy: strategy(5, [4]), contract: contract(owned), itemGraph: graph, ownedItemIds: owned, slots });
+    const plan = service.plan({ strategy: strategy(5, [4]), contract: contract(owned, 's1', undefined, [4]), itemGraph: graph, ownedItemIds: owned, slots });
 
     expect(plan.futureTransitions[0]).toMatchObject({ targetItemId: 5, requirement: 'SELL_TEMPORARY', sourceItemId: 4 });
   });
