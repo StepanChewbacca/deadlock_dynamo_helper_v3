@@ -172,7 +172,7 @@ export interface BuildContractV1 {
 export interface BuildSlotPlanTransitionV1 {
   targetGoalId: string;
   targetItemId?: number;
-  requirement: 'NONE' | 'UPGRADE' | 'SELL_TEMPORARY' | 'REPLACE' | 'FLEX_UNLOCK';
+  requirement: 'NONE' | 'UPGRADE' | 'SELL_TEMPORARY' | 'REPLACE' | 'FLEX_UNLOCK' | 'BLOCKED';
   sourceItemId?: number;
   requiredUnlockedFlexSlots?: number;
   reasonCodes: readonly string[];
