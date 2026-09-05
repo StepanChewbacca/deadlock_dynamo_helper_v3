@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import {
   DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
   RecommendationCandidate,
+  RecommendationItemGraph,
   generateRecommendationCandidates,
 } from '@deadlock-live-probe/build-domain';
 import {
@@ -51,6 +52,7 @@ export class AdaptiveRecommendationV1Service {
     const initialDelta = deriveInventoryDeltaV1(
       previousContext?.replayInput.decision.state.ownedItemIds ?? [],
       [...initial.state.inventory.heldByItemId.keys()],
+      initial.itemGraph,
     );
     const patchId = this.evidence.resolveLocalPatchId(initial.rulesetId, initial.catalogSha256) ?? 'UNKNOWN';
     const evidenceRequest = {
@@ -84,6 +86,7 @@ export class AdaptiveRecommendationV1Service {
     const freshDelta = deriveInventoryDeltaV1(
       previousContext?.replayInput.decision.state.ownedItemIds ?? [],
       [...fresh.state.inventory.heldByItemId.keys()],
+      fresh.itemGraph,
     );
     if (localEvidence.usable && planned && fresh.stateRevision !== initial.stateRevision) {
       const plannerStartedAt = Date.now();
@@ -505,16 +508,40 @@ export function rebasePlanAgainstDecisionV1(
   });
 }
 
+export interface AdaptiveInventoryDeltaV1 {
+  purchasedItemIds: readonly number[];
+  soldItemIds: readonly number[];
+  consumedItemIds: readonly number[];
+}
+
 export function deriveInventoryDeltaV1(
   previousOwnedItemIds: readonly number[],
   currentOwnedItemIds: readonly number[],
-): { purchasedItemIds: readonly number[]; soldItemIds: readonly number[] } {
-  const previous = new Set(previousOwnedItemIds.filter((itemId) => Number.isInteger(itemId) && itemId > 0));
-  const current = new Set(currentOwnedItemIds.filter((itemId) => Number.isInteger(itemId) && itemId > 0));
+  itemGraph?: RecommendationItemGraph,
+): AdaptiveInventoryDeltaV1 {
+  const previous = new Set(stableItemIds(previousOwnedItemIds));
+  const current = new Set(stableItemIds(currentOwnedItemIds));
+  const purchasedItemIds = [...current]
+    .filter((itemId) => !previous.has(itemId))
+    .sort((a, b) => a - b);
+  const removed = [...previous]
+    .filter((itemId) => !current.has(itemId))
+    .sort((a, b) => a - b);
+  const consumedItemIds = itemGraph
+    ? removed.filter((removedItemId) => purchasedItemIds.some((purchasedItemId) =>
+        itemGraph.isComponentAncestor(removedItemId, purchasedItemId),
+      ))
+    : [];
+  const consumed = new Set(consumedItemIds);
   return {
-    purchasedItemIds: [...current].filter((itemId) => !previous.has(itemId)).sort((a, b) => a - b),
-    soldItemIds: [...previous].filter((itemId) => !current.has(itemId)).sort((a, b) => a - b),
+    purchasedItemIds,
+    soldItemIds: removed.filter((itemId) => !consumed.has(itemId)),
+    consumedItemIds,
   };
+}
+
+function stableItemIds(values: readonly number[]): number[] {
+  return [...new Set(values.filter((itemId) => Number.isInteger(itemId) && itemId > 0))].sort((a, b) => a - b);
 }
 
 function resultMatchId(decision: AdaptiveDecisionStateV1): string {
