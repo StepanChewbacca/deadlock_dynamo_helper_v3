@@ -61,12 +61,13 @@ export class BuildContractV1Service {
       }
     }
 
+    // Optional goals remain visible as READY diagnostics but never become the mandatory current target.
+    // This keeps hard goals and hard investment objectives ahead of minor optional purchases.
     const orderedReady = input.strategy.goals
-      .filter((goal) => goalStates[goal.goalId] === 'READY')
+      .filter((goal) => goal.hard && goalStates[goal.goalId] === 'READY')
       .filter((goal) => !goalExcludedByUnselectedBranch(input.strategy, goal.goalId, selectedBranches))
       .sort((a, b) =>
         phaseOrderBuildStrategyV1(a.phase) - phaseOrderBuildStrategyV1(b.phase) ||
-        Number(b.hard) - Number(a.hard) ||
         input.strategy.goals.indexOf(a) - input.strategy.goals.indexOf(b),
       );
     const active = orderedReady[0];
