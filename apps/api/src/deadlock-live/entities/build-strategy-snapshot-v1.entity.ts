@@ -2,7 +2,9 @@ import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 
 @Entity('build_strategy_snapshots_v1')
 @Index('idx_build_strategy_snapshot_scope_v1', [
+  'heroId',
   'rulesetId',
+  'patchId',
   'catalogSha256',
   'active',
   'publishedAt',
@@ -10,6 +12,9 @@ import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 export class BuildStrategySnapshotV1Entity {
   @PrimaryColumn({ type: 'varchar', length: 128 })
   snapshotId!: string;
+
+  @Column({ type: 'int' })
+  heroId!: number;
 
   @Column({ type: 'varchar', length: 128 })
   rulesetId!: string;
