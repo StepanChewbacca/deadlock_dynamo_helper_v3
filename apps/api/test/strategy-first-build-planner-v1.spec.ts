@@ -112,17 +112,18 @@ describe('strategy-first build planner v1', () => {
   it('returns WAIT while keeping the build incomplete when the current core transaction is unaffordable', () => {
     const spec = strategy([goal('g1', 2)]);
     const result = planner.plan({ decision: decision([], 500), evidence: emptyEvidence, strategies: [spec] });
-    expect(result.nextAction.type).toBe('WAIT');
+    expect(result.nextAction).toMatchObject({ type: 'WAIT', targetItemId: 2 });
+    expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(2);
     expect(result.strategyPlan.buildStatus).toBe('WAITING');
     expect(result.strategyPlan.remainingGoalIds).toContain('g1');
   });
 
-  it('plans a temporary sell before a full-slot core purchase', () => {
+  it('plans a temporary sell before a full-slot core purchase and keeps the core as semantic NEXT', () => {
     const temp = goal('temp', 4, [], 'TEMPORARY_EARLY');
     const spec = strategy([temp, goal('target', 5)]);
     const result = planner.plan({ decision: decision([1, 2, 4, 5].filter((id) => id !== 5).concat([3]), 5000), evidence: emptyEvidence, strategies: [spec] });
-    expect(result.nextAction.type).toBe('SELL');
-    expect(result.nextAction.itemId).toBe(4);
+    expect(result.nextAction).toMatchObject({ type: 'SELL', itemId: 4, sellItemId: 4, targetItemId: 5 });
+    expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(5);
   });
 
   it('chooses one branch using contextual scoring instead of putting both branch items into the plan', () => {
