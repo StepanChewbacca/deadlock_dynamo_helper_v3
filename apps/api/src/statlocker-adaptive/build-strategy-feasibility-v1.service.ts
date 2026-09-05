@@ -28,6 +28,8 @@ export interface BuildStrategyFeasibilityV1Result {
   actionIds: readonly string[];
   finalItemIds: readonly number[];
   failedGoalId?: string;
+  failedBranchSelection?: Readonly<Record<string, string>>;
+  validatedBranchPaths?: number;
   reasonCodes: readonly string[];
 }
 
@@ -52,7 +54,8 @@ export class BuildStrategyFeasibilityV1Service {
         feasible: false,
         actionIds: [],
         finalItemIds: [],
-        reasonCodes: ['UNSUPPORTED_MULTI_SELECT_BRANCH_V1'],
+        validatedBranchPaths: 0,
+        reasonCodes: ['UNSUPPORTED_MULTI_SELECT_BRANCH', 'UNSUPPORTED_MULTI_SELECT_BRANCH_V1'],
       };
     }
 
@@ -62,30 +65,45 @@ export class BuildStrategyFeasibilityV1Service {
         feasible: false,
         actionIds: [],
         finalItemIds: [],
+        validatedBranchPaths: 0,
         reasonCodes: ['BRANCH_PATH_EXPLOSION'],
       };
     }
 
     let representative: PathValidationResult | undefined;
+    let validatedBranchPaths = 0;
     for (const selectedBranches of branchPaths) {
       const path = validatePath(input, selectedBranches);
       representative ??= path;
       if (!path.feasible) {
         return {
           ...path,
+          failedBranchSelection: { ...selectedBranches },
+          validatedBranchPaths,
           reasonCodes: unique([
             ...path.reasonCodes,
-            ...(input.strategy.branchGroups.length > 0 ? ['BRANCH_OPTION_UNREACHABLE', branchPathCode(selectedBranches)] : []),
+            ...(input.strategy.branchGroups.length > 0
+              ? ['BRANCH_PATH_UNREACHABLE', 'BRANCH_OPTION_UNREACHABLE', branchPathCode(selectedBranches)]
+              : []),
           ]),
         };
       }
+      validatedBranchPaths += 1;
     }
 
-    return representative ?? {
+    const base = representative ?? {
       feasible: true,
       actionIds: [],
       finalItemIds: [],
       reasonCodes: ['ALL_MANDATORY_GOALS_REACHABLE'],
+    };
+    return {
+      ...base,
+      validatedBranchPaths,
+      reasonCodes: unique([
+        ...base.reasonCodes,
+        ...(input.strategy.branchGroups.length > 0 ? ['ALL_BRANCH_PATHS_REACHABLE'] : []),
+      ]),
     };
   }
 }
