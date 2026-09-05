@@ -36,43 +36,96 @@ interface SearchState {
   actionIds: readonly string[];
 }
 
+interface PathValidationResult {
+  feasible: boolean;
+  actionIds: readonly string[];
+  finalItemIds: readonly number[];
+  failedGoalId?: string;
+  reasonCodes: readonly string[];
+}
+
 @Injectable()
 export class BuildStrategyFeasibilityV1Service {
   validate(input: BuildStrategyFeasibilityV1Input): BuildStrategyFeasibilityV1Result {
-    const selectedBranches = defaultBranchSelections(input.strategy);
-    const goals = orderedRequiredGoals(input.strategy, selectedBranches);
-    let searchState: SearchState = {
-      decision: createInitialDecision(input),
-      actionIds: [],
-    };
-    const completed: BuildStrategyGoalV1[] = [];
-
-    for (const goal of goals) {
-      if (goalSatisfied(goal, searchState.decision, input.itemGraph)) {
-        completed.push(goal);
-        continue;
-      }
-      const realized = realizeGoal(searchState, goal, completed, input);
-      if (!realized) {
-        return {
-          feasible: false,
-          actionIds: searchState.actionIds,
-          finalItemIds: heldIds(searchState.decision),
-          failedGoalId: goal.goalId,
-          reasonCodes: ['MANDATORY_GOAL_UNREACHABLE', `GOAL:${goal.goalId}`],
-        };
-      }
-      searchState = realized;
-      completed.push(goal);
+    if (input.strategy.branchGroups.some((group) => group.minSelect !== 1 || group.maxSelect !== 1)) {
+      return {
+        feasible: false,
+        actionIds: [],
+        finalItemIds: [],
+        reasonCodes: ['UNSUPPORTED_MULTI_SELECT_BRANCH_V1'],
+      };
     }
 
-    return {
+    const branchPaths = enumerateBranchSelections(input.strategy);
+    if (branchPaths.length > 64) {
+      return {
+        feasible: false,
+        actionIds: [],
+        finalItemIds: [],
+        reasonCodes: ['BRANCH_PATH_EXPLOSION'],
+      };
+    }
+
+    let representative: PathValidationResult | undefined;
+    for (const selectedBranches of branchPaths) {
+      const path = validatePath(input, selectedBranches);
+      representative ??= path;
+      if (!path.feasible) {
+        return {
+          ...path,
+          reasonCodes: unique([
+            ...path.reasonCodes,
+            ...(input.strategy.branchGroups.length > 0 ? ['BRANCH_OPTION_UNREACHABLE', branchPathCode(selectedBranches)] : []),
+          ]),
+        };
+      }
+    }
+
+    return representative ?? {
       feasible: true,
-      actionIds: searchState.actionIds,
-      finalItemIds: heldIds(searchState.decision),
+      actionIds: [],
+      finalItemIds: [],
       reasonCodes: ['ALL_MANDATORY_GOALS_REACHABLE'],
     };
   }
+}
+
+function validatePath(
+  input: BuildStrategyFeasibilityV1Input,
+  selectedBranches: Readonly<Record<string, string>>,
+): PathValidationResult {
+  const goals = orderedRequiredGoals(input.strategy, selectedBranches);
+  let searchState: SearchState = {
+    decision: createInitialDecision(input),
+    actionIds: [],
+  };
+  const completed: BuildStrategyGoalV1[] = [];
+
+  for (const goal of goals) {
+    if (goalSatisfied(goal, searchState.decision, input.itemGraph)) {
+      completed.push(goal);
+      continue;
+    }
+    const realized = realizeGoal(searchState, goal, completed, input);
+    if (!realized) {
+      return {
+        feasible: false,
+        actionIds: searchState.actionIds,
+        finalItemIds: heldIds(searchState.decision),
+        failedGoalId: goal.goalId,
+        reasonCodes: ['MANDATORY_GOAL_UNREACHABLE', `GOAL:${goal.goalId}`],
+      };
+    }
+    searchState = realized;
+    completed.push(goal);
+  }
+
+  return {
+    feasible: true,
+    actionIds: searchState.actionIds,
+    finalItemIds: heldIds(searchState.decision),
+    reasonCodes: ['ALL_MANDATORY_GOALS_REACHABLE'],
+  };
 }
 
 function createInitialDecision(input: BuildStrategyFeasibilityV1Input): RecommendationDecisionState {
@@ -217,13 +270,28 @@ function topologicalOrder(goals: readonly BuildStrategyGoalV1[], strategy: Build
   return result;
 }
 
-function defaultBranchSelections(strategy: BuildStrategySpecV1): Record<string, string> {
-  const selected: Record<string, string> = {};
-  for (const branch of strategy.branchGroups) {
-    const option = branch.optionGoalIds[0];
-    if (option) selected[branch.branchGroupId] = option;
+function enumerateBranchSelections(strategy: BuildStrategySpecV1): Readonly<Record<string, string>>[] {
+  let paths: Record<string, string>[] = [{}];
+  for (const group of [...strategy.branchGroups].sort((a, b) => a.branchGroupId.localeCompare(b.branchGroupId))) {
+    const options = [...new Set(group.optionGoalIds)].sort();
+    const next: Record<string, string>[] = [];
+    for (const path of paths) {
+      for (const option of options) {
+        next.push({ ...path, [group.branchGroupId]: option });
+      }
+    }
+    paths = next;
+    if (paths.length > 64) return paths;
   }
-  return selected;
+  return paths.length > 0 ? paths : [{}];
+}
+
+function branchPathCode(selected: Readonly<Record<string, string>>): string {
+  const value = Object.entries(selected)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([groupId, goalId]) => `${groupId}=${goalId}`)
+    .join(',');
+  return `BRANCH_PATH:${value || 'none'}`;
 }
 
 function heldIds(state: RecommendationDecisionState): number[] {
@@ -232,4 +300,8 @@ function heldIds(state: RecommendationDecisionState): number[] {
 
 function stateKey(state: RecommendationDecisionState): string {
   return JSON.stringify([heldIds(state), state.economy.spendableSouls.value ?? 'UNKNOWN']);
+}
+
+function unique(values: readonly string[]): string[] {
+  return [...new Set(values)];
 }
