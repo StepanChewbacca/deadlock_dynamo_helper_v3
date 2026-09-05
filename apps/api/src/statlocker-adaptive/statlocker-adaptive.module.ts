@@ -17,7 +17,20 @@ import { AdaptiveRecommendationObservabilityV1Service } from './adaptive-recomme
 import { AdaptiveRecommendationV1Controller } from './adaptive-recommendation-v1.controller';
 import { AdaptiveRecommendationV1Service } from './adaptive-recommendation-v1.service';
 import { AdaptiveReplayV1Service } from './adaptive-replay-v1.service';
+import { BuildArchetypeMinerV1Service } from './build-archetype-miner-v1.service';
+import { BuildContractV1Service } from './build-contract-v1.service';
+import { BuildInvestmentPolicyV1Service } from './build-investment-policy-v1.service';
+import { BuildSituationalResolverV1Service } from './build-situational-resolver-v1.service';
 import { BuildSkeletonService } from './build-skeleton.service';
+import { BuildSlotPlannerV1Service } from './build-slot-planner-v1.service';
+import { BuildStrategyCompilerV1Service } from './build-strategy-compiler-v1.service';
+import { BuildStrategyFeasibilityV1Service } from './build-strategy-feasibility-v1.service';
+import { BuildStrategyRegistryV1Service } from './build-strategy-registry-v1.service';
+import { BuildStrategySelectorV1Service } from './build-strategy-selector-v1.service';
+import { BuildStrategySessionV1Service } from './build-strategy-session-v1.service';
+import { BuildStrategyValidatorV1Service } from './build-strategy-validator-v1.service';
+import { ConsensusStrategyFallbackV1Service } from './consensus-strategy-fallback-v1.service';
+import { PlannerTrajectoryBuilderV2Service } from './planner-trajectory-builder-v2.service';
 import {
   STATLOCKER_BROWSER_LAUNCHER_V1,
   StatlockerBrowserCollectorService,
@@ -26,6 +39,9 @@ import { StatlockerEvidenceService } from './statlocker-evidence.service';
 import { StatlockerNormalizerService } from './statlocker-normalizer.service';
 import { StatlockerRefreshService } from './statlocker-refresh.service';
 import { StatlockerSnapshotStoreService } from './statlocker-snapshot-store.service';
+import { StrategyFirstAdaptivePlannerFacadeV1Service } from './strategy-first-adaptive-planner-facade-v1.service';
+import { StrategyFirstBuildPlannerV1Service } from './strategy-first-build-planner-v1.service';
+import { StrategyFirstLegacyPlannerAdapterV1Service } from './strategy-first-legacy-planner-adapter-v1.service';
 
 @Module({
   imports: [
@@ -56,7 +72,26 @@ import { StatlockerSnapshotStoreService } from './statlocker-snapshot-store.serv
     AdaptivePhaseEligibilityV1Service,
     AdaptiveRecommendationObservabilityV1Service,
     AdaptiveChoiceResolverV1Service,
-    AdaptiveBuildPlannerV1Service,
+    PlannerTrajectoryBuilderV2Service,
+    BuildArchetypeMinerV1Service,
+    BuildStrategyValidatorV1Service,
+    BuildStrategyCompilerV1Service,
+    BuildStrategyFeasibilityV1Service,
+    BuildStrategyRegistryV1Service,
+    BuildStrategySelectorV1Service,
+    BuildStrategySessionV1Service,
+    BuildContractV1Service,
+    BuildSlotPlannerV1Service,
+    BuildInvestmentPolicyV1Service,
+    BuildSituationalResolverV1Service,
+    ConsensusStrategyFallbackV1Service,
+    StrategyFirstBuildPlannerV1Service,
+    StrategyFirstAdaptivePlannerFacadeV1Service,
+    StrategyFirstLegacyPlannerAdapterV1Service,
+    {
+      provide: AdaptiveBuildPlannerV1Service,
+      useExisting: StrategyFirstLegacyPlannerAdapterV1Service,
+    },
     AdaptiveReplayV1Service,
     AdaptiveRecommendationV1Service,
   ],
@@ -65,6 +100,7 @@ import { StatlockerSnapshotStoreService } from './statlocker-snapshot-store.serv
     AdaptiveRecommendationObservabilityV1Service,
     StatlockerRefreshService,
     StatlockerEvidenceService,
+    BuildStrategyRegistryV1Service,
   ],
 })
 export class StatlockerAdaptiveModule {}
