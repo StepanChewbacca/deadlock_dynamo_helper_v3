@@ -46,7 +46,12 @@ export class AdaptiveRecommendationV1Service {
     validateRequest(request);
     const initial = await this.decisionState.build(request.matchId, request.localSteamId);
     this.observability.recordDecisionState(initial);
-    const previous = await this.replay.getPreviousPlan(initial.state.matchId, initial.localSteamId);
+    const previousContext = await this.replay.getPreviousContext(initial.state.matchId, initial.localSteamId);
+    const previous = previousContext?.result;
+    const initialDelta = deriveInventoryDeltaV1(
+      previousContext?.replayInput.decision.state.ownedItemIds ?? [],
+      [...initial.state.inventory.heldByItemId.keys()],
+    );
     const patchId = this.evidence.resolveLocalPatchId(initial.rulesetId, initial.catalogSha256) ?? 'UNKNOWN';
     const evidenceRequest = {
       heroId: initial.state.heroId,
@@ -67,8 +72,8 @@ export class AdaptiveRecommendationV1Service {
             decision: initial,
             evidence: localEvidence,
             previousResult: previous,
-            recentPurchasedItemIds: [],
-            recentSoldItemIds: [],
+            recentPurchasedItemIds: initialDelta.purchasedItemIds,
+            recentSoldItemIds: initialDelta.soldItemIds,
           }) as AdaptivePlannerRuntimeResultV1;
           this.observability.recordPlannerLatency(Date.now() - plannerStartedAt);
           return result;
@@ -76,14 +81,18 @@ export class AdaptiveRecommendationV1Service {
       : undefined;
 
     const fresh = await this.decisionState.build(request.matchId, request.localSteamId);
+    const freshDelta = deriveInventoryDeltaV1(
+      previousContext?.replayInput.decision.state.ownedItemIds ?? [],
+      [...fresh.state.inventory.heldByItemId.keys()],
+    );
     if (localEvidence.usable && planned && fresh.stateRevision !== initial.stateRevision) {
       const plannerStartedAt = Date.now();
       planned = this.planner.plan({
         decision: fresh,
         evidence: localEvidence,
         previousResult: previous,
-        recentPurchasedItemIds: [],
-        recentSoldItemIds: [],
+        recentPurchasedItemIds: freshDelta.purchasedItemIds,
+        recentSoldItemIds: freshDelta.soldItemIds,
         suppressObservability: true,
       }) as AdaptivePlannerRuntimeResultV1;
       this.observability.recordPlannerLatency(Date.now() - plannerStartedAt);
@@ -154,8 +163,8 @@ export class AdaptiveRecommendationV1Service {
 
     const replayInput = this.replay.toReplayInput(fresh, localEvidence, {
       previousResult: previous,
-      recentPurchasedItemIds: [],
-      recentSoldItemIds: [],
+      recentPurchasedItemIds: freshDelta.purchasedItemIds,
+      recentSoldItemIds: freshDelta.soldItemIds,
     });
     await this.replay.persist({
       decisionId: result.decisionId,
@@ -494,6 +503,18 @@ export function rebasePlanAgainstDecisionV1(
     }
     return { ...item, position: index + 1, status };
   });
+}
+
+export function deriveInventoryDeltaV1(
+  previousOwnedItemIds: readonly number[],
+  currentOwnedItemIds: readonly number[],
+): { purchasedItemIds: readonly number[]; soldItemIds: readonly number[] } {
+  const previous = new Set(previousOwnedItemIds.filter((itemId) => Number.isInteger(itemId) && itemId > 0));
+  const current = new Set(currentOwnedItemIds.filter((itemId) => Number.isInteger(itemId) && itemId > 0));
+  return {
+    purchasedItemIds: [...current].filter((itemId) => !previous.has(itemId)).sort((a, b) => a - b),
+    soldItemIds: [...previous].filter((itemId) => !current.has(itemId)).sort((a, b) => a - b),
+  };
 }
 
 function resultMatchId(decision: AdaptiveDecisionStateV1): string {
