@@ -34,7 +34,29 @@ export class BuildStrategySessionV1Service {
       };
     }
 
-    if (input.selection.commitment === 'OOD' || !proposedId) {
+    if (input.selection.commitment === 'OOD') {
+      if (proposedId) {
+        const rebased = proposedId !== previous.strategyId;
+        return {
+          strategyId: proposedId,
+          commitment: 'OOD',
+          posterior: proposedPosterior,
+          selectedAtGameTimeSec: rebased ? input.gameTimeSec : previous.selectedAtGameTimeSec,
+          replanReasons: [...new Set([
+            ...input.selection.reasonCodes,
+            'CURRENT_STATE_OUT_OF_DISTRIBUTION',
+            ...(rebased ? ['OOD_NEAREST_STRATEGY_REBASE'] : []),
+          ])],
+        };
+      }
+      return {
+        ...previous,
+        commitment: previous.commitment === 'COMMITTED' ? 'DIVERGED' : 'OOD',
+        replanReasons: [...new Set([...previous.replanReasons, 'CURRENT_STATE_OUT_OF_DISTRIBUTION'])],
+      };
+    }
+
+    if (!proposedId) {
       return {
         ...previous,
         commitment: previous.commitment === 'COMMITTED' ? 'DIVERGED' : 'OOD',
