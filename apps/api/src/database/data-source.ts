@@ -49,8 +49,6 @@ export const databaseOptions: DataSourceOptions = {
 
 export const AppDataSource = new DataSource(databaseOptions);
 
-export default AppDataSource;
-
 function readPositiveIntegerEnvironmentValue(
   name: string,
   defaultValue: number,
