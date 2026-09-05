@@ -9,10 +9,14 @@ rsync -avz --delete \
   --exclude 'node_modules' \
   --exclude 'dist' \
   --exclude '.git' \
+  --exclude '.env' \
   --exclude 'storage' \
   --exclude '*.hprof' \
   --exclude 'apps/overwolf-client/dist' \
   "$SCRIPT_DIR/" my-vps:~/apps/deadlock_dynamo_helper/
+
+echo "=== Running DB migrations on my-vps... ==="
+ssh my-vps "cd ~/apps/deadlock_dynamo_helper && docker compose run --rm api node run-migrations.js"
 
 echo "=== Triggering Docker Compose build & start on my-vps... ==="
 ssh my-vps "cd ~/apps/deadlock_dynamo_helper && docker compose up --build -d"
