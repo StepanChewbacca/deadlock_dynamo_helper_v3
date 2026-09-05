@@ -2,6 +2,7 @@ import type {
   AdaptiveActionTypeV1,
   AdaptiveActionV1,
   AdaptiveRecommendationResultV1,
+  AdaptiveRecommendationStrategyV1,
 } from '@deadlock-live-probe/shared';
 import {
   ADAPTIVE_ITEM_CATALOG,
@@ -34,6 +35,19 @@ export interface AdaptivePresentedAlternative {
   readonly scoreLabel: string;
 }
 
+export interface AdaptivePresentedStrategy {
+  readonly idLabel: string;
+  readonly commitmentLabel: string;
+  readonly buildStatusLabel: string;
+  readonly progressLabel: string;
+  readonly progressValue: number;
+  readonly currentGoalLabel?: string;
+  readonly branchLabel?: string;
+  readonly slotLabel: string;
+  readonly investmentLabel?: string;
+  readonly situationalLabel?: string;
+}
+
 export interface AdaptiveRecommendationPresentation {
   readonly sourceLabel: string;
   readonly stateLabel: string;
@@ -46,6 +60,7 @@ export interface AdaptiveRecommendationPresentation {
   readonly replacedItem?: AdaptivePresentedItem;
   readonly confidence: { readonly label: string; readonly value: number };
   readonly reasons: readonly string[];
+  readonly strategy?: AdaptivePresentedStrategy;
   readonly plan: {
     readonly items: readonly AdaptivePresentedPlanItem[];
     readonly remainingCount: number;
@@ -102,7 +117,7 @@ export function buildAdaptiveRecommendationPresentation(
     .sort((left, right) => left.position - right.position);
 
   return {
-    sourceLabel: 'Statlocker Adaptive',
+    sourceLabel: recommendation.strategy ? 'Strategy-first Adaptive' : 'Statlocker Adaptive',
     stateLabel: GAME_STATE_LABELS[recommendation.gameState] ?? GAME_STATE_LABELS.UNKNOWN,
     stateTone: recommendation.gameState.toLowerCase() as AdaptiveRecommendationPresentation['stateTone'],
     healthLabel: recommendation.ready
@@ -122,6 +137,9 @@ export function buildAdaptiveRecommendationPresentation(
     reasons: recommendation.nextAction.reasonCodes
       .slice(0, 3)
       .map(humanizeReasonCode),
+    strategy: recommendation.strategy
+      ? presentStrategy(recommendation.strategy)
+      : undefined,
     plan: {
       items: orderedPlan.map((planned) => ({
         item: presentItem(planned.itemId),
@@ -136,6 +154,81 @@ export function buildAdaptiveRecommendationPresentation(
       ? `${freshEvidenceCount} fresh Statlocker signal${freshEvidenceCount === 1 ? '' : 's'}`
       : 'Statlocker evidence is updating',
   };
+}
+
+function presentStrategy(strategy: AdaptiveRecommendationStrategyV1): AdaptivePresentedStrategy {
+  const total = Math.max(0, strategy.progress.totalHardGoals);
+  const satisfied = Math.max(0, Math.min(total, strategy.progress.satisfiedHardGoals));
+  const currentGoalLabel = strategy.currentGoal
+    ? `${titleCase(strategy.currentGoal.type)} · ${humanizeToken(strategy.currentGoal.goalId)}`
+    : undefined;
+  const branches = Object.entries(strategy.committedBranches).length > 0
+    ? strategy.committedBranches
+    : strategy.selectedBranches;
+  const branchLabel = Object.keys(branches).length > 0
+    ? Object.entries(branches)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([group, goal]) => `${humanizeToken(group)}: ${humanizeToken(goal)}`)
+      .join(' · ')
+    : undefined;
+  const slot = strategy.slotPlan;
+  const flex = slot.unlockedFlexSlots === undefined
+    ? `${slot.currentFlexUsed}/? flex`
+    : `${slot.currentFlexUsed}/${slot.unlockedFlexSlots} flex`;
+  const activeInvestment = strategy.investmentObjectives.find((objective) => objective.state === 'ACTIVE')
+    ?? strategy.investmentObjectives.find((objective) => objective.state === 'SATISFIED');
+
+  return {
+    idLabel: strategyLabel(strategy.strategyId),
+    commitmentLabel: titleCase(strategy.commitment),
+    buildStatusLabel: titleCase(strategy.buildStatus.replace(/_/g, ' ')),
+    progressLabel: `${satisfied} / ${total} core goals`,
+    progressValue: total === 0 ? 100 : Math.round((satisfied / total) * 100),
+    currentGoalLabel,
+    branchLabel,
+    slotLabel: `${slot.currentUsedSlots} slots · ${flex} · ${slot.reservedSituationalSlots} reserved`,
+    investmentLabel: activeInvestment ? investmentLabel(activeInvestment) : undefined,
+    situationalLabel: strategy.situationalDecision
+      ? situationalLabel(strategy.situationalDecision)
+      : undefined,
+  };
+}
+
+function investmentLabel(
+  objective: AdaptiveRecommendationStrategyV1['investmentObjectives'][number],
+): string {
+  const current = formatNumber(objective.currentValue);
+  if (objective.targetValue === undefined) {
+    return `${titleCase(objective.type)} ${current} · ${titleCase(objective.state)}`;
+  }
+  const distance = objective.distance ?? Math.max(0, objective.targetValue - objective.currentValue);
+  return `${titleCase(objective.type)} ${current} / ${formatNumber(objective.targetValue)} · ${formatNumber(distance)} to objective`;
+}
+
+function situationalLabel(
+  decision: NonNullable<AdaptiveRecommendationStrategyV1['situationalDecision']>,
+): string {
+  const item = presentItem(decision.targetItemId);
+  return `${titleCase(decision.purpose.replace(/_/g, ' '))} window · ${item.known ? item.name : item.diagnosticLabel} · ${toPercent(decision.confidence)}%`;
+}
+
+function strategyLabel(strategyId: string): string {
+  const parts = strategyId.split(':').filter(Boolean);
+  const meaningful = parts.filter((part) => !['strategy', 'hero', 'archetype'].includes(part.toLowerCase()) && !/^\d+$/.test(part));
+  return humanizeToken(meaningful[meaningful.length - 1] ?? strategyId);
+}
+
+function humanizeToken(value: string): string {
+  return value.trim().replace(/[_:-]+/g, ' ').replace(/\s+/g, ' ').toLowerCase();
+}
+
+function titleCase(value: string): string {
+  const normalized = value.trim().replace(/[_-]+/g, ' ').toLowerCase();
+  return normalized.replace(/(^|\s)\S/g, (char) => char.toUpperCase());
+}
+
+function formatNumber(value: number): string {
+  return Math.max(0, Math.round(Number.isFinite(value) ? value : 0)).toLocaleString('en-US');
 }
 
 function resolveActionItemId(
