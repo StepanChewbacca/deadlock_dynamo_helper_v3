@@ -5,6 +5,7 @@ import * as puppeteer from 'puppeteer-core';
 import { DeadlockLiveModule } from '../deadlock-live/deadlock-live.module';
 import { AdaptiveRecommendationDecisionV1Entity } from '../deadlock-live/entities/adaptive-recommendation-decision-v1.entity';
 import { BuildStrategySnapshotV1Entity } from '../deadlock-live/entities/build-strategy-snapshot-v1.entity';
+import { MatchPlayer } from '../deadlock-live/entities/match-player.entity';
 import { RecommendationItemCatalogItemV1 } from '../deadlock-live/entities/recommendation-item-catalog-item-v1.entity';
 import { RecommendationItemCatalogRecipeV1 } from '../deadlock-live/entities/recommendation-item-catalog-recipe-v1.entity';
 import { RecommendationItemCatalogVersionV1 } from '../deadlock-live/entities/recommendation-item-catalog-version-v1.entity';
@@ -26,12 +27,15 @@ import { BuildSkeletonService } from './build-skeleton.service';
 import { BuildSlotPlannerV1Service } from './build-slot-planner-v1.service';
 import { BuildStrategyCompilerV1Service } from './build-strategy-compiler-v1.service';
 import { BuildStrategyFeasibilityV1Service } from './build-strategy-feasibility-v1.service';
+import { BuildStrategyMiningPipelineV1Service } from './build-strategy-mining-pipeline-v1.service';
 import { BuildStrategyRegistryV1Service } from './build-strategy-registry-v1.service';
 import { BuildStrategySelectorV1Service } from './build-strategy-selector-v1.service';
 import { BuildStrategySessionV1Service } from './build-strategy-session-v1.service';
 import { BuildStrategySnapshotStoreV1Service } from './build-strategy-snapshot-store-v1.service';
 import { BuildStrategyValidatorV1Service } from './build-strategy-validator-v1.service';
 import { ConsensusStrategyFallbackV1Service } from './consensus-strategy-fallback-v1.service';
+import { HistoricalBuildTrajectorySourceV2Service } from './historical-build-trajectory-source-v2.service';
+import { HistoricalPlannerTrajectoryExtractorV2Service } from './historical-planner-trajectory-extractor-v2.service';
 import { PlannerTrajectoryBuilderV2Service } from './planner-trajectory-builder-v2.service';
 import {
   STATLOCKER_BROWSER_LAUNCHER_V1,
@@ -56,6 +60,7 @@ import { StrategyFirstLegacyPlannerAdapterV1Service } from './strategy-first-leg
       StatlockerEvidenceSnapshotV1Entity,
       AdaptiveRecommendationDecisionV1Entity,
       BuildStrategySnapshotV1Entity,
+      MatchPlayer,
     ]),
   ],
   controllers: [AdaptiveRecommendationV1Controller],
@@ -76,12 +81,15 @@ import { StrategyFirstLegacyPlannerAdapterV1Service } from './strategy-first-leg
     AdaptiveRecommendationObservabilityV1Service,
     AdaptiveChoiceResolverV1Service,
     PlannerTrajectoryBuilderV2Service,
+    HistoricalPlannerTrajectoryExtractorV2Service,
+    HistoricalBuildTrajectorySourceV2Service,
     BuildArchetypeMinerV1Service,
     BuildStrategyValidatorV1Service,
     BuildStrategyCompilerV1Service,
     BuildStrategyFeasibilityV1Service,
     BuildStrategyRegistryV1Service,
     BuildStrategySnapshotStoreV1Service,
+    BuildStrategyMiningPipelineV1Service,
     BuildStrategySelectorV1Service,
     BuildStrategySessionV1Service,
     BuildContractV1Service,
@@ -106,6 +114,7 @@ import { StrategyFirstLegacyPlannerAdapterV1Service } from './strategy-first-leg
     StatlockerEvidenceService,
     BuildStrategyRegistryV1Service,
     BuildStrategySnapshotStoreV1Service,
+    BuildStrategyMiningPipelineV1Service,
   ],
 })
 export class StatlockerAdaptiveModule {}
