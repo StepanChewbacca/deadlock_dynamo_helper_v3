@@ -141,7 +141,7 @@ export class StrategyFirstBuildPlannerV1Service {
     const immediate = this.evaluateNode(input, strategy, initialNode, branchState, scorerContext);
     const best = this.search(input, strategy, initialNode, branchState, scorerContext);
     const first = best.actions[0] ?? immediate[0];
-    const nextAction = first
+    const proposedNextAction = first
       ? adaptiveAction(first.candidate, first.reasonCodes)
       : fallbackAction(initialContract);
     const displayContract = this.contracts.resolve({
@@ -151,7 +151,7 @@ export class StrategyFirstBuildPlannerV1Service {
       selectedBranches: branchState.selected,
       committedBranches: branchState.committed,
       commitment: session.commitment,
-      immediateMode: nextAction.type === 'WAIT' || nextAction.type === 'HOLD' ? 'WAIT' : 'TRANSACTION',
+      immediateMode: proposedNextAction.type === 'WAIT' || proposedNextAction.type === 'HOLD' ? 'WAIT' : 'TRANSACTION',
     });
     const slotPlan = this.slots.plan({
       strategy,
@@ -160,15 +160,30 @@ export class StrategyFirstBuildPlannerV1Service {
       ownedItemIds,
       slots: input.decision.slots,
     });
-    const investmentPlan = this.investments.resolve({ strategy, contract: displayContract, investment: input.decision.investment });
-    const strategyPlan = makeStrategyPlan(strategy, displayContract, slotPlan, investmentPlan);
+    const effectiveContract = slotPlan.feasible
+      ? displayContract
+      : {
+          ...displayContract,
+          status: 'REPLAN_REQUIRED' as const,
+          completionReasonCodes: [...new Set([...displayContract.completionReasonCodes, 'NO_SLOT_FEASIBLE_PATH'])].sort(),
+        };
+    const nextAction: AdaptiveActionV1 = slotPlan.feasible
+      ? proposedNextAction
+      : {
+          actionKey: 'HOLD',
+          type: 'HOLD',
+          reasonCodes: ['REPLAN_REQUIRED', 'NO_SLOT_FEASIBLE_PATH'],
+        };
+    const investmentPlan = this.investments.resolve({ strategy, contract: effectiveContract, investment: input.decision.investment });
+    const strategyPlan = makeStrategyPlan(strategy, effectiveContract, slotPlan, investmentPlan);
     const recommendedBuild = this.buildRecommendedBuild(
       strategy,
-      displayContract,
+      effectiveContract,
+      slotPlan,
       input,
       scorerContext,
       nextAction,
-      first?.candidate,
+      slotPlan.feasible ? first?.candidate : undefined,
     );
 
     return {
@@ -176,14 +191,14 @@ export class StrategyFirstBuildPlannerV1Service {
       strategy,
       strategySelection: selection,
       strategySession: session,
-      contract: displayContract,
+      contract: effectiveContract,
       strategyPlan,
       nextAction,
       recommendedBuild,
       changes: [],
-      rankedImmediateCandidates: immediate.map(toAdaptiveScoredAction),
-      totalScore: best.utility,
-      confidence: first?.confidence ?? 0,
+      rankedImmediateCandidates: slotPlan.feasible ? immediate.map(toAdaptiveScoredAction) : [],
+      totalScore: slotPlan.feasible ? best.utility : 0,
+      confidence: slotPlan.feasible ? first?.confidence ?? 0 : 0,
       plannerVersion: this.version,
     };
   }
@@ -365,8 +380,9 @@ export class StrategyFirstBuildPlannerV1Service {
     const transition = slotPlan.futureTransitions.find((entry) => entry.targetGoalId === currentGoal.goalId);
     const action = candidate.action;
     if (action.type === 'WAIT_SAVE') return action.targetItemId === undefined || (action.targetItemId !== undefined && relevant.has(action.targetItemId));
+    if (transition?.requirement === 'BLOCKED') return false;
     if (action.type === 'BUY_ITEM' || action.type === 'UPGRADE_ITEM') return relevant.has(action.itemId);
-    if (action.type === 'REPLACE_ITEM') return relevant.has(action.buyItemId) && (!transition?.sourceItemId || transition.sourceItemId === action.sellItemId);
+    if (action.type === 'REPLACE_ITEM') return transition?.requirement === 'REPLACE' && transition.sourceItemId === action.sellItemId && relevant.has(action.buyItemId);
     if (action.type === 'SELL_ITEM') return transition?.requirement === 'SELL_TEMPORARY' && transition.sourceItemId === action.itemId;
     return false;
   }
@@ -374,6 +390,7 @@ export class StrategyFirstBuildPlannerV1Service {
   private buildRecommendedBuild(
     strategy: BuildStrategySpecV1,
     contract: BuildContractV1,
+    slotPlan: BuildSlotPlanV1,
     input: StrategyFirstBuildPlannerV1Input,
     scorerContext: AdaptiveItemScoreContextV1,
     nextAction: AdaptiveActionV1,
@@ -412,6 +429,8 @@ export class StrategyFirstBuildPlannerV1Service {
       const state = contract.goalStates[goal.goalId];
       if (state === 'SKIPPED' || state === 'WAIVED' || state === 'SATISFIED') continue;
       if (!goal.hard && contract.currentGoalId !== goal.goalId) continue;
+      const slotTransition = slotPlan.futureTransitions.find((entry) => entry.targetGoalId === goal.goalId);
+      if (slotTransition?.requirement === 'BLOCKED') continue;
       for (const itemId of goal.targetItemIds) {
         if (seen.has(itemId) || input.decision.itemGraph.isTargetSatisfied(itemId, owned)) continue;
         if (goal.type === 'BRANCH' && !Object.values(contract.selectedBranches).includes(goal.goalId)) continue;
@@ -480,6 +499,7 @@ function strategicCandidateUtility(
   }
   const transition = currentGoal ? slotPlan.futureTransitions.find((entry) => entry.targetGoalId === currentGoal.goalId) : undefined;
   if (transition?.requirement === 'SELL_TEMPORARY' && candidate.action.type === 'SELL_ITEM' && transition.sourceItemId === candidate.action.itemId) utility += 0.65;
+  if (transition?.requirement === 'REPLACE' && candidate.action.type === 'REPLACE_ITEM' && transition.sourceItemId === candidate.action.sellItemId) utility += 0.65;
   if (transition?.requirement === 'UPGRADE' && candidate.action.type === 'UPGRADE_ITEM') utility += 0.35;
   return utility;
 }
@@ -495,7 +515,7 @@ function makeStrategyPlan(
   const currentGoal = strategy.goals.find((goal) => goal.goalId === contract.currentGoalId);
   return {
     strategyId: strategy.strategyId,
-    buildStatus: slotPlan.feasible ? contract.status : 'REPLAN_REQUIRED',
+    buildStatus: contract.status,
     progress: { satisfiedHardGoals, totalHardGoals: hardGoals.length },
     currentGoal: currentGoal ? { goalId: currentGoal.goalId, type: currentGoal.type, reasonCodes: currentGoal.rationaleCodes } : undefined,
     remainingGoalIds: [...contract.remainingHardGoalIds],
