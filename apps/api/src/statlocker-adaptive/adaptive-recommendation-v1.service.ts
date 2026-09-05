@@ -110,11 +110,7 @@ export class AdaptiveRecommendationV1Service {
         ? previousEvidenceFallback(previous, fresh, localEvidence, blockers)
         : emptyEvidenceFallback(fresh, localEvidence, blockers, feasibleByActionKey);
     } else if (planned) {
-      const freshOwnedItemIds = new Set(fresh.state.inventory.heldByItemId.keys());
-      const freshBuild = rebasePlanAgainstOwnedInventory(
-        planned.recommendedBuild,
-        [...freshOwnedItemIds],
-      );
+      const freshBuild = rebasePlanAgainstDecisionV1(planned.recommendedBuild, fresh);
       const freshRanked = planned.rankedImmediateCandidates.filter(({ action }) =>
         feasibleByActionKey.has(action.actionKey),
       );
@@ -247,11 +243,12 @@ function previousEvidenceFallback(
   blockers: ReadonlySet<string>,
 ): AdaptiveRecommendationResultV1 {
   const ownedItemIds = [...fresh.state.inventory.heldByItemId.keys()];
-  const preservedBuild = rebasePlanAgainstOwnedInventory(previous.recommendedBuild, ownedItemIds);
-  const owned = new Set(ownedItemIds);
+  const preservedBuild = rebasePlanAgainstDecisionV1(previous.recommendedBuild, fresh);
   const previousTarget = previous.nextTargetItemId;
   const targetItemId = firstNextTarget(preservedBuild)
-    ?? (previousTarget !== undefined && !owned.has(previousTarget) ? previousTarget : undefined);
+    ?? (previousTarget !== undefined && !fresh.itemGraph.isTargetSatisfied(previousTarget, ownedItemIds)
+      ? previousTarget
+      : undefined);
   return {
     ...previous,
     decisionId: fresh.state.decisionId,
@@ -475,13 +472,17 @@ function isWaitSaveActionKey(actionKey: string): boolean {
   return actionKey === 'WAIT_SAVE' || actionKey.startsWith('WAIT_SAVE:');
 }
 
-function rebasePlanAgainstOwnedInventory(
+export function rebasePlanAgainstDecisionV1(
   build: AdaptiveRecommendationResultV1['recommendedBuild'],
-  ownedItemIds: readonly number[],
+  decision: Pick<AdaptiveDecisionStateV1, 'state' | 'itemGraph'>,
 ): AdaptiveRecommendationResultV1['recommendedBuild'] {
+  const ownedItemIds = [...decision.state.inventory.heldByItemId.keys()];
   const owned = new Set(ownedItemIds);
+  const relevant = build.filter((item) =>
+    owned.has(item.itemId) || !decision.itemGraph.isTargetSatisfied(item.itemId, ownedItemIds),
+  );
   let nextAssigned = false;
-  return build.map((item, index) => {
+  return relevant.map((item, index) => {
     let status: typeof item.status;
     if (owned.has(item.itemId)) {
       status = 'OWNED';
