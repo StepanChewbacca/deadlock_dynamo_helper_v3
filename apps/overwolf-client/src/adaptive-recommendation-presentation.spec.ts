@@ -55,6 +55,93 @@ describe('adaptive recommendation presentation', () => {
     expect(view.confidence).toEqual({ label: '82% confidence', value: 82 });
     expect(view.reasons).toContain('Keep saving for the next core item');
     expect(view.evidenceLabel).toBe('2 fresh Statlocker signals');
+    expect(view.strategy).toBeUndefined();
+  });
+
+  it('presents the selected strategy, progress, branches, slot pressure and investment objective', () => {
+    const view = buildAdaptiveRecommendationPresentation(recommendation({
+      strategy: {
+        strategyId: 'hero:1:archetype:burst-spirit',
+        commitment: 'COMMITTED',
+        selectedAtGameTimeSec: 210,
+        posterior: 0.87,
+        reasonCodes: ['DISTINCTIVE_PREFIX_COMMITMENT'],
+        selectedBranches: { boots: 'boots-spirit' },
+        committedBranches: { boots: 'boots-spirit' },
+        buildStatus: 'IN_PROGRESS',
+        progress: { satisfiedHardGoals: 3, totalHardGoals: 7 },
+        currentGoal: { goalId: 'mid:upgrade:2', type: 'UPGRADE', reasonCodes: ['CURRENT_GOAL'] },
+        remainingGoalIds: ['mid:upgrade:2', 'late:core:3'],
+        slotPlan: {
+          currentUsedSlots: 9,
+          currentFlexUsed: 1,
+          unlockedFlexSlots: 2,
+          reservedSituationalSlots: 1,
+          feasible: true,
+          reasonCodes: ['SLOT_PLAN_FEASIBLE'],
+        },
+        investmentObjectives: [{
+          objectiveId: 'spirit-3200',
+          type: 'spirit',
+          state: 'ACTIVE',
+          currentValue: 2400,
+          targetValue: 3200,
+          distance: 800,
+          reasonCodes: ['INVESTMENT_OBJECTIVE_ACTIVE'],
+        }],
+      },
+    }));
+
+    expect(view.sourceLabel).toBe('Strategy-first Adaptive');
+    expect(view.strategy).toEqual({
+      idLabel: 'burst spirit',
+      commitmentLabel: 'Committed',
+      buildStatusLabel: 'In progress',
+      progressLabel: '3 / 7 core goals',
+      progressValue: 43,
+      currentGoalLabel: 'Upgrade · mid upgrade 2',
+      branchLabel: 'boots: boots spirit',
+      slotLabel: '9 slots · 1/2 flex · 1 reserved',
+      investmentLabel: 'Spirit 2,400 / 3,200 · 800 to objective',
+      situationalLabel: undefined,
+    });
+  });
+
+  it('presents an active situational window as an explicit bounded strategy deviation', () => {
+    const view = buildAdaptiveRecommendationPresentation(recommendation({
+      strategy: {
+        strategyId: 'strategy:survival',
+        commitment: 'PROVISIONAL',
+        posterior: 0.61,
+        reasonCodes: ['STRATEGY_SELECTION_PROVISIONAL'],
+        selectedBranches: {},
+        committedBranches: {},
+        buildStatus: 'WAITING',
+        progress: { satisfiedHardGoals: 2, totalHardGoals: 5 },
+        remainingGoalIds: ['g3', 'g4', 'g5'],
+        slotPlan: {
+          currentUsedSlots: 8,
+          currentFlexUsed: 0,
+          reservedSituationalSlots: 1,
+          feasible: true,
+          reasonCodes: [],
+        },
+        investmentObjectives: [],
+        situationalDecision: {
+          windowId: 'anti-cc-mid',
+          purpose: 'ANTI_CC',
+          targetItemId: 3862866912,
+          enemyHeroIds: [4, 5],
+          enemyItemIds: [],
+          confidence: 0.78,
+          reasonCodes: ['SITUATIONAL_WINDOW_ACTIVE'],
+        },
+      },
+    }));
+
+    expect(view.strategy?.commitmentLabel).toBe('Provisional');
+    expect(view.strategy?.buildStatusLabel).toBe('Waiting');
+    expect(view.strategy?.situationalLabel).toBe('Anti CC window · Restorative Shot · 78%');
   });
 
   it('shows the entire sorted build path without truncating later items', () => {
