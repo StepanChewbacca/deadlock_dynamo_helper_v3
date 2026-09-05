@@ -47,6 +47,7 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
       input.decision.state.heroId,
       input.decision.rulesetId,
       input.decision.catalogSha256,
+      input.evidence.statlockerPatchId,
     );
     if (strategies.length === 0) {
       const skeleton = asSkeleton(input.evidence.byDataset.CONSENSUS_SKELETON.payload, input.decision.state.heroId);
