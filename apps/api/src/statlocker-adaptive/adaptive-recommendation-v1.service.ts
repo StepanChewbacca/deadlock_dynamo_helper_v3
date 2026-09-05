@@ -8,6 +8,7 @@ import {
   AdaptiveActionV1,
   AdaptiveRecommendationRequestV1,
   AdaptiveRecommendationResultV1,
+  AdaptiveRecommendationStrategyV1,
   AdaptiveScoredActionV1,
 } from '@deadlock-live-probe/shared';
 import { AdaptiveBuildPlannerV1Service } from './adaptive-build-planner-v1.service';
@@ -26,6 +27,10 @@ import { ADAPTIVE_POLICY_V1_CONFIG } from './statlocker-adaptive.config';
 import { StatlockerEvidenceFamilyV1 } from './statlocker-adaptive.types';
 
 const SCORER_VERSION = 'adaptive-evidence-scorer-v1';
+
+type AdaptivePlannerRuntimeResultV1 = ReturnType<AdaptiveBuildPlannerV1Service['plan']> & {
+  strategy?: AdaptiveRecommendationStrategyV1;
+};
 
 @Injectable()
 export class AdaptiveRecommendationV1Service {
@@ -55,7 +60,7 @@ export class AdaptiveRecommendationV1Service {
       : this.evidence.getLocalEvidence(evidenceRequest);
     this.observability.recordEvidence(localEvidence);
 
-    let planned = localEvidence.usable
+    let planned: AdaptivePlannerRuntimeResultV1 | undefined = localEvidence.usable
       ? (() => {
           const plannerStartedAt = Date.now();
           const result = this.planner.plan({
@@ -64,7 +69,7 @@ export class AdaptiveRecommendationV1Service {
             previousResult: previous,
             recentPurchasedItemIds: [],
             recentSoldItemIds: [],
-          });
+          }) as AdaptivePlannerRuntimeResultV1;
           this.observability.recordPlannerLatency(Date.now() - plannerStartedAt);
           return result;
         })()
@@ -80,7 +85,7 @@ export class AdaptiveRecommendationV1Service {
         recentPurchasedItemIds: [],
         recentSoldItemIds: [],
         suppressObservability: true,
-      });
+      }) as AdaptivePlannerRuntimeResultV1;
       this.observability.recordPlannerLatency(Date.now() - plannerStartedAt);
     }
     const freshCandidates = generateRecommendationCandidates({
@@ -90,7 +95,7 @@ export class AdaptiveRecommendationV1Service {
     });
     const feasibleByActionKey = new Map(
       freshCandidates
-        .filter((candidate) => candidate.feasible)
+        .filter((candidate) => candidate.feasible && candidate.recommendationEligible)
         .map((candidate) => [candidate.actionId, candidate]),
     );
 
@@ -135,6 +140,7 @@ export class AdaptiveRecommendationV1Service {
         scorerVersion: SCORER_VERSION,
         plannerVersion: planned.plannerVersion,
         configVersion: ADAPTIVE_POLICY_V1_CONFIG.version,
+        strategy: planned.strategy,
         evidence: toProvenance(localEvidence),
       };
     } else {
@@ -167,15 +173,17 @@ export class AdaptiveRecommendationV1Service {
   }
 }
 
-function finalLegalityRules(decision: AdaptiveDecisionStateV1) {
+export function finalLegalityRules(decision: AdaptiveDecisionStateV1) {
   const slots = decision.slots;
   if (!slots) return DEFAULT_RECOMMENDATION_CANDIDATE_RULES;
   return {
     ...DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
     baseSlots: slots.baseSlots,
+    baseSlotsByType: { ...slots.baseSlotsByType },
     maxFlexSlots: slots.maxFlexSlots,
     unlockedFlexSlots: slots.unlockedFlexSlots,
     flexCapacityEvidence: slots.evidence,
+    maxActiveItems: slots.maxActiveItems,
   };
 }
 
