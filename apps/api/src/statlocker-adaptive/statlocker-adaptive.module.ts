@@ -16,6 +16,7 @@ import { AdaptiveChoiceResolverV1Service } from './adaptive-choice-resolver-v1.s
 import { AdaptiveDecisionStateV1Service } from './adaptive-decision-state-v1.service';
 import { AdaptiveEvidenceScorerV1Service } from './adaptive-evidence-scorer-v1.service';
 import { AdaptivePhaseEligibilityV1Service } from './adaptive-phase-eligibility-v1.service';
+import { AdaptivePlannerServingRouterV1Service } from './adaptive-planner-serving-router-v1.service';
 import { AdaptiveRecommendationObservabilityV1Service } from './adaptive-recommendation-observability-v1.service';
 import { AdaptiveRecommendationV1Controller } from './adaptive-recommendation-v1.controller';
 import { AdaptiveRecommendationV1Service } from './adaptive-recommendation-v1.service';
@@ -50,6 +51,8 @@ import { StatlockerSnapshotStoreService } from './statlocker-snapshot-store.serv
 import { StrategyFirstAdaptivePlannerFacadeV1Service } from './strategy-first-adaptive-planner-facade-v1.service';
 import { StrategyFirstBuildPlannerV1Service } from './strategy-first-build-planner-v1.service';
 import { StrategyFirstLegacyPlannerAdapterV1Service } from './strategy-first-legacy-planner-adapter-v1.service';
+import { StrategyFirstOperationsV1Service } from './strategy-first-operations-v1.service';
+import { StrategyFirstPromotionGateV1Service } from './strategy-first-promotion-gate-v1.service';
 import { StrategyFirstSituationalOverlayV1Service } from './strategy-first-situational-overlay-v1.service';
 
 @Module({
@@ -106,9 +109,12 @@ import { StrategyFirstSituationalOverlayV1Service } from './strategy-first-situa
     StrategyFirstSituationalOverlayV1Service,
     StrategyFirstAdaptivePlannerFacadeV1Service,
     StrategyFirstLegacyPlannerAdapterV1Service,
+    StrategyFirstPromotionGateV1Service,
+    StrategyFirstOperationsV1Service,
+    AdaptivePlannerServingRouterV1Service,
     {
       provide: AdaptiveBuildPlannerV1Service,
-      useExisting: StrategyFirstLegacyPlannerAdapterV1Service,
+      useExisting: AdaptivePlannerServingRouterV1Service,
     },
     AdaptiveReplayV1Service,
     AdaptiveRecommendationV1Service,
@@ -122,6 +128,8 @@ import { StrategyFirstSituationalOverlayV1Service } from './strategy-first-situa
     BuildStrategyRegistryV1Service,
     BuildStrategySnapshotStoreV1Service,
     BuildStrategyMiningPipelineV1Service,
+    StrategyFirstOperationsV1Service,
+    StrategyFirstPromotionGateV1Service,
   ],
 })
 export class StatlockerAdaptiveModule {}
