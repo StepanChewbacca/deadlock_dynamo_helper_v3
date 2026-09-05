@@ -76,6 +76,11 @@ export interface BuildSituationalWindowV1 {
   maxSouls: number;
   maxCoreDelaySouls: number;
   allowedPurposes: readonly BuildSituationalPurposeV1[];
+  /**
+   * Explicit strategy-owned candidate set. The planner never infers an item purpose from its name,
+   * score or category. Omitted mappings keep the window reserved but not actionable.
+   */
+  candidateItemIdsByPurpose?: Readonly<Partial<Record<BuildSituationalPurposeV1, readonly number[]>>>;
 }
 
 export interface BuildInvestmentObjectiveV1 {
