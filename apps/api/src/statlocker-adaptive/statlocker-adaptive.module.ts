@@ -48,6 +48,7 @@ import { StatlockerSnapshotStoreService } from './statlocker-snapshot-store.serv
 import { StrategyFirstAdaptivePlannerFacadeV1Service } from './strategy-first-adaptive-planner-facade-v1.service';
 import { StrategyFirstBuildPlannerV1Service } from './strategy-first-build-planner-v1.service';
 import { StrategyFirstLegacyPlannerAdapterV1Service } from './strategy-first-legacy-planner-adapter-v1.service';
+import { StrategyFirstSituationalOverlayV1Service } from './strategy-first-situational-overlay-v1.service';
 
 @Module({
   imports: [
@@ -98,6 +99,7 @@ import { StrategyFirstLegacyPlannerAdapterV1Service } from './strategy-first-leg
     BuildSituationalResolverV1Service,
     ConsensusStrategyFallbackV1Service,
     StrategyFirstBuildPlannerV1Service,
+    StrategyFirstSituationalOverlayV1Service,
     StrategyFirstAdaptivePlannerFacadeV1Service,
     StrategyFirstLegacyPlannerAdapterV1Service,
     {
