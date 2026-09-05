@@ -2,6 +2,7 @@ import { createRecommendationItemGraph } from '@deadlock-live-probe/build-domain
 import { HistoricalBuildTrajectorySourceV2Service } from '../src/statlocker-adaptive/historical-build-trajectory-source-v2.service';
 import { HistoricalPlannerTrajectoryExtractorV2Service } from '../src/statlocker-adaptive/historical-planner-trajectory-extractor-v2.service';
 import { RecommendationEconomyRulesV1 } from '../src/statlocker-adaptive/adaptive-economy-v1';
+import { MissingRawMatchMetadataError } from '../src/deadlock-live/ruleset-resolver.service';
 
 const graph = createRecommendationItemGraph([
   { itemId: 1, name: 'A', slotType: 'weapon', active: false, availableRulesetIds: ['r1'], directPurchaseCost: 800, upgradeRecipes: [], sellTransition: { soulsRefund: 400, returnedItemIds: [] } },
@@ -118,7 +119,7 @@ describe('historical build trajectory source v2', () => {
   });
 
   it('rejects a match when no raw metadata can be resolved', async () => {
-    const result = await sourceForResolution(undefined, new Error('No raw metadata found for match 100'))
+    const result = await sourceForResolution(undefined, new MissingRawMatchMetadataError(100))
       .load(sourceInput);
 
     expect(result.trajectories).toEqual([]);
@@ -127,5 +128,11 @@ describe('historical build trajectory source v2', () => {
       playerKey: '100:player:10',
       diagnostics: ['HISTORICAL_PROVENANCE_MISSING'],
     }]);
+  });
+
+  it('propagates unexpected resolver failures instead of mining a partial sample', async () => {
+    await expect(
+      sourceForResolution(undefined, new Error('ruleset metadata repository unavailable')).load(sourceInput),
+    ).rejects.toThrow('ruleset metadata repository unavailable');
   });
 });

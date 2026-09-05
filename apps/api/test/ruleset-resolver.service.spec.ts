@@ -1,4 +1,6 @@
 import {
+  MissingRawMatchMetadataError,
+  RulesetResolverService,
   extractDemoMetadataClientVersion,
   extractMatchStartTime,
   extractObservedClientVersion,
@@ -6,6 +8,16 @@ import {
 } from '../src/deadlock-live/ruleset-resolver.service';
 
 describe('RulesetResolverService helpers', () => {
+  it('throws a typed error when raw metadata is absent', async () => {
+    const service = new RulesetResolverService(
+      { findOne: jest.fn(async () => undefined) } as any,
+      {} as any,
+      {} as any,
+    );
+
+    await expect(service.getLatestForMatch(100)).rejects.toBeInstanceOf(MissingRawMatchMetadataError);
+  });
+
   it('prefers explicit observed client_version fields', () => {
     expect(
       extractObservedClientVersion({

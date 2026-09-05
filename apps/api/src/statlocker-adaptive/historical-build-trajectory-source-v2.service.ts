@@ -3,7 +3,10 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { RecommendationItemGraph } from '@deadlock-live-probe/build-domain';
 import { MatchPlayer } from '../deadlock-live/entities/match-player.entity';
-import { RulesetResolverService } from '../deadlock-live/ruleset-resolver.service';
+import {
+  MissingRawMatchMetadataError,
+  RulesetResolverService,
+} from '../deadlock-live/ruleset-resolver.service';
 import { RecommendationEconomyRulesV1 } from './adaptive-economy-v1';
 import {
   HistoricalPlannerTrajectoryExtractorV2Service,
@@ -120,8 +123,11 @@ export class HistoricalBuildTrajectorySourceV2Service {
     let resolved;
     try {
       resolved = await this.rulesetResolver.getLatestForMatch(matchId);
-    } catch {
-      return 'HISTORICAL_PROVENANCE_MISSING';
+    } catch (error) {
+      if (error instanceof MissingRawMatchMetadataError) {
+        return 'HISTORICAL_PROVENANCE_MISSING';
+      }
+      throw error;
     }
 
     if (resolved.method !== 'OBSERVED' && resolved.method !== 'DEMO_METADATA') {

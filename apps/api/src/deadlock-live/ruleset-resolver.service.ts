@@ -16,6 +16,13 @@ export class ResolvePendingRulesetsDto {
   limit?: number;
 }
 
+export class MissingRawMatchMetadataError extends Error {
+  constructor(readonly matchId: number) {
+    super(`No raw metadata found for match ${matchId}`);
+    this.name = 'MissingRawMatchMetadataError';
+  }
+}
+
 export interface RulesetResolutionResult {
   matchId: number;
   rawMetadataId: number;
@@ -68,7 +75,7 @@ export class RulesetResolverService {
       order: { fetchedAt: 'DESC', id: 'DESC' },
     });
     if (!rawMetadata) {
-      throw new Error(`No raw metadata found for match ${matchId}`);
+      throw new MissingRawMatchMetadataError(matchId);
     }
 
     return this.resolveAndPersist(rawMetadata);
@@ -80,7 +87,7 @@ export class RulesetResolverService {
       order: { fetchedAt: 'DESC', id: 'DESC' },
     });
     if (!rawMetadata) {
-      throw new Error(`No raw metadata found for match ${matchId}`);
+      throw new MissingRawMatchMetadataError(matchId);
     }
 
     if (
