@@ -44,7 +44,7 @@ function strategy(secondBranchItemId: number, maxSelect = 1): BuildStrategySpecV
     goals: [...core, branchA, branchB],
     branchGroups: [{
       branchGroupId: 'main-branch', optionGoalIds: ['branch-upgrade', 'branch-other'],
-      minSelect: 1, maxSelect, commitment: 'ON_FIRST_PURCHASE',
+      minSelect: 1, maxSelect,
     }],
     situationalWindows: [],
     investmentPolicy: { objectives: [], preferredWeights: { weapon: 1, vitality: 0, spirit: 0 } },
