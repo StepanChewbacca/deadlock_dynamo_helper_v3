@@ -17,16 +17,51 @@ const spec: BuildStrategySpecV1 = {
   terminalPolicy: { requiredGoalIds: ['g'], allowWaiveSoftGoals: true },
 };
 
+function forHero(heroId: number, strategyId: string, patchId = 'p1'): BuildStrategySpecV1 {
+  return { ...spec, heroId, strategyId, sourcePatchId: patchId };
+}
+
 describe('build strategy registry v1', () => {
   it('stores validated immutable snapshots and returns defensive copies', () => {
     const registry = new BuildStrategyRegistryV1Service();
     registry.replaceSnapshot({ rulesetId: 'r1', patchId: 'p1', catalogSha256: 'a'.repeat(64), sourceSha256: 'b'.repeat(64), specs: [spec], itemGraph: graph });
 
-    const first = registry.getStrategies(1, 'r1', 'a'.repeat(64));
+    const first = registry.getStrategies(1, 'r1', 'a'.repeat(64), 'p1');
     expect(first).toHaveLength(1);
     expect(first[0].strategyId).toBe('s1');
     (first as BuildStrategySpecV1[]).splice(0, 1);
-    expect(registry.getStrategies(1, 'r1', 'a'.repeat(64))).toHaveLength(1);
+    expect(registry.getStrategies(1, 'r1', 'a'.repeat(64), 'p1')).toHaveLength(1);
+  });
+
+  it('keeps independently mined heroes in the same exact scope', () => {
+    const registry = new BuildStrategyRegistryV1Service();
+    registry.replaceSnapshot({
+      rulesetId: 'r1', patchId: 'p1', catalogSha256: 'a'.repeat(64), sourceSha256: 'b'.repeat(64),
+      specs: [forHero(1, 'hero-1')], itemGraph: graph,
+    });
+    registry.replaceSnapshot({
+      rulesetId: 'r1', patchId: 'p1', catalogSha256: 'a'.repeat(64), sourceSha256: 'c'.repeat(64),
+      specs: [forHero(2, 'hero-2')], itemGraph: graph,
+    });
+
+    expect(registry.getStrategies(1, 'r1', 'a'.repeat(64), 'p1').map((entry) => entry.strategyId)).toEqual(['hero-1']);
+    expect(registry.getStrategies(2, 'r1', 'a'.repeat(64), 'p1').map((entry) => entry.strategyId)).toEqual(['hero-2']);
+  });
+
+  it('keeps patch scopes isolated even when ruleset and catalog identities match', () => {
+    const registry = new BuildStrategyRegistryV1Service();
+    registry.replaceSnapshot({
+      rulesetId: 'r1', patchId: 'p1', catalogSha256: 'a'.repeat(64), sourceSha256: 'b'.repeat(64),
+      specs: [forHero(1, 'patch-1', 'p1')], itemGraph: graph,
+    });
+    registry.replaceSnapshot({
+      rulesetId: 'r1', patchId: 'p2', catalogSha256: 'a'.repeat(64), sourceSha256: 'c'.repeat(64),
+      specs: [forHero(1, 'patch-2', 'p2')], itemGraph: graph,
+    });
+
+    expect(registry.getStrategies(1, 'r1', 'a'.repeat(64), 'p1').map((entry) => entry.strategyId)).toEqual(['patch-1']);
+    expect(registry.getStrategies(1, 'r1', 'a'.repeat(64), 'p2').map((entry) => entry.strategyId)).toEqual(['patch-2']);
+    expect(registry.getStrategies(1, 'r1', 'a'.repeat(64))).toEqual([]);
   });
 
   it('rejects invalid specs instead of publishing partial strategy state', () => {
