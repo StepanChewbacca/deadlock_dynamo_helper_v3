@@ -171,7 +171,7 @@ describe('strategy-first runtime continuity v1', () => {
       commitment: 'COMMITTED',
       selectedAtGameTimeSec: 180,
       posterior: 0.91,
-      reasonCodes: ['DISTINCTIVE_PREFIX_COMMITMENT'],
+      replanReasons: ['DISTINCTIVE_PREFIX_COMMITMENT'],
     });
     expect(captured.previousContract).toMatchObject({
       strategyId: 'sticky-strategy',
@@ -190,7 +190,7 @@ describe('strategy-first runtime continuity v1', () => {
         commitment: 'COMMITTED',
         selectedAtGameTimeSec: 120,
         posterior: 0.88,
-        reasonCodes: ['STICKY_COMMITTED_STRATEGY'],
+        replanReasons: ['STICKY_COMMITTED_STRATEGY'],
       },
       contract: {
         selectedBranches: { branch: 'a' },
