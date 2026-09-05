@@ -144,7 +144,7 @@ function buildPayload(
     .sort((a, b) => a.parentItemId - b.parentItemId || a.componentItemId - b.componentItemId);
   return {
     schemaVersion: 1,
-    specs: clone(specs).sort((a, b) => a.strategyId.localeCompare(b.strategyId)),
+    specs: clone([...specs]).sort((a, b) => a.strategyId.localeCompare(b.strategyId)),
     itemDefinitions,
     lineageEdges,
   };
