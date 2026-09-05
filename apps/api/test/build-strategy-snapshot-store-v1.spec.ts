@@ -44,6 +44,10 @@ const spec: BuildStrategySpecV1 = {
   terminalPolicy: { requiredGoalIds: ['core'], allowWaiveSoftGoals: true },
 };
 
+function forHero(heroId: number, strategyId: string): BuildStrategySpecV1 {
+  return { ...spec, heroId, strategyId };
+}
+
 function repository() {
   const rows: any[] = [];
   return {
@@ -62,7 +66,7 @@ function repository() {
       return { affected: rows.length };
     }),
     find: jest.fn(async (options: any) => rows
-      .filter((row) => options?.where?.active === undefined || row.active === options.where.active)
+      .filter((row) => Object.entries(options?.where ?? {}).every(([key, value]) => row[key] === value))
       .sort((a, b) => String(a.snapshotId).localeCompare(String(b.snapshotId)))),
   } as any;
 }
@@ -87,48 +91,70 @@ describe('build strategy snapshot store v1', () => {
     expect(repo.rows).toHaveLength(1);
     expect(repo.rows[0]).toMatchObject({
       snapshotId: 'strategy-snapshot-1',
+      heroId: 1,
       rulesetId: 'r1',
+      patchId: 'p1',
       catalogSha256: 'a'.repeat(64),
       active: true,
     });
     expect(repo.rows[0].contentSha256).toMatch(/^[a-f0-9]{64}$/);
-    expect(registry.getStrategies(1, 'r1', 'a'.repeat(64)).map((entry) => entry.strategyId))
+    expect(registry.getStrategies(1, 'r1', 'a'.repeat(64), 'p1').map((entry) => entry.strategyId))
       .toEqual(['hero1:archetype:a']);
   });
 
-  it('rehydrates the in-memory registry from persisted immutable topology', async () => {
+  it('keeps active snapshots for other heroes while replacing the same hero scope', async () => {
+    const repo = repository();
+    const registry = new BuildStrategyRegistryV1Service();
+    const store = new BuildStrategySnapshotStoreV1Service(repo, registry);
+
+    await store.publish({
+      snapshotId: 'hero-1-v1', rulesetId: 'r1', patchId: 'p1', catalogSha256: 'a'.repeat(64),
+      sourceSha256: 'b'.repeat(64), specs: [forHero(1, 'hero-1-v1')], itemGraph: graph,
+    });
+    await store.publish({
+      snapshotId: 'hero-2-v1', rulesetId: 'r1', patchId: 'p1', catalogSha256: 'a'.repeat(64),
+      sourceSha256: 'c'.repeat(64), specs: [forHero(2, 'hero-2-v1')], itemGraph: graph,
+    });
+    await store.publish({
+      snapshotId: 'hero-1-v2', rulesetId: 'r1', patchId: 'p1', catalogSha256: 'a'.repeat(64),
+      sourceSha256: 'd'.repeat(64), specs: [forHero(1, 'hero-1-v2')], itemGraph: graph,
+    });
+
+    expect(repo.rows.find((row) => row.snapshotId === 'hero-1-v1')?.active).toBe(false);
+    expect(repo.rows.find((row) => row.snapshotId === 'hero-2-v1')?.active).toBe(true);
+    expect(repo.rows.find((row) => row.snapshotId === 'hero-1-v2')?.active).toBe(true);
+    expect(registry.getStrategies(1, 'r1', 'a'.repeat(64), 'p1').map((entry) => entry.strategyId)).toEqual(['hero-1-v2']);
+    expect(registry.getStrategies(2, 'r1', 'a'.repeat(64), 'p1').map((entry) => entry.strategyId)).toEqual(['hero-2-v1']);
+  });
+
+  it('rehydrates multiple hero snapshots into the in-memory registry', async () => {
     const repo = repository();
     const firstRegistry = new BuildStrategyRegistryV1Service();
     const firstStore = new BuildStrategySnapshotStoreV1Service(repo, firstRegistry);
     await firstStore.publish({
-      snapshotId: 'strategy-snapshot-1',
-      rulesetId: 'r1',
-      patchId: 'p1',
-      catalogSha256: 'a'.repeat(64),
-      sourceSha256: 'b'.repeat(64),
-      specs: [spec],
-      itemGraph: graph,
+      snapshotId: 'strategy-snapshot-1', rulesetId: 'r1', patchId: 'p1', catalogSha256: 'a'.repeat(64),
+      sourceSha256: 'b'.repeat(64), specs: [forHero(1, 'hero-1')], itemGraph: graph,
+    });
+    await firstStore.publish({
+      snapshotId: 'strategy-snapshot-2', rulesetId: 'r1', patchId: 'p1', catalogSha256: 'a'.repeat(64),
+      sourceSha256: 'c'.repeat(64), specs: [forHero(2, 'hero-2')], itemGraph: graph,
     });
 
     const restoredRegistry = new BuildStrategyRegistryV1Service();
     const restoredStore = new BuildStrategySnapshotStoreV1Service(repo, restoredRegistry);
     const count = await restoredStore.hydrateActive();
 
-    expect(count).toBe(1);
-    expect(restoredRegistry.getStrategies(1, 'r1', 'a'.repeat(64))).toEqual([spec]);
+    expect(count).toBe(2);
+    expect(restoredRegistry.getStrategies(1, 'r1', 'a'.repeat(64), 'p1').map((entry) => entry.strategyId)).toEqual(['hero-1']);
+    expect(restoredRegistry.getStrategies(2, 'r1', 'a'.repeat(64), 'p1').map((entry) => entry.strategyId)).toEqual(['hero-2']);
   });
 
   it('fails closed when a persisted snapshot content hash is tampered', async () => {
     const repo = repository();
     const firstStore = new BuildStrategySnapshotStoreV1Service(repo, new BuildStrategyRegistryV1Service());
     await firstStore.publish({
-      snapshotId: 'strategy-snapshot-1',
-      rulesetId: 'r1',
-      patchId: 'p1',
-      catalogSha256: 'a'.repeat(64),
-      sourceSha256: 'b'.repeat(64),
-      specs: [spec],
-      itemGraph: graph,
+      snapshotId: 'strategy-snapshot-1', rulesetId: 'r1', patchId: 'p1', catalogSha256: 'a'.repeat(64),
+      sourceSha256: 'b'.repeat(64), specs: [spec], itemGraph: graph,
     });
     repo.rows[0].contentSha256 = '0'.repeat(64);
 
