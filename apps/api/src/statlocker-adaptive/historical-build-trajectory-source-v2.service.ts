@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { RecommendationItemGraph } from '@deadlock-live-probe/build-domain';
 import { MatchPlayer } from '../deadlock-live/entities/match-player.entity';
 import {
@@ -51,7 +51,20 @@ export class HistoricalBuildTrajectorySourceV2Service {
       order: { matchId: 'DESC', id: 'ASC' },
       take: Math.max(1, Math.min(100_000, Math.floor(input.limit ?? 10_000))),
     });
-    const peerCache = new Map<number, readonly MatchPlayer[]>();
+    const peersByMatchId = new Map<number, MatchPlayer[]>();
+    const matchIds = [...new Set(targets.map((player) => Number(player.matchId)))];
+    for (let offset = 0; offset < matchIds.length; offset += 500) {
+      const peers = await this.players.find({
+        where: { matchId: In(matchIds.slice(offset, offset + 500)) },
+        select: { id: true, matchId: true, heroId: true, team: true },
+        order: { matchId: 'ASC', id: 'ASC' },
+      });
+      for (const peer of peers) {
+        const matchPeers = peersByMatchId.get(Number(peer.matchId));
+        if (matchPeers) matchPeers.push(peer);
+        else peersByMatchId.set(Number(peer.matchId), [peer]);
+      }
+    }
     const trajectories: PlannerTrajectoryV2[] = [];
     const rejected: HistoricalBuildTrajectoryRejectionV2[] = [];
 
@@ -66,14 +79,7 @@ export class HistoricalBuildTrajectorySourceV2Service {
         });
         continue;
       }
-      let peers = peerCache.get(Number(player.matchId));
-      if (!peers) {
-        peers = await this.players.find({
-          where: { matchId: player.matchId },
-          order: { id: 'ASC' },
-        });
-        peerCache.set(Number(player.matchId), peers);
-      }
+      const peers = peersByMatchId.get(Number(player.matchId)) ?? [];
       const result = this.extractor.extract({
         matchId: String(player.matchId),
         playerKey,

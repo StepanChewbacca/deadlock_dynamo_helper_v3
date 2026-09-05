@@ -58,6 +58,50 @@ function sourceForResolution(resolved: any, error?: Error) {
   );
 }
 
+function multiMatchRepository(reversePeers = false) {
+  const targets: any[] = [
+    {
+      id: 20,
+      matchId: 101,
+      heroId: 1,
+      team: 1,
+      won: false,
+      match: { matchId: 101, averageBadge: 42 },
+      itemPurchases: [{ itemId: 2, purchaseTimeS: 200, soldTimeS: null, upgradeId: null }],
+    },
+    {
+      id: 10,
+      matchId: 100,
+      heroId: 1,
+      team: 0,
+      won: true,
+      match: { matchId: 100, averageBadge: 67 },
+      itemPurchases: [{ itemId: 1, purchaseTimeS: 100, soldTimeS: null, upgradeId: null }],
+    },
+  ];
+  const peerRows: any[] = [
+    targets[0],
+    { id: 21, matchId: 101, heroId: 3, team: 1 },
+    { id: 22, matchId: 101, heroId: 4, team: 0 },
+    targets[1],
+    { id: 11, matchId: 100, heroId: 2, team: 0 },
+    { id: 12, matchId: 100, heroId: 3, team: 1 },
+  ];
+  const rows = reversePeers ? [...peerRows].reverse() : peerRows;
+  const peerFindCalls: any[] = [];
+  const repository = {
+    peerFindCalls,
+    find: jest.fn(async (options: any) => {
+      if (options?.where?.heroId === 1) return targets;
+      peerFindCalls.push(options);
+      const matchId = options?.where?.matchId;
+      const matchIds = Array.isArray(matchId?._value) ? matchId._value : [matchId];
+      return rows.filter((row) => matchIds.includes(row.matchId));
+    }),
+  };
+  return repository as any;
+}
+
 const sourceInput = {
   heroId: 1,
   patchId: 'p1',
@@ -70,6 +114,38 @@ const sourceInput = {
 };
 
 describe('historical build trajectory source v2', () => {
+  it('batches peer loading across target matches and keeps equivalent output byte-for-byte deterministic', async () => {
+    const repositoryA = multiMatchRepository();
+    const repositoryB = multiMatchRepository(true);
+    const resolver = {
+      getLatestForMatch: jest.fn(async (matchId: number) => resolution({ matchId })),
+    } as any;
+    const sourceA = new HistoricalBuildTrajectorySourceV2Service(
+      repositoryA,
+      new HistoricalPlannerTrajectoryExtractorV2Service(),
+      resolver,
+    );
+    const sourceB = new HistoricalBuildTrajectorySourceV2Service(
+      repositoryB,
+      new HistoricalPlannerTrajectoryExtractorV2Service(),
+      resolver,
+    );
+
+    const resultA = await sourceA.load(sourceInput);
+    const resultB = await sourceB.load(sourceInput);
+
+    expect(repositoryA.peerFindCalls).toHaveLength(1);
+    expect(repositoryA.peerFindCalls[0].where.matchId._value).toEqual([101, 100]);
+    expect(repositoryA.peerFindCalls[0].relations).toBeUndefined();
+    expect(repositoryA.peerFindCalls[0].select).toEqual({
+      id: true,
+      matchId: true,
+      heroId: true,
+      team: true,
+    });
+    expect(JSON.stringify(resultA)).toBe(JSON.stringify(resultB));
+  });
+
   it('loads exact per-match purchase history with ally/enemy and rank cohort context', async () => {
     const source = new HistoricalBuildTrajectorySourceV2Service(
       repository(),
