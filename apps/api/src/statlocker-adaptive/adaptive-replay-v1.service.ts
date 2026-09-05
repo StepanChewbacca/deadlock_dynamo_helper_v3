@@ -122,6 +122,14 @@ export interface AdaptiveReplayOutputV1 {
   snapshotIds: readonly string[];
 }
 
+export interface AdaptivePreviousContextV1 {
+  result: AdaptiveRecommendationResultV1;
+  replayInput: AdaptiveReplayInputV1;
+  decisionId: string;
+  stateRevision: string;
+  decidedAt: Date;
+}
+
 @Injectable()
 export class AdaptiveReplayV1Service {
   constructor(
@@ -174,17 +182,31 @@ export class AdaptiveReplayV1Service {
     return this.run(input);
   }
 
-  async getPreviousPlan(
+  async getPreviousContext(
     matchId: string,
     playerKey: string,
-  ): Promise<AdaptiveRecommendationResultV1 | undefined> {
+  ): Promise<AdaptivePreviousContextV1 | undefined> {
     const row = await this.repository.findOne({
       where: { matchId, playerKey },
       order: { decidedAt: 'DESC', decisionId: 'DESC' },
     });
     if (!row) return undefined;
     const result = row.result as unknown as AdaptiveRecommendationResultV1;
-    return result.ready ? result : undefined;
+    if (!result.ready) return undefined;
+    return {
+      result,
+      replayInput: row.replayInput as unknown as AdaptiveReplayInputV1,
+      decisionId: row.decisionId,
+      stateRevision: row.stateRevision,
+      decidedAt: row.decidedAt,
+    };
+  }
+
+  async getPreviousPlan(
+    matchId: string,
+    playerKey: string,
+  ): Promise<AdaptiveRecommendationResultV1 | undefined> {
+    return (await this.getPreviousContext(matchId, playerKey))?.result;
   }
 
   toReplayInput(
