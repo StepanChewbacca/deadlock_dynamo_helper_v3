@@ -80,6 +80,7 @@ export class BuildStrategyMiningPipelineV1Service {
           strategy,
           itemGraph: input.itemGraph,
           slotRules: slotRulesFromEconomyRulesV1(input.economyRules),
+          economyRules: input.economyRules,
         }),
       }))
       .filter((entry) => !entry.validation.feasible);
@@ -90,6 +91,10 @@ export class BuildStrategyMiningPipelineV1Service {
           ...feasibilityFailures.flatMap((entry) => [
             `STRATEGY:${entry.strategy.strategyId}`,
             ...(entry.validation.failedGoalId ? [`GOAL:${entry.validation.failedGoalId}`] : []),
+            ...(entry.validation.failedInvestmentObjectiveId
+              ? [`OBJECTIVE:${entry.validation.failedInvestmentObjectiveId}`]
+              : []),
+            ...entry.validation.reasonCodes,
           ]),
         ]),
         archetypeCount: mining.archetypes.length,
