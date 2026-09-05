@@ -14,6 +14,7 @@ import { RecommendationItemGraph } from './recommendation-item-graph';
 import { InventoryAcquisitionType, InventoryItemInstance, InventorySlotType, InventoryState } from './types';
 
 export interface RecommendationCandidateGeneratorRules {
+  /** @deprecated Use baseSlotsByType. Kept only for Dataset V1/backward-compatible callers. */
   baseSlots?: number;
   baseSlotsByType: Readonly<Record<InventorySlotType, number>>;
   maxFlexSlots: number;
@@ -24,10 +25,19 @@ export interface RecommendationCandidateGeneratorRules {
   generateTargetedWaitActions: boolean;
 }
 
+export interface RecommendationSlotUsage {
+  itemCount: number;
+  usedByType: Readonly<Record<InventorySlotType, number>>;
+  baseCapacityByType: Readonly<Record<InventorySlotType, number>>;
+  overflowByType: Readonly<Record<InventorySlotType, number>>;
+  flexUsed: number;
+  activeItemsUsed: number;
+}
+
 export const DEFAULT_RECOMMENDATION_CANDIDATE_RULES: RecommendationCandidateGeneratorRules = {
-  baseSlots: 9,
+  baseSlots: 12,
   baseSlotsByType: { weapon: 4, vitality: 4, spirit: 4 },
-  maxFlexSlots: 3,
+  maxFlexSlots: 4,
   flexCapacityEvidence: 'UNKNOWN',
   maxActiveItems: 4,
   allowSellOnlyActions: true,
@@ -302,24 +312,54 @@ function slotFailureReason(
   if (resultingUsed > rules.maxFlexSlots) return 'SLOT_LIMIT_EXCEEDED';
 
   if (rules.flexCapacityEvidence === 'UNKNOWN') {
-    return resultingUsed > currentUsed ? 'FLEX_SLOT_CAPACITY_UNKNOWN' : undefined;
+    return 'FLEX_SLOT_CAPACITY_UNKNOWN';
   }
 
   const unlocked = Math.min(rules.maxFlexSlots, Math.max(0, rules.unlockedFlexSlots ?? 0));
   return resultingUsed > unlocked ? 'SLOT_LIMIT_EXCEEDED' : undefined;
 }
 
+export function recommendationSlotUsageFor(
+  itemIds: readonly number[],
+  graph: RecommendationItemGraph,
+  rules: RecommendationCandidateGeneratorRules,
+): RecommendationSlotUsage {
+  const usedByType: Record<InventorySlotType, number> = { weapon: 0, vitality: 0, spirit: 0 };
+  let activeItemsUsed = 0;
+  for (const itemId of [...new Set(itemIds)]) {
+    const item = graph.getItem(itemId);
+    if (!item) continue;
+    usedByType[item.slotType] += 1;
+    if (item.active) activeItemsUsed += 1;
+  }
+
+  const baseCapacityByType: Record<InventorySlotType, number> = {
+    weapon: Math.max(0, Math.floor(rules.baseSlotsByType.weapon)),
+    vitality: Math.max(0, Math.floor(rules.baseSlotsByType.vitality)),
+    spirit: Math.max(0, Math.floor(rules.baseSlotsByType.spirit)),
+  };
+  const overflowByType: Record<InventorySlotType, number> = {
+    weapon: Math.max(0, usedByType.weapon - baseCapacityByType.weapon),
+    vitality: Math.max(0, usedByType.vitality - baseCapacityByType.vitality),
+    spirit: Math.max(0, usedByType.spirit - baseCapacityByType.spirit),
+  };
+
+  return {
+    itemCount: usedByType.weapon + usedByType.vitality + usedByType.spirit,
+    usedByType,
+    baseCapacityByType,
+    overflowByType,
+    flexUsed: overflowByType.weapon + overflowByType.vitality + overflowByType.spirit,
+    activeItemsUsed,
+  };
+}
+
 export function flexUsedFor(
   itemIds: readonly number[],
-  _graph: RecommendationItemGraph,
+  graph: RecommendationItemGraph,
   rules: RecommendationCandidateGeneratorRules,
 ): number {
-  const legacyBaseSlots = (Object.keys(rules.baseSlotsByType) as InventorySlotType[])
-    .reduce((sum, type) => sum + Math.max(0, rules.baseSlotsByType[type]), 0);
-  const baseSlots = Number.isFinite(rules.baseSlots)
-    ? Math.max(0, Math.floor(rules.baseSlots as number))
-    : legacyBaseSlots;
-  return Math.max(0, itemIds.length - baseSlots);
+  return recommendationSlotUsageFor(itemIds, graph, rules).flexUsed;
 }
 
 function checkActiveLimit(
@@ -327,9 +367,7 @@ function checkActiveLimit(
   graph: RecommendationItemGraph,
   rules: RecommendationCandidateGeneratorRules,
 ): boolean {
-  let activeCount = 0;
-  for (const itemId of itemIds) if (graph.getItem(itemId)?.active) activeCount += 1;
-  return activeCount <= rules.maxActiveItems;
+  return recommendationSlotUsageFor(itemIds, graph, rules).activeItemsUsed <= rules.maxActiveItems;
 }
 
 function heldIds(state: RecommendationDecisionState): number[] {
