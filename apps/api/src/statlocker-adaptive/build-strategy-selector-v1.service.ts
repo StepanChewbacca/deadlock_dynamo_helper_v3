@@ -15,6 +15,8 @@ export interface BuildStrategyPurchaseEvidenceV1 {
 
 export interface BuildStrategySelectorV1Input {
   strategies: readonly BuildStrategySpecV1[];
+  heroId?: number;
+  rulesetId?: string;
   itemGraph: RecommendationItemGraph;
   ownedItemIds: readonly number[];
   purchaseHistory: readonly BuildStrategyPurchaseEvidenceV1[];
@@ -25,12 +27,14 @@ export interface BuildStrategySelectorV1Input {
 @Injectable()
 export class BuildStrategySelectorV1Service {
   select(input: BuildStrategySelectorV1Input): BuildStrategySelectionV1 {
+    const inferredHeroId = input.heroId ?? input.strategies[0]?.heroId;
+    const inferredRulesetId = input.rulesetId ?? input.strategies[0]?.rulesetId;
     const candidates = input.strategies
-      .filter((strategy) => strategy.heroId > 0)
-      .filter((strategy) => strategy.rulesetId === input.strategies[0]?.rulesetId)
+      .filter((strategy) => strategy.heroId === inferredHeroId)
+      .filter((strategy) => strategy.rulesetId === inferredRulesetId)
       .sort((a, b) => a.strategyId.localeCompare(b.strategyId));
     if (candidates.length === 0) {
-      return { commitment: 'OOD', posteriors: [], reasonCodes: ['NO_STRATEGIES_AVAILABLE'] };
+      return { commitment: 'OOD', posteriors: [], reasonCodes: ['NO_STRATEGIES_AVAILABLE_FOR_LIVE_SCOPE'] };
     }
 
     const scored = candidates.map((strategy) => {
