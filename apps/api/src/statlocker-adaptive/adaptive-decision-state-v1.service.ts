@@ -20,13 +20,13 @@ import { RecommendationItemCatalogItemV1 } from '../deadlock-live/entities/recom
 import { RecommendationItemCatalogRecipeV1 } from '../deadlock-live/entities/recommendation-item-catalog-recipe-v1.entity';
 import { resolveRecommendationCatalogAssetSemantics } from '../deadlock-live/recommendation-catalog-asset-semantics';
 import {
-  ADAPTIVE_UNIVERSAL_SLOT_RULES_V1,
   AdaptiveInvestmentStateV1,
   AdaptiveSlotStateV1,
   RecommendationEconomyRulesV1,
   deriveAdaptiveInvestmentStateV1,
   deriveAdaptiveSlotStateV1,
   resolveRecommendationEconomyRulesV1,
+  slotRulesFromEconomyRulesV1,
 } from './adaptive-economy-v1';
 
 export interface AdaptiveDecisionStateV1 {
@@ -36,7 +36,10 @@ export interface AdaptiveDecisionStateV1 {
   catalogSha256: string;
   rulesetId: string;
   localSteamId: string;
+  allyHeroIds: readonly number[];
   enemyHeroIds: readonly number[];
+  allyItemIds: readonly number[];
+  enemyItemIds: readonly number[];
   ourTeamSouls?: number;
   enemyTeamSouls?: number;
   slots: AdaptiveSlotStateV1;
@@ -140,7 +143,7 @@ export class AdaptiveDecisionStateV1Service {
     const slots = deriveAdaptiveSlotStateV1(
       ownedItemIds,
       compiled.graph,
-      ADAPTIVE_UNIVERSAL_SLOT_RULES_V1,
+      slotRulesFromEconomyRulesV1(exactEconomyRules),
       { evidence: 'UNKNOWN' },
     );
     const investment = deriveAdaptiveInvestmentStateV1(ownedItemIds, compiled.graph, exactEconomyRules);
@@ -153,12 +156,14 @@ export class AdaptiveDecisionStateV1Service {
       ? observedFact(local.souls as number, `souls-affordability:${compiled.rulesetId}:${version.payloadSha256}`)
       : unknownFact<number>('souls-affordability-scope-unverified');
 
+    const players = Object.values(match.playersBySteamId);
+    const allies = players.filter((player) => player.teamId === local.teamId && player.steamId !== localSteamId);
+    const enemies = players.filter((player) => player.teamId !== undefined && player.teamId !== local.teamId);
+    const allyHeroIds = stableHeroIds(allies);
+    const enemyHeroIds = stableHeroIds(enemies);
+    const allyItemIds = stableObservedItemIds(allies);
+    const enemyItemIds = stableObservedItemIds(enemies);
     const teamTotals = calculateTeamSoulTotals(match, local.teamId);
-    const enemyHeroIds = Object.values(match.playersBySteamId)
-      .filter((player) => player.teamId !== undefined && player.teamId !== local.teamId)
-      .map((player) => player.heroId)
-      .filter((heroId): heroId is number => Number.isInteger(heroId))
-      .sort((a, b) => a - b);
     const gameTimeSec = Number.isFinite(match.gameTimeSec) ? (match.gameTimeSec as number) : 0;
     const stateRevision = computeStateRevision(match, localSteamId, version, ownedItemIds);
     const state: RecommendationDecisionState = {
@@ -182,7 +187,10 @@ export class AdaptiveDecisionStateV1Service {
       catalogSha256: version.payloadSha256,
       rulesetId: compiled.rulesetId,
       localSteamId,
+      allyHeroIds,
       enemyHeroIds,
+      allyItemIds,
+      enemyItemIds,
       ourTeamSouls: teamTotals.our,
       enemyTeamSouls: teamTotals.enemy,
       slots,
@@ -211,6 +219,19 @@ function resolveLocalSteamId(match: MinimalMatchState, requested?: string): stri
   if (realPlayers.length === 1) return realPlayers[0].steamId;
 
   throw new AdaptiveLiveStateNotReadyError(match.matchId, 'LOCAL_PLAYER_UNRESOLVED');
+}
+
+function stableHeroIds(players: readonly MinimalPlayerState[]): number[] {
+  return players
+    .map((player) => player.heroId)
+    .filter((heroId): heroId is number => Number.isInteger(heroId))
+    .sort((a, b) => a - b);
+}
+
+function stableObservedItemIds(players: readonly MinimalPlayerState[]): number[] {
+  return [...new Set(players.flatMap((player) => player.items.map((item) => item.id)))]
+    .filter((itemId) => Number.isInteger(itemId) && itemId > 0)
+    .sort((a, b) => a - b);
 }
 
 function calculateTeamSoulTotals(
