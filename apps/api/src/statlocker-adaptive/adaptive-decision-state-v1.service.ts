@@ -140,7 +140,7 @@ export class AdaptiveDecisionStateV1Service {
       nextInstanceSequence: heldByItemId.size + 1,
     };
 
-    const exactEconomyRules = await this.economyRulesStore.resolveExact(
+    const exactEconomyRules = await this.economyRulesStore?.resolveExact?.(
       compiled.rulesetId,
       version.payloadSha256,
     );

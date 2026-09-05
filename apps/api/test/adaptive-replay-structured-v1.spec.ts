@@ -395,20 +395,25 @@ function preparatorySellReplayInput(): AdaptiveReplayInputV1 {
   return input;
 }
 
-function exactSlotState(usedSlots: number, unlockedFlexSlots: number) {
+function exactSlotState(usedSlots: number, unlockedFlexSlots: number): any {
   const baseSlots = 9;
   const maxFlexSlots = 3;
   const usedFlexSlots = Math.max(0, usedSlots - baseSlots);
   return {
     baseSlots,
+    baseSlotsByType: { weapon: 3, vitality: 3, spirit: 3 },
+    maxActiveItems: 4,
     maxFlexSlots,
     unlockedFlexSlots,
     usedSlots,
     usedFlexSlots,
+    usedSlotsByType: { weapon: Math.min(3, usedSlots), vitality: Math.max(0, Math.min(3, usedSlots - 3)), spirit: Math.max(0, Math.min(3, usedSlots - 6)) },
+    overflowByType: { weapon: Math.max(0, usedSlots - 3), vitality: 0, spirit: 0 },
     provedFlexLowerBound: usedFlexSlots,
     freeBaseSlots: Math.max(0, baseSlots - usedSlots),
     freeFlexSlots: Math.max(0, unlockedFlexSlots - usedFlexSlots),
     totalCapacity: baseSlots + unlockedFlexSlots,
+    flexCapacityEvidence: 'OBSERVED',
     evidence: 'OBSERVED' as const,
   };
 }
@@ -718,6 +723,8 @@ describe('AdaptiveReplayV1Service structured replay invariants', () => {
       rulesetId: 'ruleset-a',
       catalogSha256,
       baseSlots: 9,
+      baseSlotsByType: { weapon: 3, vitality: 3, spirit: 3 },
+      maxActiveItems: 4,
       maxFlexSlots: 3,
       investmentBreakpoints: {
         weapon: [1600],

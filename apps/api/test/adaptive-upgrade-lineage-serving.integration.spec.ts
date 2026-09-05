@@ -183,6 +183,7 @@ describe('adaptive upgrade-lineage serving integration', () => {
       versionRepo,
       itemRepo,
       recipeRepo,
+      { getRules: jest.fn().mockResolvedValue(undefined) } as any,
     );
 
     const built = await decisionState.build(liveMatch.matchId, 'local');

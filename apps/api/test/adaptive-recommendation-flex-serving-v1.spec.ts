@@ -9,10 +9,11 @@ const catalogSha256 = 'a'.repeat(64);
 function graph() {
   return createRecommendationItemGraph(Array.from({ length: 10 }, (_, index) => {
     const itemId = index + 1;
+    const slotType = itemId <= 3 ? 'weapon' : itemId <= 6 ? 'vitality' : itemId <= 9 ? 'spirit' : 'weapon';
     return {
       itemId,
       name: `Item ${itemId}`,
-      slotType: 'weapon' as const,
+      slotType: slotType as any,
       active: false,
       availableRulesetIds: ['ruleset-a'],
       directPurchaseCost: 500,
@@ -62,15 +63,29 @@ function decision(revision: string, unlockedFlexSlots = 1) {
     enemyHeroIds: [20],
     slots: {
       baseSlots: 9,
+      baseSlotsByType: { weapon: 3, vitality: 3, spirit: 3 },
+      maxActiveItems: 4,
       maxFlexSlots: 3,
       unlockedFlexSlots,
       usedSlots: 9,
       usedFlexSlots: 0,
+      usedSlotsByType: { weapon: 3, vitality: 3, spirit: 3 },
+      overflowByType: { weapon: 0, vitality: 0, spirit: 0 },
       provedFlexLowerBound: 0,
       freeBaseSlots: 0,
       freeFlexSlots: unlockedFlexSlots,
       totalCapacity: 9 + unlockedFlexSlots,
+      flexCapacityEvidence: 'OBSERVED',
       evidence: 'OBSERVED',
+    },
+    economyRules: {
+      rulesetId: 'ruleset-a',
+      catalogSha256,
+      baseSlots: 9,
+      baseSlotsByType: { weapon: 3, vitality: 3, spirit: 3 },
+      maxActiveItems: 4,
+      maxFlexSlots: 3,
+      investmentBreakpoints: { weapon: [], vitality: [], spirit: [] },
     },
     investment: {
       tracks: {

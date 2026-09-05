@@ -84,7 +84,7 @@ function detectObservedReplacement(
     .filter((itemId) => previousByItem.has(itemId) && !nextByItem.has(itemId))
     .sort((a, b) => a - b);
   const purchasedCandidates = [...purchased]
-    .filter((itemId) => !previousByItem.has(itemId) && nextByItem.has(itemId))
+    .filter((itemId) => (!previousByItem.has(itemId) || previousByItem.get(itemId)?.status !== 'OWNED') && nextByItem.has(itemId))
     .sort((a, b) => a - b);
   if (soldCandidates.length !== 1 || purchasedCandidates.length !== 1) return undefined;
   const sellItemId = soldCandidates[0];

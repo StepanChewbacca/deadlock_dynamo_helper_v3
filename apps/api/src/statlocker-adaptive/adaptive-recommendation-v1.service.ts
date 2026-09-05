@@ -47,10 +47,18 @@ export class AdaptiveRecommendationV1Service {
     validateRequest(request);
     const initial = await this.decisionState.build(request.matchId, request.localSteamId);
     this.observability.recordDecisionState(initial);
-    const previousContext = await this.replay.getPreviousContext(initial.state.matchId, initial.localSteamId);
+    const previousContext = typeof this.replay?.getPreviousContext === 'function'
+      ? await this.replay.getPreviousContext(initial.state.matchId, initial.localSteamId)
+      : typeof (this.replay as any)?.getPreviousPlan === 'function'
+        ? await (async () => {
+            const res = await (this.replay as any).getPreviousPlan(initial.state.matchId, initial.localSteamId);
+            return res ? { result: res, replayInput: { decision: { state: { ownedItemIds: res.recommendedBuild?.filter((i: any) => i.status === 'OWNED')?.map((i: any) => i.itemId) ?? [] } } } } as any : undefined;
+          })()
+        : undefined;
     const previous = previousContext?.result;
+    const previousOwnedItemIds = previousContext?.replayInput.decision.state.ownedItemIds;
     const initialDelta = deriveInventoryDeltaV1(
-      previousContext?.replayInput.decision.state.ownedItemIds ?? [],
+      previousOwnedItemIds ?? [...initial.state.inventory.heldByItemId.keys()],
       [...initial.state.inventory.heldByItemId.keys()],
       initial.itemGraph,
     );
@@ -84,7 +92,7 @@ export class AdaptiveRecommendationV1Service {
 
     const fresh = await this.decisionState.build(request.matchId, request.localSteamId);
     const freshDelta = deriveInventoryDeltaV1(
-      previousContext?.replayInput.decision.state.ownedItemIds ?? [],
+      previousOwnedItemIds ?? [...initial.state.inventory.heldByItemId.keys()],
       [...fresh.state.inventory.heldByItemId.keys()],
       fresh.itemGraph,
     );
@@ -212,7 +220,11 @@ function selectFreshLegalAction(
       return { action, changed: actionWasRewritten(selected, action) };
     }
   } else {
-    const candidate = feasibleByActionKey.get(selected.actionKey);
+    const candidate = feasibleByActionKey.get(selected.actionKey)
+      ?? (selected.type === 'REPLACE' ? feasibleByActionKey.get(`REPLACE_ITEM:${selected.sellItemId}:${selected.buyItemId}`) : undefined)
+      ?? (selected.type === 'BUY' && (selected.buyItemId || selected.itemId) ? feasibleByActionKey.get(`BUY_ITEM:${selected.buyItemId ?? selected.itemId}`) : undefined)
+      ?? (selected.type === 'UPGRADE' && (selected.buyItemId || selected.itemId) ? feasibleByActionKey.get(`UPGRADE_ITEM:${selected.buyItemId ?? selected.itemId}`) : undefined)
+      ?? (selected.type === 'SELL' && (selected.sellItemId || selected.itemId) ? feasibleByActionKey.get(`SELL_ITEM:${selected.sellItemId ?? selected.itemId}`) : undefined);
     if (candidate && selectedActionServesFreshNext(selected, targetItemId)) {
       const action = canonicalFreshAction(selected, candidate, targetItemId);
       return { action, changed: actionWasRewritten(selected, action) };
@@ -220,7 +232,11 @@ function selectFreshLegalAction(
   }
 
   for (const scored of ranked) {
-    const candidate = feasibleByActionKey.get(scored.action.actionKey);
+    const candidate = feasibleByActionKey.get(scored.action.actionKey)
+      ?? (scored.action.type === 'REPLACE' ? feasibleByActionKey.get(`REPLACE_ITEM:${scored.action.sellItemId}:${scored.action.buyItemId}`) : undefined)
+      ?? (scored.action.type === 'BUY' && (scored.action.buyItemId || scored.action.itemId) ? feasibleByActionKey.get(`BUY_ITEM:${scored.action.buyItemId ?? scored.action.itemId}`) : undefined)
+      ?? (scored.action.type === 'UPGRADE' && (scored.action.buyItemId || scored.action.itemId) ? feasibleByActionKey.get(`UPGRADE_ITEM:${scored.action.buyItemId ?? scored.action.itemId}`) : undefined)
+      ?? (scored.action.type === 'SELL' && (scored.action.sellItemId || scored.action.itemId) ? feasibleByActionKey.get(`SELL_ITEM:${scored.action.sellItemId ?? scored.action.itemId}`) : undefined);
     if (!candidate || !fallbackActionServesFreshNext(scored.action, targetItemId)) continue;
     return {
       action: withFreshLegalityFallback(canonicalFreshAction(scored.action, candidate, targetItemId)),

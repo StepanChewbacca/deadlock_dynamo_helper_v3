@@ -50,6 +50,7 @@ it('resolves the sole real Steam player when GEP omits the local marker', async 
     { find: jest.fn().mockResolvedValue([version]) } as any,
     { find: jest.fn().mockResolvedValue(items) } as any,
     { find: jest.fn().mockResolvedValue([]) } as any,
+    { getRules: jest.fn().mockResolvedValue(undefined) } as any,
   );
 
   const result = await service.build('match-1');

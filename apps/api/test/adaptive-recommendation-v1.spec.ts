@@ -72,15 +72,29 @@ function decision(options: {
     },
     slots: {
       baseSlots: 9,
+      baseSlotsByType: { weapon: 3, vitality: 3, spirit: 3 },
+      maxActiveItems: 4,
       maxFlexSlots: 3,
       unlockedFlexSlots,
       usedSlots: owned.length,
       usedFlexSlots: Math.max(0, owned.length - 9),
+      usedSlotsByType: { weapon: owned.length, vitality: 0, spirit: 0 },
+      overflowByType: { weapon: Math.max(0, owned.length - 3), vitality: 0, spirit: 0 },
       provedFlexLowerBound: Math.max(0, owned.length - 9),
       freeBaseSlots: Math.max(0, 9 - owned.length),
       freeFlexSlots: unlockedFlexSlots === undefined ? undefined : Math.max(0, unlockedFlexSlots - Math.max(0, owned.length - 9)),
       totalCapacity: unlockedFlexSlots === undefined ? undefined : 9 + unlockedFlexSlots,
+      flexCapacityEvidence: slotsEvidence,
       evidence: slotsEvidence,
+    },
+    economyRules: {
+      rulesetId: 'ruleset-a',
+      catalogSha256,
+      baseSlots: 9,
+      baseSlotsByType: { weapon: 3, vitality: 3, spirit: 3 },
+      maxActiveItems: 4,
+      maxFlexSlots: 3,
+      investmentBreakpoints: { weapon: [1600], vitality: [1600], spirit: [1600] },
     },
     investment: options.investmentEvidence === 'UNKNOWN'
       ? {
@@ -184,7 +198,7 @@ function realPlannerEvidence(groups: readonly ConsensusBuildGroupV1[], exactWpa:
   const wpaItems = itemIds.map((itemId) => ({
     heroId: 10,
     itemId,
-    meanWpa: 0,
+    meanWpa: exactWpa[itemId] ?? 0,
     sampleSize: 2000,
     wpaConfidence: 1,
     gameState: { even: 0 },
@@ -654,6 +668,7 @@ describe('AdaptiveRecommendationV1Service', () => {
     });
 
     const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
+
     const status = h.observability.getStatus();
     expect(result.nextAction).toEqual(expect.objectContaining({ type: 'HOLD', targetItemId: 2 }));
     expect(status.counters.finalLegalityFallbackCount).toBe(1);
@@ -724,13 +739,14 @@ describe('AdaptiveRecommendationV1Service', () => {
     ];
     const h = harness({
       states: [
-        decision({ wallet: 1000, owned: [1], revision: 'revision-a' }),
-        decision({ wallet: 1000, owned: [1], revision: 'revision-b' }),
+        decision({ wallet: 1000, owned: [1], gameTimeSec: 700, revision: 'revision-a' }),
+        decision({ wallet: 1000, owned: [1], gameTimeSec: 700, revision: 'revision-b' }),
       ],
       plan,
     });
 
     const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
+
     const status = h.observability.getStatus();
     expect(result.nextAction).toMatchObject({ type: 'SELL', sellItemId: 1, targetItemId: 2 });
     expect(status.counters.sellCount).toBe(1);
@@ -779,13 +795,14 @@ describe('AdaptiveRecommendationV1Service', () => {
       observability,
       planner,
       states: [
-        decision({ wallet: 1000, owned: [1], revision: 'revision-a' }),
-        decision({ wallet: 1000, owned: [1], revision: 'revision-b' }),
+        decision({ wallet: 1000, owned: [1], gameTimeSec: 700, revision: 'revision-a' }),
+        decision({ wallet: 1000, owned: [1], gameTimeSec: 700, revision: 'revision-b' }),
       ],
       localEvidence: realPlannerEvidence([group], { 1: 0, 2: 0.9 }),
     });
 
     const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
+
     const status = h.observability.getStatus();
     expect(result.nextAction.type).toBe('REPLACE');
     expect(status.counters.replaceCount).toBe(1);

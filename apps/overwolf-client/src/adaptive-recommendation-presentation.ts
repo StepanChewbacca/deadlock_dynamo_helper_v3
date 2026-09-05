@@ -183,7 +183,7 @@ function presentStrategy(strategy: AdaptiveRecommendationStrategyV1): AdaptivePr
   return {
     idLabel: strategyLabel(strategy.strategyId),
     commitmentLabel: titleCase(strategy.commitment),
-    buildStatusLabel: titleCase(strategy.buildStatus.replace(/_/g, ' ')),
+    buildStatusLabel: humanizeSentence(strategy.buildStatus),
     progressLabel: `${satisfied} / ${total} core goals`,
     progressValue: total === 0 ? 100 : Math.round((satisfied / total) * 100),
     currentGoalLabel,
@@ -211,7 +211,7 @@ function situationalLabel(
   decision: NonNullable<AdaptiveRecommendationStrategyV1['situationalDecision']>,
 ): string {
   const item = presentItem(decision.targetItemId);
-  return `${titleCase(decision.purpose.replace(/_/g, ' '))} window · ${item.known ? item.name : item.diagnosticLabel} · ${toPercent(decision.confidence)}%`;
+  return `${formatPurpose(decision.purpose)} window · ${item.known ? item.name : item.diagnosticLabel} · ${toPercent(decision.confidence)}%`;
 }
 
 function strategyLabel(strategyId: string): string {
@@ -348,4 +348,20 @@ function humanizeReasonCode(code: string): string {
 function toPercent(value: number): number {
   const finite = Number.isFinite(Number(value)) ? Number(value) : 0;
   return Math.round(Math.max(0, Math.min(1, finite)) * 100);
+}
+
+function humanizeSentence(value: string): string {
+  const normalized = value.trim().replace(/[_-]+/g, ' ').toLowerCase();
+  return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : '';
+}
+
+function formatPurpose(purpose: string): string {
+  const acronyms: Record<string, string> = { cc: 'CC', dps: 'DPS', aoe: 'AoE', hp: 'HP' };
+  return purpose
+    .trim()
+    .replace(/[_-]+/g, ' ')
+    .toLowerCase()
+    .split(/\s+/)
+    .map((word) => acronyms[word] ?? (word.charAt(0).toUpperCase() + word.slice(1)))
+    .join(' ');
 }

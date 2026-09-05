@@ -202,6 +202,7 @@ async function createFixture(options: { rebuildSkeleton?: boolean } = {}) {
     versionRepo,
     itemRepo,
     recipeRepo,
+    { getRules: jest.fn().mockResolvedValue(undefined) } as any,
   );
 
   const snapshotRepo = snapshotRepository();
