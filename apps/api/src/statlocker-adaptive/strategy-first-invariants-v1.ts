@@ -16,7 +16,8 @@ export type StrategyFirstInvariantViolationCodeV1 =
   | 'BRANCH_CONTRADICTION'
   | 'UNEXPECTED_COMMITTED_STRATEGY_SWITCH'
   | 'CORE_WITHOUT_EXIT_SLOT'
-  | 'UNEXPLAINED_SITUATIONAL';
+  | 'UNEXPLAINED_SITUATIONAL'
+  | 'NEXT_ACTION_BUILD_MISMATCH';
 
 export interface StrategyFirstInvariantViolationV1 {
   code: StrategyFirstInvariantViolationCodeV1;
@@ -52,6 +53,7 @@ export interface StrategyFirstInvariantSummaryV1 {
   archetypeUnexpectedSwitchRate: number;
   coreWithoutExitSlotRate: number;
   unexplainedSituationalRate: number;
+  nextActionBuildMismatchRate: number;
 }
 
 export function evaluateStrategyFirstInvariantsV1(
@@ -59,7 +61,6 @@ export function evaluateStrategyFirstInvariantsV1(
 ): StrategyFirstInvariantCheckV1 {
   const violations: StrategyFirstInvariantViolationV1[] = [];
   const ownedItemIds = [...input.decision.state.inventory.heldByItemId.keys()].sort((a, b) => a - b);
-  const owned = new Set(ownedItemIds);
 
   if (isTransactional(input.result.nextAction.type)) {
     const legal = generateRecommendationCandidates({
@@ -114,15 +115,35 @@ export function evaluateStrategyFirstInvariantsV1(
     }
   }
 
-  if (input.result.contract.status === 'COMPLETE' || input.result.strategyPlan.buildStatus === 'COMPLETE') {
-    if (input.result.contract.remainingHardGoalIds.length > 0 || input.result.strategyPlan.remainingGoalIds.length > 0) {
-      violations.push({ code: 'FALSE_BUILD_COMPLETE', reasonCodes: ['COMPLETE_WITH_MANDATORY_GOALS_REMAINING'] });
+  const complete = input.result.contract.status === 'COMPLETE' || input.result.strategyPlan.buildStatus === 'COMPLETE';
+  if (complete) {
+    const hardInvestmentStates = new Map(
+      input.result.strategyPlan.investmentPlan.objectives.map((objective) => [objective.objectiveId, objective.state]),
+    );
+    const hardInvestmentRemaining = input.result.strategy.investmentPolicy.objectives
+      .filter((objective) => objective.hard)
+      .filter((objective) => {
+        const state = hardInvestmentStates.get(objective.objectiveId);
+        return state !== 'SATISFIED' && state !== 'WAIVED';
+      });
+    if (
+      input.result.contract.remainingHardGoalIds.length > 0 ||
+      input.result.strategyPlan.remainingGoalIds.length > 0 ||
+      hardInvestmentRemaining.length > 0 ||
+      (input.result.strategyPlan.remainingHardInvestmentObjectiveIds?.length ?? 0) > 0
+    ) {
+      violations.push({
+        code: 'FALSE_BUILD_COMPLETE',
+        reasonCodes: ['COMPLETE_WITH_MANDATORY_OBLIGATIONS_REMAINING'],
+      });
     }
   }
 
   for (const goal of input.result.strategy.goals) {
     if (!goal.hard || goal.minSelect <= 0 || input.result.contract.goalStates[goal.goalId] !== 'SATISFIED') continue;
-    const satisfiedCount = goal.targetItemIds.filter((itemId) => input.decision.itemGraph.isTargetSatisfied(itemId, ownedItemIds)).length;
+    const satisfiedCount = goal.targetItemIds.filter((itemId) =>
+      input.decision.itemGraph.isTargetSatisfied(itemId, ownedItemIds),
+    ).length;
     if (satisfiedCount < goal.minSelect) {
       violations.push({
         code: 'MANDATORY_GOAL_LOST',
@@ -184,6 +205,9 @@ export function evaluateStrategyFirstInvariantsV1(
     }
   }
 
+  const mismatch = nextActionBuildMismatch(input.result);
+  if (mismatch) violations.push(mismatch);
+
   return {
     valid: violations.length === 0,
     violations: violations.sort((a, b) =>
@@ -215,7 +239,46 @@ export function summarizeStrategyFirstInvariantChecksV1(
     archetypeUnexpectedSwitchRate: rate('UNEXPECTED_COMMITTED_STRATEGY_SWITCH'),
     coreWithoutExitSlotRate: rate('CORE_WITHOUT_EXIT_SLOT'),
     unexplainedSituationalRate: rate('UNEXPLAINED_SITUATIONAL'),
+    nextActionBuildMismatchRate: rate('NEXT_ACTION_BUILD_MISMATCH'),
   };
+}
+
+function nextActionBuildMismatch(
+  result: EvaluateStrategyFirstInvariantsV1Input['result'],
+): StrategyFirstInvariantViolationV1 | undefined {
+  if (result.contract.status === 'REPLAN_REQUIRED' || result.contract.status === 'OUT_OF_DISTRIBUTION') return undefined;
+  const nextItemId = [...result.recommendedBuild]
+    .sort((a, b) => a.position - b.position || a.itemId - b.itemId)
+    .find((row) => row.status === 'NEXT')?.itemId;
+  const targetItemId = result.nextAction.targetItemId;
+  if (result.contract.status === 'COMPLETE') {
+    return nextItemId === undefined && targetItemId === undefined
+      ? undefined
+      : {
+          code: 'NEXT_ACTION_BUILD_MISMATCH',
+          itemId: targetItemId ?? nextItemId,
+          reasonCodes: ['COMPLETE_BUILD_HAS_ACTIONABLE_TARGET'],
+        };
+  }
+  if (isTransactional(result.nextAction.type)) {
+    if (targetItemId === undefined || nextItemId !== targetItemId) {
+      return {
+        code: 'NEXT_ACTION_BUILD_MISMATCH',
+        itemId: targetItemId ?? nextItemId,
+        reasonCodes: ['TRANSACTION_TARGET_DOES_NOT_MATCH_FIRST_NEXT_ROW'],
+      };
+    }
+    return undefined;
+  }
+  if ((result.nextAction.type === 'WAIT' || result.nextAction.type === 'HOLD' || result.nextAction.type === 'CONTINUE_CORE') &&
+    (targetItemId !== undefined || nextItemId !== undefined) && targetItemId !== nextItemId) {
+    return {
+      code: 'NEXT_ACTION_BUILD_MISMATCH',
+      itemId: targetItemId ?? nextItemId,
+      reasonCodes: ['NON_TRANSACTION_TARGET_DOES_NOT_MATCH_FIRST_NEXT_ROW'],
+    };
+  }
+  return undefined;
 }
 
 function isTransactional(type: string): boolean {
