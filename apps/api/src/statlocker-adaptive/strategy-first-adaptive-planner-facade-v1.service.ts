@@ -76,12 +76,13 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
       decision: input.decision,
       evidence: input.evidence,
     }) ?? planned;
+    const aligned = alignFirstNextRow(overlaid);
     const withChanges: StrategyFirstBuildPlannerV1Result = {
-      ...overlaid,
+      ...aligned,
       changes: input.previousResult
         ? diffAdaptiveBuildPlansV1(
             input.previousResult.recommendedBuild,
-            overlaid.recommendedBuild,
+            aligned.recommendedBuild,
             input.recentPurchasedItemIds ?? [],
             input.recentSoldItemIds ?? [],
           )
@@ -108,6 +109,27 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
         : [],
     };
   }
+}
+
+function alignFirstNextRow(result: StrategyFirstBuildPlannerV1Result): StrategyFirstBuildPlannerV1Result {
+  if (
+    result.contract.status === 'COMPLETE' ||
+    result.contract.status === 'REPLAN_REQUIRED' ||
+    result.contract.status === 'OUT_OF_DISTRIBUTION'
+  ) {
+    return result;
+  }
+  const targetItemId = result.nextAction.targetItemId;
+  if (targetItemId === undefined) return result;
+  const targetExists = result.recommendedBuild.some((row) => row.itemId === targetItemId && row.status !== 'OWNED');
+  if (!targetExists) return result;
+  return {
+    ...result,
+    recommendedBuild: result.recommendedBuild.map((row) => {
+      if (row.status === 'OWNED') return row;
+      return { ...row, status: row.itemId === targetItemId ? 'NEXT' as const : 'PLANNED' as const };
+    }),
+  };
 }
 
 function failClosedStrategyResult(
@@ -157,9 +179,9 @@ function previousStrategySession(
   return {
     strategyId: strategy.strategyId,
     commitment: strategy.commitment,
-    posterior: strategy.posterior,
+    posterior: Number.isFinite(strategy.posterior) ? strategy.posterior : 0,
     selectedAtGameTimeSec: strategy.selectedAtGameTimeSec ?? 0,
-    replanReasons: [...strategy.reasonCodes],
+    replanReasons: [...(strategy.reasonCodes ?? [])],
   };
 }
 
@@ -174,8 +196,8 @@ function previousBuildContract(
     commitment: strategy.commitment,
     currentGoalId: strategy.currentGoal?.goalId,
     goalStates: {},
-    selectedBranches: { ...strategy.selectedBranches },
-    committedBranches: { ...strategy.committedBranches },
+    selectedBranches: { ...(strategy.selectedBranches ?? {}) },
+    committedBranches: { ...(strategy.committedBranches ?? {}) },
     temporaryItemIds: [],
     reservedSituationalWindowIds: strategy.situationalDecision ? [strategy.situationalDecision.windowId] : [],
     activeSituationalDecision: strategy.situationalDecision
@@ -183,17 +205,17 @@ function previousBuildContract(
           windowId: strategy.situationalDecision.windowId,
           purpose: strategy.situationalDecision.purpose as any,
           targetItemId: strategy.situationalDecision.targetItemId,
-          enemyHeroIds: [...strategy.situationalDecision.enemyHeroIds],
-          enemyItemIds: [...strategy.situationalDecision.enemyItemIds],
+          enemyHeroIds: [...(strategy.situationalDecision.enemyHeroIds ?? [])],
+          enemyItemIds: [...(strategy.situationalDecision.enemyItemIds ?? [])],
           statisticalSupport: 0,
           confidence: strategy.situationalDecision.confidence,
           slotImpact: 0,
           investmentImpact: 0,
           coreInterruptionSouls: 0,
-          reasonCodes: [...strategy.situationalDecision.reasonCodes],
+          reasonCodes: [...(strategy.situationalDecision.reasonCodes ?? [])],
         }
       : undefined,
-    remainingHardGoalIds: [...strategy.remainingGoalIds],
+    remainingHardGoalIds: [...(strategy.remainingGoalIds ?? [])],
     completionReasonCodes: [],
   };
 }
