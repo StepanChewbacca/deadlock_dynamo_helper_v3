@@ -70,6 +70,7 @@ export function toAdaptiveRecommendationStrategyV1(
         }
       : undefined,
     remainingGoalIds: [...plan.remainingGoalIds],
+    remainingHardInvestmentObjectiveIds: [...plan.remainingHardInvestmentObjectiveIds],
     slotPlan: {
       currentUsedSlots: plan.slotPlan.currentUsedSlots,
       currentFlexUsed: plan.slotPlan.currentFlexUsed,
@@ -77,6 +78,14 @@ export function toAdaptiveRecommendationStrategyV1(
       reservedSituationalSlots: plan.slotPlan.reservedSituationalSlots,
       feasible: plan.slotPlan.feasible,
       reasonCodes: [...plan.slotPlan.reasonCodes],
+      futureTransitions: plan.slotPlan.futureTransitions.map((transition) => ({
+        targetGoalId: transition.targetGoalId,
+        targetItemId: transition.targetItemId,
+        requirement: transition.requirement,
+        sourceItemId: transition.sourceItemId,
+        requiredUnlockedFlexSlots: transition.requiredUnlockedFlexSlots,
+        reasonCodes: [...transition.reasonCodes],
+      })),
     },
     investmentObjectives: plan.investmentPlan.objectives.map((objective) => ({
       objectiveId: objective.objectiveId,
