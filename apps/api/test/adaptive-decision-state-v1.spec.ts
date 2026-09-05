@@ -1,6 +1,7 @@
 import { MinimalMatchState } from '@deadlock-live-probe/shared';
 import { AdaptiveDecisionStateV1Service } from '../src/statlocker-adaptive/adaptive-decision-state-v1.service';
 
+const catalogSha256 = 'a'.repeat(64);
 const matchState: MinimalMatchState = {
   matchId: 'match-1',
   gameTimeSec: 600,
@@ -46,7 +47,7 @@ const version = {
   catalogVersionId: 'catalog-1',
   rulesetKey: 'ruleset-a',
   source: 'TEST',
-  payloadSha256: 'a'.repeat(64),
+  payloadSha256: catalogSha256,
   importedAt: new Date('2026-08-31T11:00:00.000Z'),
 };
 
@@ -83,21 +84,50 @@ const items = [
   },
 ];
 
-function createService(scopeVerified: boolean, state: MinimalMatchState = matchState) {
+const exactRules = {
+  rulesetId: 'ruleset-a',
+  catalogSha256,
+  baseSlots: 12,
+  baseSlotsByType: { weapon: 4, vitality: 4, spirit: 4 },
+  maxFlexSlots: 4,
+  maxActiveItems: 4,
+  investmentBreakpoints: {
+    weapon: [500, 1600, 3200],
+    vitality: [800, 1600, 3200],
+    spirit: [800, 1600, 3200],
+  },
+} as const;
+
+function createService(
+  scopeVerified: boolean,
+  state: MinimalMatchState = matchState,
+  economyRules: typeof exactRules | undefined = undefined,
+) {
   const liveState = { getState: jest.fn().mockReturnValue(state) } as any;
   const soulsEvidence = { canVerifyScope: jest.fn().mockResolvedValue(scopeVerified) } as any;
   const versionRepo = { find: jest.fn().mockResolvedValue([version]) } as any;
   const itemRepo = { find: jest.fn().mockResolvedValue(items) } as any;
   const recipeRepo = { find: jest.fn().mockResolvedValue([]) } as any;
+  const economyRulesStore = {
+    resolveExact: jest.fn().mockResolvedValue(economyRules),
+  } as any;
   return {
-    service: new AdaptiveDecisionStateV1Service(liveState, soulsEvidence, versionRepo, itemRepo, recipeRepo),
+    service: new AdaptiveDecisionStateV1Service(
+      liveState,
+      soulsEvidence,
+      versionRepo,
+      itemRepo,
+      recipeRepo,
+      economyRulesStore,
+    ),
     versionRepo,
+    economyRulesStore,
   };
 }
 
 describe('AdaptiveDecisionStateV1Service', () => {
   it('builds an ML-neutral deterministic decision state from live state and catalog rows', async () => {
-    const { service, versionRepo } = createService(true);
+    const { service, versionRepo, economyRulesStore } = createService(true);
     const first = await service.build('match-1');
     const second = await service.build('match-1');
 
@@ -105,12 +135,13 @@ describe('AdaptiveDecisionStateV1Service', () => {
       order: { importedAt: 'DESC', catalogVersionId: 'DESC' },
       take: 1,
     });
+    expect(economyRulesStore.resolveExact).toHaveBeenCalledWith('ruleset-a', catalogSha256);
     expect(first.localSteamId).toBe('local');
     expect(first.state.heroId).toBe(10);
     expect([...first.state.inventory.heldByItemId.keys()]).toEqual([1]);
     expect(first.itemGraph.getItem(2)?.itemId).toBe(2);
     expect(first.rulesetId).toBe('ruleset-a');
-    expect(first.catalogSha256).toBe('a'.repeat(64));
+    expect(first.catalogSha256).toBe(catalogSha256);
     expect(first.state.gameTimeSec).toBe(600);
     expect(first.enemyHeroIds).toEqual([20, 30]);
     expect(first.ourTeamSouls).toBe(5000);
@@ -122,6 +153,21 @@ describe('AdaptiveDecisionStateV1Service', () => {
     expect(first.economyRulesEvidence).toBe('UNKNOWN');
     expect(first.investment.evidence).toBe('UNKNOWN');
     expect(first.stateRevision).toBe(second.stateRevision);
+  });
+
+  it('uses only the exact persisted economy rules for slot shape and investment state', async () => {
+    const { service, economyRulesStore } = createService(true, matchState, exactRules);
+
+    const result = await service.build('match-1');
+
+    expect(economyRulesStore.resolveExact).toHaveBeenCalledWith('ruleset-a', catalogSha256);
+    expect(result.economyRules).toEqual(exactRules);
+    expect(result.economyRulesEvidence).toBe('RECONSTRUCTED');
+    expect(result.slots.baseSlotsByType).toEqual({ weapon: 4, vitality: 4, spirit: 4 });
+    expect(result.investment.evidence).toBe('RECONSTRUCTED');
+    expect(result.investment.tracks.weapon.currentValue).toBe(500);
+    expect(result.investment.tracks.weapon.achievedBreakpoint).toBe(500);
+    expect(result.investment.tracks.weapon.nextBreakpoint).toBe(1600);
   });
 
   it('promotes roster souls to spendable only for an exact verified scope', async () => {
