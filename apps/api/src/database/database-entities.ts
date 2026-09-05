@@ -18,6 +18,7 @@ import { RawMatchMetadata } from '../deadlock-live/entities/raw-match-metadata.e
 import { RecommendationDatasetRegistryV1 } from '../deadlock-live/entities/recommendation-dataset-registry.entity';
 import { RecommendationDecisionCandidateV8 } from '../deadlock-live/entities/recommendation-decision-candidate.entity';
 import { RecommendationDecisionV8 } from '../deadlock-live/entities/recommendation-decision.entity';
+import { RecommendationEconomyRulesSnapshotV1Entity } from '../deadlock-live/entities/recommendation-economy-rules-snapshot-v1.entity';
 import { RecommendationEvidenceSnapshotV8 } from '../deadlock-live/entities/recommendation-evidence-snapshot-v8.entity';
 import { RecommendationExposureAckV8 } from '../deadlock-live/entities/recommendation-exposure-ack.entity';
 import { RecommendationItemCatalogItemV1 } from '../deadlock-live/entities/recommendation-item-catalog-item-v1.entity';
@@ -58,6 +59,7 @@ export const DATABASE_ENTITIES = [
   StatlockerEvidenceSnapshotV1Entity,
   AdaptiveRecommendationDecisionV1Entity,
   BuildStrategySnapshotV1Entity,
+  RecommendationEconomyRulesSnapshotV1Entity,
   ModelBundleRegistryV1,
   RecommendationDatasetRegistryV1,
   RecommendationValueDatasetRegistryV1,
