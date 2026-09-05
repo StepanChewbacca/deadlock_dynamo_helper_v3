@@ -60,9 +60,8 @@ export class StrategyFirstSituationalOverlayV1Service {
       legalByTarget.set(target, list);
     }
 
-    const evidenceByWindow = new Map<string, BuildSituationalCandidateEvidenceV1[]>();
+    const evidence: BuildSituationalCandidateEvidenceV1[] = [];
     for (const window of openWindows) {
-      const entries: BuildSituationalCandidateEvidenceV1[] = [];
       for (const purpose of window.allowedPurposes) {
         for (const itemId of explicitCandidates(window, purpose)) {
           if (input.decision.itemGraph.isTargetSatisfied(itemId, input.decision.state.inventory.heldByItemId.keys())) continue;
@@ -70,10 +69,10 @@ export class StrategyFirstSituationalOverlayV1Service {
           if (!candidate) continue;
           const score = safeScore(this.scorer, itemId, input);
           if (!score) continue;
-          entries.push({
-            itemId,
+          evidence.push({
+            targetItemId: itemId,
             purpose,
-            estimatedUtility: score.score,
+            contextualScore: score.score,
             statisticalSupport: exactEnemySupport(score),
             confidence: score.confidence,
             effectiveCostSouls: Math.max(0, candidate.effectiveCostSouls),
@@ -82,50 +81,46 @@ export class StrategyFirstSituationalOverlayV1Service {
             coreInterruptionSouls: Math.max(0, candidate.effectiveCostSouls),
             enemyHeroIds: [...input.decision.enemyHeroIds],
             enemyItemIds: [...input.decision.enemyItemIds],
-            strategicFit: 1,
-            candidateKey: candidate.actionId,
+            reasonCodes: [`SITUATIONAL_PURPOSE:${purpose}`],
           });
         }
       }
-      evidenceByWindow.set(window.windowId, entries);
     }
 
     const coreScore = coreContinuationScore(input.result);
-    const resolved = this.resolver.resolve({
+    const selected = this.resolver.resolve({
       strategy: input.result.strategy,
       contract: input.result.contract,
       continueCoreScore: coreScore,
-      candidatesByWindow: evidenceByWindow,
+      candidates: evidence,
     });
-    if (!resolved.selected) return input.result;
+    if (!selected) return input.result;
 
-    const selectedCandidate = [...(legalByTarget.get(resolved.selected.targetItemId) ?? [])]
-      .find((candidate) => candidate.actionId === resolved.selected?.candidateKey)
-      ?? bestTransaction(legalByTarget.get(resolved.selected.targetItemId) ?? []);
+    const selectedCandidate = bestTransaction(legalByTarget.get(selected.targetItemId) ?? []);
     if (!selectedCandidate) return input.result;
 
-    const score = safeScore(this.scorer, resolved.selected.targetItemId, input);
-    const nextAction = adaptiveAction(selectedCandidate, resolved.selected.reasonCodes);
+    const score = safeScore(this.scorer, selected.targetItemId, input);
+    const nextAction = adaptiveAction(selectedCandidate, selected.reasonCodes);
     const contract = {
       ...input.result.contract,
-      activeSituationalDecision: resolved.selected,
+      activeSituationalDecision: selected,
     };
     const strategyPlan = {
       ...input.result.strategyPlan,
-      situationalDecision: resolved.selected,
+      situationalDecision: selected,
     };
     const recommendedBuild = insertSituationalNext(
       input.result.recommendedBuild,
-      resolved.selected.targetItemId,
+      selected.targetItemId,
       score,
       input.decision.state.inventory.heldByItemId.keys(),
     );
     const scoredAction: AdaptiveScoredActionV1 = {
       action: nextAction,
-      score: resolved.selected.estimatedUtility,
-      confidence: resolved.selected.confidence,
+      score: score?.score ?? coreScore,
+      confidence: selected.confidence,
       components: score?.components ?? [],
-      reasonCodes: [...resolved.selected.reasonCodes],
+      reasonCodes: [...selected.reasonCodes],
     };
 
     return {
@@ -138,8 +133,8 @@ export class StrategyFirstSituationalOverlayV1Service {
         scoredAction,
         ...input.result.rankedImmediateCandidates.filter((entry) => entry.action.actionKey !== nextAction.actionKey),
       ],
-      totalScore: Math.max(input.result.totalScore, resolved.selected.estimatedUtility),
-      confidence: resolved.selected.confidence,
+      totalScore: Math.max(input.result.totalScore, score?.score ?? coreScore),
+      confidence: selected.confidence,
     };
   }
 }
@@ -247,7 +242,7 @@ function insertSituationalNext(
     reasonCodes: ['SITUATIONAL_WINDOW_ACTIVE'],
   };
   return [...ownedPrefix, situational, ...future]
-    .map((entry, index) => ({
+    .map((entry, index): AdaptivePlannedItemV1 => ({
       ...entry,
       position: index + 1,
       status: owned.has(entry.itemId) ? 'OWNED' : entry.itemId === itemId ? 'NEXT' : 'PLANNED',
