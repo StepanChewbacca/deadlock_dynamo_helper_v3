@@ -52,59 +52,61 @@ export function toAdaptiveRecommendationStrategyV1(
 ): AdaptiveRecommendationStrategyV1 {
   const session = result.strategySession;
   const plan = result.strategyPlan;
+  const slotPlan = plan.slotPlan;
+  const investmentPlan = plan.investmentPlan;
   return {
     strategyId: session.strategyId ?? result.strategy.strategyId,
     commitment: session.commitment,
     selectedAtGameTimeSec: session.selectedAtGameTimeSec,
     posterior: session.posterior,
-    reasonCodes: [...session.replanReasons],
-    selectedBranches: { ...result.contract.selectedBranches },
-    committedBranches: { ...result.contract.committedBranches },
+    reasonCodes: [...(session.replanReasons ?? [])],
+    selectedBranches: { ...(result.contract.selectedBranches ?? {}) },
+    committedBranches: { ...(result.contract.committedBranches ?? {}) },
     buildStatus: plan.buildStatus,
     progress: { ...plan.progress },
     currentGoal: plan.currentGoal
       ? {
           goalId: plan.currentGoal.goalId,
           type: plan.currentGoal.type,
-          reasonCodes: [...plan.currentGoal.reasonCodes],
+          reasonCodes: [...(plan.currentGoal.reasonCodes ?? [])],
         }
       : undefined,
-    remainingGoalIds: [...plan.remainingGoalIds],
-    remainingHardInvestmentObjectiveIds: [...plan.remainingHardInvestmentObjectiveIds],
+    remainingGoalIds: [...(plan.remainingGoalIds ?? [])],
+    remainingHardInvestmentObjectiveIds: [...(plan.remainingHardInvestmentObjectiveIds ?? [])],
     slotPlan: {
-      currentUsedSlots: plan.slotPlan.currentUsedSlots,
-      currentFlexUsed: plan.slotPlan.currentFlexUsed,
-      unlockedFlexSlots: plan.slotPlan.unlockedFlexSlots,
-      reservedSituationalSlots: plan.slotPlan.reservedSituationalSlots,
-      feasible: plan.slotPlan.feasible,
-      reasonCodes: [...plan.slotPlan.reasonCodes],
-      futureTransitions: plan.slotPlan.futureTransitions.map((transition) => ({
+      currentUsedSlots: slotPlan.currentUsedSlots,
+      currentFlexUsed: slotPlan.currentFlexUsed,
+      unlockedFlexSlots: slotPlan.unlockedFlexSlots,
+      reservedSituationalSlots: slotPlan.reservedSituationalSlots,
+      feasible: slotPlan.feasible,
+      reasonCodes: [...(slotPlan.reasonCodes ?? [])],
+      futureTransitions: (slotPlan.futureTransitions ?? []).map((transition) => ({
         targetGoalId: transition.targetGoalId,
         targetItemId: transition.targetItemId,
         requirement: transition.requirement,
         sourceItemId: transition.sourceItemId,
         requiredUnlockedFlexSlots: transition.requiredUnlockedFlexSlots,
-        reasonCodes: [...transition.reasonCodes],
+        reasonCodes: [...(transition.reasonCodes ?? [])],
       })),
     },
-    investmentObjectives: plan.investmentPlan.objectives.map((objective) => ({
+    investmentObjectives: (investmentPlan?.objectives ?? []).map((objective) => ({
       objectiveId: objective.objectiveId,
       type: objective.type,
       state: objective.state,
       currentValue: objective.currentValue,
       targetValue: objective.targetValue,
       distance: objective.distance,
-      reasonCodes: [...objective.reasonCodes],
+      reasonCodes: [...(objective.reasonCodes ?? [])],
     })),
     situationalDecision: plan.situationalDecision
       ? {
           windowId: plan.situationalDecision.windowId,
           purpose: plan.situationalDecision.purpose,
           targetItemId: plan.situationalDecision.targetItemId,
-          enemyHeroIds: [...plan.situationalDecision.enemyHeroIds],
-          enemyItemIds: [...plan.situationalDecision.enemyItemIds],
+          enemyHeroIds: [...(plan.situationalDecision.enemyHeroIds ?? [])],
+          enemyItemIds: [...(plan.situationalDecision.enemyItemIds ?? [])],
           confidence: plan.situationalDecision.confidence,
-          reasonCodes: [...plan.situationalDecision.reasonCodes],
+          reasonCodes: [...(plan.situationalDecision.reasonCodes ?? [])],
         }
       : undefined,
   };
