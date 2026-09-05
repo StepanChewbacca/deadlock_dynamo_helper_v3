@@ -82,6 +82,10 @@ export interface AdaptiveStrategySituationalDecisionV1 {
   enemyItemIds: readonly number[];
   confidence: number;
   reasonCodes: readonly string[];
+  statisticalSupport?: number;
+  slotImpact?: number;
+  investmentImpact?: number;
+  coreInterruptionSouls?: number;
 }
 
 export interface AdaptiveRecommendationStrategyV1 {
@@ -89,6 +93,7 @@ export interface AdaptiveRecommendationStrategyV1 {
   commitment: AdaptiveStrategyCommitmentV1;
   selectedAtGameTimeSec?: number;
   posterior: number;
+  stability?: number;
   reasonCodes: readonly string[];
   selectedBranches: Readonly<Record<string, string>>;
   committedBranches: Readonly<Record<string, string>>;
