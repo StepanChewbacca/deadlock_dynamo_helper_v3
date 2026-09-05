@@ -91,8 +91,6 @@ const PLAN_STATUS_LABELS = {
   PLANNED: 'Planned',
 } as const;
 
-const ALTERNATIVE_DISPLAY_LIMIT = 3;
-
 export function buildAdaptiveRecommendationPresentation(
   recommendation: AdaptiveRecommendationResultV1,
 ): AdaptiveRecommendationPresentation {
@@ -149,7 +147,8 @@ export function buildAdaptiveRecommendationPresentation(
       })),
       remainingCount: 0,
     },
-    alternatives: buildAlternatives(recommendation, primaryItemId),
+    // rankedImmediateCandidates intentionally stay diagnostic until a curated alternative contract exists.
+    alternatives: [],
     evidenceLabel: freshEvidenceCount > 0
       ? `${freshEvidenceCount} fresh Statlocker signal${freshEvidenceCount === 1 ? '' : 's'}`
       : 'Statlocker evidence is updating',
@@ -162,9 +161,11 @@ function presentStrategy(strategy: AdaptiveRecommendationStrategyV1): AdaptivePr
   const currentGoalLabel = strategy.currentGoal
     ? `${titleCase(strategy.currentGoal.type)} · ${humanizeToken(strategy.currentGoal.goalId)}`
     : undefined;
-  const branches = Object.entries(strategy.committedBranches).length > 0
-    ? strategy.committedBranches
-    : strategy.selectedBranches;
+  const committedBranches = strategy.committedBranches ?? {};
+  const selectedBranches = strategy.selectedBranches ?? {};
+  const branches = Object.entries(committedBranches).length > 0
+    ? committedBranches
+    : selectedBranches;
   const branchLabel = Object.keys(branches).length > 0
     ? Object.entries(branches)
       .sort(([a], [b]) => a.localeCompare(b))
@@ -175,8 +176,9 @@ function presentStrategy(strategy: AdaptiveRecommendationStrategyV1): AdaptivePr
   const flex = slot.unlockedFlexSlots === undefined
     ? `${slot.currentFlexUsed}/? flex`
     : `${slot.currentFlexUsed}/${slot.unlockedFlexSlots} flex`;
-  const activeInvestment = strategy.investmentObjectives.find((objective) => objective.state === 'ACTIVE')
-    ?? strategy.investmentObjectives.find((objective) => objective.state === 'SATISFIED');
+  const investmentObjectives = strategy.investmentObjectives ?? [];
+  const activeInvestment = investmentObjectives.find((objective) => objective.state === 'ACTIVE')
+    ?? investmentObjectives.find((objective) => objective.state === 'SATISFIED');
 
   return {
     idLabel: strategyLabel(strategy.strategyId),
@@ -289,46 +291,6 @@ function buildHeadline(
     case 'ABSTAIN':
       return 'No safe purchase yet';
   }
-}
-
-function buildAlternatives(
-  recommendation: AdaptiveRecommendationResultV1,
-  primaryItemId: number | undefined,
-): readonly AdaptivePresentedAlternative[] {
-  const alternatives: AdaptivePresentedAlternative[] = [];
-  const seen = new Set<string>();
-
-  for (const candidate of recommendation.rankedImmediateCandidates) {
-    const itemId = resolveActionItemId(candidate.action);
-    const key = itemId === undefined
-      ? `action:${candidate.action.type}`
-      : `item:${itemId}`;
-    if (
-      candidate.action.actionKey === recommendation.nextAction.actionKey
-      || itemId === primaryItemId
-      || seen.has(key)
-    ) {
-      continue;
-    }
-
-    seen.add(key);
-    const item = itemId === undefined ? undefined : presentItem(itemId);
-    const replacedItem = candidate.action.type === 'REPLACE'
-      ? presentActionSellItem(candidate.action)
-      : undefined;
-    alternatives.push({
-      actionLabel: humanizeActionType(candidate.action.type),
-      headline: buildHeadline(candidate.action, item, replacedItem),
-      item,
-      replacedItem,
-      scoreLabel: `${toPercent(candidate.score)}% fit`,
-    });
-    if (alternatives.length === ALTERNATIVE_DISPLAY_LIMIT) {
-      break;
-    }
-  }
-
-  return alternatives;
 }
 
 function presentActionSellItem(action: AdaptiveActionV1): AdaptivePresentedItem | undefined {
