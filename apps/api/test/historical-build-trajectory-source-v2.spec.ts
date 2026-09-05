@@ -102,6 +102,43 @@ function multiMatchRepository(reversePeers = false) {
   return repository as any;
 }
 
+function rejectedTraceRepository(reverseTargets = false) {
+  const targets = [
+    {
+      id: 31,
+      matchId: 301,
+      heroId: 1,
+      team: 0,
+      won: true,
+      match: { matchId: 301, averageBadge: 67 },
+      itemPurchases: [],
+    },
+    {
+      id: 32,
+      matchId: 302,
+      heroId: 1,
+      team: 0,
+      won: true,
+      match: { matchId: 302, averageBadge: 67 },
+      itemPurchases: [],
+    },
+    {
+      id: 33,
+      matchId: 303,
+      heroId: 1,
+      team: 0,
+      won: true,
+      match: { matchId: 303, averageBadge: 67 },
+      itemPurchases: [],
+    },
+  ];
+  return {
+    find: jest.fn(async (options: any) => options?.where?.heroId === 1
+      ? (reverseTargets ? [...targets].reverse() : targets)
+      : targets),
+  } as any;
+}
+
 const sourceInput = {
   heroId: 1,
   patchId: 'p1',
@@ -171,6 +208,42 @@ describe('historical build trajectory source v2', () => {
     });
     expect(countsA).toEqual(countsB);
     expect(Object.values(countsA).reduce((total, count) => total + count, 0))
+      .toBe(resultA.rejected.length);
+  });
+
+  it('normalizes and deterministically orders rejection reasons across reordered multi-diagnostic traces', async () => {
+    const extractor = {
+      extract: jest.fn(({ matchId }: { matchId: string }) => ({
+        accepted: false,
+        diagnostics: matchId === '301'
+          ? ['UNKNOWN_ITEM:900', 'SELL_ITEM_NOT_HELD:5']
+          : matchId === '302'
+            ? []
+            : ['not-a-diagnostic:raw-value'],
+      })),
+    } as any;
+    const resolver = { getLatestForMatch: jest.fn(async (matchId: number) => resolution({ matchId })) } as any;
+    const resultA = await new HistoricalBuildTrajectorySourceV2Service(
+      rejectedTraceRepository(),
+      extractor,
+      resolver,
+    ).load(sourceInput);
+    const resultB = await new HistoricalBuildTrajectorySourceV2Service(
+      rejectedTraceRepository(true),
+      extractor,
+      resolver,
+    ).load(sourceInput);
+
+    expect(resultA.rejectionReasonCounts).toEqual({
+      HISTORICAL_TRAJECTORY_REJECTED: 2,
+      SELL_ITEM_NOT_HELD: 1,
+    });
+    expect(Object.keys(resultA.rejectionReasonCounts)).toEqual([
+      'HISTORICAL_TRAJECTORY_REJECTED',
+      'SELL_ITEM_NOT_HELD',
+    ]);
+    expect(JSON.stringify(resultA.rejectionReasonCounts)).toBe(JSON.stringify(resultB.rejectionReasonCounts));
+    expect(Object.values(resultA.rejectionReasonCounts).reduce((total, count) => total + count, 0))
       .toBe(resultA.rejected.length);
   });
 
