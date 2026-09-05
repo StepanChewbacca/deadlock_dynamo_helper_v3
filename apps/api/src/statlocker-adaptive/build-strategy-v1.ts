@@ -216,6 +216,7 @@ export interface AdaptiveStrategyPlanV1 {
     reasonCodes: readonly string[];
   };
   remainingGoalIds: readonly string[];
+  remainingHardInvestmentObjectiveIds: readonly string[];
   slotPlan: BuildSlotPlanV1;
   investmentPlan: BuildInvestmentPlanV1;
   situationalDecision?: BuildSituationalDecisionV1;
