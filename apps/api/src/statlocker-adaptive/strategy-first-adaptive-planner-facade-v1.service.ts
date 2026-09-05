@@ -1,6 +1,7 @@
 import { Injectable, Optional } from '@nestjs/common';
 import { AdaptiveRecommendationResultV1 } from '@deadlock-live-probe/shared';
 import { AdaptiveDecisionStateV1 } from './adaptive-decision-state-v1.service';
+import { AdaptiveRecommendationObservabilityV1Service } from './adaptive-recommendation-observability-v1.service';
 import { diffAdaptiveBuildPlansV1 } from './build-plan-diff-v1';
 import { BuildStrategyRegistryV1Service } from './build-strategy-registry-v1.service';
 import { ConsensusStrategyFallbackV1Service } from './consensus-strategy-fallback-v1.service';
@@ -13,6 +14,10 @@ import { BuildStrategySessionV1 } from './build-strategy-session-v1.service';
 import { StatlockerEvidenceBundleV1 } from './statlocker-evidence.service';
 import { ConsensusSkeletonV1 } from './statlocker-adaptive.types';
 import { StrategyFirstSituationalOverlayV1Service } from './strategy-first-situational-overlay-v1.service';
+import {
+  StrategyFirstInvariantCheckV1,
+  evaluateStrategyFirstInvariantsV1,
+} from './strategy-first-invariants-v1';
 
 export type StrategyFirstPreviousResultV1 = Pick<
   AdaptiveRecommendationResultV1,
@@ -34,6 +39,7 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
     private readonly registry: BuildStrategyRegistryV1Service,
     private readonly fallback: ConsensusStrategyFallbackV1Service,
     @Optional() private readonly situational?: StrategyFirstSituationalOverlayV1Service,
+    @Optional() private readonly observability?: AdaptiveRecommendationObservabilityV1Service,
   ) {}
 
   plan(input: StrategyFirstAdaptivePlannerFacadeV1Input): StrategyFirstBuildPlannerV1Result {
@@ -65,23 +71,82 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
       recentPurchasedItemIds: input.recentPurchasedItemIds ?? [],
       recentSoldItemIds: input.recentSoldItemIds ?? [],
     });
-    const result = this.situational?.apply({
+    const overlaid = this.situational?.apply({
       result: planned,
       decision: input.decision,
       evidence: input.evidence,
     }) ?? planned;
-    return {
-      ...result,
+    const withChanges: StrategyFirstBuildPlannerV1Result = {
+      ...overlaid,
       changes: input.previousResult
         ? diffAdaptiveBuildPlansV1(
             input.previousResult.recommendedBuild,
-            result.recommendedBuild,
+            overlaid.recommendedBuild,
+            input.recentPurchasedItemIds ?? [],
+            input.recentSoldItemIds ?? [],
+          )
+        : [],
+    };
+    const invariantCheck = evaluateStrategyFirstInvariantsV1({
+      decision: input.decision,
+      result: withChanges,
+      previousStrategy: input.previousResult?.strategy,
+    });
+    this.observability?.recordStrategyInvariantCheck(invariantCheck);
+    if (invariantCheck.valid) return withChanges;
+
+    const safe = failClosedStrategyResult(withChanges, input.decision, invariantCheck);
+    return {
+      ...safe,
+      changes: input.previousResult
+        ? diffAdaptiveBuildPlansV1(
+            input.previousResult.recommendedBuild,
+            safe.recommendedBuild,
             input.recentPurchasedItemIds ?? [],
             input.recentSoldItemIds ?? [],
           )
         : [],
     };
   }
+}
+
+function failClosedStrategyResult(
+  result: StrategyFirstBuildPlannerV1Result,
+  decision: AdaptiveDecisionStateV1,
+  check: StrategyFirstInvariantCheckV1,
+): StrategyFirstBuildPlannerV1Result {
+  const owned = new Set(decision.state.inventory.heldByItemId.keys());
+  const violationReasons = check.violations.map((violation) => `INVARIANT:${violation.code}`);
+  const completionReasonCodes = unique([
+    ...result.contract.completionReasonCodes,
+    'STRATEGY_INVARIANT_FAIL_CLOSED',
+    ...violationReasons,
+  ]).sort();
+  const recommendedBuild = result.recommendedBuild
+    .filter((row) => owned.has(row.itemId))
+    .sort((a, b) => a.position - b.position || a.itemId - b.itemId)
+    .map((row, index) => ({ ...row, position: index + 1, status: 'OWNED' as const }));
+  return {
+    ...result,
+    contract: {
+      ...result.contract,
+      status: 'REPLAN_REQUIRED',
+      completionReasonCodes,
+    },
+    strategyPlan: {
+      ...result.strategyPlan,
+      buildStatus: 'REPLAN_REQUIRED',
+    },
+    nextAction: {
+      actionKey: 'HOLD',
+      type: 'HOLD',
+      reasonCodes: ['STRATEGY_INVARIANT_FAIL_CLOSED', ...violationReasons],
+    },
+    recommendedBuild,
+    rankedImmediateCandidates: [],
+    totalScore: 0,
+    confidence: 0,
+  };
 }
 
 function previousStrategySession(
@@ -138,4 +203,8 @@ function asSkeleton(value: unknown, heroId: number): ConsensusSkeletonV1 | undef
   const skeleton = value as Partial<ConsensusSkeletonV1>;
   if (skeleton.heroId !== heroId || !Array.isArray(skeleton.groups)) return undefined;
   return skeleton as ConsensusSkeletonV1;
+}
+
+function unique(values: readonly string[]): string[] {
+  return [...new Set(values)];
 }
