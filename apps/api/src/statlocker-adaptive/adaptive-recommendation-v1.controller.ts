@@ -6,10 +6,14 @@ import { AdaptiveRecommendationObservabilityV1Service } from './adaptive-recomme
 import { StatlockerEvidenceService } from './statlocker-evidence.service';
 import { StatlockerRefreshService, StatlockerRefreshStatusV1 } from './statlocker-refresh.service';
 import { ADAPTIVE_POLICY_V1_CONFIG } from './statlocker-adaptive.config';
+import { StrategyFirstOperationsV1Service } from './strategy-first-operations-v1.service';
+import { StrategyFirstPromotionGateV1Service } from './strategy-first-promotion-gate-v1.service';
 
 export interface AdaptiveRecommendationStatusV1 {
   refresh: StatlockerRefreshStatusV1;
   observability: ReturnType<AdaptiveRecommendationObservabilityV1Service['getStatus']>;
+  strategyPromotion: ReturnType<StrategyFirstPromotionGateV1Service['status']>;
+  strategyOperations: ReturnType<StrategyFirstOperationsV1Service['getStatus']>;
   rulesetVersion?: string;
   catalogSha256?: string;
   statlockerPatchId?: string;
@@ -24,6 +28,8 @@ export class AdaptiveRecommendationV1Controller {
     private readonly refresh: StatlockerRefreshService,
     private readonly evidence: StatlockerEvidenceService,
     private readonly observability: AdaptiveRecommendationObservabilityV1Service,
+    private readonly strategyPromotion: StrategyFirstPromotionGateV1Service,
+    private readonly strategyOperations: StrategyFirstOperationsV1Service,
   ) {}
 
   @Post('recommend')
@@ -50,6 +56,8 @@ export class AdaptiveRecommendationV1Controller {
     return {
       refresh,
       observability: this.observability.getStatus(),
+      strategyPromotion: this.strategyPromotion.status(),
+      strategyOperations: this.strategyOperations.getStatus(),
       rulesetVersion: refresh.identity?.rulesetVersion,
       catalogSha256: refresh.identity?.catalogSha256,
       statlockerPatchId: local.statlockerPatchId,
