@@ -21,7 +21,9 @@ const economyRules: RecommendationEconomyRulesV1 = {
   rulesetId: 'ruleset-a',
   catalogSha256,
   baseSlots: 9,
+  baseSlotsByType: { weapon: 3, vitality: 3, spirit: 3 },
   maxFlexSlots: 3,
+  maxActiveItems: 4,
   investmentBreakpoints: {
     weapon: [1600, 3200, 6400],
     vitality: [1600, 3200, 6400],
@@ -98,7 +100,7 @@ function decision(options: {
   const slotState = deriveAdaptiveSlotStateV1(
     owned,
     itemGraph,
-    { baseSlots: 9, maxFlexSlots: 3 },
+    { baseSlots: 9, baseSlotsByType: { weapon: 3, vitality: 3, spirit: 3 }, maxFlexSlots: 3, maxActiveItems: 4 },
     {
       unlockedFlexSlots: options.unlockedFlexSlots ?? (options.flexEvidence === 'UNKNOWN' ? undefined : 3),
       evidence: options.flexEvidence ?? 'OBSERVED',
