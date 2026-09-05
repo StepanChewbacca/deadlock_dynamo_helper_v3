@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { AdaptiveRecommendationResultV1 } from '@deadlock-live-probe/shared';
 import { AdaptiveDecisionStateV1 } from './adaptive-decision-state-v1.service';
 import { BuildStrategyRegistryV1Service } from './build-strategy-registry-v1.service';
@@ -11,6 +11,7 @@ import { BuildContractV1 } from './build-strategy-v1';
 import { BuildStrategySessionV1 } from './build-strategy-session-v1.service';
 import { StatlockerEvidenceBundleV1 } from './statlocker-evidence.service';
 import { ConsensusSkeletonV1 } from './statlocker-adaptive.types';
+import { StrategyFirstSituationalOverlayV1Service } from './strategy-first-situational-overlay-v1.service';
 
 export type StrategyFirstPreviousResultV1 = Pick<
   AdaptiveRecommendationResultV1,
@@ -31,6 +32,7 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
     private readonly planner: StrategyFirstBuildPlannerV1Service,
     private readonly registry: BuildStrategyRegistryV1Service,
     private readonly fallback: ConsensusStrategyFallbackV1Service,
+    @Optional() private readonly situational?: StrategyFirstSituationalOverlayV1Service,
   ) {}
 
   plan(input: StrategyFirstAdaptivePlannerFacadeV1Input): StrategyFirstBuildPlannerV1Result {
@@ -52,7 +54,7 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
 
     const previousSession = previousStrategySession(input.previousResult);
     const previousContract = previousBuildContract(input.previousResult);
-    return this.planner.plan({
+    const result = this.planner.plan({
       decision: input.decision,
       evidence: input.evidence,
       strategies,
@@ -62,6 +64,7 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
       recentPurchasedItemIds: input.recentPurchasedItemIds,
       recentSoldItemIds: input.recentSoldItemIds,
     } as Parameters<StrategyFirstBuildPlannerV1Service['plan']>[0]);
+    return this.situational?.apply({ result, decision: input.decision, evidence: input.evidence }) ?? result;
   }
 }
 
