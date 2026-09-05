@@ -115,7 +115,8 @@ export function showAdaptiveRecommendation(data: AdaptiveRecommendationResultV1)
   renderStrategy(view.strategy);
   renderReasons(view.reasons);
   renderPlan(planItems, view.plan.remainingCount);
-  renderAlternatives(view.alternatives);
+  // rankedImmediateCandidates are diagnostic only. A user-facing alternative requires a dedicated curated contract.
+  renderAlternatives([]);
   clearAdaptiveError();
 }
 
