@@ -33,6 +33,7 @@ export interface HistoricalBuildTrajectoryRejectionV2 {
 export interface HistoricalBuildTrajectorySourceV2Result {
   trajectories: readonly PlannerTrajectoryV2[];
   rejected: readonly HistoricalBuildTrajectoryRejectionV2[];
+  rejectionReasonCounts: Readonly<Record<string, number>>;
 }
 
 @Injectable()
@@ -119,6 +120,7 @@ export class HistoricalBuildTrajectorySourceV2Service {
     return {
       trajectories: trajectories.sort((a, b) => a.traceId.localeCompare(b.traceId)),
       rejected: rejected.sort((a, b) => a.matchId.localeCompare(b.matchId) || a.playerKey.localeCompare(b.playerKey)),
+      rejectionReasonCounts: aggregateRejectionReasonCounts(rejected),
     };
   }
 
@@ -147,6 +149,23 @@ export class HistoricalBuildTrajectorySourceV2Service {
     }
     return undefined;
   }
+}
+
+function aggregateRejectionReasonCounts(
+  rejected: readonly HistoricalBuildTrajectoryRejectionV2[],
+): Readonly<Record<string, number>> {
+  const counts = new Map<string, number>();
+  for (const entry of rejected) {
+    const reason = [...new Set(entry.diagnostics.map(normalizeDiagnosticCode))]
+      .sort()[0] ?? 'HISTORICAL_TRAJECTORY_REJECTED';
+    counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+  return Object.fromEntries([...counts.entries()].sort(([a], [b]) => a.localeCompare(b)));
+}
+
+function normalizeDiagnosticCode(diagnostic: string): string {
+  const code = diagnostic.split(':', 1)[0];
+  return /^[A-Z][A-Z0-9_]*$/.test(code) ? code : 'HISTORICAL_TRAJECTORY_REJECTED';
 }
 
 function rankCohort(averageBadge: number | null | undefined): string {

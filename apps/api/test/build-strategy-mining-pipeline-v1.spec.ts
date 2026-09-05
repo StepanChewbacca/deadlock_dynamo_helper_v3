@@ -16,7 +16,13 @@ const spec = { strategyId: 's1', heroId: 1, rulesetId: 'r1', sourcePatchId: 'p1'
 
 describe('build strategy mining pipeline v1', () => {
   it('publishes only after trajectory mining, compilation and feasibility gates pass', async () => {
-    const source = { load: jest.fn(async () => ({ trajectories: [trajectory('t1'), trajectory('t2'), trajectory('t3')], rejected: [] })) } as any;
+    const source = {
+      load: jest.fn(async () => ({
+        trajectories: [trajectory('t1'), trajectory('t2'), trajectory('t3')],
+        rejected: [],
+        rejectionReasonCounts: {},
+      })),
+    } as any;
     const miner = { mine: jest.fn(() => ({ archetypes: [archetype], noiseTraceIds: [], traceCount: 3, pairwiseDistances: {} })) } as any;
     const compiler = { compile: jest.fn(() => spec) } as any;
     const feasibility = { validate: jest.fn(() => ({ feasible: true, actionIds: ['BUY_ITEM:1'], finalItemIds: [1], reasonCodes: ['ALL_MANDATORY_GOALS_REACHABLE'] })) } as any;
@@ -36,6 +42,7 @@ describe('build strategy mining pipeline v1', () => {
 
     expect(result.published).toBe(true);
     expect(result.strategyCount).toBe(1);
+    expect(result.rejectionReasonCounts).toEqual({});
     expect(store.publish).toHaveBeenCalledTimes(1);
     expect(store.publish.mock.calls[0][0]).toMatchObject({
       rulesetId: 'r1',
@@ -47,7 +54,13 @@ describe('build strategy mining pipeline v1', () => {
   });
 
   it('fails closed and does not publish when any compiled archetype is unreachable', async () => {
-    const source = { load: jest.fn(async () => ({ trajectories: [trajectory('t1'), trajectory('t2'), trajectory('t3')], rejected: [] })) } as any;
+    const source = {
+      load: jest.fn(async () => ({
+        trajectories: [trajectory('t1'), trajectory('t2'), trajectory('t3')],
+        rejected: [],
+        rejectionReasonCounts: {},
+      })),
+    } as any;
     const miner = { mine: jest.fn(() => ({ archetypes: [archetype], noiseTraceIds: [], traceCount: 3, pairwiseDistances: {} })) } as any;
     const compiler = { compile: jest.fn(() => spec) } as any;
     const feasibility = { validate: jest.fn(() => ({ feasible: false, failedGoalId: 'g1', actionIds: [], finalItemIds: [], reasonCodes: ['MANDATORY_GOAL_UNREACHABLE'] })) } as any;
@@ -70,7 +83,7 @@ describe('build strategy mining pipeline v1', () => {
   });
 
   it('forwards the exact catalog client version to historical trajectory provenance checks', async () => {
-    const source = { load: jest.fn(async () => ({ trajectories: [], rejected: [] })) } as any;
+    const source = { load: jest.fn(async () => ({ trajectories: [], rejected: [], rejectionReasonCounts: {} })) } as any;
     const pipeline = new BuildStrategyMiningPipelineV1Service(
       source,
       { mine: jest.fn() } as any,
@@ -94,5 +107,53 @@ describe('build strategy mining pipeline v1', () => {
       catalogSha256: 'a'.repeat(64),
       catalogClientVersion: 123,
     }));
+  });
+
+  it('returns a zero-accepted rejection breakdown without source identifiers or raw diagnostic details', async () => {
+    const source = {
+      load: jest.fn(async () => ({
+        trajectories: [],
+        rejected: [
+          { matchId: 'match-1', playerKey: 'match-1:player:11', diagnostics: ['UNKNOWN_ITEM:900'] },
+          { matchId: 'match-2', playerKey: 'match-2:player:12', diagnostics: ['UNKNOWN_ITEM:901'] },
+          { matchId: 'match-3', playerKey: 'match-3:player:13', diagnostics: ['HISTORICAL_PROVENANCE_MISSING'] },
+        ],
+        rejectionReasonCounts: {
+          HISTORICAL_PROVENANCE_MISSING: 1,
+          UNKNOWN_ITEM: 2,
+        },
+      })),
+    } as any;
+    const pipeline = new BuildStrategyMiningPipelineV1Service(
+      source,
+      { mine: jest.fn() } as any,
+      { compile: jest.fn() } as any,
+      { validate: jest.fn() } as any,
+      { publish: jest.fn() } as any,
+    );
+
+    const result = await pipeline.run({
+      heroId: 1,
+      patchId: 'p1',
+      rulesetId: 'r1',
+      catalogSha256: 'a'.repeat(64),
+      catalogClientVersion: 123,
+      itemGraph: graph,
+      economyRules,
+    });
+
+    const rejectionReasonCounts = result.rejectionReasonCounts;
+    expect(result).toMatchObject({
+      published: false,
+      rejectedTraceCount: 3,
+      reasonCodes: ['NO_ACCEPTED_HISTORICAL_TRAJECTORIES'],
+    });
+    expect(rejectionReasonCounts).toEqual({
+      HISTORICAL_PROVENANCE_MISSING: 1,
+      UNKNOWN_ITEM: 2,
+    });
+    expect(Object.values(rejectionReasonCounts).reduce((total, count) => total + count, 0))
+      .toBe(result.rejectedTraceCount);
+    expect(JSON.stringify(result)).not.toMatch(/match-[1-3]|player:|900|901/);
   });
 });

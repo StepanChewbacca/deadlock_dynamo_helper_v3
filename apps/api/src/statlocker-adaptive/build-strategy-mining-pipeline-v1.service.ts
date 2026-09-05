@@ -30,6 +30,7 @@ export interface BuildStrategyMiningPipelineV1Result {
   snapshotId?: string;
   sourceTraceCount: number;
   rejectedTraceCount: number;
+  rejectionReasonCounts: Readonly<Record<string, number>>;
   noiseTraceCount: number;
   archetypeCount: number;
   strategyCount: number;
@@ -121,6 +122,7 @@ export class BuildStrategyMiningPipelineV1Service {
       snapshotId,
       sourceTraceCount: historical.trajectories.length,
       rejectedTraceCount: historical.rejected.length,
+      rejectionReasonCounts: historical.rejectionReasonCounts,
       noiseTraceCount: mining.noiseTraceIds.length,
       archetypeCount: mining.archetypes.length,
       strategyCount: specs.length,
@@ -140,6 +142,7 @@ function result(
     published,
     sourceTraceCount: historical.trajectories.length,
     rejectedTraceCount: historical.rejected.length,
+    rejectionReasonCounts: historical.rejectionReasonCounts,
     noiseTraceCount,
     archetypeCount: strategyCount,
     strategyCount,

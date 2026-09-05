@@ -65,6 +65,7 @@ function publishedPipelineResult() {
     noiseTraceCount: 0,
     archetypeCount: 1,
     strategyCount: 1,
+    rejectionReasonCounts: {},
     reasonCodes: ['STRATEGY_SNAPSHOT_PUBLISHED'],
   };
 }
@@ -92,10 +93,14 @@ describe('strategy-first operations v1', () => {
       published: true,
       snapshotId: 'strategy:1:p1:abc',
       sourceTraceCount: 10,
-      rejectedTraceCount: 0,
+      rejectedTraceCount: 3,
       noiseTraceCount: 1,
       archetypeCount: 2,
       strategyCount: 2,
+      rejectionReasonCounts: {
+        HISTORICAL_PROVENANCE_MISSING: 1,
+        UNKNOWN_ITEM: 2,
+      },
       reasonCodes: ['STRATEGY_SNAPSHOT_PUBLISHED'],
       input,
     }));
@@ -120,7 +125,18 @@ describe('strategy-first operations v1', () => {
       economyRules,
       minClusterSize: 3,
     }));
-    expect(operations.getStatus().lastMineByHero[`1:r1:${catalogSha256}`]).toMatchObject({ published: true });
+    const latest = operations.getStatus().lastMineByHero[`1:r1:${catalogSha256}`];
+    expect(latest).toMatchObject({
+      published: true,
+      pipeline: {
+        rejectedTraceCount: 3,
+        rejectionReasonCounts: {
+          HISTORICAL_PROVENANCE_MISSING: 1,
+          UNKNOWN_ITEM: 2,
+        },
+      },
+    });
+    expect(JSON.stringify(latest)).not.toMatch(/match-|player:|900|901/);
   });
 
   it('fails closed before mining when the exact catalog has no positive client version', async () => {

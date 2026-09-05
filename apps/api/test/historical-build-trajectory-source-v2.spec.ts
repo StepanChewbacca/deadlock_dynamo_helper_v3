@@ -146,6 +146,34 @@ describe('historical build trajectory source v2', () => {
     expect(JSON.stringify(resultA)).toBe(JSON.stringify(resultB));
   });
 
+  it('aggregates one normalized rejection reason per rejected trajectory deterministically', async () => {
+    const resolver = {
+      getLatestForMatch: jest.fn(async (matchId: number) => matchId === 100
+        ? resolution({ matchId, rulesetKey: 'r2' })
+        : resolution({ matchId, clientVersion: 124 })),
+    } as any;
+    const resultA = await new HistoricalBuildTrajectorySourceV2Service(
+      multiMatchRepository(),
+      new HistoricalPlannerTrajectoryExtractorV2Service(),
+      resolver,
+    ).load(sourceInput);
+    const resultB = await new HistoricalBuildTrajectorySourceV2Service(
+      multiMatchRepository(true),
+      new HistoricalPlannerTrajectoryExtractorV2Service(),
+      resolver,
+    ).load(sourceInput);
+
+    const countsA = resultA.rejectionReasonCounts;
+    const countsB = resultB.rejectionReasonCounts;
+    expect(countsA).toEqual({
+      HISTORICAL_CLIENT_VERSION_MISMATCH: 1,
+      HISTORICAL_RULESET_MISMATCH: 1,
+    });
+    expect(countsA).toEqual(countsB);
+    expect(Object.values(countsA).reduce((total, count) => total + count, 0))
+      .toBe(resultA.rejected.length);
+  });
+
   it('loads exact per-match purchase history with ally/enemy and rank cohort context', async () => {
     const source = new HistoricalBuildTrajectorySourceV2Service(
       repository(),

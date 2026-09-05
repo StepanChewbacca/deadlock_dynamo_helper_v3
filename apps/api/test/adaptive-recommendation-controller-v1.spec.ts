@@ -53,12 +53,48 @@ function harness() {
       }],
     })),
   };
+  const strategyPromotion = { status: jest.fn(() => ({ allowed: false })) };
+  const strategyOperations = {
+    getStatus: jest.fn(() => ({
+      inFlightKeys: [],
+      bootstrapEconomyRulesCount: 0,
+      lastMineByHero: {
+        [`10:ruleset-a:${'a'.repeat(64)}`]: {
+          attempted: true,
+          published: false,
+          reasonCodes: ['NO_ACCEPTED_HISTORICAL_TRAJECTORIES'],
+          pipeline: {
+            published: false,
+            sourceTraceCount: 0,
+            rejectedTraceCount: 3,
+            noiseTraceCount: 0,
+            archetypeCount: 0,
+            strategyCount: 0,
+            rejectionReasonCounts: {
+              HISTORICAL_PROVENANCE_MISSING: 1,
+              UNKNOWN_ITEM: 2,
+            },
+            reasonCodes: ['NO_ACCEPTED_HISTORICAL_TRAJECTORIES'],
+          },
+        },
+      },
+    })),
+  };
   return {
-    controller: new AdaptiveRecommendationV1Controller(service as any, refresh as any, evidence as any, observability),
+    controller: new AdaptiveRecommendationV1Controller(
+      service as any,
+      refresh as any,
+      evidence as any,
+      observability,
+      strategyPromotion as any,
+      strategyOperations as any,
+    ),
     service,
     refresh,
     evidence,
     observability,
+    strategyPromotion,
+    strategyOperations,
   };
 }
 
@@ -101,6 +137,15 @@ describe('AdaptiveRecommendationV1Controller', () => {
     expect(status.statlockerPatchId).toBe('15-1');
     expect(status.activeSnapshotIds).toEqual(['snapshot-a']);
     expect(status.families[0].freshness).toBe('FRESH');
+    expect(status.strategyOperations.lastMineByHero[`10:ruleset-a:${'a'.repeat(64)}`].pipeline)
+      .toMatchObject({
+        rejectedTraceCount: 3,
+        rejectionReasonCounts: {
+          HISTORICAL_PROVENANCE_MISSING: 1,
+          UNKNOWN_ITEM: 2,
+        },
+      });
     expect(JSON.stringify(status)).not.toMatch(/cookie|localStorage|authorization|apiKey|headers/i);
+    expect(JSON.stringify(status)).not.toMatch(/match-|player:|900|901/);
   });
 });
