@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import {
   FactEvidence,
   InventoryState,
+  InventorySlotType,
   RecommendationDecisionState,
   RecommendationItemDefinition,
   RecommendationItemLineageEdge,
@@ -16,6 +17,7 @@ import {
   AdaptiveBuildPlanChangeV1,
   AdaptivePlannedItemV1,
   AdaptiveRecommendationResultV1,
+  AdaptiveRecommendationStrategyV1,
   AdaptiveScoredActionV1,
 } from '@deadlock-live-probe/shared';
 import { AdaptiveRecommendationDecisionV1Entity } from '../deadlock-live/entities/adaptive-recommendation-decision-v1.entity';
@@ -65,7 +67,12 @@ export interface AdaptiveReplayDecisionV1 {
   catalogSha256: string;
   rulesetId: string;
   localSteamId: string;
+  /** Optional so replay inputs persisted before strategy context remain readable. */
+  allyHeroIds?: readonly number[];
   enemyHeroIds: readonly number[];
+  /** Optional so replay inputs persisted before item-context scoring remain readable. */
+  allyItemIds?: readonly number[];
+  enemyItemIds?: readonly number[];
   ourTeamSouls?: number;
   enemyTeamSouls?: number;
   slots?: AdaptiveSlotStateV1;
@@ -76,13 +83,15 @@ export interface AdaptiveReplayDecisionV1 {
   stateRevision: string;
 }
 
+export type AdaptiveReplayPreviousResultV1 = Pick<
+  AdaptiveRecommendationResultV1,
+  'recommendedBuild' | 'totalScore' | 'nextAction' | 'confidence' | 'strategy'
+>;
+
 export interface AdaptiveReplayInputV1 {
   decision: AdaptiveReplayDecisionV1;
   evidence: StatlockerEvidenceBundleV1;
-  previousResult?: Pick<
-    AdaptiveRecommendationResultV1,
-    'recommendedBuild' | 'totalScore' | 'nextAction' | 'confidence'
-  >;
+  previousResult?: AdaptiveReplayPreviousResultV1;
   recentPurchasedItemIds: readonly number[];
   recentSoldItemIds: readonly number[];
   configVersion: string;
@@ -109,6 +118,7 @@ export interface AdaptiveReplayOutputV1 {
   rankedImmediateCandidates: readonly AdaptiveScoredActionV1[];
   totalScore: number;
   confidence: number;
+  strategy?: AdaptiveRecommendationStrategyV1;
   snapshotIds: readonly string[];
 }
 
@@ -129,7 +139,7 @@ export class AdaptiveReplayV1Service {
       previousResult: input.previousResult,
       recentPurchasedItemIds: input.recentPurchasedItemIds,
       recentSoldItemIds: input.recentSoldItemIds,
-    });
+    }) as AdaptiveBuildPlannerResultV1 & { strategy?: AdaptiveRecommendationStrategyV1 };
     return {
       gameState: result.gameState,
       nextAction: result.nextAction,
@@ -138,6 +148,7 @@ export class AdaptiveReplayV1Service {
       rankedImmediateCandidates: result.rankedImmediateCandidates,
       totalScore: result.totalScore,
       confidence: result.confidence,
+      strategy: result.strategy,
       snapshotIds: [...input.snapshotIds].sort(),
     };
   }
@@ -180,10 +191,7 @@ export class AdaptiveReplayV1Service {
     decision: AdaptiveDecisionStateV1,
     evidence: StatlockerEvidenceBundleV1,
     options: {
-      previousResult?: Pick<
-        AdaptiveRecommendationResultV1,
-        'recommendedBuild' | 'totalScore' | 'nextAction' | 'confidence'
-      >;
+      previousResult?: AdaptiveReplayPreviousResultV1;
       recentPurchasedItemIds?: readonly number[];
       recentSoldItemIds?: readonly number[];
     } = {},
@@ -258,7 +266,10 @@ function serializeDecision(decision: AdaptiveDecisionStateV1): AdaptiveReplayDec
     catalogSha256: decision.catalogSha256,
     rulesetId: decision.rulesetId,
     localSteamId: decision.localSteamId,
+    allyHeroIds: [...decision.allyHeroIds].sort((a, b) => a - b),
     enemyHeroIds: [...decision.enemyHeroIds].sort((a, b) => a - b),
+    allyItemIds: [...decision.allyItemIds].sort((a, b) => a - b),
+    enemyItemIds: [...decision.enemyItemIds].sort((a, b) => a - b),
     ourTeamSouls: decision.ourTeamSouls,
     enemyTeamSouls: decision.enemyTeamSouls,
     slots: cloneJson(decision.slots),
@@ -292,9 +303,7 @@ function reconstructDecision(input: AdaptiveReplayDecisionV1): AdaptiveDecisionS
       shopOpportunity: { ...input.state.shopOpportunity },
     },
   };
-  const slots = input.slots
-    ? cloneJson(input.slots)
-    : deriveAdaptiveSlotStateV1(ownedItemIds, itemGraph, ADAPTIVE_UNIVERSAL_SLOT_RULES_V1, { evidence: 'UNKNOWN' });
+  const slots = normalizeReplaySlotStateV1(input.slots, ownedItemIds, itemGraph);
   const economyRules = exactReplayEconomyRulesV1(input);
   const investment = normalizeReplayInvestmentStateV1(
     input.investment,
@@ -309,7 +318,10 @@ function reconstructDecision(input: AdaptiveReplayDecisionV1): AdaptiveDecisionS
     catalogSha256: input.catalogSha256,
     rulesetId: input.rulesetId,
     localSteamId: input.localSteamId,
-    enemyHeroIds: [...input.enemyHeroIds].sort((a, b) => a - b),
+    allyHeroIds: sortedNumbers(input.allyHeroIds ?? []),
+    enemyHeroIds: sortedNumbers(input.enemyHeroIds),
+    allyItemIds: sortedNumbers(input.allyItemIds ?? []),
+    enemyItemIds: sortedNumbers(input.enemyItemIds ?? []),
     ourTeamSouls: input.ourTeamSouls,
     enemyTeamSouls: input.enemyTeamSouls,
     slots,
@@ -318,6 +330,31 @@ function reconstructDecision(input: AdaptiveReplayDecisionV1): AdaptiveDecisionS
     economyRulesEvidence: economyRules ? 'RECONSTRUCTED' : 'UNKNOWN',
     stateRevision: input.stateRevision,
   };
+}
+
+function normalizeReplaySlotStateV1(
+  supplied: unknown,
+  ownedItemIds: readonly number[],
+  itemGraph: ReturnType<typeof createRecommendationItemGraph>,
+): AdaptiveSlotStateV1 {
+  if (isCanonicalReplaySlotStateV1(supplied)) return cloneJson(supplied);
+  return deriveAdaptiveSlotStateV1(
+    ownedItemIds,
+    itemGraph,
+    ADAPTIVE_UNIVERSAL_SLOT_RULES_V1,
+    { evidence: 'UNKNOWN' },
+  );
+}
+
+function isCanonicalReplaySlotStateV1(value: unknown): value is AdaptiveSlotStateV1 {
+  if (!isRecord(value) || !isRecord(value.baseSlotsByType) || !isRecord(value.usedSlotsByType) ||
+    !isRecord(value.overflowByType) || !isRecord(value.freeBaseSlotsByType)) return false;
+  if (!isNonNegativeInteger(value.baseSlots) || !isNonNegativeInteger(value.maxFlexSlots) ||
+    !isNonNegativeInteger(value.maxActiveItems) || !isNonNegativeInteger(value.usedSlots) ||
+    !isNonNegativeInteger(value.usedFlexSlots) || !isNonNegativeInteger(value.activeItemsUsed)) return false;
+  return allSlotTypesValid(value.baseSlotsByType) && allSlotTypesValid(value.usedSlotsByType) &&
+    allSlotTypesValid(value.overflowByType) && allSlotTypesValid(value.freeBaseSlotsByType) &&
+    (value.evidence === 'OBSERVED' || value.evidence === 'RECONSTRUCTED' || value.evidence === 'UNKNOWN');
 }
 
 function normalizeReplayInvestmentStateV1(
@@ -334,15 +371,27 @@ function normalizeReplayInvestmentStateV1(
 function exactReplayEconomyRulesV1(input: AdaptiveReplayDecisionV1): RecommendationEconomyRulesV1 | undefined {
   const rules = input.economyRules;
   if (!isRecord(rules) || rules.rulesetId !== input.rulesetId || rules.catalogSha256 !== input.catalogSha256 ||
-    !isNonNegativeInteger(rules.baseSlots) || !isNonNegativeInteger(rules.maxFlexSlots) ||
-    !isRecord(rules.investmentBreakpoints)) return undefined;
+    !isNonNegativeInteger(rules.baseSlots) || !isRecord(rules.baseSlotsByType) ||
+    !isNonNegativeInteger(rules.maxFlexSlots) || !isNonNegativeInteger(rules.maxActiveItems) ||
+    !isRecord(rules.investmentBreakpoints) || !allSlotTypesValid(rules.baseSlotsByType)) return undefined;
   const validBreakpoints = ADAPTIVE_INVESTMENT_TYPES_V1.every((type) => {
     const values = rules.investmentBreakpoints[type];
     return Array.isArray(values) && values.every((value) =>
       typeof value === 'number' && Number.isFinite(value) && value > 0,
     );
   });
-  return validBreakpoints ? rules as RecommendationEconomyRulesV1 : undefined;
+  const baseTotal = (['weapon', 'vitality', 'spirit'] as const)
+    .reduce((sum, type) => sum + Number(rules.baseSlotsByType[type]), 0);
+  return validBreakpoints && baseTotal === rules.baseSlots ? rules as unknown as RecommendationEconomyRulesV1 : undefined;
+}
+
+function allSlotTypesValid(value: Record<string, unknown>): boolean {
+  return (['weapon', 'vitality', 'spirit'] as readonly InventorySlotType[])
+    .every((type) => isNonNegativeInteger(value[type]));
+}
+
+function sortedNumbers(values: readonly number[]): number[] {
+  return [...new Set(values.filter((value) => Number.isInteger(value)))].sort((a, b) => a - b);
 }
 
 function isNonNegativeInteger(value: unknown): value is number {
