@@ -149,7 +149,55 @@ describe('strategy-first runtime continuity v1', () => {
     const planner = {
       plan(input: any) {
         captured = input;
-        return {} as any;
+        const selected = input.strategies[0];
+        return {
+          gameState: 'UNKNOWN',
+          strategy: selected,
+          strategySelection: { selectedStrategyId: selected.strategyId, commitment: 'COMMITTED', posteriors: [], reasonCodes: [] },
+          strategySession: {
+            strategyId: 'sticky-strategy',
+            commitment: 'COMMITTED',
+            selectedAtGameTimeSec: 180,
+            posterior: 0.91,
+            replanReasons: ['DISTINCTIVE_PREFIX_COMMITMENT'],
+          },
+          contract: {
+            strategyId: selected.strategyId,
+            status: 'WAITING',
+            commitment: 'COMMITTED',
+            goalStates: {},
+            selectedBranches: { boots: 'boots-a' },
+            committedBranches: { boots: 'boots-a' },
+            temporaryItemIds: [],
+            reservedSituationalWindowIds: [],
+            remainingHardGoalIds: ['required'],
+            completionReasonCodes: ['MANDATORY_GOALS_REMAIN'],
+          },
+          strategyPlan: {
+            strategyId: selected.strategyId,
+            buildStatus: 'WAITING',
+            progress: { satisfiedHardGoals: 0, totalHardGoals: 1 },
+            remainingGoalIds: ['required'],
+            remainingHardInvestmentObjectiveIds: [],
+            slotPlan: {
+              currentUsedSlots: 0,
+              currentFlexUsed: 0,
+              unlockedFlexSlots: 0,
+              reservedSituationalSlots: 0,
+              futureTransitions: [],
+              feasible: true,
+              reasonCodes: [],
+            },
+            investmentPlan: { objectives: [], activeObjectiveIds: [] },
+          },
+          nextAction: { actionKey: 'HOLD', type: 'HOLD', reasonCodes: ['TEST_FIXTURE'] },
+          recommendedBuild: [],
+          changes: [],
+          rankedImmediateCandidates: [],
+          totalScore: 0,
+          confidence: 0,
+          plannerVersion: 'strategy-first-build-planner-v1',
+        };
       },
     } as any;
     const facade = new StrategyFirstAdaptivePlannerFacadeV1Service(
@@ -234,6 +282,7 @@ describe('strategy-first runtime continuity v1', () => {
       committedBranches: { branch: 'a' },
       buildStatus: 'WAITING',
       currentGoal: { goalId: 'g3', type: 'UPGRADE' },
+      remainingHardInvestmentObjectiveIds: [],
     });
     expect(strategy.investmentObjectives[0]).toMatchObject({ targetValue: 3200, distance: 800 });
   });
