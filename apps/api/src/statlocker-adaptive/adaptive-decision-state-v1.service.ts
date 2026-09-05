@@ -25,9 +25,9 @@ import {
   RecommendationEconomyRulesV1,
   deriveAdaptiveInvestmentStateV1,
   deriveAdaptiveSlotStateV1,
-  resolveRecommendationEconomyRulesV1,
   slotRulesFromEconomyRulesV1,
 } from './adaptive-economy-v1';
+import { RecommendationEconomyRulesStoreV1Service } from './recommendation-economy-rules-store-v1.service';
 
 export interface AdaptiveDecisionStateV1 {
   state: RecommendationDecisionState;
@@ -70,6 +70,7 @@ export class AdaptiveDecisionStateV1Service {
     private readonly itemRepo: Repository<RecommendationItemCatalogItemV1>,
     @InjectRepository(RecommendationItemCatalogRecipeV1)
     private readonly recipeRepo: Repository<RecommendationItemCatalogRecipeV1>,
+    private readonly economyRulesStore: RecommendationEconomyRulesStoreV1Service,
   ) {}
 
   async build(matchId: string, requestedLocalSteamId?: string): Promise<AdaptiveDecisionStateV1> {
@@ -139,7 +140,10 @@ export class AdaptiveDecisionStateV1Service {
       nextInstanceSequence: heldByItemId.size + 1,
     };
 
-    const exactEconomyRules = resolveRecommendationEconomyRulesV1(compiled.rulesetId, version.payloadSha256);
+    const exactEconomyRules = await this.economyRulesStore.resolveExact(
+      compiled.rulesetId,
+      version.payloadSha256,
+    );
     const slots = deriveAdaptiveSlotStateV1(
       ownedItemIds,
       compiled.graph,
