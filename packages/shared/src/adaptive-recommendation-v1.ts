@@ -31,6 +31,8 @@ export type AdaptiveStrategyBuildStatusV1 =
   | 'REPLAN_REQUIRED'
   | 'OUT_OF_DISTRIBUTION';
 
+export type AdaptiveStrategyCommitmentV1 = 'PROVISIONAL' | 'COMMITTED' | 'DIVERGED' | 'OOD';
+
 export interface AdaptiveStrategyProgressV1 {
   satisfiedHardGoals: number;
   totalHardGoals: number;
@@ -73,6 +75,12 @@ export interface AdaptiveStrategySituationalDecisionV1 {
 
 export interface AdaptiveRecommendationStrategyV1 {
   strategyId: string;
+  commitment: AdaptiveStrategyCommitmentV1;
+  selectedAtGameTimeSec?: number;
+  posterior: number;
+  reasonCodes: readonly string[];
+  selectedBranches: Readonly<Record<string, string>>;
+  committedBranches: Readonly<Record<string, string>>;
   buildStatus: AdaptiveStrategyBuildStatusV1;
   progress: AdaptiveStrategyProgressV1;
   currentGoal?: AdaptiveStrategyCurrentGoalV1;
