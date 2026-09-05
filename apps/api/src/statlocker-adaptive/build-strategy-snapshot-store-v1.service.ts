@@ -43,7 +43,7 @@ export class BuildStrategySnapshotStoreV1Service implements OnModuleInit {
   }
 
   async publish(input: PublishBuildStrategySnapshotV1Input): Promise<void> {
-    validatePublishIdentity(input);
+    const heroId = validatePublishIdentity(input);
     const payload = buildPayload(input.specs, input.itemGraph);
     const contentSha256 = contentHash(payload);
 
@@ -59,13 +59,16 @@ export class BuildStrategySnapshotStoreV1Service implements OnModuleInit {
 
     const existing = await this.repository.find({
       where: {
+        heroId,
         rulesetId: input.rulesetId,
+        patchId: input.patchId,
         catalogSha256: input.catalogSha256.toLowerCase(),
         active: true,
       },
     });
     const row = this.repository.create({
       snapshotId: input.snapshotId,
+      heroId,
       rulesetId: input.rulesetId,
       patchId: input.patchId,
       catalogSha256: input.catalogSha256.toLowerCase(),
@@ -78,7 +81,7 @@ export class BuildStrategySnapshotStoreV1Service implements OnModuleInit {
     });
 
     // Persist the new immutable artifact first. If old-row deactivation fails, startup hydration
-    // deterministically selects the newest artifact instead of leaving the runtime with no strategy.
+    // deterministically selects the newest artifact for this exact hero/patch/catalog scope.
     await this.repository.save(row);
     for (const previous of existing) {
       if (previous.snapshotId === input.snapshotId || !previous.active) continue;
@@ -107,6 +110,9 @@ export class BuildStrategySnapshotStoreV1Service implements OnModuleInit {
       const actualHash = contentHash(payload);
       if (actualHash !== row.contentSha256.toLowerCase()) {
         throw new Error(`Build strategy snapshot content hash mismatch: ${row.snapshotId}`);
+      }
+      if (payload.specs.some((spec) => spec.heroId !== row.heroId)) {
+        throw new Error(`Build strategy snapshot hero scope mismatch: ${row.snapshotId}`);
       }
       const itemGraph = createRecommendationItemGraph(payload.itemDefinitions, payload.lineageEdges);
       this.registry.replaceSnapshot({
@@ -138,7 +144,7 @@ function buildPayload(
     .sort((a, b) => a.parentItemId - b.parentItemId || a.componentItemId - b.componentItemId);
   return {
     schemaVersion: 1,
-    specs: clone(specs).sort((a, b) => a.heroId - b.heroId || a.strategyId.localeCompare(b.strategyId)),
+    specs: clone(specs).sort((a, b) => a.strategyId.localeCompare(b.strategyId)),
     itemDefinitions,
     lineageEdges,
   };
@@ -156,13 +162,18 @@ function contentHash(payload: PersistedBuildStrategySnapshotPayloadV1): string {
   return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 }
 
-function validatePublishIdentity(input: PublishBuildStrategySnapshotV1Input): void {
+function validatePublishIdentity(input: PublishBuildStrategySnapshotV1Input): number {
   if (!input.snapshotId || !input.rulesetId || !input.patchId) {
     throw new Error('Build strategy snapshot identity is incomplete');
   }
   if (!/^[a-f0-9]{64}$/i.test(input.catalogSha256) || !/^[a-f0-9]{64}$/i.test(input.sourceSha256)) {
     throw new Error('Build strategy snapshot SHA256 values are invalid');
   }
+  const heroIds = [...new Set(input.specs.map((spec) => spec.heroId))].sort((a, b) => a - b);
+  if (heroIds.length !== 1) {
+    throw new Error('Build strategy snapshot must contain strategies for exactly one hero');
+  }
+  return heroIds[0];
 }
 
 function clone<T>(value: T): T {
