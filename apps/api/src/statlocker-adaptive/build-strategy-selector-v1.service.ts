@@ -56,8 +56,16 @@ export class BuildStrategySelectorV1Service {
 
     const best = posteriors[0];
     const second = posteriors[1];
-    if (!best || best.conformance < 0.15) {
+    if (!best) {
       return { commitment: 'OOD', posteriors, reasonCodes: ['NO_STRATEGY_CONFORMANCE'] };
+    }
+    if (best.conformance < 0.15) {
+      return {
+        selectedStrategyId: best.strategyId,
+        commitment: 'OOD',
+        posteriors,
+        reasonCodes: ['NO_STRATEGY_CONFORMANCE', 'NEAREST_STRATEGY_REBASE'],
+      };
     }
     const gap = best.probability - (second?.probability ?? 0);
     const distinctiveEvidence = best.evidenceCount >= 2 && gap >= 0.20;
