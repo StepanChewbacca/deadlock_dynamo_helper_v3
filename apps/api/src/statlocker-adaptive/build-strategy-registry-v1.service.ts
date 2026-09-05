@@ -13,6 +13,7 @@ export interface ReplaceBuildStrategySnapshotV1Input {
 }
 
 export interface BuildStrategySnapshotMetadataV1 {
+  heroId: number;
   rulesetId: string;
   patchId: string;
   catalogSha256: string;
@@ -48,28 +49,63 @@ export class BuildStrategyRegistryV1Service {
       throw new Error(`Invalid strategy snapshot: ${[...new Set(failures)].sort().join(',')}`);
     }
 
-    const key = snapshotKey(input.rulesetId, input.catalogSha256);
-    const specs = clone(input.specs).sort((a, b) => a.heroId - b.heroId || a.strategyId.localeCompare(b.strategyId));
-    this.snapshots.set(key, {
-      rulesetId: input.rulesetId,
-      patchId: input.patchId,
-      catalogSha256: input.catalogSha256.toLowerCase(),
-      sourceSha256: input.sourceSha256.toLowerCase(),
-      strategyCount: specs.length,
-      specs,
-    });
+    const byHero = new Map<number, BuildStrategySpecV1[]>();
+    for (const spec of input.specs) {
+      const values = byHero.get(spec.heroId) ?? [];
+      values.push(clone(spec));
+      byHero.set(spec.heroId, values);
+    }
+    for (const [heroId, heroSpecs] of byHero.entries()) {
+      const specs = heroSpecs.sort((a, b) => a.strategyId.localeCompare(b.strategyId));
+      this.snapshots.set(snapshotKey(heroId, input.rulesetId, input.catalogSha256, input.patchId), {
+        heroId,
+        rulesetId: input.rulesetId,
+        patchId: input.patchId,
+        catalogSha256: input.catalogSha256.toLowerCase(),
+        sourceSha256: input.sourceSha256.toLowerCase(),
+        strategyCount: specs.length,
+        specs,
+      });
+    }
   }
 
-  getStrategies(heroId: number, rulesetId: string, catalogSha256: string): readonly BuildStrategySpecV1[] {
-    const snapshot = this.snapshots.get(snapshotKey(rulesetId, catalogSha256));
-    if (!snapshot) return [];
-    return clone(snapshot.specs.filter((spec) => spec.heroId === heroId));
+  getStrategies(
+    heroId: number,
+    rulesetId: string,
+    catalogSha256: string,
+    patchId?: string,
+  ): readonly BuildStrategySpecV1[] {
+    if (patchId) {
+      const snapshot = this.snapshots.get(snapshotKey(heroId, rulesetId, catalogSha256, patchId));
+      return snapshot ? clone(snapshot.specs) : [];
+    }
+
+    const matches = [...this.snapshots.values()]
+      .filter((snapshot) => snapshot.heroId === heroId)
+      .filter((snapshot) => snapshot.rulesetId === rulesetId)
+      .filter((snapshot) => snapshot.catalogSha256 === catalogSha256.toLowerCase());
+    if (matches.length !== 1) return [];
+    return clone(matches[0].specs);
   }
 
-  getSnapshotMetadata(rulesetId: string, catalogSha256: string): BuildStrategySnapshotMetadataV1 | undefined {
-    const snapshot = this.snapshots.get(snapshotKey(rulesetId, catalogSha256));
-    if (!snapshot) return undefined;
-    const { specs: _specs, ...metadata } = snapshot;
+  getSnapshotMetadata(
+    heroId: number,
+    rulesetId: string,
+    catalogSha256: string,
+    patchId?: string,
+  ): BuildStrategySnapshotMetadataV1 | undefined {
+    if (patchId) {
+      const snapshot = this.snapshots.get(snapshotKey(heroId, rulesetId, catalogSha256, patchId));
+      if (!snapshot) return undefined;
+      const { specs: _specs, ...metadata } = snapshot;
+      return { ...metadata };
+    }
+    const matches = [...this.snapshots.values()]
+      .filter((snapshot) => snapshot.heroId === heroId)
+      .filter((snapshot) => snapshot.rulesetId === rulesetId)
+      .filter((snapshot) => snapshot.catalogSha256 === catalogSha256.toLowerCase());
+    if (matches.length !== 1) return undefined;
+    const { specs: _specs, ...metadata } = matches[0];
     return { ...metadata };
   }
 
@@ -78,8 +114,8 @@ export class BuildStrategyRegistryV1Service {
   }
 }
 
-function snapshotKey(rulesetId: string, catalogSha256: string): string {
-  return `${rulesetId}:${catalogSha256.toLowerCase()}`;
+function snapshotKey(heroId: number, rulesetId: string, catalogSha256: string, patchId: string): string {
+  return `${heroId}:${rulesetId}:${catalogSha256.toLowerCase()}:${patchId}`;
 }
 
 function clone<T>(value: T): T {
