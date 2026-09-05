@@ -24,6 +24,64 @@ export type AdaptiveEvidenceFreshnessV1 = (typeof ADAPTIVE_EVIDENCE_FRESHNESS_V1
 
 export type AdaptiveBuildPlanChangeTypeV1 = 'KEEP' | 'INSERT' | 'SKIP' | 'SELL' | 'REPLACE' | 'MOVE';
 
+export type AdaptiveStrategyBuildStatusV1 =
+  | 'IN_PROGRESS'
+  | 'WAITING'
+  | 'COMPLETE'
+  | 'REPLAN_REQUIRED'
+  | 'OUT_OF_DISTRIBUTION';
+
+export interface AdaptiveStrategyProgressV1 {
+  satisfiedHardGoals: number;
+  totalHardGoals: number;
+}
+
+export interface AdaptiveStrategyCurrentGoalV1 {
+  goalId: string;
+  type: string;
+  reasonCodes: readonly string[];
+}
+
+export interface AdaptiveStrategySlotPlanV1 {
+  currentUsedSlots: number;
+  currentFlexUsed: number;
+  unlockedFlexSlots?: number;
+  reservedSituationalSlots: number;
+  feasible: boolean;
+  reasonCodes: readonly string[];
+}
+
+export interface AdaptiveStrategyInvestmentObjectiveV1 {
+  objectiveId: string;
+  type: 'weapon' | 'vitality' | 'spirit';
+  state: 'LOCKED' | 'ACTIVE' | 'SATISFIED' | 'WAIVED';
+  currentValue: number;
+  targetValue?: number;
+  distance?: number;
+  reasonCodes: readonly string[];
+}
+
+export interface AdaptiveStrategySituationalDecisionV1 {
+  windowId: string;
+  purpose: string;
+  targetItemId: number;
+  enemyHeroIds: readonly number[];
+  enemyItemIds: readonly number[];
+  confidence: number;
+  reasonCodes: readonly string[];
+}
+
+export interface AdaptiveRecommendationStrategyV1 {
+  strategyId: string;
+  buildStatus: AdaptiveStrategyBuildStatusV1;
+  progress: AdaptiveStrategyProgressV1;
+  currentGoal?: AdaptiveStrategyCurrentGoalV1;
+  remainingGoalIds: readonly string[];
+  slotPlan: AdaptiveStrategySlotPlanV1;
+  investmentObjectives: readonly AdaptiveStrategyInvestmentObjectiveV1[];
+  situationalDecision?: AdaptiveStrategySituationalDecisionV1;
+}
+
 export interface AdaptiveRecommendationRequestV1 {
   matchId: string;
   localSteamId?: string;
@@ -111,5 +169,6 @@ export interface AdaptiveRecommendationResultV1 {
   scorerVersion: string;
   plannerVersion: string;
   configVersion: string;
+  strategy?: AdaptiveRecommendationStrategyV1;
   evidence: AdaptiveEvidenceProvenanceV1;
 }
