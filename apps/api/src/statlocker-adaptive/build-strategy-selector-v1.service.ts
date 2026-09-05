@@ -6,6 +6,8 @@ import {
   BuildStrategySpecV1,
 } from './build-strategy-v1';
 
+export type { BuildStrategySelectionV1 } from './build-strategy-v1';
+
 export interface BuildStrategyPurchaseEvidenceV1 {
   itemId: number;
   gameTimeSec: number;
