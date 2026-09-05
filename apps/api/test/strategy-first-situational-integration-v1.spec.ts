@@ -6,6 +6,7 @@ import {
 } from '@deadlock-live-probe/build-domain';
 import { deriveAdaptiveSlotStateV1, unknownAdaptiveInvestmentStateV1 } from '../src/statlocker-adaptive/adaptive-economy-v1';
 import { StrategyFirstBuildPlannerV1Service } from '../src/statlocker-adaptive/strategy-first-build-planner-v1.service';
+import { StrategyFirstSituationalOverlayV1Service } from '../src/statlocker-adaptive/strategy-first-situational-overlay-v1.service';
 import { BuildStrategySpecV1 } from '../src/statlocker-adaptive/build-strategy-v1';
 
 const items: RecommendationItemDefinition[] = [
@@ -66,7 +67,14 @@ const evidence: any = {
 describe('strategy-first situational integration v1', () => {
   it('selects a bounded situational transaction only when it beats continuing core', () => {
     const planner = new StrategyFirstBuildPlannerV1Service(scorer);
-    const result = planner.plan({ decision, evidence, strategies: [strategy] });
+    const base = planner.plan({ decision, evidence, strategies: [strategy] });
+    expect(base.nextAction.targetItemId).toBe(1);
+
+    const result = new StrategyFirstSituationalOverlayV1Service(scorer).apply({
+      result: base,
+      decision,
+      evidence,
+    });
 
     expect(result.nextAction).toMatchObject({ type: 'BUY', itemId: 2, targetItemId: 2 });
     expect(result.contract.activeSituationalDecision).toMatchObject({
