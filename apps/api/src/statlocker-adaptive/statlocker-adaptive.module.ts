@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import * as puppeteer from 'puppeteer-core';
 import { DeadlockLiveModule } from '../deadlock-live/deadlock-live.module';
 import { AdaptiveRecommendationDecisionV1Entity } from '../deadlock-live/entities/adaptive-recommendation-decision-v1.entity';
+import { BuildStrategySnapshotV1Entity } from '../deadlock-live/entities/build-strategy-snapshot-v1.entity';
 import { RecommendationItemCatalogItemV1 } from '../deadlock-live/entities/recommendation-item-catalog-item-v1.entity';
 import { RecommendationItemCatalogRecipeV1 } from '../deadlock-live/entities/recommendation-item-catalog-recipe-v1.entity';
 import { RecommendationItemCatalogVersionV1 } from '../deadlock-live/entities/recommendation-item-catalog-version-v1.entity';
@@ -28,6 +29,7 @@ import { BuildStrategyFeasibilityV1Service } from './build-strategy-feasibility-
 import { BuildStrategyRegistryV1Service } from './build-strategy-registry-v1.service';
 import { BuildStrategySelectorV1Service } from './build-strategy-selector-v1.service';
 import { BuildStrategySessionV1Service } from './build-strategy-session-v1.service';
+import { BuildStrategySnapshotStoreV1Service } from './build-strategy-snapshot-store-v1.service';
 import { BuildStrategyValidatorV1Service } from './build-strategy-validator-v1.service';
 import { ConsensusStrategyFallbackV1Service } from './consensus-strategy-fallback-v1.service';
 import { PlannerTrajectoryBuilderV2Service } from './planner-trajectory-builder-v2.service';
@@ -53,6 +55,7 @@ import { StrategyFirstLegacyPlannerAdapterV1Service } from './strategy-first-leg
       RecommendationItemCatalogRecipeV1,
       StatlockerEvidenceSnapshotV1Entity,
       AdaptiveRecommendationDecisionV1Entity,
+      BuildStrategySnapshotV1Entity,
     ]),
   ],
   controllers: [AdaptiveRecommendationV1Controller],
@@ -78,6 +81,7 @@ import { StrategyFirstLegacyPlannerAdapterV1Service } from './strategy-first-leg
     BuildStrategyCompilerV1Service,
     BuildStrategyFeasibilityV1Service,
     BuildStrategyRegistryV1Service,
+    BuildStrategySnapshotStoreV1Service,
     BuildStrategySelectorV1Service,
     BuildStrategySessionV1Service,
     BuildContractV1Service,
@@ -101,6 +105,7 @@ import { StrategyFirstLegacyPlannerAdapterV1Service } from './strategy-first-leg
     StatlockerRefreshService,
     StatlockerEvidenceService,
     BuildStrategyRegistryV1Service,
+    BuildStrategySnapshotStoreV1Service,
   ],
 })
 export class StatlockerAdaptiveModule {}
