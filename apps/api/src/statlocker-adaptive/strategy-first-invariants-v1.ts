@@ -197,7 +197,10 @@ export function evaluateStrategyFirstInvariantsV1(
 
   const previous = input.previousStrategy;
   if (previous?.commitment === 'COMMITTED' && previous.strategyId !== input.result.strategySession.strategyId) {
-    if (!input.result.strategySession.replanReasons.includes('COMMITTED_STRATEGY_SWITCH')) {
+    const explicitCommittedSwitch = input.result.strategySession.replanReasons.includes('COMMITTED_STRATEGY_SWITCH');
+    const explicitOodRebase = input.result.strategySession.commitment === 'OOD' &&
+      input.result.strategySession.replanReasons.includes('OOD_NEAREST_STRATEGY_REBASE');
+    if (!explicitCommittedSwitch && !explicitOodRebase) {
       violations.push({
         code: 'UNEXPECTED_COMMITTED_STRATEGY_SWITCH',
         reasonCodes: ['COMMITTED_STRATEGY_CHANGED_WITHOUT_SWITCH_GATE'],
