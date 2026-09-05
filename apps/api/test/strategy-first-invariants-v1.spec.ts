@@ -67,6 +67,7 @@ function baseResult(): any {
     strategyPlan: {
       strategyId: 's', buildStatus: 'IN_PROGRESS', progress: { satisfiedHardGoals: 1, totalHardGoals: 2 },
       currentGoal: { goalId: 'branch-a', type: 'BRANCH', reasonCodes: ['BRANCH'] }, remainingGoalIds: ['branch-a'],
+      remainingHardInvestmentObjectiveIds: [],
       slotPlan: { currentUsedSlots: 1, currentFlexUsed: 0, unlockedFlexSlots: 0, reservedSituationalSlots: 0, futureTransitions: [], feasible: true, reasonCodes: [] },
       investmentPlan: { objectives: [], activeObjectiveIds: [] },
     },
@@ -119,6 +120,46 @@ describe('strategy-first runtime invariants v1', () => {
     ]));
   });
 
+  it('allows a committed strategy to rebase only through the explicit nearest OOD path', () => {
+    const result = baseResult();
+    result.strategy.strategyId = 'nearest-strategy';
+    result.strategySession = {
+      ...result.strategySession,
+      strategyId: 'nearest-strategy',
+      commitment: 'OOD',
+      replanReasons: ['CURRENT_STATE_OUT_OF_DISTRIBUTION', 'OOD_NEAREST_STRATEGY_REBASE'],
+    };
+    result.contract.status = 'OUT_OF_DISTRIBUTION';
+    result.contract.commitment = 'OOD';
+    result.strategyPlan.buildStatus = 'OUT_OF_DISTRIBUTION';
+
+    const codes = evaluateStrategyFirstInvariantsV1({
+      decision,
+      result,
+      previousStrategy: { strategyId: 'old-strategy', commitment: 'COMMITTED' },
+    }).violations.map((entry) => entry.code);
+    expect(codes).not.toContain('UNEXPECTED_COMMITTED_STRATEGY_SWITCH');
+  });
+
+  it('rejects a WAIT target that disagrees with the first NEXT build row', () => {
+    const result = baseResult();
+    result.nextAction = { actionKey: 'WAIT_SAVE:4', type: 'WAIT', targetItemId: 4, reasonCodes: [] };
+    result.recommendedBuild.push({ itemId: 3, position: 2, status: 'NEXT', score: 1, confidence: 1, skeletonStrength: 1, contextualSupport: 1, reasonCodes: [] });
+
+    expect(evaluateStrategyFirstInvariantsV1({ decision, result }).violations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'NEXT_ACTION_BUILD_MISMATCH' }),
+    ]));
+  });
+
+  it('accepts a WAIT target aligned with the first NEXT build row', () => {
+    const result = baseResult();
+    result.nextAction = { actionKey: 'WAIT_SAVE:3', type: 'WAIT', targetItemId: 3, reasonCodes: [] };
+    result.recommendedBuild.push({ itemId: 3, position: 2, status: 'NEXT', score: 1, confidence: 1, skeletonStrength: 1, contextualSupport: 1, reasonCodes: [] });
+
+    const codes = evaluateStrategyFirstInvariantsV1({ decision, result }).violations.map((entry) => entry.code);
+    expect(codes).not.toContain('NEXT_ACTION_BUILD_MISMATCH');
+  });
+
   it('summarizes release metrics as rates over evaluated decisions', () => {
     const clean = evaluateStrategyFirstInvariantsV1({ decision, result: baseResult() });
     const badResult = baseResult();
@@ -129,5 +170,6 @@ describe('strategy-first runtime invariants v1', () => {
     expect(summary.evaluatedDecisions).toBe(2);
     expect(summary.redundantAncestorRate).toBe(0.5);
     expect(summary.illegalActionRate).toBe(0);
+    expect(summary.nextActionBuildMismatchRate).toBe(0.5);
   });
 });
