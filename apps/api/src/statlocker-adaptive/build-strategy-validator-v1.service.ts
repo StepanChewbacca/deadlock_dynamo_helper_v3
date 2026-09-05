@@ -20,9 +20,15 @@ export type BuildStrategyValidationErrorCodeV1 =
   | 'BRANCH_SELECTION_BOUNDS_INVALID'
   | 'DUPLICATE_SITUATIONAL_WINDOW_ID'
   | 'SITUATIONAL_WINDOW_BOUNDS_INVALID'
+  | 'SITUATIONAL_UNKNOWN_GOAL'
+  | 'SITUATIONAL_PURPOSES_INVALID'
+  | 'SITUATIONAL_CANDIDATE_INVALID'
   | 'TERMINAL_UNKNOWN_GOAL'
   | 'TERMINAL_GOAL_NOT_HARD'
   | 'INVESTMENT_OBJECTIVE_INVALID'
+  | 'DUPLICATE_INVESTMENT_OBJECTIVE_ID'
+  | 'INVESTMENT_WEIGHTS_INVALID'
+  | 'HARD_INVESTMENT_ACTIVATION_NOT_GUARANTEED'
   | 'SLOT_POLICY_INVALID';
 
 export interface BuildStrategyValidationErrorV1 {
@@ -32,6 +38,7 @@ export interface BuildStrategyValidationErrorV1 {
   branchGroupId?: string;
   windowId?: string;
   itemId?: number;
+  objectiveId?: string;
 }
 
 export interface BuildStrategyValidationResultV1 {
@@ -78,18 +85,24 @@ export class BuildStrategyValidatorV1Service {
           message: `Invalid selection bounds ${goal.minSelect}/${goal.maxSelect}`,
         });
       }
+      const targetIds = new Set<number>();
       for (const itemId of goal.targetItemIds) {
-        const item = graph.getItem(itemId);
-        if (!item) {
-          errors.push({ code: 'UNKNOWN_ITEM', goalId: goal.goalId, itemId, message: `Unknown item ${itemId}` });
-          continue;
-        }
-        if (!item.availableRulesetIds.includes(strategy.rulesetId)) {
+        if (targetIds.has(itemId)) {
           errors.push({
-            code: 'ITEM_UNAVAILABLE_IN_RULESET',
+            code: 'INVALID_SELECTION_BOUNDS',
             goalId: goal.goalId,
             itemId,
-            message: `Item ${itemId} is unavailable in ruleset ${strategy.rulesetId}`,
+            message: `Goal ${goal.goalId} contains duplicate item ${itemId}`,
+          });
+        }
+        targetIds.add(itemId);
+        validateItem(errors, graph, strategy.rulesetId, itemId, { goalId: goal.goalId });
+        if (goal.lifecycleByItemId[itemId] === undefined) {
+          errors.push({
+            code: 'INVALID_SELECTION_BOUNDS',
+            goalId: goal.goalId,
+            itemId,
+            message: `Goal ${goal.goalId} is missing lifecycle semantics for item ${itemId}`,
           });
         }
       }
@@ -111,6 +124,7 @@ export class BuildStrategyValidatorV1Service {
     }
 
     const branchIds = new Set<string>();
+    const branchGoalIds = new Set<string>();
     for (const branch of strategy.branchGroups) {
       if (branchIds.has(branch.branchGroupId)) {
         errors.push({
@@ -120,7 +134,16 @@ export class BuildStrategyValidatorV1Service {
         });
       }
       branchIds.add(branch.branchGroupId);
+      const uniqueOptions = new Set(branch.optionGoalIds);
+      if (uniqueOptions.size !== branch.optionGoalIds.length) {
+        errors.push({
+          code: 'BRANCH_SELECTION_BOUNDS_INVALID',
+          branchGroupId: branch.branchGroupId,
+          message: `Branch group ${branch.branchGroupId} contains duplicate options`,
+        });
+      }
       for (const goalId of branch.optionGoalIds) {
+        branchGoalIds.add(goalId);
         if (!goalIds.has(goalId)) {
           errors.push({
             code: 'BRANCH_UNKNOWN_GOAL',
@@ -131,7 +154,7 @@ export class BuildStrategyValidatorV1Service {
         }
       }
       if (!Number.isInteger(branch.minSelect) || !Number.isInteger(branch.maxSelect) ||
-        branch.minSelect < 1 || branch.maxSelect < branch.minSelect || branch.maxSelect > branch.optionGoalIds.length) {
+        branch.minSelect < 1 || branch.maxSelect < branch.minSelect || branch.maxSelect > uniqueOptions.size) {
         errors.push({
           code: 'BRANCH_SELECTION_BOUNDS_INVALID',
           branchGroupId: branch.branchGroupId,
@@ -159,14 +182,41 @@ export class BuildStrategyValidatorV1Service {
           message: `Invalid bounds for situational window ${window.windowId}`,
         });
       }
+      if (window.allowedPurposes.length === 0 || new Set(window.allowedPurposes).size !== window.allowedPurposes.length) {
+        errors.push({
+          code: 'SITUATIONAL_PURPOSES_INVALID',
+          windowId: window.windowId,
+          message: `Situational window ${window.windowId} must contain unique allowed purposes`,
+        });
+      }
       for (const goalId of [...window.afterGoalIds, ...window.beforeGoalIds]) {
         if (!goalIds.has(goalId)) {
           errors.push({
-            code: 'BRANCH_UNKNOWN_GOAL',
+            code: 'SITUATIONAL_UNKNOWN_GOAL',
             windowId: window.windowId,
             goalId,
             message: `Situational window ${window.windowId} references unknown goal ${goalId}`,
           });
+        }
+      }
+      for (const [purpose, candidateIds] of Object.entries(window.candidateItemIdsByPurpose ?? {})) {
+        if (!window.allowedPurposes.includes(purpose as any)) {
+          errors.push({
+            code: 'SITUATIONAL_CANDIDATE_INVALID',
+            windowId: window.windowId,
+            message: `Situational window ${window.windowId} maps disallowed purpose ${purpose}`,
+          });
+        }
+        const uniqueCandidateIds = new Set(candidateIds ?? []);
+        if (uniqueCandidateIds.size !== (candidateIds ?? []).length) {
+          errors.push({
+            code: 'SITUATIONAL_CANDIDATE_INVALID',
+            windowId: window.windowId,
+            message: `Situational window ${window.windowId} contains duplicate candidates for ${purpose}`,
+          });
+        }
+        for (const itemId of uniqueCandidateIds) {
+          validateItem(errors, graph, strategy.rulesetId, itemId, { windowId: window.windowId });
         }
       }
     }
@@ -181,23 +231,71 @@ export class BuildStrategyValidatorV1Service {
       }
     }
 
+    const objectiveIds = new Set<string>();
     for (const objective of strategy.investmentPolicy.objectives) {
+      if (!objective.objectiveId || objectiveIds.has(objective.objectiveId)) {
+        errors.push({
+          code: 'DUPLICATE_INVESTMENT_OBJECTIVE_ID',
+          objectiveId: objective.objectiveId,
+          message: `Investment objective ID must be non-empty and unique: ${objective.objectiveId}`,
+        });
+      }
+      objectiveIds.add(objective.objectiveId);
       const target = objective.targetBreakpoint ?? objective.minimumValue;
+      if (objective.hard && target === undefined) {
+        errors.push({
+          code: 'INVESTMENT_OBJECTIVE_INVALID',
+          objectiveId: objective.objectiveId,
+          message: `Hard investment objective ${objective.objectiveId} requires a target`,
+        });
+      }
       if (target !== undefined && (!Number.isFinite(target) || target <= 0)) {
         errors.push({
           code: 'INVESTMENT_OBJECTIVE_INVALID',
+          objectiveId: objective.objectiveId,
           message: `Investment objective ${objective.objectiveId} has invalid target`,
+        });
+      }
+      if (objective.targetBreakpoint !== undefined && objective.minimumValue !== undefined) {
+        errors.push({
+          code: 'INVESTMENT_OBJECTIVE_INVALID',
+          objectiveId: objective.objectiveId,
+          message: `Investment objective ${objective.objectiveId} must use one target semantic`,
         });
       }
       for (const goalId of [...objective.activateAfterGoalIds, ...objective.deactivateAfterGoalIds]) {
         if (!goalIds.has(goalId)) {
           errors.push({
             code: 'INVESTMENT_OBJECTIVE_INVALID',
+            objectiveId: objective.objectiveId,
             goalId,
             message: `Investment objective ${objective.objectiveId} references unknown goal ${goalId}`,
           });
         }
       }
+      if (objective.hard) {
+        for (const goalId of objective.activateAfterGoalIds) {
+          const activationGoal = goalById.get(goalId);
+          if (!activationGoal?.hard || branchGoalIds.has(goalId)) {
+            errors.push({
+              code: 'HARD_INVESTMENT_ACTIVATION_NOT_GUARANTEED',
+              objectiveId: objective.objectiveId,
+              goalId,
+              message: `Hard investment objective ${objective.objectiveId} depends on non-guaranteed goal ${goalId}`,
+            });
+          }
+        }
+      }
+    }
+
+    const weights = strategy.investmentPolicy.preferredWeights;
+    const weightValues = [weights.weapon, weights.vitality, weights.spirit];
+    if (weightValues.some((value) => !Number.isFinite(value) || value < 0) ||
+      weightValues.reduce((sum, value) => sum + value, 0) <= 0) {
+      errors.push({
+        code: 'INVESTMENT_WEIGHTS_INVALID',
+        message: 'Investment preferred weights must be finite, non-negative, and have positive total mass',
+      });
     }
 
     if (!Number.isInteger(strategy.slotPolicy.reservedSituationalSlots) || strategy.slotPolicy.reservedSituationalSlots < 0 ||
@@ -207,12 +305,35 @@ export class BuildStrategyValidatorV1Service {
 
     const stableErrors = errors.sort((a, b) =>
       a.code.localeCompare(b.code) ||
+      (a.objectiveId ?? '').localeCompare(b.objectiveId ?? '') ||
       (a.goalId ?? '').localeCompare(b.goalId ?? '') ||
       (a.branchGroupId ?? '').localeCompare(b.branchGroupId ?? '') ||
       (a.windowId ?? '').localeCompare(b.windowId ?? '') ||
       (a.itemId ?? 0) - (b.itemId ?? 0),
     );
     return { valid: stableErrors.length === 0, errors: stableErrors };
+  }
+}
+
+function validateItem(
+  errors: BuildStrategyValidationErrorV1[],
+  graph: RecommendationItemGraph,
+  rulesetId: string,
+  itemId: number,
+  context: Pick<BuildStrategyValidationErrorV1, 'goalId' | 'windowId'>,
+): void {
+  const item = graph.getItem(itemId);
+  if (!item) {
+    errors.push({ ...context, code: 'UNKNOWN_ITEM', itemId, message: `Unknown item ${itemId}` });
+    return;
+  }
+  if (!item.availableRulesetIds.includes(rulesetId)) {
+    errors.push({
+      ...context,
+      code: 'ITEM_UNAVAILABLE_IN_RULESET',
+      itemId,
+      message: `Item ${itemId} is unavailable in ruleset ${rulesetId}`,
+    });
   }
 }
 
