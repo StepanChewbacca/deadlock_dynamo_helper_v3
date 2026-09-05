@@ -38,15 +38,13 @@ export class BuildSlotPlannerV1Service {
       if (targetItemId === undefined) continue;
       const transition = this.transitionForTarget(input, goalId, targetItemId);
       transitions.push(transition);
-      if (transition.requirement === 'NONE') continue;
-      if (transition.requirement === 'UPGRADE' || transition.requirement === 'SELL_TEMPORARY' ||
-        transition.requirement === 'REPLACE' || transition.requirement === 'FLEX_UNLOCK') continue;
-      feasible = false;
+      if (transition.requirement === 'BLOCKED') feasible = false;
     }
 
     if (transitions.some((entry) => entry.requirement === 'FLEX_UNLOCK')) reasonCodes.push('FUTURE_GOAL_REQUIRES_FLEX_UNLOCK');
     if (transitions.some((entry) => entry.requirement === 'SELL_TEMPORARY')) reasonCodes.push('TEMPORARY_ITEM_EXIT_REQUIRED');
     if (transitions.some((entry) => entry.requirement === 'UPGRADE')) reasonCodes.push('UPGRADE_COMPRESSES_SLOT_PATH');
+    if (transitions.some((entry) => entry.requirement === 'REPLACE')) reasonCodes.push('EXPLICIT_REPLACEMENT_PATH_REQUIRED');
     if (!feasible) reasonCodes.push('NO_SLOT_FEASIBLE_PATH');
 
     return {
@@ -70,8 +68,8 @@ export class BuildSlotPlannerV1Service {
       return {
         targetGoalId: goalId,
         targetItemId,
-        requirement: 'REPLACE',
-        reasonCodes: ['TARGET_ITEM_UNKNOWN'],
+        requirement: 'BLOCKED',
+        reasonCodes: ['TARGET_ITEM_UNKNOWN', 'NO_SLOT_EXIT_PATH'],
       };
     }
 
@@ -113,7 +111,7 @@ export class BuildSlotPlannerV1Service {
     }
 
     const requiredFlex = requiredFlexAfterAdd(input.ownedItemIds, targetItemId, input);
-    if (requiredFlex <= input.slots.maxFlexSlots &&
+    if (requiredFlex > 0 && requiredFlex <= input.slots.maxFlexSlots &&
       (input.slots.unlockedFlexSlots === undefined || requiredFlex > input.slots.unlockedFlexSlots)) {
       return {
         targetGoalId: goalId,
@@ -126,24 +124,56 @@ export class BuildSlotPlannerV1Service {
       };
     }
 
+    const replacementSource = findReplacementSource(input, targetItemId, (itemIds) => this.canFit(itemIds, input));
+    if (replacementSource !== undefined) {
+      return {
+        targetGoalId: goalId,
+        targetItemId,
+        requirement: 'REPLACE',
+        sourceItemId: replacementSource,
+        reasonCodes: ['NON_MANDATORY_ITEM_REPLACEMENT_PATH'],
+      };
+    }
+
     return {
       targetGoalId: goalId,
       targetItemId,
-      requirement: 'REPLACE',
-      reasonCodes: ['EXPLICIT_REPLACEMENT_PATH_REQUIRED'],
+      requirement: 'BLOCKED',
+      reasonCodes: ['NO_SLOT_EXIT_PATH'],
     };
   }
 
   private canFit(itemIds: readonly number[], input: BuildSlotPlannerV1Input): boolean {
     const rules = candidateGeneratorRulesFromSlotStateV1(input.slots);
     const usage = recommendationSlotUsageFor(itemIds, input.itemGraph, rules);
-    const unlocked = input.slots.unlockedFlexSlots;
-    if (usage.flexUsed > input.slots.maxFlexSlots) return false;
-    if (unlocked === undefined || usage.flexUsed > unlocked) return false;
-    if (usage.activeItemsUsed > input.slots.maxActiveItems) return false;
-    const reserved = input.strategy.slotPolicy.reservedSituationalSlots;
-    return usage.flexUsed + reserved <= unlocked || usage.itemCount + reserved <= input.slots.baseSlots + unlocked;
+    const requiredFlex = minimumRequiredFlex(usage.flexUsed, usage.itemCount, input.strategy.slotPolicy.reservedSituationalSlots, input.slots.baseSlots);
+    if (requiredFlex > input.slots.maxFlexSlots) return false;
+    if (input.slots.unlockedFlexSlots === undefined) {
+      if (requiredFlex > 0) return false;
+    } else if (requiredFlex > input.slots.unlockedFlexSlots) {
+      return false;
+    }
+    return usage.activeItemsUsed <= input.slots.maxActiveItems;
   }
+}
+
+function findReplacementSource(
+  input: BuildSlotPlannerV1Input,
+  targetItemId: number,
+  canFit: (itemIds: readonly number[]) => boolean,
+): number | undefined {
+  const satisfiedHardGoals = input.strategy.goals.filter((goal) =>
+    goal.hard && input.contract.goalStates[goal.goalId] === 'SATISFIED' && goal.minSelect > 0,
+  );
+  for (const sourceItemId of [...new Set(input.ownedItemIds)].sort((a, b) => a - b)) {
+    const afterExit = input.ownedItemIds.filter((itemId) => itemId !== sourceItemId);
+    const preservesHardGoals = satisfiedHardGoals.every((goal) =>
+      goal.targetItemIds.filter((itemId) => input.itemGraph.isTargetSatisfied(itemId, afterExit)).length >= goal.minSelect,
+    );
+    if (!preservesHardGoals) continue;
+    if (canFit([...afterExit, targetItemId])) return sourceItemId;
+  }
+  return undefined;
 }
 
 function requiredFlexAfterAdd(
@@ -152,6 +182,23 @@ function requiredFlexAfterAdd(
   input: BuildSlotPlannerV1Input,
 ): number {
   const rules = candidateGeneratorRulesFromSlotStateV1(input.slots);
-  return recommendationSlotUsageFor([...ownedItemIds, targetItemId], input.itemGraph, rules).flexUsed +
-    input.strategy.slotPolicy.reservedSituationalSlots;
+  const usage = recommendationSlotUsageFor([...ownedItemIds, targetItemId], input.itemGraph, rules);
+  return minimumRequiredFlex(
+    usage.flexUsed,
+    usage.itemCount,
+    input.strategy.slotPolicy.reservedSituationalSlots,
+    input.slots.baseSlots,
+  );
+}
+
+function minimumRequiredFlex(
+  categoryOverflow: number,
+  itemCount: number,
+  reservedSituationalSlots: number,
+  baseSlots: number,
+): number {
+  return Math.max(
+    categoryOverflow,
+    Math.max(0, itemCount + Math.max(0, reservedSituationalSlots) - baseSlots),
+  );
 }
