@@ -44,6 +44,15 @@ export interface AdaptiveStrategyCurrentGoalV1 {
   reasonCodes: readonly string[];
 }
 
+export interface AdaptiveStrategySlotTransitionV1 {
+  targetGoalId: string;
+  targetItemId?: number;
+  requirement: 'NONE' | 'UPGRADE' | 'SELL_TEMPORARY' | 'REPLACE' | 'FLEX_UNLOCK' | 'BLOCKED';
+  sourceItemId?: number;
+  requiredUnlockedFlexSlots?: number;
+  reasonCodes: readonly string[];
+}
+
 export interface AdaptiveStrategySlotPlanV1 {
   currentUsedSlots: number;
   currentFlexUsed: number;
@@ -51,6 +60,8 @@ export interface AdaptiveStrategySlotPlanV1 {
   reservedSituationalSlots: number;
   feasible: boolean;
   reasonCodes: readonly string[];
+  /** Optional for persisted V1 recommendations written before strategy slot transitions were exposed. */
+  futureTransitions?: readonly AdaptiveStrategySlotTransitionV1[];
 }
 
 export interface AdaptiveStrategyInvestmentObjectiveV1 {
@@ -85,6 +96,8 @@ export interface AdaptiveRecommendationStrategyV1 {
   progress: AdaptiveStrategyProgressV1;
   currentGoal?: AdaptiveStrategyCurrentGoalV1;
   remainingGoalIds: readonly string[];
+  /** Optional for persisted V1 recommendations written before hard investment obligations were surfaced. */
+  remainingHardInvestmentObjectiveIds?: readonly string[];
   slotPlan: AdaptiveStrategySlotPlanV1;
   investmentObjectives: readonly AdaptiveStrategyInvestmentObjectiveV1[];
   situationalDecision?: AdaptiveStrategySituationalDecisionV1;
