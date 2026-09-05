@@ -1,6 +1,7 @@
 import { Injectable, Optional } from '@nestjs/common';
 import { AdaptiveRecommendationResultV1 } from '@deadlock-live-probe/shared';
 import { AdaptiveDecisionStateV1 } from './adaptive-decision-state-v1.service';
+import { diffAdaptiveBuildPlansV1 } from './build-plan-diff-v1';
 import { BuildStrategyRegistryV1Service } from './build-strategy-registry-v1.service';
 import { ConsensusStrategyFallbackV1Service } from './consensus-strategy-fallback-v1.service';
 import {
@@ -54,17 +55,29 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
 
     const previousSession = previousStrategySession(input.previousResult);
     const previousContract = previousBuildContract(input.previousResult);
-    const result = this.planner.plan({
+    const planned = this.planner.plan({
       decision: input.decision,
       evidence: input.evidence,
       strategies,
       previousSession,
       previousContract,
-      previousRecommendedBuild: input.previousResult?.recommendedBuild,
-      recentPurchasedItemIds: input.recentPurchasedItemIds,
-      recentSoldItemIds: input.recentSoldItemIds,
-    } as Parameters<StrategyFirstBuildPlannerV1Service['plan']>[0]);
-    return this.situational?.apply({ result, decision: input.decision, evidence: input.evidence }) ?? result;
+    });
+    const result = this.situational?.apply({
+      result: planned,
+      decision: input.decision,
+      evidence: input.evidence,
+    }) ?? planned;
+    return {
+      ...result,
+      changes: input.previousResult
+        ? diffAdaptiveBuildPlansV1(
+            input.previousResult.recommendedBuild,
+            result.recommendedBuild,
+            input.recentPurchasedItemIds ?? [],
+            input.recentSoldItemIds ?? [],
+          )
+        : [],
+    };
   }
 }
 
