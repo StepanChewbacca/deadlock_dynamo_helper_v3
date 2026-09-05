@@ -159,7 +159,14 @@ function parsePayload(value: Record<string, unknown>): PersistedBuildStrategySna
 }
 
 function contentHash(payload: PersistedBuildStrategySnapshotPayloadV1): string {
-  return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+  return createHash('sha256').update(canonicalJson(payload)).digest('hex');
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(',')}}`;
 }
 
 function validatePublishIdentity(input: PublishBuildStrategySnapshotV1Input): number {

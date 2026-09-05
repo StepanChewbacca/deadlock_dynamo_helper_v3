@@ -71,6 +71,16 @@ function repository() {
   } as any;
 }
 
+function reorderObjectKeysRecursively(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(reorderObjectKeysRecursively);
+  if (!value || typeof value !== 'object') return value;
+  const record = value as Record<string, unknown>;
+  return Object.keys(record).sort().reverse().reduce<Record<string, unknown>>((reordered, key) => {
+    reordered[key] = reorderObjectKeysRecursively(record[key]);
+    return reordered;
+  }, {});
+}
+
 describe('build strategy snapshot store v1', () => {
   it('publishes an immutable exact-scope snapshot and makes it live only after persistence', async () => {
     const repo = repository();
@@ -120,9 +130,9 @@ describe('build strategy snapshot store v1', () => {
       sourceSha256: 'd'.repeat(64), specs: [forHero(1, 'hero-1-v2')], itemGraph: graph,
     });
 
-    expect(repo.rows.find((row) => row.snapshotId === 'hero-1-v1')?.active).toBe(false);
-    expect(repo.rows.find((row) => row.snapshotId === 'hero-2-v1')?.active).toBe(true);
-    expect(repo.rows.find((row) => row.snapshotId === 'hero-1-v2')?.active).toBe(true);
+    expect(repo.rows.find((row: any) => row.snapshotId === 'hero-1-v1')?.active).toBe(false);
+    expect(repo.rows.find((row: any) => row.snapshotId === 'hero-2-v1')?.active).toBe(true);
+    expect(repo.rows.find((row: any) => row.snapshotId === 'hero-1-v2')?.active).toBe(true);
     expect(registry.getStrategies(1, 'r1', 'a'.repeat(64), 'p1').map((entry) => entry.strategyId)).toEqual(['hero-1-v2']);
     expect(registry.getStrategies(2, 'r1', 'a'.repeat(64), 'p1').map((entry) => entry.strategyId)).toEqual(['hero-2-v1']);
   });
@@ -147,6 +157,23 @@ describe('build strategy snapshot store v1', () => {
     expect(count).toBe(2);
     expect(restoredRegistry.getStrategies(1, 'r1', 'a'.repeat(64), 'p1').map((entry) => entry.strategyId)).toEqual(['hero-1']);
     expect(restoredRegistry.getStrategies(2, 'r1', 'a'.repeat(64), 'p1').map((entry) => entry.strategyId)).toEqual(['hero-2']);
+  });
+
+  it('rehydrates a valid snapshot after PostgreSQL jsonb recursively reorders payload object keys', async () => {
+    const repo = repository();
+    const firstStore = new BuildStrategySnapshotStoreV1Service(repo, new BuildStrategyRegistryV1Service());
+    await firstStore.publish({
+      snapshotId: 'strategy-snapshot-jsonb', rulesetId: 'r1', patchId: 'p1', catalogSha256: 'a'.repeat(64),
+      sourceSha256: 'b'.repeat(64), specs: [spec], itemGraph: graph,
+    });
+    repo.rows[0].payload = reorderObjectKeysRecursively(repo.rows[0].payload);
+
+    const restoredRegistry = new BuildStrategyRegistryV1Service();
+    const restoredStore = new BuildStrategySnapshotStoreV1Service(repo, restoredRegistry);
+
+    await expect(restoredStore.hydrateActive()).resolves.toBe(1);
+    expect(restoredRegistry.getStrategies(1, 'r1', 'a'.repeat(64), 'p1').map((entry) => entry.strategyId))
+      .toEqual(['hero1:archetype:a']);
   });
 
   it('fails closed when a persisted snapshot content hash is tampered', async () => {
