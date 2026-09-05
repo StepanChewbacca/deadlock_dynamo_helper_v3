@@ -1,4 +1,5 @@
 import { AdaptiveRecommendationDecisionV1Entity } from '../deadlock-live/entities/adaptive-recommendation-decision-v1.entity';
+import { BuildStrategySnapshotV1Entity } from '../deadlock-live/entities/build-strategy-snapshot-v1.entity';
 import { CrawlerRun } from '../deadlock-live/entities/crawler-run.entity';
 import { CrawlerState } from '../deadlock-live/entities/crawler-state.entity';
 import { GameRuleset } from '../deadlock-live/entities/game-ruleset.entity';
@@ -56,6 +57,7 @@ export const DATABASE_ENTITIES = [
   SoulsAffordabilityEvidenceV2Entity,
   StatlockerEvidenceSnapshotV1Entity,
   AdaptiveRecommendationDecisionV1Entity,
+  BuildStrategySnapshotV1Entity,
   ModelBundleRegistryV1,
   RecommendationDatasetRegistryV1,
   RecommendationValueDatasetRegistryV1,
