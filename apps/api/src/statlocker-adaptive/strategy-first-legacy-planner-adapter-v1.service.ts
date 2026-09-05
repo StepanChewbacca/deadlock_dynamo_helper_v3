@@ -54,11 +54,13 @@ export function toAdaptiveRecommendationStrategyV1(
   const plan = result.strategyPlan;
   const slotPlan = plan.slotPlan;
   const investmentPlan = plan.investmentPlan;
+  const situational = plan.situationalDecision;
   return {
     strategyId: session.strategyId ?? result.strategy.strategyId,
     commitment: session.commitment,
     selectedAtGameTimeSec: session.selectedAtGameTimeSec,
     posterior: session.posterior,
+    stability: result.strategy.stability,
     reasonCodes: [...(session.replanReasons ?? [])],
     selectedBranches: { ...(result.contract.selectedBranches ?? {}) },
     committedBranches: { ...(result.contract.committedBranches ?? {}) },
@@ -98,15 +100,19 @@ export function toAdaptiveRecommendationStrategyV1(
       distance: objective.distance,
       reasonCodes: [...(objective.reasonCodes ?? [])],
     })),
-    situationalDecision: plan.situationalDecision
+    situationalDecision: situational
       ? {
-          windowId: plan.situationalDecision.windowId,
-          purpose: plan.situationalDecision.purpose,
-          targetItemId: plan.situationalDecision.targetItemId,
-          enemyHeroIds: [...(plan.situationalDecision.enemyHeroIds ?? [])],
-          enemyItemIds: [...(plan.situationalDecision.enemyItemIds ?? [])],
-          confidence: plan.situationalDecision.confidence,
-          reasonCodes: [...(plan.situationalDecision.reasonCodes ?? [])],
+          windowId: situational.windowId,
+          purpose: situational.purpose,
+          targetItemId: situational.targetItemId,
+          enemyHeroIds: [...(situational.enemyHeroIds ?? [])],
+          enemyItemIds: [...(situational.enemyItemIds ?? [])],
+          confidence: situational.confidence,
+          reasonCodes: [...(situational.reasonCodes ?? [])],
+          statisticalSupport: situational.statisticalSupport,
+          slotImpact: situational.slotImpact,
+          investmentImpact: situational.investmentImpact,
+          coreInterruptionSouls: situational.coreInterruptionSouls,
         }
       : undefined,
   };
