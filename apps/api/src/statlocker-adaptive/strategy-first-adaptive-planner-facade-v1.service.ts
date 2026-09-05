@@ -71,12 +71,15 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
       recentPurchasedItemIds: input.recentPurchasedItemIds ?? [],
       recentSoldItemIds: input.recentSoldItemIds ?? [],
     });
-    const overlaid = this.situational?.apply({
-      result: planned,
-      decision: input.decision,
-      evidence: input.evidence,
-    }) ?? planned;
-    const aligned = alignFirstNextRow(overlaid);
+    const overlaid = planned.contract.status === 'COMPLETE'
+      ? planned
+      : this.situational?.apply({
+          result: planned,
+          decision: input.decision,
+          evidence: input.evidence,
+        }) ?? planned;
+    const terminalNormalized = normalizeTerminalResult(overlaid, input.decision);
+    const aligned = alignFirstNextRow(terminalNormalized);
     const withChanges: StrategyFirstBuildPlannerV1Result = {
       ...aligned,
       changes: input.previousResult
@@ -109,6 +112,30 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
         : [],
     };
   }
+}
+
+function normalizeTerminalResult(
+  result: StrategyFirstBuildPlannerV1Result,
+  decision: AdaptiveDecisionStateV1,
+): StrategyFirstBuildPlannerV1Result {
+  if (result.contract.status !== 'COMPLETE') return result;
+  const owned = new Set(decision.state.inventory.heldByItemId.keys());
+  const recommendedBuild = result.recommendedBuild
+    .filter((row) => owned.has(row.itemId))
+    .sort((a, b) => a.position - b.position || a.itemId - b.itemId)
+    .map((row, index) => ({ ...row, position: index + 1, status: 'OWNED' as const }));
+  return {
+    ...result,
+    nextAction: {
+      actionKey: 'HOLD',
+      type: 'HOLD',
+      reasonCodes: ['BUILD_CONTRACT_COMPLETE'],
+    },
+    recommendedBuild,
+    rankedImmediateCandidates: [],
+    totalScore: 0,
+    confidence: 1,
+  };
 }
 
 function alignFirstNextRow(result: StrategyFirstBuildPlannerV1Result): StrategyFirstBuildPlannerV1Result {
