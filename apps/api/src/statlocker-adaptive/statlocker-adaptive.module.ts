@@ -6,6 +6,7 @@ import { DeadlockLiveModule } from '../deadlock-live/deadlock-live.module';
 import { AdaptiveRecommendationDecisionV1Entity } from '../deadlock-live/entities/adaptive-recommendation-decision-v1.entity';
 import { BuildStrategySnapshotV1Entity } from '../deadlock-live/entities/build-strategy-snapshot-v1.entity';
 import { MatchPlayer } from '../deadlock-live/entities/match-player.entity';
+import { RecommendationEconomyRulesSnapshotV1Entity } from '../deadlock-live/entities/recommendation-economy-rules-snapshot-v1.entity';
 import { RecommendationItemCatalogItemV1 } from '../deadlock-live/entities/recommendation-item-catalog-item-v1.entity';
 import { RecommendationItemCatalogRecipeV1 } from '../deadlock-live/entities/recommendation-item-catalog-recipe-v1.entity';
 import { RecommendationItemCatalogVersionV1 } from '../deadlock-live/entities/recommendation-item-catalog-version-v1.entity';
@@ -37,6 +38,7 @@ import { ConsensusStrategyFallbackV1Service } from './consensus-strategy-fallbac
 import { HistoricalBuildTrajectorySourceV2Service } from './historical-build-trajectory-source-v2.service';
 import { HistoricalPlannerTrajectoryExtractorV2Service } from './historical-planner-trajectory-extractor-v2.service';
 import { PlannerTrajectoryBuilderV2Service } from './planner-trajectory-builder-v2.service';
+import { RecommendationEconomyRulesStoreV1Service } from './recommendation-economy-rules-store-v1.service';
 import {
   STATLOCKER_BROWSER_LAUNCHER_V1,
   StatlockerBrowserCollectorService,
@@ -58,6 +60,7 @@ import { StrategyFirstSituationalOverlayV1Service } from './strategy-first-situa
       RecommendationItemCatalogVersionV1,
       RecommendationItemCatalogItemV1,
       RecommendationItemCatalogRecipeV1,
+      RecommendationEconomyRulesSnapshotV1Entity,
       StatlockerEvidenceSnapshotV1Entity,
       AdaptiveRecommendationDecisionV1Entity,
       BuildStrategySnapshotV1Entity,
@@ -76,6 +79,7 @@ import { StrategyFirstSituationalOverlayV1Service } from './strategy-first-situa
     StatlockerRefreshService,
     StatlockerEvidenceService,
     BuildSkeletonService,
+    RecommendationEconomyRulesStoreV1Service,
     AdaptiveDecisionStateV1Service,
     AdaptiveEvidenceScorerV1Service,
     AdaptivePhaseEligibilityV1Service,
@@ -114,6 +118,7 @@ import { StrategyFirstSituationalOverlayV1Service } from './strategy-first-situa
     AdaptiveRecommendationObservabilityV1Service,
     StatlockerRefreshService,
     StatlockerEvidenceService,
+    RecommendationEconomyRulesStoreV1Service,
     BuildStrategyRegistryV1Service,
     BuildStrategySnapshotStoreV1Service,
     BuildStrategyMiningPipelineV1Service,
