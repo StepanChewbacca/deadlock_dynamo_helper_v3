@@ -107,6 +107,32 @@ describe('adaptive recommendation presentation', () => {
     });
   });
 
+  it('remains readable for persisted strategy payloads written before investment objectives were exposed', () => {
+    const view = buildAdaptiveRecommendationPresentation(recommendation({
+      strategy: {
+        strategyId: 'strategy:legacy',
+        commitment: 'PROVISIONAL',
+        posterior: 0.5,
+        reasonCodes: [],
+        selectedBranches: {},
+        committedBranches: {},
+        buildStatus: 'WAITING',
+        progress: { satisfiedHardGoals: 1, totalHardGoals: 2 },
+        remainingGoalIds: ['g2'],
+        slotPlan: {
+          currentUsedSlots: 4,
+          currentFlexUsed: 0,
+          reservedSituationalSlots: 0,
+          feasible: true,
+          reasonCodes: [],
+        },
+      },
+    }));
+
+    expect(view.strategy?.idLabel).toBe('legacy');
+    expect(view.strategy?.investmentLabel).toBeUndefined();
+  });
+
   it('presents an active situational window as an explicit bounded strategy deviation', () => {
     const view = buildAdaptiveRecommendationPresentation(recommendation({
       strategy: {
@@ -174,29 +200,16 @@ describe('adaptive recommendation presentation', () => {
     expect(view.plan.items.every((item) => ['Owned', 'Next', 'Planned'].includes(item.statusLabel))).toBe(true);
   });
 
-  it('limits alternatives to three and omits the primary action', () => {
+  it('keeps ranked immediate candidates diagnostic instead of exposing them as Also viable', () => {
     const rankedImmediateCandidates = [
       { action: { actionKey: 'UPGRADE:3862866912', type: 'UPGRADE', itemId: 3862866912, reasonCodes: [] }, score: 0.95, confidence: 0.9 },
       { action: { actionKey: 'BUY:968099481', type: 'BUY', buyItemId: 968099481, reasonCodes: [] }, score: 0.84, confidence: 0.8 },
       { action: { actionKey: 'REPLACE:1:968099481', type: 'REPLACE', sellItemId: 1437614329, buyItemId: 968099481, reasonCodes: [] }, score: 0.8, confidence: 0.75 },
-      { action: { actionKey: 'BUY:1342610602', type: 'BUY', buyItemId: 1342610602, reasonCodes: [] }, score: 0.74, confidence: 0.7 },
-      { action: { actionKey: 'BUY:1437614329', type: 'BUY', buyItemId: 1437614329, reasonCodes: [] }, score: 0.64, confidence: 0.6 },
-      { action: { actionKey: 'BUY:7409189', type: 'BUY', buyItemId: 7409189, reasonCodes: [] }, score: 0.54, confidence: 0.5 },
     ];
 
     const view = buildAdaptiveRecommendationPresentation(recommendation({ rankedImmediateCandidates }));
 
-    expect(view.alternatives).toHaveLength(3);
-    expect(view.alternatives.map((item) => item.item?.name)).toEqual([
-      'Extra Spirit',
-      'Close Quarters',
-      'Melee Lifesteal',
-    ]);
-    expect(view.alternatives.map((item) => item.headline)).toEqual([
-      'Buy Extra Spirit',
-      'Buy Close Quarters',
-      'Buy Melee Lifesteal',
-    ]);
+    expect(view.alternatives).toEqual([]);
   });
 
   it('shows both sides of an exact replacement transaction', () => {
