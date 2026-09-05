@@ -10,6 +10,7 @@ import {
   RecommendationEconomyRulesV1,
   deriveAdaptiveInvestmentStateV1,
   deriveAdaptiveSlotStateV1,
+  slotRulesFromEconomyRulesV1,
 } from './adaptive-economy-v1';
 import {
   AdaptiveInvestmentDeltaV1 as AdaptiveScoreInvestmentDeltaV1,
@@ -87,10 +88,14 @@ export function projectPlannerCandidateV1(
     input.graph,
   );
   const projectedItemIds = [...projectedDecision.inventory.heldByItemId.keys()].sort((a, b) => a - b);
-  const slotRules = input.economyRules ?? {
-    baseSlots: input.node.slots.baseSlots,
-    maxFlexSlots: input.node.slots.maxFlexSlots,
-  };
+  const slotRules = input.economyRules
+    ? slotRulesFromEconomyRulesV1(input.economyRules)
+    : {
+        baseSlots: input.node.slots.baseSlots,
+        baseSlotsByType: input.node.slots.baseSlotsByType,
+        maxFlexSlots: input.node.slots.maxFlexSlots,
+        maxActiveItems: input.node.slots.maxActiveItems,
+      };
   const slots = deriveAdaptiveSlotStateV1(
     projectedItemIds,
     input.graph,
