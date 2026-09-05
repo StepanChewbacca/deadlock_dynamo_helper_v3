@@ -23,8 +23,10 @@ const catalogSha256 = 'a'.repeat(64);
 const rules: RecommendationEconomyRulesV1 = {
   rulesetId: 'ruleset-a',
   catalogSha256,
-  baseSlots: 9,
-  maxFlexSlots: 3,
+  baseSlots: 12,
+  baseSlotsByType: { weapon: 4, vitality: 4, spirit: 4 },
+  maxFlexSlots: 4,
+  maxActiveItems: 4,
   investmentBreakpoints: {
     weapon: [1600, 3200, 6400],
     vitality: [1600, 3200, 6400],
@@ -34,11 +36,11 @@ const rules: RecommendationEconomyRulesV1 = {
 
 const generatorRules: RecommendationCandidateGeneratorRules = {
   baseSlots: rules.baseSlots,
-  baseSlotsByType: { weapon: 4, vitality: 4, spirit: 4 },
+  baseSlotsByType: rules.baseSlotsByType,
   maxFlexSlots: rules.maxFlexSlots,
-  unlockedFlexSlots: 3,
+  unlockedFlexSlots: 4,
   flexCapacityEvidence: 'OBSERVED',
-  maxActiveItems: 4,
+  maxActiveItems: rules.maxActiveItems,
   allowSellOnlyActions: true,
   generateTargetedWaitActions: true,
 };
@@ -133,7 +135,7 @@ function plannerNode(held: number[], wallet = 5000) {
   const state = decisionState(held, wallet);
   return createAdaptivePlannerNodeV1({
     decisionState: state,
-    slots: deriveAdaptiveSlotStateV1(held, itemGraph, rules, { unlockedFlexSlots: 3, evidence: 'OBSERVED' }),
+    slots: deriveAdaptiveSlotStateV1(held, itemGraph, rules, { unlockedFlexSlots: 4, evidence: 'OBSERVED' }),
     investment: deriveAdaptiveInvestmentStateV1(held, itemGraph, rules),
   });
 }
@@ -189,14 +191,18 @@ describe('adaptive economy v1', () => {
     }])).toBeUndefined();
   });
 
-  it('derives flex usage from universal occupied slots, not category counts', () => {
+  it('derives flex usage from category overflow, not total inventory count', () => {
     const held = [1, 2, 3, 4, 5, 6, 10, 11, 20, 21];
     const state = deriveAdaptiveSlotStateV1(held, graph(), rules, { evidence: 'UNKNOWN' });
 
-    expect(state.baseSlots).toBe(9);
+    expect(state.baseSlots).toBe(12);
     expect(state.usedSlots).toBe(10);
-    expect(state.usedFlexSlots).toBe(1);
-    expect(state.provedFlexLowerBound).toBe(1);
+    expect(state.usedSlotsByType).toEqual({ weapon: 6, vitality: 2, spirit: 2 });
+    expect(state.overflowByType).toEqual({ weapon: 2, vitality: 0, spirit: 0 });
+    expect(state.usedFlexSlots).toBe(2);
+    expect(state.provedFlexLowerBound).toBe(2);
+    expect(state.freeBaseSlotsByType).toEqual({ weapon: 0, vitality: 2, spirit: 2 });
+    expect(state.freeBaseSlots).toBe(4);
     expect(state.unlockedFlexSlots).toBeUndefined();
     expect(state.freeFlexSlots).toBeUndefined();
     expect(state.evidence).toBe('UNKNOWN');
@@ -207,23 +213,23 @@ describe('adaptive economy v1', () => {
       [1, 2, 3, 4, 5, 6, 10, 11, 20, 21],
       graph(),
       rules,
-      { unlockedFlexSlots: 3, evidence: 'UNKNOWN' },
+      { unlockedFlexSlots: 4, evidence: 'UNKNOWN' },
     );
 
-    expect(state.provedFlexLowerBound).toBe(1);
+    expect(state.provedFlexLowerBound).toBe(2);
     expect(state.unlockedFlexSlots).toBeUndefined();
     expect(state.freeFlexSlots).toBeUndefined();
     expect(state.totalCapacity).toBeUndefined();
   });
 
   it.each([
-    [9, 0],
-    [10, 1],
-    [11, 2],
-    [12, 3],
-  ])('uses %i held items only as the unknown flex lower bound of %i', (heldCount, lowerBound) => {
-    const held = Array.from({ length: heldCount }, (_, index) => index + 1);
-    const state = deriveAdaptiveSlotStateV1(held, graph(), rules, { evidence: 'UNKNOWN' });
+    [[1, 2, 3, 4], 0],
+    [[1, 2, 3, 4, 5], 1],
+    [[1, 2, 3, 4, 5, 6], 2],
+    [[1, 2, 3, 4, 5, 6, 7], 3],
+    [[1, 2, 3, 4, 5, 6, 7, 8], 4],
+  ])('uses category overflow in %j as the unknown flex lower bound of %i', (held, lowerBound) => {
+    const state = deriveAdaptiveSlotStateV1(held as number[], graph(), rules, { evidence: 'UNKNOWN' });
 
     expect(state.usedFlexSlots).toBe(lowerBound);
     expect(state.provedFlexLowerBound).toBe(lowerBound);
@@ -232,18 +238,19 @@ describe('adaptive economy v1', () => {
     expect(state.totalCapacity).toBeUndefined();
   });
 
-  it('reports exact free slots when flex capacity is observed', () => {
+  it('reports exact category and flex headroom when flex capacity is observed', () => {
     const held = [1, 2, 3, 4, 5, 6, 10, 11, 20, 21];
     const state = deriveAdaptiveSlotStateV1(
       held,
       graph(),
       rules,
-      { unlockedFlexSlots: 2, evidence: 'OBSERVED' },
+      { unlockedFlexSlots: 3, evidence: 'OBSERVED' },
     );
 
-    expect(state.freeBaseSlots).toBe(0);
+    expect(state.freeBaseSlots).toBe(4);
+    expect(state.freeBaseSlotsByType).toEqual({ weapon: 0, vitality: 2, spirit: 2 });
     expect(state.freeFlexSlots).toBe(1);
-    expect(state.totalCapacity).toBe(11);
+    expect(state.totalCapacity).toBe(15);
   });
 
   it('keeps reconstructed capacity available for a future deterministic upstream source', () => {
@@ -251,13 +258,13 @@ describe('adaptive economy v1', () => {
       [1, 2, 3, 4, 5, 6, 10, 11, 20, 21],
       graph(),
       rules,
-      { unlockedFlexSlots: 2, evidence: 'RECONSTRUCTED' },
+      { unlockedFlexSlots: 3, evidence: 'RECONSTRUCTED' },
     );
 
     expect(state.evidence).toBe('RECONSTRUCTED');
-    expect(state.unlockedFlexSlots).toBe(2);
+    expect(state.unlockedFlexSlots).toBe(3);
     expect(state.freeFlexSlots).toBe(1);
-    expect(state.totalCapacity).toBe(11);
+    expect(state.totalCapacity).toBe(15);
   });
 
   it('reports breakpoint crossings from projected inventory states', () => {
