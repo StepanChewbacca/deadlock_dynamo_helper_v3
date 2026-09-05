@@ -2,13 +2,15 @@ import { Injectable } from '@nestjs/common';
 import { RecommendationItemGraph } from '@deadlock-live-probe/build-domain';
 import { BuildArchetypeV1 } from './build-archetype.types';
 import {
+  BuildInvestmentObjectiveV1,
   BuildItemLifecycleV1,
+  BuildSituationalWindowV1,
   BuildStrategyBranchGroupV1,
   BuildStrategyGoalV1,
   BuildStrategyPhaseV1,
   BuildStrategySpecV1,
 } from './build-strategy-v1';
-import { PlannerTrajectoryV2 } from './planner-trajectory-v2';
+import { PlannerInvestmentVectorV2, PlannerTrajectoryV2 } from './planner-trajectory-v2';
 
 export interface BuildStrategyCompilerV1Input {
   archetype: BuildArchetypeV1;
@@ -90,7 +92,9 @@ export class BuildStrategyCompilerV1Service {
       .map((goal) => goal.goalId);
     const representative = members.find((trace) => trace.traceId === input.archetype.representativeTraceId) ?? members[0];
     const investment = representative.archetypeFeaturePayload.finalInvestment;
-    const totalInvestment = Math.max(1, investment.weapon + investment.vitality + investment.spirit);
+    const preferredWeights = normalizedInvestmentWeights(investment);
+    const investmentObjectives = inferSoftInvestmentObjectives(members, goals, terminalRequiredGoalIds);
+    const situationalWindows = inferSituationalWindows(members, goals, input.itemGraph);
 
     return {
       schemaVersion: 1,
@@ -103,17 +107,13 @@ export class BuildStrategyCompilerV1Service {
       representativeTraceId: input.archetype.representativeTraceId,
       goals,
       branchGroups,
-      situationalWindows: [],
+      situationalWindows,
       investmentPolicy: {
-        objectives: [],
-        preferredWeights: {
-          weapon: investment.weapon / totalInvestment,
-          vitality: investment.vitality / totalInvestment,
-          spirit: investment.spirit / totalInvestment,
-        },
+        objectives: investmentObjectives,
+        preferredWeights,
       },
       slotPolicy: {
-        reservedSituationalSlots: inferSituationalReservationCount(members),
+        reservedSituationalSlots: situationalWindows.length > 0 ? 1 : inferSituationalReservationCount(members),
         maxTemporarySlots: Math.max(0, countTemporaryGoals(goals)),
       },
       terminalPolicy: {
@@ -167,7 +167,7 @@ function makeGoal(
     maxSelect: 1,
     prerequisiteGoalIds: [...prerequisiteGoalIds],
     hard,
-    lifecycleByItemId: { [candidate.itemId]: type === 'UPGRADE' ? 'PERMANENT_CORE' : 'PERMANENT_CORE' },
+    lifecycleByItemId: { [candidate.itemId]: 'PERMANENT_CORE' },
     rationaleCodes: [hard ? 'ARCHETYPE_CORE_SUPPORT' : 'ARCHETYPE_SOFT_SUPPORT', `SUPPORT:${candidate.support.toFixed(3)}`],
   };
 }
@@ -199,6 +199,99 @@ function markLifecycleFromObservedTransitions(
   }
 }
 
+function inferSoftInvestmentObjectives(
+  traces: readonly PlannerTrajectoryV2[],
+  goals: readonly BuildStrategyGoalV1[],
+  terminalRequiredGoalIds: readonly string[],
+): BuildInvestmentObjectiveV1[] {
+  const types = ['weapon', 'vitality', 'spirit'] as const;
+  const activationGoal = goals.find((goal) => goal.hard && goal.phase === 'EARLY')
+    ?? goals.find((goal) => goal.hard);
+  const deactivateGoal = terminalRequiredGoalIds[terminalRequiredGoalIds.length - 1];
+  return types.flatMap((type) => {
+    const values = traces
+      .map((trace) => Math.max(0, trace.archetypeFeaturePayload.finalInvestment[type]))
+      .filter((value) => Number.isFinite(value));
+    const positiveSupport = values.filter((value) => value > 0).length / Math.max(1, traces.length);
+    const target = median(values);
+    if (target <= 0 || positiveSupport < 0.70 || relativeMedianDeviation(values, target) > 0.35) return [];
+    return [{
+      objectiveId: `investment:${type}:${Math.round(target)}`,
+      type,
+      hard: false,
+      minimumValue: Math.max(1, Math.round(target)),
+      activateAfterGoalIds: activationGoal ? [activationGoal.goalId] : [],
+      deactivateAfterGoalIds: deactivateGoal ? [deactivateGoal] : [],
+      reasonCodes: [
+        'ARCHETYPE_INVESTMENT_MILESTONE',
+        `SUPPORT:${positiveSupport.toFixed(3)}`,
+      ],
+    } satisfies BuildInvestmentObjectiveV1];
+  });
+}
+
+function inferSituationalWindows(
+  traces: readonly PlannerTrajectoryV2[],
+  goals: readonly BuildStrategyGoalV1[],
+  graph: RecommendationItemGraph,
+): BuildSituationalWindowV1[] {
+  if (traces.length < 3) return [];
+  const finalSets = traces.map((trace) => new Set(trace.archetypeFeaturePayload.finalInventoryItemIds));
+  const mandatoryItems = new Set(goals.filter((goal) => goal.hard).flatMap((goal) => goal.targetItemIds));
+  const allFinalItems = new Set(finalSets.flatMap((set) => [...set]));
+  const candidates = [...allFinalItems]
+    .filter((itemId) => !mandatoryItems.has(itemId))
+    .map((itemId) => ({
+      itemId,
+      frequency: finalSets.filter((set) => set.has(itemId)).length / finalSets.length,
+    }))
+    .filter((entry) => entry.frequency >= 0.15 && entry.frequency < 0.45)
+    .filter((entry) => graph.getItem(entry.itemId) !== undefined)
+    .sort((a, b) => b.frequency - a.frequency || a.itemId - b.itemId)
+    .slice(0, 6);
+  if (candidates.length === 0) return [];
+  const afterGoal = goals.find((goal) => goal.hard && goal.phase === 'EARLY') ?? goals.find((goal) => goal.hard);
+  const beforeGoal = [...goals].reverse().find((goal) => goal.hard);
+  const maxCost = Math.max(...candidates.map((entry) => effectiveItemCost(entry.itemId, graph)), 0);
+  return [{
+    windowId: `situational:utility:${candidates.map((entry) => entry.itemId).join(',')}`,
+    afterGoalIds: afterGoal ? [afterGoal.goalId] : [],
+    beforeGoalIds: beforeGoal && beforeGoal.goalId !== afterGoal?.goalId ? [beforeGoal.goalId] : [],
+    maxSlots: 1,
+    maxSouls: maxCost,
+    maxCoreDelaySouls: maxCost,
+    allowedPurposes: ['UTILITY'],
+    candidateItemIdsByPurpose: { UTILITY: candidates.map((entry) => entry.itemId) },
+  }];
+}
+
+function normalizedInvestmentWeights(
+  investment: PlannerInvestmentVectorV2,
+): { weapon: number; vitality: number; spirit: number } {
+  const values = {
+    weapon: Math.max(0, investment.weapon),
+    vitality: Math.max(0, investment.vitality),
+    spirit: Math.max(0, investment.spirit),
+  };
+  const total = values.weapon + values.vitality + values.spirit;
+  if (total <= 0) return { weapon: 1 / 3, vitality: 1 / 3, spirit: 1 / 3 };
+  return {
+    weapon: values.weapon / total,
+    vitality: values.vitality / total,
+    spirit: values.spirit / total,
+  };
+}
+
+function effectiveItemCost(itemId: number, graph: RecommendationItemGraph): number {
+  const item = graph.getItem(itemId);
+  if (!item) return 0;
+  const costs = [
+    ...(Number.isFinite(item.directPurchaseCost) ? [Math.max(0, item.directPurchaseCost as number)] : []),
+    ...item.upgradeRecipes.map((recipe) => Math.max(0, recipe.soulsCost)),
+  ];
+  return costs.length > 0 ? Math.min(...costs) : 0;
+}
+
 function inferSituationalReservationCount(traces: readonly PlannerTrajectoryV2[]): number {
   if (traces.length < 3) return 0;
   const finalSets = traces.map((trace) => new Set(trace.archetypeFeaturePayload.finalInventoryItemIds));
@@ -222,6 +315,11 @@ function phaseForTime(timeSec: number): BuildStrategyPhaseV1 {
 
 function stableGoalId(position: number, itemId: number, kind: string): string {
   return `goal:${position}:${kind}:${itemId}`;
+}
+
+function relativeMedianDeviation(values: readonly number[], center: number): number {
+  if (values.length === 0 || center <= 0) return 1;
+  return median(values.map((value) => Math.abs(value - center))) / Math.max(1, center);
 }
 
 function median(values: readonly number[]): number {
