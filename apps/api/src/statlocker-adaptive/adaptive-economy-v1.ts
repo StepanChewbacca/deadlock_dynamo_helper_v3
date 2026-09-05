@@ -1,7 +1,10 @@
 import {
   FactEvidence,
+  InventorySlotType,
   ObservedFact,
+  RecommendationCandidateGeneratorRules,
   RecommendationItemGraph,
+  recommendationSlotUsageFor,
 } from '@deadlock-live-probe/build-domain';
 
 export type AdaptiveInvestmentTypeV1 = 'weapon' | 'vitality' | 'spirit';
@@ -14,14 +17,21 @@ export const ADAPTIVE_INVESTMENT_TYPES_V1: readonly AdaptiveInvestmentTypeV1[] =
 
 export interface AdaptiveSlotStateV1 {
   baseSlots: number;
+  baseSlotsByType: Readonly<Record<InventorySlotType, number>>;
   maxFlexSlots: number;
+  maxActiveItems: number;
   unlockedFlexSlots?: number;
   usedSlots: number;
+  usedSlotsByType: Readonly<Record<InventorySlotType, number>>;
+  overflowByType: Readonly<Record<InventorySlotType, number>>;
   usedFlexSlots: number;
   provedFlexLowerBound: number;
   freeBaseSlots: number;
+  freeBaseSlotsByType: Readonly<Record<InventorySlotType, number>>;
   freeFlexSlots?: number;
   totalCapacity?: number;
+  activeItemsUsed: number;
+  freeActiveItemSlots: number;
   evidence: FactEvidence;
 }
 
@@ -47,7 +57,9 @@ export interface RecommendationEconomyRulesV1 {
   rulesetId: string;
   catalogSha256: string;
   baseSlots: number;
+  baseSlotsByType: Readonly<Record<InventorySlotType, number>>;
   maxFlexSlots: number;
+  maxActiveItems: number;
   investmentBreakpoints: Readonly<Record<AdaptiveInvestmentTypeV1, readonly number[]>>;
 }
 
@@ -79,12 +91,21 @@ export interface AdaptiveFlexCapacityInputV1 {
 
 export interface AdaptiveSlotRulesV1 {
   baseSlots: number;
+  baseSlotsByType: Readonly<Record<InventorySlotType, number>>;
   maxFlexSlots: number;
+  maxActiveItems: number;
 }
 
+/**
+ * Compatibility fallback only. Serving correctness must prefer exact rules resolved by
+ * rulesetId + catalogSha256. The values describe the current 4/4/4 + 4-flex shape, but
+ * the UNKNOWN flex evidence remains fail-closed until the match-specific unlock count is known.
+ */
 export const ADAPTIVE_UNIVERSAL_SLOT_RULES_V1: AdaptiveSlotRulesV1 = {
-  baseSlots: 9,
-  maxFlexSlots: 3,
+  baseSlots: 12,
+  baseSlotsByType: { weapon: 4, vitality: 4, spirit: 4 },
+  maxFlexSlots: 4,
+  maxActiveItems: 4,
 };
 
 const VERIFIED_RECOMMENDATION_ECONOMY_RULES_V1: readonly RecommendationEconomyRulesV1[] = [];
@@ -97,30 +118,87 @@ export function resolveRecommendationEconomyRulesV1(
   return registry.find((entry) => entry.rulesetId === rulesetId && entry.catalogSha256 === catalogSha256);
 }
 
+export function slotRulesFromEconomyRulesV1(
+  rules: RecommendationEconomyRulesV1 | undefined,
+): AdaptiveSlotRulesV1 {
+  if (!rules) return ADAPTIVE_UNIVERSAL_SLOT_RULES_V1;
+  return {
+    baseSlots: rules.baseSlots,
+    baseSlotsByType: rules.baseSlotsByType,
+    maxFlexSlots: rules.maxFlexSlots,
+    maxActiveItems: rules.maxActiveItems,
+  };
+}
+
+export function candidateGeneratorRulesFromSlotStateV1(
+  slots: AdaptiveSlotStateV1,
+  overrides: Partial<Pick<
+    RecommendationCandidateGeneratorRules,
+    'allowSellOnlyActions' | 'generateTargetedWaitActions'
+  >> = {},
+): RecommendationCandidateGeneratorRules {
+  return {
+    baseSlots: slots.baseSlots,
+    baseSlotsByType: slots.baseSlotsByType,
+    maxFlexSlots: slots.maxFlexSlots,
+    unlockedFlexSlots: slots.unlockedFlexSlots,
+    flexCapacityEvidence: slots.evidence,
+    maxActiveItems: slots.maxActiveItems,
+    allowSellOnlyActions: overrides.allowSellOnlyActions ?? true,
+    generateTargetedWaitActions: overrides.generateTargetedWaitActions ?? true,
+  };
+}
+
 export function deriveAdaptiveSlotStateV1(
   itemIds: readonly number[],
-  _graph: RecommendationItemGraph,
+  graph: RecommendationItemGraph,
   slotRules: AdaptiveSlotRulesV1,
   capacity: AdaptiveFlexCapacityInputV1 = { evidence: 'UNKNOWN' },
 ): AdaptiveSlotStateV1 {
-  const baseSlots = Math.max(0, Math.floor(slotRules.baseSlots));
+  const baseSlotsByType: Record<InventorySlotType, number> = {
+    weapon: Math.max(0, Math.floor(slotRules.baseSlotsByType.weapon)),
+    vitality: Math.max(0, Math.floor(slotRules.baseSlotsByType.vitality)),
+    spirit: Math.max(0, Math.floor(slotRules.baseSlotsByType.spirit)),
+  };
+  const baseSlots = Object.values(baseSlotsByType).reduce((sum, value) => sum + value, 0);
   const maxFlexSlots = Math.max(0, Math.floor(slotRules.maxFlexSlots));
-  const usedSlots = new Set(itemIds).size;
-  const usedFlexSlots = Math.max(0, usedSlots - baseSlots);
+  const maxActiveItems = Math.max(0, Math.floor(slotRules.maxActiveItems));
+  const usage = recommendationSlotUsageFor(itemIds, graph, {
+    baseSlots,
+    baseSlotsByType,
+    maxFlexSlots,
+    unlockedFlexSlots: capacity.unlockedFlexSlots,
+    flexCapacityEvidence: capacity.evidence,
+    maxActiveItems,
+    allowSellOnlyActions: true,
+    generateTargetedWaitActions: true,
+  });
   const unlocked = capacity.evidence === 'UNKNOWN' || capacity.unlockedFlexSlots === undefined
     ? undefined
     : Math.min(maxFlexSlots, Math.max(0, Math.floor(capacity.unlockedFlexSlots)));
+  const freeBaseSlotsByType: Record<InventorySlotType, number> = {
+    weapon: Math.max(0, baseSlotsByType.weapon - usage.usedByType.weapon),
+    vitality: Math.max(0, baseSlotsByType.vitality - usage.usedByType.vitality),
+    spirit: Math.max(0, baseSlotsByType.spirit - usage.usedByType.spirit),
+  };
 
   return {
     baseSlots,
+    baseSlotsByType,
     maxFlexSlots,
+    maxActiveItems,
     unlockedFlexSlots: unlocked,
-    usedSlots,
-    usedFlexSlots,
-    provedFlexLowerBound: usedFlexSlots,
-    freeBaseSlots: Math.max(0, baseSlots - usedSlots),
-    freeFlexSlots: unlocked === undefined ? undefined : Math.max(0, unlocked - usedFlexSlots),
+    usedSlots: usage.itemCount,
+    usedSlotsByType: usage.usedByType,
+    overflowByType: usage.overflowByType,
+    usedFlexSlots: usage.flexUsed,
+    provedFlexLowerBound: usage.flexUsed,
+    freeBaseSlots: freeBaseSlotsByType.weapon + freeBaseSlotsByType.vitality + freeBaseSlotsByType.spirit,
+    freeBaseSlotsByType,
+    freeFlexSlots: unlocked === undefined ? undefined : Math.max(0, unlocked - usage.flexUsed),
     totalCapacity: unlocked === undefined ? undefined : baseSlots + unlocked,
+    activeItemsUsed: usage.activeItemsUsed,
+    freeActiveItemSlots: Math.max(0, maxActiveItems - usage.activeItemsUsed),
     evidence: capacity.evidence,
   };
 }
@@ -162,23 +240,21 @@ function investmentValueForItemV1(
 
   const item = graph.getItem(itemId);
   if (!item) return 0;
-  const directValue = item.directPurchaseCost;
-  if (directValue !== undefined) {
-    const value = Math.max(0, directValue);
-    memo.set(itemId, value);
-    return value;
-  }
 
   visiting.add(itemId);
-  const recipeValues = item.upgradeRecipes.map((recipe) =>
-    Math.max(0, recipe.soulsCost) + recipe.consumedItemIds.reduce(
-      (sum, componentId) => sum + investmentValueForItemV1(componentId, graph, memo, visiting),
-      0,
-    ),
-  );
+  const values: number[] = [];
+  if (item.directPurchaseCost !== undefined) values.push(Math.max(0, item.directPurchaseCost));
+  for (const recipe of item.upgradeRecipes) {
+    values.push(
+      Math.max(0, recipe.soulsCost) + recipe.consumedItemIds.reduce(
+        (sum, componentId) => sum + investmentValueForItemV1(componentId, graph, memo, visiting),
+        0,
+      ),
+    );
+  }
   visiting.delete(itemId);
 
-  const value = recipeValues.length === 0 ? 0 : Math.min(...recipeValues);
+  const value = values.length === 0 ? 0 : Math.min(...values);
   memo.set(itemId, value);
   return value;
 }
@@ -209,10 +285,9 @@ export function deriveAdaptiveInvestmentDeltasV1(
   return (['weapon', 'vitality', 'spirit'] as const).map((type) => {
     const previous = before.tracks[type];
     const next = after.tracks[type];
-    const crossed: number[] = [];
-    if (next.achievedBreakpoint !== undefined && next.achievedBreakpoint > (previous.achievedBreakpoint ?? 0)) {
-      crossed.push(next.achievedBreakpoint);
-    }
+    const upper = next.achievedBreakpoint ?? 0;
+    const lower = previous.achievedBreakpoint ?? 0;
+    const crossed = upper > lower ? [upper] : [];
     return { type, before: previous, after: next, crossedBreakpoints: crossed };
   });
 }
