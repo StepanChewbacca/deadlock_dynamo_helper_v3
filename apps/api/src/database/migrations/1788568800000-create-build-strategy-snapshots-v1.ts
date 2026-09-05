@@ -7,6 +7,7 @@ export class CreateBuildStrategySnapshotsV11788568800000 implements MigrationInt
     await queryRunner.query(`
       CREATE TABLE IF NOT EXISTS "build_strategy_snapshots_v1" (
         "snapshotId" varchar(128) NOT NULL,
+        "heroId" integer NOT NULL,
         "rulesetId" varchar(128) NOT NULL,
         "patchId" varchar(128) NOT NULL,
         "catalogSha256" char(64) NOT NULL,
@@ -21,7 +22,7 @@ export class CreateBuildStrategySnapshotsV11788568800000 implements MigrationInt
     `);
     await queryRunner.query(`
       CREATE INDEX IF NOT EXISTS "idx_build_strategy_snapshot_scope_v1"
-      ON "build_strategy_snapshots_v1" ("rulesetId", "catalogSha256", "active", "publishedAt")
+      ON "build_strategy_snapshots_v1" ("heroId", "rulesetId", "patchId", "catalogSha256", "active", "publishedAt")
     `);
   }
 
