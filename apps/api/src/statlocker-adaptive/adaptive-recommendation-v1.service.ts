@@ -7,6 +7,7 @@ import {
 } from '@deadlock-live-probe/build-domain';
 import {
   AdaptiveActionV1,
+  AdaptivePlanSessionV1,
   AdaptiveRecommendationRequestV1,
   AdaptiveRecommendationResultV1,
   AdaptiveRecommendationStrategyV1,
@@ -31,6 +32,7 @@ const SCORER_VERSION = 'adaptive-evidence-scorer-v1';
 
 type AdaptivePlannerRuntimeResultV1 = ReturnType<AdaptiveBuildPlannerV1Service['plan']> & {
   strategy?: AdaptiveRecommendationStrategyV1;
+  planSession?: AdaptivePlanSessionV1;
 };
 
 @Injectable()
@@ -130,34 +132,65 @@ export class AdaptiveRecommendationV1Service {
         ? previousEvidenceFallback(previous, fresh, localEvidence, blockers)
         : emptyEvidenceFallback(fresh, localEvidence, blockers, feasibleByActionKey);
     } else if (planned) {
-      const freshBuild = rebasePlanAgainstDecisionV1(planned.recommendedBuild, fresh);
-      const freshRanked = planned.rankedImmediateCandidates.filter(({ action }) =>
+      let freshBuild = planned.planSession
+        ? planned.recommendedBuild
+        : rebasePlanAgainstDecisionV1(planned.recommendedBuild, fresh);
+      let freshRanked = planned.rankedImmediateCandidates.filter(({ action }) =>
         feasibleByActionKey.has(action.actionKey),
       );
-      const legality = selectFreshLegalAction(planned.nextAction, freshRanked, feasibleByActionKey, freshBuild);
+      const legality = planned.planSession
+        ? selectFreshTransactionPlanAction(planned.nextAction, planned.planSession, feasibleByActionKey)
+        : selectFreshLegalAction(planned.nextAction, freshRanked, feasibleByActionKey, freshBuild);
+      let nextAction = legality.action;
+      let planSession = planned.planSession;
+      let confidence = clamp01(planned.confidence * (legality.changed ? 0.85 : 1));
+
       if (legality.changed || fresh.stateRevision !== initial.stateRevision) {
         blockers.add('STATE_CHANGED_LEGALITY_RECHECK');
       }
+      if (planSession && legality.changed) {
+        blockers.add('TRANSACTION_PLAN_FRESH_LEGALITY_MISMATCH');
+        planSession = {
+          ...planSession,
+          state: 'REPLAN_REQUIRED',
+          nextStepId: undefined,
+          reasonCodes: unique([
+            ...planSession.reasonCodes,
+            'FRESH_NEXT_TRANSACTION_NOT_EXECUTABLE',
+          ]),
+        };
+        nextAction = {
+          actionKey: 'HOLD',
+          type: 'HOLD',
+          targetItemId: planned.nextAction.targetItemId,
+          reasonCodes: ['TRANSACTION_PLAN_FRESH_LEGALITY_MISMATCH'],
+        };
+        freshBuild = ownedOnlyCompatibilityBuild(freshBuild, fresh);
+        freshRanked = [];
+        confidence = 0;
+      }
+
       legalityFallback = legality.changed;
-      legalityFallbackReasonCodes = legality.action.reasonCodes ?? [];
+      legalityFallbackReasonCodes = nextAction.reasonCodes ?? [];
       result = {
         ready: true,
         blockers: [...blockers].sort(),
         decisionId: fresh.state.decisionId,
         stateRevision: fresh.stateRevision,
         gameState: planned.gameState,
-        nextAction: legality.action,
-        nextTargetItemId: firstNextTarget(freshBuild) ?? legality.action.targetItemId,
+        nextAction,
+        nextTargetItemId: firstNextTarget(freshBuild) ?? nextAction.targetItemId,
         recommendedBuild: freshBuild,
         changes: planned.changes,
         rankedImmediateCandidates: freshRanked,
-        totalScore: planned.totalScore,
-        confidence: clamp01(planned.confidence * (legality.changed ? 0.85 : 1)),
+        totalScore: planSession?.state === 'REPLAN_REQUIRED' ? 0 : planned.totalScore,
+        confidence,
         scorerVersion: SCORER_VERSION,
         plannerVersion: planned.plannerVersion,
         configVersion: ADAPTIVE_POLICY_V1_CONFIG.version,
         plannerMethod: planned.strategy ? 'STRATEGY_FIRST' : 'LEGACY_GREEDY',
         strategy: planned.strategy,
+        planSession,
         evidence: toProvenance(localEvidence),
       };
     } else {
@@ -204,6 +237,41 @@ export function finalLegalityRules(decision: AdaptiveDecisionStateV1) {
   };
 }
 
+function selectFreshTransactionPlanAction(
+  selected: AdaptiveActionV1,
+  session: AdaptivePlanSessionV1,
+  feasibleByActionKey: ReadonlyMap<string, RecommendationCandidate>,
+): { action: AdaptiveActionV1; changed: boolean } {
+  if (session.state === 'WAITING' || session.state === 'REPLAN_REQUIRED' || session.state === 'COMPLETE') {
+    return { action: selected, changed: false };
+  }
+  if (!isTransactionAction(selected)) {
+    return {
+      action: {
+        actionKey: 'HOLD',
+        type: 'HOLD',
+        targetItemId: selected.targetItemId,
+        reasonCodes: ['TRANSACTION_PLAN_NEXT_MISSING'],
+      },
+      changed: true,
+    };
+  }
+  const candidate = feasibleByActionKey.get(selected.actionKey);
+  if (!candidate) {
+    return {
+      action: {
+        actionKey: 'HOLD',
+        type: 'HOLD',
+        targetItemId: selected.targetItemId,
+        reasonCodes: ['TRANSACTION_PLAN_NEXT_NOT_FRESHLY_EXECUTABLE'],
+      },
+      changed: true,
+    };
+  }
+  const canonical = canonicalFreshAction(selected, candidate, selected.targetItemId);
+  return { action: canonical, changed: actionWasRewritten(selected, canonical) };
+}
+
 function selectFreshLegalAction(
   selected: AdaptiveActionV1,
   ranked: readonly AdaptiveScoredActionV1[],
@@ -222,9 +290,8 @@ function selectFreshLegalAction(
     }
   } else {
     const candidate = feasibleByActionKey.get(selected.actionKey)
-      ?? (selected.type === 'REPLACE' ? feasibleByActionKey.get(`REPLACE_ITEM:${selected.sellItemId}:${selected.buyItemId}`) : undefined)
+      ?? (selected.type === 'REPLACE' ? feasibleByActionKey.get(`REPLACE_ITEM:${selected.sellItemId}->${selected.buyItemId}`) : undefined)
       ?? (selected.type === 'BUY' && (selected.buyItemId || selected.itemId) ? feasibleByActionKey.get(`BUY_ITEM:${selected.buyItemId ?? selected.itemId}`) : undefined)
-      ?? (selected.type === 'UPGRADE' && (selected.buyItemId || selected.itemId) ? feasibleByActionKey.get(`UPGRADE_ITEM:${selected.buyItemId ?? selected.itemId}`) : undefined)
       ?? (selected.type === 'SELL' && (selected.sellItemId || selected.itemId) ? feasibleByActionKey.get(`SELL_ITEM:${selected.sellItemId ?? selected.itemId}`) : undefined);
     if (candidate && selectedActionServesFreshNext(selected, targetItemId)) {
       const action = canonicalFreshAction(selected, candidate, targetItemId);
@@ -234,9 +301,8 @@ function selectFreshLegalAction(
 
   for (const scored of ranked) {
     const candidate = feasibleByActionKey.get(scored.action.actionKey)
-      ?? (scored.action.type === 'REPLACE' ? feasibleByActionKey.get(`REPLACE_ITEM:${scored.action.sellItemId}:${scored.action.buyItemId}`) : undefined)
+      ?? (scored.action.type === 'REPLACE' ? feasibleByActionKey.get(`REPLACE_ITEM:${scored.action.sellItemId}->${scored.action.buyItemId}`) : undefined)
       ?? (scored.action.type === 'BUY' && (scored.action.buyItemId || scored.action.itemId) ? feasibleByActionKey.get(`BUY_ITEM:${scored.action.buyItemId ?? scored.action.itemId}`) : undefined)
-      ?? (scored.action.type === 'UPGRADE' && (scored.action.buyItemId || scored.action.itemId) ? feasibleByActionKey.get(`UPGRADE_ITEM:${scored.action.buyItemId ?? scored.action.itemId}`) : undefined)
       ?? (scored.action.type === 'SELL' && (scored.action.sellItemId || scored.action.itemId) ? feasibleByActionKey.get(`SELL_ITEM:${scored.action.sellItemId ?? scored.action.itemId}`) : undefined);
     if (!candidate || !fallbackActionServesFreshNext(scored.action, targetItemId)) continue;
     return {
@@ -272,9 +338,12 @@ function previousEvidenceFallback(
   blockers: ReadonlySet<string>,
 ): AdaptiveRecommendationResultV1 {
   const ownedItemIds = [...fresh.state.inventory.heldByItemId.keys()];
-  const preservedBuild = rebasePlanAgainstDecisionV1(previous.recommendedBuild, fresh);
+  const preservedBuild = previous.planSession
+    ? previous.recommendedBuild
+    : rebasePlanAgainstDecisionV1(previous.recommendedBuild, fresh);
   const previousTarget = previous.nextTargetItemId;
   const targetItemId = firstNextTarget(preservedBuild)
+    ?? previous.nextAction.targetItemId
     ?? (previousTarget !== undefined && !fresh.itemGraph.isTargetSatisfied(previousTarget, ownedItemIds)
       ? previousTarget
       : undefined);
@@ -421,6 +490,7 @@ function canonicalFreshAction(
       actionKey: candidate.actionId,
       type: 'BUY',
       itemId: action.itemId,
+      buyItemId: action.itemId,
       targetItemId: action.itemId,
     };
   }
@@ -430,6 +500,7 @@ function canonicalFreshAction(
       actionKey: candidate.actionId,
       type: 'UPGRADE',
       itemId: action.itemId,
+      buyItemId: action.itemId,
       targetItemId: action.itemId,
     };
   }
@@ -527,6 +598,32 @@ export function rebasePlanAgainstDecisionV1(
   });
 }
 
+function ownedOnlyCompatibilityBuild(
+  build: AdaptiveRecommendationResultV1['recommendedBuild'],
+  decision: AdaptiveDecisionStateV1,
+): AdaptiveRecommendationResultV1['recommendedBuild'] {
+  const owned = new Set(decision.state.inventory.heldByItemId.keys());
+  const existing = build
+    .filter((row) => owned.has(row.itemId))
+    .sort((a, b) => a.position - b.position || a.itemId - b.itemId)
+    .map((row, index) => ({ ...row, position: index + 1, status: 'OWNED' as const }));
+  const represented = new Set(existing.map((row) => row.itemId));
+  for (const itemId of [...owned].sort((a, b) => a - b)) {
+    if (represented.has(itemId)) continue;
+    existing.push({
+      itemId,
+      position: existing.length + 1,
+      status: 'OWNED',
+      score: 0,
+      confidence: 1,
+      skeletonStrength: 0,
+      contextualSupport: 1,
+      reasonCodes: ['OWNED_ITEM', 'TRANSACTION_PLAN_FRESH_LEGALITY_MISMATCH'],
+    });
+  }
+  return existing;
+}
+
 export interface AdaptiveInventoryDeltaV1 {
   purchasedItemIds: readonly number[];
   soldItemIds: readonly number[];
@@ -576,7 +673,7 @@ function validateRequest(request: AdaptiveRecommendationRequestV1): void {
   }
 }
 
-function unique(values: readonly string[]): readonly string[] {
+function unique(values: readonly string[]): string[] {
   return [...new Set(values)];
 }
 
