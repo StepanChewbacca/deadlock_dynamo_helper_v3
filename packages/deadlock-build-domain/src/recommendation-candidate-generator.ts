@@ -178,7 +178,7 @@ function evaluateSell(
 ): RecommendationCandidate {
   const reasons: RecommendationFeasibilityReason[] = [];
   if (!state.inventory.heldByItemId.has(item.itemId)) reasons.push('ITEM_NOT_OWNED');
-  if (!item.sellTransition) reasons.push('SELL_TRANSITION_UNKNOWN');
+  if (!item.sellTransition && item.directPurchaseCost === undefined) reasons.push('SELL_TRANSITION_UNKNOWN');
   if (item.sellTransition) {
     for (const returnedItemId of item.sellTransition.returnedItemIds) {
       if (!graph.getItem(returnedItemId)) reasons.push('SELL_RETURN_ITEM_UNKNOWN');
@@ -189,7 +189,7 @@ function evaluateSell(
   applySlotReason(state, resulting, graph, rules, reasons);
   if (!checkActiveLimit(resulting, graph, rules)) reasons.push('ACTIVE_ITEM_LIMIT_EXCEEDED');
   const feasible = reasons.length === 0;
-  const refund = item.sellTransition?.soulsRefund ?? 0;
+  const refund = item.sellTransition?.soulsRefund ?? (item.directPurchaseCost !== undefined ? Math.floor(item.directPurchaseCost * 0.5) : 0);
   const wallet = state.economy.spendableSouls.value;
   return buildCandidate(
     state,
@@ -211,7 +211,7 @@ function evaluateReplace(
 ): RecommendationCandidate {
   const reasons: RecommendationFeasibilityReason[] = [];
   if (!state.inventory.heldByItemId.has(sold.itemId)) reasons.push('ITEM_NOT_OWNED');
-  if (!sold.sellTransition) reasons.push('SELL_TRANSITION_UNKNOWN');
+  if (!sold.sellTransition && sold.directPurchaseCost === undefined) reasons.push('SELL_TRANSITION_UNKNOWN');
   if (!rulesetAvailability(state.rulesetId, bought)) reasons.push('ITEM_UNAVAILABLE_IN_RULESET');
   if (state.inventory.heldByItemId.has(bought.itemId)) reasons.push('ITEM_ALREADY_OWNED');
   if (bought.directPurchaseCost === undefined) reasons.push('DIRECT_PURCHASE_NOT_SUPPORTED');
@@ -222,7 +222,7 @@ function evaluateReplace(
   applySlotReason(state, resulting, graph, rules, reasons);
   if (!checkActiveLimit(resulting, graph, rules)) reasons.push('ACTIVE_ITEM_LIMIT_EXCEEDED');
 
-  const refund = sold.sellTransition?.soulsRefund ?? 0;
+  const refund = sold.sellTransition?.soulsRefund ?? (sold.directPurchaseCost !== undefined ? Math.floor(sold.directPurchaseCost * 0.5) : 0);
   const cost = bought.directPurchaseCost ?? 0;
   const wallet = state.economy.spendableSouls.value;
   if (wallet !== undefined && wallet + refund < cost) reasons.push('UNAFFORDABLE');
