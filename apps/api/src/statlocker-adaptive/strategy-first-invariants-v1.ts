@@ -1,7 +1,10 @@
 import {
   generateRecommendationCandidates,
 } from '@deadlock-live-probe/build-domain';
-import { AdaptiveRecommendationStrategyV1 } from '@deadlock-live-probe/shared';
+import {
+  AdaptivePlanSessionV1,
+  AdaptiveRecommendationStrategyV1,
+} from '@deadlock-live-probe/shared';
 import { AdaptiveDecisionStateV1 } from './adaptive-decision-state-v1.service';
 import { candidateGeneratorRulesFromSlotStateV1 } from './adaptive-economy-v1';
 import { StrategyFirstBuildPlannerV1Result } from './strategy-first-build-planner-v1.service';
@@ -37,7 +40,9 @@ export interface EvaluateStrategyFirstInvariantsV1Input {
   result: Pick<
     StrategyFirstBuildPlannerV1Result,
     'strategy' | 'strategySession' | 'contract' | 'strategyPlan' | 'nextAction' | 'recommendedBuild'
-  >;
+  > & {
+    planSession?: AdaptivePlanSessionV1;
+  };
   previousStrategy?: Pick<AdaptiveRecommendationStrategyV1, 'strategyId' | 'commitment'>;
 }
 
@@ -249,11 +254,28 @@ export function summarizeStrategyFirstInvariantChecksV1(
 function nextActionBuildMismatch(
   result: EvaluateStrategyFirstInvariantsV1Input['result'],
 ): StrategyFirstInvariantViolationV1 | undefined {
-  if (result.contract.status === 'REPLAN_REQUIRED' || result.contract.status === 'OUT_OF_DISTRIBUTION') return undefined;
+  const planSession = result.planSession;
   const nextItemId = [...result.recommendedBuild]
     .sort((a, b) => a.position - b.position || a.itemId - b.itemId)
     .find((row) => row.status === 'NEXT')?.itemId;
   const targetItemId = result.nextAction.targetItemId;
+
+  if (planSession?.state === 'WAITING') {
+    const barrier = planSession.steps.find((step) => step.kind === 'BARRIER' && step.state === 'BLOCKED');
+    const barrierTargetItemId = barrier?.barrier && 'targetItemId' in barrier.barrier
+      ? barrier.barrier.targetItemId
+      : undefined;
+    if (
+      (result.nextAction.type === 'HOLD' || result.nextAction.type === 'WAIT') &&
+      planSession.nextStepId === undefined &&
+      nextItemId === undefined &&
+      targetItemId === barrierTargetItemId
+    ) {
+      return undefined;
+    }
+  }
+
+  if (result.contract.status === 'REPLAN_REQUIRED' || result.contract.status === 'OUT_OF_DISTRIBUTION') return undefined;
   if (result.contract.status === 'COMPLETE') {
     return nextItemId === undefined && targetItemId === undefined
       ? undefined
