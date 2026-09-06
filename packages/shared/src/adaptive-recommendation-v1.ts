@@ -195,6 +195,7 @@ export interface AdaptiveRecommendationResultV1 {
   scorerVersion: string;
   plannerVersion: string;
   configVersion: string;
+  plannerMethod?: 'STRATEGY_FIRST' | 'LEGACY_GREEDY';
   strategy?: AdaptiveRecommendationStrategyV1;
   evidence: AdaptiveEvidenceProvenanceV1;
 }

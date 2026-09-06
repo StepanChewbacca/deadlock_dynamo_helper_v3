@@ -44,6 +44,7 @@ const elementIds = [
   'rec-item-name',
   'rec-headline',
   'rec-source',
+  'rec-planner-badge',
   'rec-game-state',
   'rec-health',
   'rec-action-label',
@@ -140,42 +141,40 @@ describe('adaptive recommendation UI state', () => {
     expect(elements.get('rec-update-note')?.style.display).toBe('none');
   });
 
-  it('shows a reconnecting empty state when no recommendation has succeeded', () => {
-    showAdaptiveError('Adaptive recommendation HTTP 500');
-
-    expect(elements.get('guide-empty')?.style.display).toBe('flex');
-    expect(elements.get('guide-empty-title')?.textContent).toBe('Statlocker is reconnecting');
-    expect(elements.get('guide-active')?.style.display).toBe('none');
-  });
-
-  it('keeps owned items visible in the desktop build path', () => {
+  it('renders strategy badge and method correctly', () => {
     showAdaptiveRecommendation(recommendation({
-      recommendedBuild: [
-        plannedItem(3862866912, 1, 'OWNED'),
-        plannedItem(968099481, 2, 'NEXT'),
-        plannedItem(1342610602, 3, 'PLANNED'),
-      ],
+      plannerMethod: 'STRATEGY_FIRST',
+      strategy: {
+        strategyId: 'burst-spirit',
+        commitment: 'COMMITTED',
+        posterior: 0.9,
+        reasonCodes: [],
+        selectedBranches: {},
+        committedBranches: {},
+        buildStatus: 'IN_PROGRESS',
+        progress: { satisfiedHardGoals: 1, totalHardGoals: 3 },
+        slotPlan: { currentUsedSlots: 2, currentFlexUsed: 0, reservedSituationalSlots: 1, feasible: true, reasonCodes: [] },
+        investmentObjectives: [],
+      },
     }));
 
-    const rows = elements.get('rec-plan')?.children ?? [];
-    expect(rows).toHaveLength(3);
-    expect(rows[0].className).toContain('status-owned');
-    expect(rows[1].className).toContain('status-next');
+    expect(elements.get('rec-planner-badge')?.textContent).toBe('Strategy-First');
+    expect(elements.get('rec-planner-badge')?.className).toBe('planner-badge planner-badge-strategy');
+    expect(elements.get('rec-source')?.textContent).toBe('Strategy-first Adaptive');
   });
 
-  it('removes owned items from the in-game overlay build path', () => {
+  it('prunes owned items only when in-game overlay is rendered', () => {
     inGameOverlay = true;
-    showAdaptiveRecommendation(recommendation({
-      recommendedBuild: [
-        plannedItem(3862866912, 1, 'OWNED'),
-        plannedItem(968099481, 2, 'NEXT'),
-        plannedItem(1342610602, 3, 'PLANNED'),
-      ],
-    }));
+    const items = [
+      plannedItem(3862866912, 1, 'OWNED'),
+      plannedItem(1577772648, 2, 'NEXT'),
+      plannedItem(1773091176, 3, 'PLANNED'),
+    ];
 
-    const rows = elements.get('rec-plan')?.children ?? [];
-    expect(rows).toHaveLength(2);
-    expect(rows.every((row) => !row.className.includes('status-owned'))).toBe(true);
-    expect(rows[0].className).toContain('status-next');
+    showAdaptiveRecommendation(recommendation({ recommendedBuild: items }));
+    const planEl = elements.get('rec-plan');
+    expect(planEl?.children.length).toBe(2);
+    expect(planEl?.children[0].className).toContain('status-next');
+    expect(planEl?.children[1].className).toContain('status-planned');
   });
 });

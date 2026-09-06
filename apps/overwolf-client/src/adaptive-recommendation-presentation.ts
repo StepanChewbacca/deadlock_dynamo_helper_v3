@@ -50,6 +50,8 @@ export interface AdaptivePresentedStrategy {
 
 export interface AdaptiveRecommendationPresentation {
   readonly sourceLabel: string;
+  readonly plannerMethodLabel: string;
+  readonly isStrategyFirst: boolean;
   readonly stateLabel: string;
   readonly stateTone: 'ahead' | 'even' | 'behind' | 'unknown';
   readonly healthLabel: string;
@@ -114,8 +116,15 @@ export function buildAdaptiveRecommendationPresentation(
   const orderedPlan = [...recommendation.recommendedBuild]
     .sort((left, right) => left.position - right.position);
 
+  const isStrategyFirst = Boolean(
+    recommendation.plannerMethod === 'STRATEGY_FIRST' || recommendation.strategy,
+  );
+  const plannerMethodLabel = isStrategyFirst ? 'Strategy-First' : 'Legacy';
+
   return {
     sourceLabel: recommendation.strategy ? 'Strategy-first Adaptive' : 'Statlocker Adaptive',
+    plannerMethodLabel,
+    isStrategyFirst,
     stateLabel: GAME_STATE_LABELS[recommendation.gameState] ?? GAME_STATE_LABELS.UNKNOWN,
     stateTone: recommendation.gameState.toLowerCase() as AdaptiveRecommendationPresentation['stateTone'],
     healthLabel: recommendation.ready

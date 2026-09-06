@@ -156,6 +156,7 @@ export class AdaptiveRecommendationV1Service {
         scorerVersion: SCORER_VERSION,
         plannerVersion: planned.plannerVersion,
         configVersion: ADAPTIVE_POLICY_V1_CONFIG.version,
+        plannerMethod: planned.strategy ? 'STRATEGY_FIRST' : 'LEGACY_GREEDY',
         strategy: planned.strategy,
         evidence: toProvenance(localEvidence),
       };
@@ -296,6 +297,7 @@ function previousEvidenceFallback(
     scorerVersion: SCORER_VERSION,
     plannerVersion: 'adaptive-build-planner-v1',
     configVersion: ADAPTIVE_POLICY_V1_CONFIG.version,
+    plannerMethod: previous.plannerMethod ?? (previous.strategy ? 'STRATEGY_FIRST' : 'LEGACY_GREEDY'),
     evidence: toProvenance(evidence),
   };
 }
@@ -328,6 +330,7 @@ function emptyEvidenceFallback(
     scorerVersion: SCORER_VERSION,
     plannerVersion: 'adaptive-build-planner-v1',
     configVersion: ADAPTIVE_POLICY_V1_CONFIG.version,
+    plannerMethod: 'LEGACY_GREEDY',
     evidence: toProvenance(evidence),
   };
 }

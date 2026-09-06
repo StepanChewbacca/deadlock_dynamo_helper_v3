@@ -79,6 +79,13 @@ export function showAdaptiveRecommendation(data: AdaptiveRecommendationResultV1)
   panel.style.display = 'flex';
 
   setText('rec-source', view.sourceLabel);
+  setText('rec-planner-badge', view.plannerMethodLabel);
+  const badgeEl = document.getElementById('rec-planner-badge');
+  if (badgeEl) {
+    badgeEl.className = view.isStrategyFirst
+      ? 'planner-badge planner-badge-strategy'
+      : 'planner-badge planner-badge-legacy';
+  }
   setText('rec-game-state', view.stateLabel);
   setText('rec-health', view.healthLabel);
   setText('rec-action-label', view.actionLabel);
@@ -183,151 +190,180 @@ function renderStrategy(strategy: AdaptivePresentedStrategy | undefined): void {
   header.className = 'section-header';
   const title = document.createElement('span');
   title.className = 'section-title';
-  title.textContent = 'Selected strategy';
+  title.textContent = `Strategy · ${strategy.idLabel}`;
   const commitment = document.createElement('span');
   commitment.className = 'strategy-commitment';
-  commitment.textContent = `${strategy.commitmentLabel} · ${strategy.buildStatusLabel}`;
+  commitment.textContent = strategy.commitmentLabel;
   header.append(title, commitment);
 
-  const name = document.createElement('strong');
-  name.className = 'strategy-name';
-  name.textContent = strategy.idLabel;
+  const grid = document.createElement('div');
+  grid.className = 'strategy-grid';
 
-  const progress = document.createElement('div');
-  progress.className = 'strategy-progress';
-  const progressCopy = document.createElement('span');
-  progressCopy.textContent = strategy.progressLabel;
-  const track = document.createElement('span');
-  track.className = 'strategy-progress-track';
-  const fill = document.createElement('span');
-  fill.className = 'strategy-progress-fill';
-  fill.style.width = `${strategy.progressValue}%`;
-  track.appendChild(fill);
-  progress.append(progressCopy, track);
+  if (strategy.currentGoalLabel) {
+    grid.append(createStrategyRow('Current goal', strategy.currentGoalLabel));
+  }
+  if (strategy.branchLabel) {
+    grid.append(createStrategyRow('Path', strategy.branchLabel));
+  }
+  if (strategy.investmentLabel) {
+    grid.append(createStrategyRow('Investment', strategy.investmentLabel));
+  }
+  if (strategy.situationalLabel) {
+    grid.append(createStrategyRow('Situational', strategy.situationalLabel));
+  }
+  grid.append(createStrategyRow('Slots', strategy.slotLabel));
+  grid.append(createStrategyRow('Progress', `${strategy.progressLabel} (${strategy.progressValue}%)`));
 
-  const details = document.createElement('div');
-  details.className = 'strategy-details';
-  [
-    strategy.currentGoalLabel,
-    strategy.branchLabel,
-    strategy.slotLabel,
-    strategy.investmentLabel,
-    strategy.situationalLabel,
-  ].filter((value): value is string => Boolean(value)).forEach((value) => {
-    const row = document.createElement('div');
-    row.textContent = value;
-    details.appendChild(row);
-  });
-
-  section.append(header, name, progress, details);
+  section.append(header, grid);
 }
 
-function renderReasons(reasons: readonly string[]): void {
-  const container = document.getElementById('rec-reasons');
-  if (!container) {
-    return;
-  }
-  container.replaceChildren();
-  const visibleReasons = reasons.length > 0
-    ? reasons
-    : ['Following the strongest available Statlocker plan'];
-  visibleReasons.forEach((reason) => {
-    const item = document.createElement('li');
-    item.textContent = reason;
-    container.appendChild(item);
-  });
-}
-
-function renderPlan(
-  items: readonly AdaptivePresentedPlanItem[],
-  remainingCount: number,
-): void {
-  const container = document.getElementById('rec-plan');
-  if (!container) {
-    return;
-  }
-  container.replaceChildren();
-
-  if (items.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'empty-row';
-    empty.textContent = 'Plan is being assembled';
-    container.appendChild(empty);
-  } else {
-    items.forEach((planned) => container.appendChild(createPlanItem(planned)));
-  }
-
-  setText('rec-plan-more', remainingCount > 0 ? `+${remainingCount} later` : '');
-}
-
-function createPlanItem(planned: AdaptivePresentedPlanItem): HTMLElement {
+function createStrategyRow(label: string, value: string): HTMLElement {
   const row = document.createElement('div');
-  row.className = `plan-item slot-${planned.item.slot} status-${planned.status.toLowerCase()}`;
-
-  const position = document.createElement('span');
-  position.className = 'plan-position';
-  position.textContent = String(planned.position).padStart(2, '0');
-
-  const details = document.createElement('span');
-  details.className = 'plan-details';
-  const name = document.createElement('strong');
-  name.textContent = planned.item.name;
-  const meta = document.createElement('small');
-  meta.textContent = [planned.statusLabel, planned.item.costLabel].filter(Boolean).join(' · ');
-  details.append(name, meta);
-
-  row.append(position, details);
+  row.className = 'strategy-row';
+  const labelEl = document.createElement('span');
+  labelEl.className = 'strategy-row-label';
+  labelEl.textContent = label;
+  const valueEl = document.createElement('span');
+  valueEl.className = 'strategy-row-value';
+  valueEl.textContent = value;
+  row.append(labelEl, valueEl);
   return row;
 }
 
-function renderAlternatives(alternatives: readonly AdaptivePresentedAlternative[]): void {
-  const container = document.getElementById('rec-alternatives');
-  const section = document.getElementById('rec-alternatives-section');
-  if (!container || !section) {
+function renderReasons(reasons: readonly string[]): void {
+  const list = document.getElementById('rec-reasons');
+  if (!list) {
     return;
   }
+
+  list.replaceChildren();
+  if (reasons.length === 0) {
+    const li = document.createElement('li');
+    li.textContent = 'Highest weighted value for current game phase';
+    list.appendChild(li);
+    return;
+  }
+
+  for (const reason of reasons) {
+    const li = document.createElement('li');
+    li.textContent = reason;
+    list.appendChild(li);
+  }
+}
+
+function renderPlan(items: readonly AdaptivePresentedPlanItem[], remainingCount: number): void {
+  const container = document.getElementById('rec-plan');
+  const moreEl = document.getElementById('rec-plan-more');
+  if (!container) {
+    return;
+  }
+
   container.replaceChildren();
-  section.style.display = alternatives.length > 0 ? 'block' : 'none';
-  alternatives.forEach((alternative) => {
+  if (items.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-row';
+    empty.textContent = 'Adaptive build path will populate after initial farm.';
+    container.appendChild(empty);
+    if (moreEl) {
+      moreEl.textContent = '';
+    }
+    return;
+  }
+
+  for (const item of items) {
+    const card = document.createElement('article');
+    card.className = `plan-item slot-${item.item.slot} status-${item.status.toLowerCase()}`;
+    const position = document.createElement('span');
+    position.className = 'plan-position';
+    position.textContent = String(item.position);
+    const details = document.createElement('div');
+    details.className = 'plan-details';
+    const strong = document.createElement('strong');
+    strong.textContent = item.item.name;
+    const small = document.createElement('small');
+    small.textContent = [item.statusLabel, item.item.costLabel].filter(Boolean).join(' · ');
+    details.append(strong, small);
+    card.append(position, details);
+    container.appendChild(card);
+  }
+
+  if (moreEl) {
+    moreEl.textContent = remainingCount > 0 ? `+${remainingCount} more` : '';
+  }
+}
+
+function renderAlternatives(alternatives: readonly AdaptivePresentedAlternative[]): void {
+  const section = document.getElementById('rec-alternatives-section');
+  const container = document.getElementById('rec-alternatives');
+  if (!section || !container) {
+    return;
+  }
+
+  if (alternatives.length === 0) {
+    section.style.display = 'none';
+    container.replaceChildren();
+    return;
+  }
+
+  section.style.display = 'block';
+  container.replaceChildren();
+  for (const alternative of alternatives) {
     const row = document.createElement('div');
     row.className = `alternative-row slot-${alternative.item?.slot || 'unknown'}`;
-
     const name = document.createElement('span');
-    name.textContent = alternative.headline;
+    name.textContent = `${alternative.actionLabel} ${alternative.item?.name || 'Alternative'}`;
     const score = document.createElement('small');
     score.textContent = alternative.scoreLabel;
     row.append(name, score);
     container.appendChild(row);
-  });
+  }
 }
 
 function clearAdaptiveError(): void {
   const note = document.getElementById('rec-update-note');
   if (note) {
-    note.textContent = '';
     note.style.display = 'none';
+    note.textContent = '';
     note.removeAttribute('title');
   }
 }
 
-function isInGameOverlay(): boolean {
-  return document.querySelector('.hud-container') !== null;
-}
-
 function setText(id: string, text: string): void {
-  const element = document.getElementById(id);
-  if (element) {
-    element.textContent = text;
+  const el = document.getElementById(id);
+  if (el) {
+    el.textContent = text;
   }
 }
 
-function setTone(id: string, tone: string): void {
-  const element = document.getElementById(id);
-  if (element) {
-    element.className = tone;
+function setTone(id: string, toneClass: string): void {
+  const el = document.getElementById(id);
+  if (!el) {
+    return;
   }
+
+  const baseClasses = el.className
+    .split(/\s+/)
+    .filter((name) => !name.startsWith('health-') && !name.startsWith('state-'));
+  baseClasses.push(toneClass);
+  el.className = baseClasses.join(' ').trim();
 }
 
 function itemGlyph(slot: string | undefined): string {
-  return { weapon: 'W', vitality: 'V', spirit: 'S' }[slot || ''] || '•';
+  switch (slot) {
+    case 'weapon':
+      return 'W';
+    case 'vitality':
+      return 'V';
+    case 'spirit':
+      return 'S';
+    default:
+      return '•';
+  }
+}
+
+function isInGameOverlay(): boolean {
+  if (typeof document !== 'undefined' && Boolean(document.querySelector?.('.hud-container'))) {
+    return true;
+  }
+  return typeof window !== 'undefined' && typeof window.location?.pathname === 'string' && window.location.pathname.includes('in_game');
 }

@@ -5,7 +5,7 @@
     <title>Deadlock Statlocker Adaptive</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <style>
       :root { --bg:#090a0e; --surface:#15161c; --soft:rgba(255,255,255,.045); --line:rgba(255,255,255,.1); --text:#f8f7f5; --muted:#aaa9b1; --dim:#74737c; --accent:#ff7658; --live:#62d49a; --warning:#f5bd64; --weapon:#e5a83b; --vitality:#58bd74; --spirit:#a978df; }
       * { box-sizing:border-box; }
@@ -37,6 +37,9 @@
       #situational-recommendation-panel[data-slot="weapon"] .primary-card { --slot:var(--weapon); } #situational-recommendation-panel[data-slot="vitality"] .primary-card { --slot:var(--vitality); } #situational-recommendation-panel[data-slot="spirit"] .primary-card { --slot:var(--spirit); }
       .rec-ribbon { display:flex; align-items:center; gap:7px; margin-bottom:10px; }
       #rec-action-label { padding:3px 7px; border-radius:5px; color:#0b0b0d; background:var(--accent); font:700 8px/1.25 "JetBrains Mono",monospace; letter-spacing:.06em; text-transform:uppercase; }
+      .planner-badge { padding:2px 6px; border-radius:5px; font:700 7.5px/1.2 "JetBrains Mono",monospace; letter-spacing:.05em; text-transform:uppercase; border:1px solid rgba(255,255,255,.12); }
+      .planner-badge-strategy { color:#58bd74; background:rgba(88,189,116,.14); border-color:rgba(88,189,116,.4); }
+      .planner-badge-legacy { color:#f5bd64; background:rgba(245,189,100,.14); border-color:rgba(245,189,100,.4); }
       #rec-game-state,#rec-health { font:600 8px/1.2 "JetBrains Mono",monospace; text-transform:uppercase; } #rec-game-state { color:var(--muted); } #rec-health { margin-left:auto; }
       #rec-health::before { content:""; display:inline-block; width:5px; height:5px; margin-right:5px; border-radius:50%; background:currentColor; box-shadow:0 0 8px currentColor; }
       #rec-health.health-live { color:var(--live); } #rec-health.health-degraded,#rec-health.health-waiting { color:var(--warning); } #rec-game-state.state-ahead { color:var(--live); } #rec-game-state.state-behind { color:#ff8e79; }
@@ -75,7 +78,12 @@
       <div id="situational-recommendation-panel">
         <div id="rec-update-note" class="rec-update-note"></div>
         <article class="primary-card">
-          <div class="rec-ribbon"><span id="rec-action-label">Stand by</span><span id="rec-game-state">Game state updating</span><span id="rec-health" class="health-waiting">Waiting</span></div>
+          <div class="rec-ribbon">
+            <span id="rec-action-label">Stand by</span>
+            <span id="rec-planner-badge" class="planner-badge planner-badge-strategy">Strategy-First</span>
+            <span id="rec-game-state">Game state updating</span>
+            <span id="rec-health" class="health-waiting">Waiting</span>
+          </div>
           <div class="primary-main"><div id="rec-item-glyph">•</div><div class="primary-copy"><div id="rec-headline">Adaptive recommendation</div><div id="rec-item-name">Waiting…</div><div id="rec-item-meta"></div></div><div class="confidence-block"><div class="confidence-copy"><span>Confidence</span><span id="rec-confidence-label">—</span></div><div class="confidence-track"><div id="rec-confidence-fill"></div></div></div></div>
         </article>
         <div class="adaptive-secondary">
