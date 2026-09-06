@@ -20,13 +20,13 @@ import { RecommendationItemCatalogItemV1 } from '../deadlock-live/entities/recom
 import { RecommendationItemCatalogRecipeV1 } from '../deadlock-live/entities/recommendation-item-catalog-recipe-v1.entity';
 import { resolveRecommendationCatalogAssetSemantics } from '../deadlock-live/recommendation-catalog-asset-semantics';
 import {
-  ADAPTIVE_UNIVERSAL_SLOT_RULES_V1,
   AdaptiveInvestmentStateV1,
   AdaptiveSlotStateV1,
   RecommendationEconomyRulesV1,
   deriveAdaptiveInvestmentStateV1,
   deriveAdaptiveSlotStateV1,
   resolveRecommendationEconomyRulesV1,
+  slotRulesFromEconomyRulesV1,
 } from './adaptive-economy-v1';
 
 export interface AdaptiveDecisionStateV1 {
@@ -91,6 +91,11 @@ export class AdaptiveDecisionStateV1Service {
         order: { parentItemId: 'ASC', componentOrder: 'ASC', componentItemId: 'ASC' },
       }),
     ]);
+
+    const expectedRulesetId = catalogRulesetId(version);
+    const pinnedEconomyRules = expectedRulesetId
+      ? resolveRecommendationEconomyRulesV1(expectedRulesetId, version.payloadSha256)
+      : undefined;
     const catalog = buildRecommendationRulesetCatalogV1({
       version: {
         catalogVersionId: version.catalogVersionId,
@@ -124,8 +129,12 @@ export class AdaptiveDecisionStateV1Service {
         componentItemId: Number(row.componentItemId),
         componentOrder: row.componentOrder,
       })),
+      upgradePricingPolicy: pinnedEconomyRules?.upgradePricingPolicy,
     });
     const compiled = compileStrictRecommendationCatalogV1(catalog);
+    const exactEconomyRules = pinnedEconomyRules?.rulesetId === compiled.rulesetId
+      ? pinnedEconomyRules
+      : resolveRecommendationEconomyRulesV1(compiled.rulesetId, version.payloadSha256);
 
     const ownedItemIds = local.items.map((item) => item.id).sort((a, b) => a - b);
     const heldByItemId = buildInventoryInstancesForRecommendation(ownedItemIds, compiled.graph);
@@ -136,12 +145,18 @@ export class AdaptiveDecisionStateV1Service {
       nextInstanceSequence: heldByItemId.size + 1,
     };
 
-    const exactEconomyRules = resolveRecommendationEconomyRulesV1(compiled.rulesetId, version.payloadSha256);
+    const slotRules = slotRulesFromEconomyRulesV1(exactEconomyRules);
+    const flexCapacity = Number.isInteger(match.unlockedFlexSlots) && Number(match.unlockedFlexSlots) >= 0
+      ? {
+          unlockedFlexSlots: Number(match.unlockedFlexSlots),
+          evidence: 'OBSERVED' as const,
+        }
+      : { evidence: 'UNKNOWN' as const };
     const slots = deriveAdaptiveSlotStateV1(
       ownedItemIds,
       compiled.graph,
-      ADAPTIVE_UNIVERSAL_SLOT_RULES_V1,
-      { evidence: 'UNKNOWN' },
+      slotRules,
+      flexCapacity,
     );
     const investment = deriveAdaptiveInvestmentStateV1(ownedItemIds, compiled.graph, exactEconomyRules);
 
@@ -154,10 +169,10 @@ export class AdaptiveDecisionStateV1Service {
       : unknownFact<number>('souls-affordability-scope-unverified');
 
     const teamTotals = calculateTeamSoulTotals(match, local.teamId);
-    const enemyHeroIds = Object.values(match.playersBySteamId)
+    const enemyHeroIds = [...new Set(Object.values(match.playersBySteamId)
       .filter((player) => player.teamId !== undefined && player.teamId !== local.teamId)
       .map((player) => player.heroId)
-      .filter((heroId): heroId is number => Number.isInteger(heroId))
+      .filter((heroId): heroId is number => Number.isInteger(heroId)))]
       .sort((a, b) => a - b);
     const gameTimeSec = Number.isFinite(match.gameTimeSec) ? (match.gameTimeSec as number) : 0;
     const stateRevision = computeStateRevision(match, localSteamId, version, ownedItemIds);
@@ -192,6 +207,11 @@ export class AdaptiveDecisionStateV1Service {
       stateRevision,
     };
   }
+}
+
+function catalogRulesetId(version: RecommendationItemCatalogVersionV1): string | undefined {
+  const value = version.rulesetKey ?? version.clientVersion;
+  return typeof value === 'string' && value.trim() ? value : undefined;
 }
 
 function resolveLocalSteamId(match: MinimalMatchState, requested?: string): string {
@@ -255,6 +275,7 @@ function computeStateRevision(
     matchId: match.matchId,
     localSteamId,
     gameTimeSec: match.gameTimeSec,
+    unlockedFlexSlots: match.unlockedFlexSlots,
     rulesetId: version.rulesetKey,
     catalogSha256: version.payloadSha256,
     ownedItemIds,
