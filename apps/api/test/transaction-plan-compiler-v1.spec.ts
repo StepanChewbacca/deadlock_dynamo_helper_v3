@@ -190,10 +190,11 @@ describe('transaction plan compiler v1', () => {
     expect(result.steps[0]).toMatchObject({ kind: 'BARRIER', barrier: { type: 'WAIT_FOR_FLEX', targetItemId: 202, requiredUnlockedFlexSlots: 1 } });
   });
 
-  it('fails closed instead of inventing barriers for unknown wallet or flex capacity', () => {
+  it('creates WAIT_FOR_GOLD barrier for unknown wallet, but fails closed for unknown flex capacity', () => {
     const unknownWallet = decision([], undefined, 0);
     const walletResult = compiler.compile({ strategy: strategy(), contract: contract(), slotPlan: slotPlan('NONE'), decision: unknownWallet, selectedCandidates: [] });
-    expect(walletResult.reachable).toBe(false);
+    expect(walletResult.reachable).toBe(true);
+    expect(walletResult.steps[0]).toMatchObject({ kind: 'BARRIER', barrier: { type: 'WAIT_FOR_GOLD', targetItemId: 202 } });
 
     const unknownFlex = decision([102, 103, 104, 105], 5000, 'UNKNOWN');
     const flexResult = compiler.compile({

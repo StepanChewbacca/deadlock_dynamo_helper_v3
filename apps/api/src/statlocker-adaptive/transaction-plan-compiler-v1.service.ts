@@ -312,7 +312,7 @@ export class TransactionPlanCompilerV1Service {
         return { steps, state, slots, reachable: false, reasonCodes: unique([...reasons, ...diagnostic.reasons]) };
       }
 
-      if (diagnostic.reasons.includes('SHOP_UNAVAILABLE')) {
+      if (diagnostic.reasons.includes('SHOP_UNAVAILABLE') || diagnostic.reasons.includes('SHOP_OPPORTUNITY_UNKNOWN')) {
         const barrier = this.barrierStep(
           args.input.strategy.strategyId,
           args.goal.goalId,
@@ -329,13 +329,13 @@ export class TransactionPlanCompilerV1Service {
         state = withShopAvailable(state);
       }
 
-      if (diagnostic.reasons.includes('UNAFFORDABLE')) {
+      if (diagnostic.reasons.includes('UNAFFORDABLE') || diagnostic.reasons.includes('SPENDABLE_SOULS_UNKNOWN')) {
         const requiredSouls = Math.max(0, diagnostic.effectiveCostSouls);
         const barrier = this.barrierStep(
           args.input.strategy.strategyId,
           args.goal.goalId,
           { type: 'WAIT_FOR_GOLD', targetItemId: args.targetItemId, requiredSouls },
-          'INSUFFICIENT_GOLD',
+          diagnostic.reasons.includes('UNAFFORDABLE') ? 'INSUFFICIENT_GOLD' : 'UNKNOWN_AFFORDABILITY',
           state,
           slots,
           args.input,
@@ -559,8 +559,6 @@ export class TransactionPlanCompilerV1Service {
 
 const NON_DEFERABLE_REASONS = new Set<RecommendationFeasibilityReason>([
   'ITEM_UNAVAILABLE_IN_RULESET',
-  'SPENDABLE_SOULS_UNKNOWN',
-  'SHOP_OPPORTUNITY_UNKNOWN',
   'FLEX_SLOT_CAPACITY_UNKNOWN',
   'MISSING_UPGRADE_COMPONENT',
   'SELL_TRANSITION_UNKNOWN',

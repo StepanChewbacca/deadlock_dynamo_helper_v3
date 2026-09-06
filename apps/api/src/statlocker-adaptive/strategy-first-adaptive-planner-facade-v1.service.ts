@@ -267,10 +267,20 @@ function failClosedBase(
     failCode,
     ...violationReasons,
   ]).sort();
-  const recommendedBuild = result.recommendedBuild
-    .filter((row) => owned.has(row.itemId))
-    .sort((a, b) => a.position - b.position || a.itemId - b.itemId)
-    .map((row, index) => ({ ...row, position: index + 1, status: 'OWNED' as const }));
+  const recommendedBuild = result.recommendedBuild.length > 0
+    ? result.recommendedBuild.map((row) =>
+        row.status === 'NEXT' ? { ...row, status: 'PLANNED' as const } : row,
+      )
+    : [...owned].sort((a, b) => a - b).map((itemId, index) => ({
+        itemId,
+        position: index + 1,
+        status: 'OWNED' as const,
+        score: 0,
+        confidence: 1,
+        skeletonStrength: 0,
+        contextualSupport: 1,
+        reasonCodes: ['OWNED_ITEM', failCode],
+      }));
   return {
     ...result,
     contract: {
@@ -311,10 +321,20 @@ function failClosedFlatStrategyResult(
 ): StrategyFirstBuildPlannerV1Result {
   const owned = new Set(decision.state.inventory.heldByItemId.keys());
   const violationReasons = check.violations.map((violation) => `INVARIANT:${violation.code}`);
-  const recommendedBuild = result.recommendedBuild
-    .filter((row) => owned.has(row.itemId))
-    .sort((a, b) => a.position - b.position || a.itemId - b.itemId)
-    .map((row, index) => ({ ...row, position: index + 1, status: 'OWNED' as const }));
+  const recommendedBuild = result.recommendedBuild.length > 0
+    ? result.recommendedBuild.map((row) =>
+        row.status === 'NEXT' ? { ...row, status: 'PLANNED' as const } : row,
+      )
+    : [...owned].sort((a, b) => a - b).map((itemId, index) => ({
+        itemId,
+        position: index + 1,
+        status: 'OWNED' as const,
+        score: 0,
+        confidence: 1,
+        skeletonStrength: 0,
+        contextualSupport: 1,
+        reasonCodes: ['OWNED_ITEM', 'STRATEGY_INVARIANT_FAIL_CLOSED'],
+      }));
   return {
     ...result,
     contract: {
