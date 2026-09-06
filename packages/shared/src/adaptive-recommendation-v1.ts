@@ -16,6 +16,15 @@ export type AdaptiveActionTypeV1 = (typeof ADAPTIVE_ACTION_TYPES_V1)[number];
 export const ADAPTIVE_PLAN_STATUSES_V1 = ['OWNED', 'NEXT', 'PLANNED'] as const;
 export type AdaptivePlanStatusV1 = (typeof ADAPTIVE_PLAN_STATUSES_V1)[number];
 
+export const ADAPTIVE_PLAN_ACTION_STATUSES_V1 = [
+  'OWNED',
+  'READY',
+  'BLOCKED',
+  'PLANNED',
+  'COMPLETED',
+] as const;
+export type AdaptivePlanActionStatusV1 = (typeof ADAPTIVE_PLAN_ACTION_STATUSES_V1)[number];
+
 export const ADAPTIVE_EVIDENCE_FRESHNESS_V1 = [
   'FRESH',
   'STALE_USABLE',
@@ -125,6 +134,89 @@ export interface AdaptiveActionV1 {
   reasonCodes: readonly string[];
 }
 
+export type AdaptivePlanRequirementV1 =
+  | {
+      type: 'SOULS';
+      requiredSouls: number;
+      currentSouls?: number;
+      shortfallSouls?: number;
+      evidence: 'OBSERVED' | 'RECONSTRUCTED' | 'UNKNOWN';
+    }
+  | {
+      type: 'FLEX_SLOT';
+      requiredFlexSlots: number;
+      unlockedFlexSlots?: number;
+      evidence: 'OBSERVED' | 'RECONSTRUCTED' | 'UNKNOWN';
+    }
+  | {
+      type: 'SELL_ITEM';
+      itemId: number;
+    }
+  | {
+      type: 'UPGRADE_COMPONENT';
+      itemIds: readonly number[];
+    }
+  | {
+      type: 'SHOP_OPPORTUNITY';
+      available?: boolean;
+      evidence: 'OBSERVED' | 'RECONSTRUCTED' | 'UNKNOWN';
+    };
+
+export type AdaptiveSituationalPurposeV1 =
+  | 'CATCH'
+  | 'ANTI_CC'
+  | 'CLEANSE'
+  | 'ANTI_BULLET'
+  | 'ANTI_SPIRIT'
+  | 'ANTI_BURST'
+  | 'ANTI_HEAL'
+  | 'MOBILITY'
+  | 'TEAM_UTILITY'
+  | 'SURVIVAL';
+
+export type AdaptiveSituationalEvidenceKindV1 =
+  | 'MATCHUP_STAT'
+  | 'MECHANICAL_COUNTER'
+  | 'ENEMY_ITEMIZATION'
+  | 'LIVE_THREAT';
+
+export interface AdaptiveSituationalEnemyTargetV1 {
+  enemyHeroId: number;
+  role: 'PRIMARY' | 'SECONDARY';
+  score: number;
+  confidence: number;
+  evidenceKinds: readonly AdaptiveSituationalEvidenceKindV1[];
+  deltaWpa?: number;
+  sampleSize?: number;
+}
+
+export interface AdaptiveSituationalContextV1 {
+  purpose: AdaptiveSituationalPurposeV1;
+  targetEnemies: readonly AdaptiveSituationalEnemyTargetV1[];
+  primaryTargetEnemyHeroId?: number;
+  recommendationConfidence: number;
+  coreInterruption: {
+    nextCoreTargetItemId?: number;
+    estimatedSoulsDelay?: number;
+    accepted: boolean;
+  };
+  reasonCodes: readonly string[];
+}
+
+export interface AdaptivePlanActionV1 {
+  planActionId: string;
+  sequence: number;
+  status: AdaptivePlanActionStatusV1;
+  action: AdaptiveActionV1;
+  targetItemId?: number;
+  sourceItemIds: readonly number[];
+  requirements: readonly AdaptivePlanRequirementV1[];
+  goalId?: string;
+  groupId?: string;
+  reasonCodes: readonly string[];
+  situational?: AdaptiveSituationalContextV1;
+}
+
 export interface AdaptiveScoreComponentV1 {
   key: string;
   raw: number;
@@ -189,6 +281,7 @@ export interface AdaptiveRecommendationResultV1 {
   gameState: 'AHEAD' | 'EVEN' | 'BEHIND' | 'UNKNOWN';
   nextAction: AdaptiveActionV1;
   nextTargetItemId?: number;
+  planActions?: readonly AdaptivePlanActionV1[];
   recommendedBuild: readonly AdaptivePlannedItemV1[];
   changes: readonly AdaptiveBuildPlanChangeV1[];
   rankedImmediateCandidates: readonly AdaptiveScoredActionV1[];
