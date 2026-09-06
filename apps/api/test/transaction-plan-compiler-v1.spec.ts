@@ -135,12 +135,17 @@ describe('transaction plan compiler v1', () => {
     });
   });
 
-  it('never exposes a standalone SELL_ITEM as a transaction plan step', () => {
+  it('ignores a selected naked SELL_ITEM and compiles the slot exit as SELL_AND_BUY instead', () => {
     const d = decision([101], 5000);
     const sell = candidatesFor(d).find((candidate) => candidate.action.type === 'SELL_ITEM' && candidate.action.itemId === 101)!;
     const result = compiler.compile({ strategy: strategy(), contract: contract([101]), slotPlan: slotPlan('SELL_TEMPORARY', 101), decision: d, selectedCandidates: [sell] });
-    expect(result.steps.some((step) => step.kind === 'TRANSACTION' && step.action?.type === 'SELL_AND_BUY')).toBe(false);
-    expect(result.steps.some((step) => step.kind === 'TRANSACTION')).toBe(false);
+    expect(result.steps).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'TRANSACTION',
+        action: { type: 'SELL_AND_BUY', sellItemId: 101, buyItemId: 202 },
+      }),
+    ]));
+    expect(result.steps.some((step) => step.reasonCodes.some((code) => code.includes('SELL_ITEM:101')))).toBe(false);
   });
 
   it('creates WAIT_FOR_GOLD and a locked transaction when exact funds are insufficient', () => {
