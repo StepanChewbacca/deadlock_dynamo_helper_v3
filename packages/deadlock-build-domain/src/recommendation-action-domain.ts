@@ -77,7 +77,10 @@ export type RecommendationFeasibilityReason =
 
 export type RecommendationSuppressionReason =
   | 'TARGET_SATISFIED_BY_OWNED_UPGRADE'
-  | 'LINEAGE_DOWNGRADE';
+  | 'LINEAGE_DOWNGRADE'
+  | 'OWNED_COMPONENT_REQUIRES_UPGRADE_PATH'
+  | 'UPGRADE_TRANSACTION_MECHANICS_UNKNOWN'
+  | 'DIRECT_PURCHASE_MODE_UNKNOWN';
 
 export interface RecommendationCandidateEvidence {
   spendableSouls: FactEvidence;
