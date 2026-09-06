@@ -13,6 +13,7 @@ export interface AdaptiveRecommendationStatusV1 {
   refresh: StatlockerRefreshStatusV1;
   observability: ReturnType<AdaptiveRecommendationObservabilityV1Service['getStatus']>;
   strategyPromotion: ReturnType<StrategyFirstPromotionGateV1Service['status']>;
+  transactionPlanPromotion: ReturnType<StrategyFirstPromotionGateV1Service['transactionStatus']>;
   strategyOperations: ReturnType<StrategyFirstOperationsV1Service['getStatus']>;
   rulesetVersion?: string;
   catalogSha256?: string;
@@ -57,6 +58,7 @@ export class AdaptiveRecommendationV1Controller {
       refresh,
       observability: this.observability.getStatus(),
       strategyPromotion: this.strategyPromotion.status(),
+      transactionPlanPromotion: this.strategyPromotion.transactionStatus(),
       strategyOperations: this.strategyOperations.getStatus(),
       rulesetVersion: refresh.identity?.rulesetVersion,
       catalogSha256: refresh.identity?.catalogSha256,
