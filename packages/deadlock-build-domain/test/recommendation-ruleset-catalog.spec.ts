@@ -118,6 +118,9 @@ describe('recommendation ruleset catalog', () => {
 
     const candidates = generateRecommendationCandidates({ state, itemGraph: compiled.graph });
     expect(candidates.some((candidate) => candidate.action.type === 'UPGRADE_ITEM' && candidate.action.itemId === 2)).toBe(false);
+    const directBuy = candidates.find((candidate) => candidate.action.type === 'BUY_ITEM' && candidate.action.itemId === 2);
+    expect(directBuy?.recommendationEligible).toBe(false);
+    expect(directBuy?.recommendationSuppressionReasons).toContain('UPGRADE_TRANSACTION_MECHANICS_UNKNOWN');
   });
 
   it('compiles exact upgrade and sell mechanics only when enriched with provenance', () => {
@@ -143,12 +146,59 @@ describe('recommendation ruleset catalog', () => {
     });
     const compiled = compileStrictRecommendationCatalogV1(catalog);
 
+    expect(catalog.items.find((item) => item.itemId === 2)?.upgradeRecipes[0].costSource)
+      .toBe('MECHANICS_ENRICHMENT');
     expect(compiled.graph.getItem(2)?.upgradeRecipes).toEqual([
       { recipeId: 'upgrade:2', consumedItemIds: [1], soulsCost: 800 },
     ]);
     expect(compiled.graph.getDirectComponentIds(2)).toEqual([1]);
     expect(compiled.graph.getItem(2)?.sellTransition).toEqual({ soulsRefund: 800, returnedItemIds: [1] });
     expect(compiled.graph.getItem(2)?.maxCopies).toBe(1);
+  });
+
+  it('derives upgrade cost only under a verified pinned pricing policy', () => {
+    const input = baseInput();
+    const catalog = buildRecommendationRulesetCatalogV1({
+      ...input,
+      upgradePricingPolicy: {
+        mode: 'TARGET_COST_MINUS_VERIFIED_COMPONENT_CREDIT',
+        componentCreditRatio: 1,
+        evidence: 'RECONSTRUCTED',
+        source: 'ruleset-fixture:r1',
+      },
+    });
+    const recipe = catalog.items.find((item) => item.itemId === 2)?.upgradeRecipes[0];
+    const compiled = compileStrictRecommendationCatalogV1(catalog);
+
+    expect(recipe?.soulsCost).toMatchObject({
+      value: 800,
+      evidence: 'RECONSTRUCTED',
+      source: 'upgrade-pricing:ruleset-fixture:r1',
+    });
+    expect(recipe?.costSource).toBe('RULESET_DERIVED_COMPONENT_CREDIT');
+    expect(compiled.graph.getItem(2)?.upgradeRecipes).toEqual([
+      { recipeId: 'upgrade:2', consumedItemIds: [1], soulsCost: 800 },
+    ]);
+  });
+
+  it('never derives upgrade price without a verified policy', () => {
+    const catalog = buildRecommendationRulesetCatalogV1(baseInput());
+    expect(catalog.items.find((item) => item.itemId === 2)?.upgradeRecipes[0].soulsCost.evidence).toBe('UNKNOWN');
+    expect(catalog.items.find((item) => item.itemId === 2)?.upgradeRecipes[0].costSource).toBeUndefined();
+  });
+
+  it('rejects an inconsistent negative derived upgrade price instead of clamping it', () => {
+    const input = baseInput();
+    expect(() => buildRecommendationRulesetCatalogV1({
+      ...input,
+      items: [input.items[0], { ...input.items[1], cost: 400 }],
+      upgradePricingPolicy: {
+        mode: 'TARGET_COST_MINUS_VERIFIED_COMPONENT_CREDIT',
+        componentCreditRatio: 1,
+        evidence: 'OBSERVED',
+        source: 'bad-ruleset-fixture',
+      },
+    })).toThrow('Derived upgrade cost for item 2 is invalid');
   });
 
   it('reports mechanic coverage without pretending unknown facts are known', () => {
