@@ -16,10 +16,14 @@ import {
   nextActionFromPlanSessionV1,
   recommendedBuildFromPlanSessionV1,
 } from './transaction-plan-projection-v1';
-import { TransactionPlanValidatorV1Service } from './transaction-plan-validator-v1.service';
+import {
+  TransactionPlanValidationV1,
+  TransactionPlanValidatorV1Service,
+} from './transaction-plan-validator-v1.service';
 
 export type StrategyFirstTransactionPlanResultV1 = StrategyFirstBuildPlannerV1Result & {
   planSession: AdaptivePlanSessionV1;
+  transactionPlanValidation: TransactionPlanValidationV1;
 };
 
 export interface StrategyFirstTransactionPlanV1Input {
@@ -45,9 +49,11 @@ export class StrategyFirstTransactionPlanV1Service {
         proposedReachable: true,
         decision: input.decision,
       });
+      const transactionPlanValidation = this.validator.validate({ session, decision: input.decision });
       return {
         ...input.result,
         planSession: session,
+        transactionPlanValidation,
         nextAction: nextActionFromPlanSessionV1(session),
         recommendedBuild: recommendedBuildFromPlanSessionV1({
           session,
@@ -73,12 +79,18 @@ export class StrategyFirstTransactionPlanV1Service {
       proposedReachable: compiled.reachable,
       decision: input.decision,
     });
-    const validation = compiled.reachable
+    const transactionPlanValidation: TransactionPlanValidationV1 = compiled.reachable
       ? this.validator.validate({ session, decision: input.decision })
-      : { valid: false, violations: [{ code: 'TRANSACTION_PATH_UNREACHABLE', reasonCodes: compiled.reasonCodes }] };
+      : {
+          valid: false,
+          violations: [{
+            code: 'TRANSACTION_PATH_UNREACHABLE',
+            reasonCodes: compiled.reasonCodes,
+          }],
+        };
 
-    if (!compiled.reachable || !validation.valid) {
-      const validationReasons = validation.violations.flatMap((violation) => [
+    if (!compiled.reachable || !transactionPlanValidation.valid) {
+      const validationReasons = transactionPlanValidation.violations.flatMap((violation) => [
         `PLAN_VALIDATION:${violation.code}`,
         ...violation.reasonCodes,
       ]);
@@ -93,7 +105,7 @@ export class StrategyFirstTransactionPlanV1Service {
           'TRANSACTION_PLAN_FAIL_CLOSED',
         ]),
       };
-      return failClosed(input.result, input.decision, session);
+      return failClosed(input.result, input.decision, session, transactionPlanValidation);
     }
 
     const effectiveStatus = session.state === 'WAITING'
@@ -120,6 +132,7 @@ export class StrategyFirstTransactionPlanV1Service {
       contract,
       strategyPlan,
       planSession: session,
+      transactionPlanValidation,
       nextAction: nextActionFromPlanSessionV1(session),
       recommendedBuild: recommendedBuildFromPlanSessionV1({
         session,
@@ -166,6 +179,7 @@ function failClosed(
   result: StrategyFirstBuildPlannerV1Result,
   decision: AdaptiveDecisionStateV1,
   session: AdaptivePlanSessionV1,
+  transactionPlanValidation: TransactionPlanValidationV1,
 ): StrategyFirstTransactionPlanResultV1 {
   const completionReasonCodes = unique([
     ...result.contract.completionReasonCodes,
@@ -184,6 +198,7 @@ function failClosed(
       buildStatus: 'REPLAN_REQUIRED',
     },
     planSession: session,
+    transactionPlanValidation,
     nextAction: {
       actionKey: 'HOLD',
       type: 'HOLD',
