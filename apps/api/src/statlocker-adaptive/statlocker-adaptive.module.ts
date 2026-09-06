@@ -54,6 +54,10 @@ import { StrategyFirstLegacyPlannerAdapterV1Service } from './strategy-first-leg
 import { StrategyFirstOperationsV1Service } from './strategy-first-operations-v1.service';
 import { StrategyFirstPromotionGateV1Service } from './strategy-first-promotion-gate-v1.service';
 import { StrategyFirstSituationalOverlayV1Service } from './strategy-first-situational-overlay-v1.service';
+import { StrategyFirstTransactionPlanV1Service } from './strategy-first-transaction-plan-v1.service';
+import { TransactionPlanCompilerV1Service } from './transaction-plan-compiler-v1.service';
+import { TransactionPlanReconcilerV1Service } from './transaction-plan-reconciler-v1.service';
+import { TransactionPlanValidatorV1Service } from './transaction-plan-validator-v1.service';
 
 @Module({
   imports: [
@@ -107,6 +111,10 @@ import { StrategyFirstSituationalOverlayV1Service } from './strategy-first-situa
     ConsensusStrategyFallbackV1Service,
     StrategyFirstBuildPlannerV1Service,
     StrategyFirstSituationalOverlayV1Service,
+    TransactionPlanCompilerV1Service,
+    TransactionPlanValidatorV1Service,
+    TransactionPlanReconcilerV1Service,
+    StrategyFirstTransactionPlanV1Service,
     StrategyFirstAdaptivePlannerFacadeV1Service,
     StrategyFirstLegacyPlannerAdapterV1Service,
     StrategyFirstPromotionGateV1Service,
