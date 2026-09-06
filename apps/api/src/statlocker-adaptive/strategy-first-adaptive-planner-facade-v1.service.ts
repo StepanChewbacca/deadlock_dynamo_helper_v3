@@ -5,10 +5,7 @@ import { AdaptiveRecommendationObservabilityV1Service } from './adaptive-recomme
 import { diffAdaptiveBuildPlansV1 } from './build-plan-diff-v1';
 import { BuildStrategyRegistryV1Service } from './build-strategy-registry-v1.service';
 import { ConsensusStrategyFallbackV1Service } from './consensus-strategy-fallback-v1.service';
-import {
-  StrategyFirstBuildPlannerV1Result,
-  StrategyFirstBuildPlannerV1Service,
-} from './strategy-first-build-planner-v1.service';
+import { StrategyFirstBuildPlannerV1Service } from './strategy-first-build-planner-v1.service';
 import { BuildContractV1 } from './build-strategy-v1';
 import { BuildStrategySessionV1 } from './build-strategy-session-v1.service';
 import { StatlockerEvidenceBundleV1 } from './statlocker-evidence.service';
@@ -18,10 +15,14 @@ import {
   StrategyFirstInvariantCheckV1,
   evaluateStrategyFirstInvariantsV1,
 } from './strategy-first-invariants-v1';
+import {
+  StrategyFirstTransactionPlanResultV1,
+  StrategyFirstTransactionPlanV1Service,
+} from './strategy-first-transaction-plan-v1.service';
 
 export type StrategyFirstPreviousResultV1 = Pick<
   AdaptiveRecommendationResultV1,
-  'recommendedBuild' | 'totalScore' | 'nextAction' | 'confidence' | 'strategy'
+  'recommendedBuild' | 'totalScore' | 'nextAction' | 'confidence' | 'strategy' | 'planSession'
 >;
 
 export interface StrategyFirstAdaptivePlannerFacadeV1Input {
@@ -38,11 +39,12 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
     private readonly planner: StrategyFirstBuildPlannerV1Service,
     private readonly registry: BuildStrategyRegistryV1Service,
     private readonly fallback: ConsensusStrategyFallbackV1Service,
+    private readonly transactionPlan: StrategyFirstTransactionPlanV1Service,
     @Optional() private readonly situational?: StrategyFirstSituationalOverlayV1Service,
     @Optional() private readonly observability?: AdaptiveRecommendationObservabilityV1Service,
   ) {}
 
-  plan(input: StrategyFirstAdaptivePlannerFacadeV1Input): StrategyFirstBuildPlannerV1Result {
+  plan(input: StrategyFirstAdaptivePlannerFacadeV1Input): StrategyFirstTransactionPlanResultV1 {
     let strategies = this.registry.getStrategies(
       input.decision.state.heroId,
       input.decision.rulesetId,
@@ -79,14 +81,18 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
           decision: input.decision,
           evidence: input.evidence,
         }) ?? planned;
-    const terminalNormalized = normalizeTerminalResult(overlaid, input.decision);
-    const aligned = alignFirstNextRow(terminalNormalized);
-    const withChanges: StrategyFirstBuildPlannerV1Result = {
-      ...aligned,
+    const transactionFirst = this.transactionPlan.apply({
+      result: overlaid,
+      decision: input.decision,
+      previousPlanSession: input.previousResult?.planSession,
+      recentPurchasedItemIds: input.recentPurchasedItemIds ?? [],
+    });
+    const withChanges: StrategyFirstTransactionPlanResultV1 = {
+      ...transactionFirst,
       changes: input.previousResult
         ? diffAdaptiveBuildPlansV1(
             input.previousResult.recommendedBuild,
-            aligned.recommendedBuild,
+            transactionFirst.recommendedBuild,
             input.recentPurchasedItemIds ?? [],
             input.recentSoldItemIds ?? [],
           )
@@ -115,56 +121,11 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
   }
 }
 
-function normalizeTerminalResult(
-  result: StrategyFirstBuildPlannerV1Result,
-  decision: AdaptiveDecisionStateV1,
-): StrategyFirstBuildPlannerV1Result {
-  if (result.contract.status !== 'COMPLETE') return result;
-  const owned = new Set(decision.state.inventory.heldByItemId.keys());
-  const recommendedBuild = result.recommendedBuild
-    .filter((row) => owned.has(row.itemId))
-    .sort((a, b) => a.position - b.position || a.itemId - b.itemId)
-    .map((row, index) => ({ ...row, position: index + 1, status: 'OWNED' as const }));
-  return {
-    ...result,
-    nextAction: {
-      actionKey: 'HOLD',
-      type: 'HOLD',
-      reasonCodes: ['BUILD_CONTRACT_COMPLETE'],
-    },
-    recommendedBuild,
-    rankedImmediateCandidates: [],
-    totalScore: 0,
-    confidence: 1,
-  };
-}
-
-function alignFirstNextRow(result: StrategyFirstBuildPlannerV1Result): StrategyFirstBuildPlannerV1Result {
-  if (
-    result.contract.status === 'COMPLETE' ||
-    result.contract.status === 'REPLAN_REQUIRED' ||
-    result.contract.status === 'OUT_OF_DISTRIBUTION'
-  ) {
-    return result;
-  }
-  const targetItemId = result.nextAction.targetItemId;
-  if (targetItemId === undefined) return result;
-  const targetExists = result.recommendedBuild.some((row) => row.itemId === targetItemId && row.status !== 'OWNED');
-  if (!targetExists) return result;
-  return {
-    ...result,
-    recommendedBuild: result.recommendedBuild.map((row) => {
-      if (row.status === 'OWNED') return row;
-      return { ...row, status: row.itemId === targetItemId ? 'NEXT' as const : 'PLANNED' as const };
-    }),
-  };
-}
-
 function failClosedStrategyResult(
-  result: StrategyFirstBuildPlannerV1Result,
+  result: StrategyFirstTransactionPlanResultV1,
   decision: AdaptiveDecisionStateV1,
   check: StrategyFirstInvariantCheckV1,
-): StrategyFirstBuildPlannerV1Result {
+): StrategyFirstTransactionPlanResultV1 {
   const owned = new Set(decision.state.inventory.heldByItemId.keys());
   const violationReasons = check.violations.map((violation) => `INVARIANT:${violation.code}`);
   const completionReasonCodes = unique([
@@ -186,6 +147,16 @@ function failClosedStrategyResult(
     strategyPlan: {
       ...result.strategyPlan,
       buildStatus: 'REPLAN_REQUIRED',
+    },
+    planSession: {
+      ...result.planSession,
+      state: 'REPLAN_REQUIRED',
+      nextStepId: undefined,
+      reasonCodes: unique([
+        ...result.planSession.reasonCodes,
+        'STRATEGY_INVARIANT_FAIL_CLOSED',
+        ...violationReasons,
+      ]),
     },
     nextAction: {
       actionKey: 'HOLD',
