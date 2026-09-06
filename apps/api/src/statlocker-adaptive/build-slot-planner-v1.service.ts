@@ -166,6 +166,7 @@ function findReplacementSource(
     goal.hard && input.contract.goalStates[goal.goalId] === 'SATISFIED' && goal.minSelect > 0,
   );
   for (const sourceItemId of [...new Set(input.ownedItemIds)].sort((a, b) => a - b)) {
+    if (isReadyUpgradeComponentForPendingHardGoal(input, sourceItemId, targetItemId)) continue;
     const afterExit = input.ownedItemIds.filter((itemId) => itemId !== sourceItemId);
     const preservesHardGoals = satisfiedHardGoals.every((goal) =>
       goal.targetItemIds.filter((itemId) => input.itemGraph.isTargetSatisfied(itemId, afterExit)).length >= goal.minSelect,
@@ -174,6 +175,28 @@ function findReplacementSource(
     if (canFit([...afterExit, targetItemId])) return sourceItemId;
   }
   return undefined;
+}
+
+function isReadyUpgradeComponentForPendingHardGoal(
+  input: BuildSlotPlannerV1Input,
+  sourceItemId: number,
+  currentTargetItemId: number,
+): boolean {
+  const owned = new Set(input.ownedItemIds);
+  return input.strategy.goals
+    .filter((goal) => goal.hard && goal.minSelect > 0)
+    .filter((goal) => {
+      const state = input.contract.goalStates[goal.goalId];
+      return state !== 'SATISFIED' && state !== 'SKIPPED' && state !== 'WAIVED';
+    })
+    .filter((goal) => !goal.targetItemIds.includes(currentTargetItemId))
+    .some((goal) => goal.targetItemIds.some((targetItemId) => {
+      const target = input.itemGraph.getItem(targetItemId);
+      return target?.upgradeRecipes.some((recipe) =>
+        recipe.consumedItemIds.includes(sourceItemId) &&
+        recipe.consumedItemIds.every((componentItemId) => owned.has(componentItemId)),
+      ) ?? false;
+    }));
 }
 
 function requiredFlexAfterAdd(
