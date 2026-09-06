@@ -1,5 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { AdaptiveRecommendationStrategyV1 } from '@deadlock-live-probe/shared';
+import {
+  AdaptivePlanSessionV1,
+  AdaptiveRecommendationStrategyV1,
+} from '@deadlock-live-probe/shared';
 import {
   AdaptiveBuildPlannerInputV1,
   AdaptiveBuildPlannerResultV1,
@@ -9,12 +12,13 @@ import { StrategyFirstBuildPlannerV1Result } from './strategy-first-build-planne
 
 export type StrategyFirstLegacyPlannerResultV1 = AdaptiveBuildPlannerResultV1 & {
   strategy: AdaptiveRecommendationStrategyV1;
+  planSession: AdaptivePlanSessionV1;
 };
 
 /**
  * Compatibility adapter for existing recommendation/replay call sites while the external API
  * remains on AdaptiveRecommendationResultV1. Runtime semantics come from the strategy-first
- * planner; the legacy planner version string is retained only so persisted V1 replay inputs stay readable.
+ * transaction planner; the legacy planner version string is retained only so persisted V1 replay inputs stay readable.
  */
 @Injectable()
 export class StrategyFirstLegacyPlannerAdapterV1Service {
@@ -40,6 +44,7 @@ export class StrategyFirstLegacyPlannerAdapterV1Service {
       confidence: result.confidence,
       plannerVersion: this.version,
       strategy: toAdaptiveRecommendationStrategyV1(result),
+      planSession: result.planSession,
     };
   }
 }
