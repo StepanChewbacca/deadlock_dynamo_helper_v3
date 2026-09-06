@@ -35,15 +35,12 @@ function flatResult(): any {
   };
 }
 
-function failClosedTransactionResult(): any {
+function legacyResult(): any {
   return {
-    ...transactionResult(),
-    nextAction: { actionKey: 'HOLD', type: 'HOLD', reasonCodes: ['TRANSACTION_PLAN_FAIL_CLOSED'] },
-    transactionPlanValidation: {
-      valid: false,
-      violations: [{ code: 'TRANSACTION_PATH_UNREACHABLE', reasonCodes: ['SHOP_OPPORTUNITY_UNKNOWN'] }],
-    },
-    planSession: { ...transactionResult().planSession, state: 'REPLAN_REQUIRED', steps: [] },
+    gameState: 'EVEN',
+    nextAction: { actionKey: 'BUY:3', type: 'BUY', targetItemId: 3, reasonCodes: [] },
+    recommendedBuild: [{ itemId: 3, position: 1, status: 'NEXT', score: 0, confidence: 0, skeletonStrength: 0, contextualSupport: 0, reasonCodes: [] }],
+    changes: [], rankedImmediateCandidates: [], totalScore: 1, confidence: 1, plannerVersion: 'adaptive-build-planner-v1',
   };
 }
 
@@ -52,6 +49,9 @@ function router(transactionMode: 'FLAT_COMPAT' | 'TRANSACTION_SHADOW' | 'TRANSAC
   const strategy = {
     plan: jest.fn(() => transactionResult()),
     planFlatCompat: jest.fn(() => flatResult()),
+  } as any;
+  const legacy = {
+    plan: jest.fn(() => legacyResult()),
   } as any;
   const promotion = {
     configuredMode: () => 'STRATEGY',
@@ -73,7 +73,8 @@ function router(transactionMode: 'FLAT_COMPAT' | 'TRANSACTION_SHADOW' | 'TRANSAC
     {} as any,
     promotion,
   );
-  return { value, calls, strategy };
+  (value as any).legacy = legacy;
+  return { value, calls, strategy, legacy };
 }
 
 describe('transaction plan serving shadow v1', () => {
@@ -103,26 +104,23 @@ describe('transaction plan serving shadow v1', () => {
     expect(calls.shadow).toBe(1);
   });
 
-  it('serves a fail-closed transaction result when primary is explicitly approved but a validation failure blocks promotion', () => {
+  it('falls back to flat compat when primary is configured but validation failure blocks promotion', () => {
     const { value, strategy } = router('TRANSACTION_PRIMARY', false);
-    (strategy.plan as jest.Mock).mockReturnValueOnce(failClosedTransactionResult());
-    (value as any).promotion.transactionPromotionApproved = () => true;
 
     const result = value.plan({ decision: decision() } as any);
 
-    expect(result.nextAction.type).toBe('HOLD');
-    expect(result.planSession?.state).toBe('REPLAN_REQUIRED');
-    expect(strategy.planFlatCompat).not.toHaveBeenCalled();
+    expect(result.nextAction.type).toBe('SELL');
+    expect(result.planSession).toBeUndefined();
+    expect(strategy.planFlatCompat).toHaveBeenCalledTimes(1);
   });
 
-  it('does not fall back to legacy when primary is approved but exact economy evidence is unavailable', () => {
-    const { value, strategy } = router('TRANSACTION_PRIMARY', true);
-    (value as any).promotion.transactionPromotionApproved = () => true;
+  it('falls back to legacy when exact economy evidence is unavailable', () => {
+    const { value, strategy, legacy } = router('TRANSACTION_PRIMARY', true);
 
     const result = value.plan({ decision: decision('UNKNOWN') } as any);
 
-    expect(result.nextAction.type).toBe('HOLD');
-    expect(result.planSession?.state).toBe('REPLAN_REQUIRED');
+    expect(result.nextAction.type).toBe('BUY');
+    expect(legacy.plan).toHaveBeenCalledTimes(1);
     expect(strategy.planFlatCompat).not.toHaveBeenCalled();
   });
 });
