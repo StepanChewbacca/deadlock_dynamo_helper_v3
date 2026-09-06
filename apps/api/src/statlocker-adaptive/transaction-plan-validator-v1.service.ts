@@ -137,7 +137,8 @@ function matchingCandidate(
   slots: AdaptiveSlotStateV1,
   decision: AdaptiveDecisionStateV1,
 ): RecommendationCandidate | undefined {
-  if (!step.action) return undefined;
+  const planned = step.action;
+  if (!planned) return undefined;
   const candidates = generateRecommendationCandidates({
     state,
     itemGraph: decision.itemGraph,
@@ -148,21 +149,18 @@ function matchingCandidate(
   });
   return candidates.find((candidate) => {
     const action = candidate.action;
-    if (step.action?.type === 'BUY') {
-      return action.type === 'BUY_ITEM' && action.itemId === step.action.buyItemId;
+    if (planned.type === 'BUY') {
+      return action.type === 'BUY_ITEM' && action.itemId === planned.buyItemId;
     }
-    if (step.action?.type === 'UPGRADE') {
+    if (planned.type === 'UPGRADE') {
       return action.type === 'UPGRADE_ITEM' &&
-        action.itemId === step.action.buyItemId &&
-        (step.action.recipeId === undefined || action.recipeId === step.action.recipeId) &&
-        sameNumberSet(action.consumedItemIds, step.action.consumedItemIds);
+        action.itemId === planned.buyItemId &&
+        (planned.recipeId === undefined || action.recipeId === planned.recipeId) &&
+        sameNumberSet(action.consumedItemIds, planned.consumedItemIds);
     }
-    if (step.action?.type === 'SELL_AND_BUY') {
-      return action.type === 'REPLACE_ITEM' &&
-        action.sellItemId === step.action.sellItemId &&
-        action.buyItemId === step.action.buyItemId;
-    }
-    return false;
+    return action.type === 'REPLACE_ITEM' &&
+      action.sellItemId === planned.sellItemId &&
+      action.buyItemId === planned.buyItemId;
   });
 }
 
