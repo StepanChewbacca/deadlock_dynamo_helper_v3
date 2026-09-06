@@ -25,6 +25,14 @@ export interface AdaptivePolicyV1Config {
     inferenceMaxMedianTimeDeltaSec: number;
     inferenceMinConfidence: number;
   };
+  situational: {
+    minTargetConfidence: number;
+    minTargetPriority: number;
+    maxDisplayedTargets: number;
+    minImprovementOverCore: number;
+    targetSwitchMinImprovement: number;
+    maxCoreDelaySouls: number;
+  };
   optionalActivationMinScore: number;
   investment: {
     crossingBonus: number;
@@ -59,7 +67,7 @@ export interface AdaptivePolicyV1Config {
 }
 
 export const ADAPTIVE_POLICY_V1_CONFIG: AdaptivePolicyV1Config = {
-  version: 'statlocker-adaptive-v1.2.0',
+  version: 'statlocker-adaptive-v1.3.0',
   gameStateThreshold: 0.08,
   gameStateBlendWidth: 0.03,
   exactEnemyMaxMatchups: 3,
@@ -84,6 +92,14 @@ export const ADAPTIVE_POLICY_V1_CONFIG: AdaptivePolicyV1Config = {
     inferenceMaxCooccurrence: 0.25,
     inferenceMaxMedianTimeDeltaSec: 300,
     inferenceMinConfidence: 0.60,
+  },
+  situational: {
+    minTargetConfidence: 0.35,
+    minTargetPriority: 0.04,
+    maxDisplayedTargets: 2,
+    minImprovementOverCore: 0.08,
+    targetSwitchMinImprovement: 0.05,
+    maxCoreDelaySouls: 3200,
   },
   optionalActivationMinScore: 0.15,
   investment: {
@@ -151,6 +167,12 @@ const NUMERIC_ENV_SPECS: readonly NumericEnvSpec[] = [
   scalar('ADAPTIVE_CORE_REPLACE_MIN_IMPROVEMENT', 0, 1, (c) => c.coreReplaceMinImprovement, (c, v) => { c.coreReplaceMinImprovement = v; }),
   scalar('ADAPTIVE_RECENT_PURCHASE_PROTECTION_MS', 0, 900_000, (c) => c.recentPurchaseProtectionMs, (c, v) => { c.recentPurchaseProtectionMs = v; }, true),
   scalar('ADAPTIVE_RECENT_SELL_REBUY_PENALTY_MS', 0, 900_000, (c) => c.recentSellRebuyPenaltyMs, (c, v) => { c.recentSellRebuyPenaltyMs = v; }, true),
+  scalar('ADAPTIVE_SITUATIONAL_MIN_TARGET_CONFIDENCE', 0, 1, (c) => c.situational.minTargetConfidence, (c, v) => { c.situational.minTargetConfidence = v; }),
+  scalar('ADAPTIVE_SITUATIONAL_MIN_TARGET_PRIORITY', 0, 1, (c) => c.situational.minTargetPriority, (c, v) => { c.situational.minTargetPriority = v; }),
+  scalar('ADAPTIVE_SITUATIONAL_MAX_DISPLAYED_TARGETS', 1, 6, (c) => c.situational.maxDisplayedTargets, (c, v) => { c.situational.maxDisplayedTargets = v; }, true),
+  scalar('ADAPTIVE_SITUATIONAL_MIN_IMPROVEMENT_OVER_CORE', 0, 1, (c) => c.situational.minImprovementOverCore, (c, v) => { c.situational.minImprovementOverCore = v; }),
+  scalar('ADAPTIVE_SITUATIONAL_TARGET_SWITCH_MIN_IMPROVEMENT', 0, 1, (c) => c.situational.targetSwitchMinImprovement, (c, v) => { c.situational.targetSwitchMinImprovement = v; }),
+  scalar('ADAPTIVE_SITUATIONAL_MAX_CORE_DELAY_SOULS', 0, 20_000, (c) => c.situational.maxCoreDelaySouls, (c, v) => { c.situational.maxCoreDelaySouls = v; }, true),
 ];
 
 export function loadAdaptivePolicyV1Config(
@@ -214,6 +236,7 @@ function cloneDefaults(): AdaptivePolicyV1Config {
     ...ADAPTIVE_POLICY_V1_CONFIG,
     phase: { ...ADAPTIVE_POLICY_V1_CONFIG.phase },
     choice: { ...ADAPTIVE_POLICY_V1_CONFIG.choice },
+    situational: { ...ADAPTIVE_POLICY_V1_CONFIG.situational },
     investment: { ...ADAPTIVE_POLICY_V1_CONFIG.investment },
     shrinkK: { ...ADAPTIVE_POLICY_V1_CONFIG.shrinkK },
     weights: { ...ADAPTIVE_POLICY_V1_CONFIG.weights },
