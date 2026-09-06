@@ -36,10 +36,10 @@ const projection = {
   usedByType: { weapon: 0, vitality: 0, spirit: 0 }, flexUsed: 0, unlockedFlexSlots: 0, activeItemsUsed: 0,
 };
 
-function buyStep(stepId: string, goalId: string, itemId: number): AdaptivePlanStepV1 {
+function buyStep(stepId: string, goalId: string, itemId: number, prerequisiteStepIds: readonly string[] = []): AdaptivePlanStepV1 {
   return {
     stepId, goalId, kind: 'TRANSACTION', state: 'READY', action: { type: 'BUY', buyItemId: itemId },
-    prerequisiteStepIds: [], blockingReasons: [], projectedBefore: projection, reasonCodes: [],
+    prerequisiteStepIds, blockingReasons: [], projectedBefore: projection, reasonCodes: [],
   };
 }
 
@@ -71,6 +71,37 @@ describe('transaction plan reconciler v1', () => {
     expect(second.steps.slice(0, 2).map((step) => step.stepId)).toEqual(['step-1', 'step-2']);
     expect(second.steps.map((step) => step.stepId)).toContain('step-4');
     expect(second.steps.map((step) => step.stepId)).not.toContain('step-3');
+  });
+
+  it('replans only the affected suffix after a manual alternate-branch purchase', () => {
+    const original = [
+      buyStep('core', 'core-goal', 1),
+      buyStep('branch-a', 'branch-a-goal', 2, ['core']),
+      buyStep('late-a', 'late-goal', 3, ['branch-a']),
+    ];
+    const first = reconciler.reconcile({
+      strategyId: 's', gameTimeSec: 100, proposedSteps: original, proposedReachable: true, decision: decision([]),
+    });
+    const alternate = [
+      buyStep('core', 'core-goal', 1),
+      buyStep('branch-b', 'branch-b-goal', 4, ['core']),
+      buyStep('late-b', 'late-goal', 3, ['branch-b']),
+    ];
+    const second = reconciler.reconcile({
+      previous: first,
+      strategyId: 's',
+      gameTimeSec: 110,
+      proposedSteps: alternate,
+      proposedReachable: true,
+      decision: decision([4], 110),
+    });
+
+    expect(second.planSessionId).toBe(first.planSessionId);
+    expect(second.steps[0]?.stepId).toBe('core');
+    expect(second.steps.map((step) => step.stepId)).not.toContain('branch-a');
+    expect(second.steps.map((step) => step.stepId)).not.toContain('late-a');
+    expect(second.steps.find((step) => step.stepId === 'branch-b')?.state).toBe('COMPLETED');
+    expect(second.steps.map((step) => step.stepId)).toContain('late-b');
   });
 
   it('creates a new session id on strategy switch', () => {
