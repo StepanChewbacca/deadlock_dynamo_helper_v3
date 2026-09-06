@@ -153,7 +153,8 @@ export class StrategyFirstPromotionGateV1Service {
 
   transactionStatus(): TransactionPlanPromotionStatusV1 {
     const configuredMode = this.transactionConfiguredMode();
-    const release = this.observability.getStatus().transactionPlanRelease;
+    const observability = this.observability.getStatus();
+    const release = observability.transactionPlanRelease;
     const externallyApproved = parseBoolean(process.env.ADAPTIVE_TRANSACTION_PLAN_PROMOTION_APPROVED);
     const minimumShadowDecisions = readBoundedInteger(
       process.env.ADAPTIVE_TRANSACTION_PLAN_PROMOTION_MIN_DECISIONS,
@@ -164,6 +165,9 @@ export class StrategyFirstPromotionGateV1Service {
     const blockers: string[] = [];
     if (TRANSACTION_RELEASE_RATE_KEYS.some((key) => Number(release[key]) !== 0)) {
       blockers.push('TRANSACTION_HARD_RELEASE_METRIC_NON_ZERO');
+    }
+    if (observability.counters.transactionPlanValidationFailureCount > 0) {
+      blockers.push('TRANSACTION_PLAN_VALIDATION_FAILURE');
     }
     if (this.transactionShadowFailures > 0) blockers.push('TRANSACTION_SHADOW_RUNTIME_FAILURE');
     if (!externallyApproved && this.transactionShadowComparisons < minimumShadowDecisions) {
