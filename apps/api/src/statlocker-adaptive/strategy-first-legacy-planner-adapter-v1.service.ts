@@ -15,6 +15,10 @@ export type StrategyFirstLegacyPlannerResultV1 = AdaptiveBuildPlannerResultV1 & 
   planSession: AdaptivePlanSessionV1;
 };
 
+export type StrategyFirstFlatCompatPlannerResultV1 = AdaptiveBuildPlannerResultV1 & {
+  strategy: AdaptiveRecommendationStrategyV1;
+};
+
 /**
  * Compatibility adapter for existing recommendation/replay call sites while the external API
  * remains on AdaptiveRecommendationResultV1. Runtime semantics come from the strategy-first
@@ -27,13 +31,33 @@ export class StrategyFirstLegacyPlannerAdapterV1Service {
   constructor(private readonly strategyPlanner: StrategyFirstAdaptivePlannerFacadeV1Service) {}
 
   plan(input: AdaptiveBuildPlannerInputV1): StrategyFirstLegacyPlannerResultV1 {
-    const result = this.strategyPlanner.plan({
+    const result = this.strategyPlanner.plan(this.toFacadeInput(input));
+    return {
+      ...this.toPlannerResult(result),
+      strategy: toAdaptiveRecommendationStrategyV1(result),
+      planSession: result.planSession,
+    };
+  }
+
+  planFlatCompat(input: AdaptiveBuildPlannerInputV1): StrategyFirstFlatCompatPlannerResultV1 {
+    const result = this.strategyPlanner.planFlatCompat(this.toFacadeInput(input));
+    return {
+      ...this.toPlannerResult(result),
+      strategy: toAdaptiveRecommendationStrategyV1(result),
+    };
+  }
+
+  private toFacadeInput(input: AdaptiveBuildPlannerInputV1) {
+    return {
       decision: input.decision,
       evidence: input.evidence,
       previousResult: input.previousResult as any,
       recentPurchasedItemIds: input.recentPurchasedItemIds,
       recentSoldItemIds: input.recentSoldItemIds,
-    });
+    };
+  }
+
+  private toPlannerResult(result: StrategyFirstBuildPlannerV1Result): AdaptiveBuildPlannerResultV1 {
     return {
       gameState: result.gameState,
       nextAction: result.nextAction,
@@ -43,8 +67,6 @@ export class StrategyFirstLegacyPlannerAdapterV1Service {
       totalScore: result.totalScore,
       confidence: result.confidence,
       plannerVersion: this.version,
-      strategy: toAdaptiveRecommendationStrategyV1(result),
-      planSession: result.planSession,
     };
   }
 }
