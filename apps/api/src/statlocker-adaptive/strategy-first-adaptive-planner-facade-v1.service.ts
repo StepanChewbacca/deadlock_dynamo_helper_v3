@@ -22,6 +22,7 @@ import {
   StrategyFirstTransactionPlanResultV1,
   StrategyFirstTransactionPlanV1Service,
 } from './strategy-first-transaction-plan-v1.service';
+import { diffTransactionPlansV1 } from './transaction-plan-diff-v1';
 import {
   TransactionPlanInvariantCheckV1,
   evaluateTransactionPlanInvariantsV1,
@@ -52,7 +53,7 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
   ) {}
 
   plan(input: StrategyFirstAdaptivePlannerFacadeV1Input): StrategyFirstTransactionPlanResultV1 {
-    const base = this.planBase(input);
+    const base = this.planBase(input, false);
     const transactionFirst = (this.transactionPlan ?? new StrategyFirstTransactionPlanV1Service()).apply({
       result: base,
       decision: input.decision,
@@ -60,6 +61,12 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
       recentPurchasedItemIds: input.recentPurchasedItemIds ?? [],
     });
     const withChanges = withLegacyChanges(transactionFirst, input);
+    this.observability?.recordTransactionPlanOutcome({
+      previous: input.previousResult?.planSession,
+      current: withChanges.planSession,
+      changes: diffTransactionPlansV1(input.previousResult?.planSession, withChanges.planSession),
+      validation: withChanges.transactionPlanValidation,
+    });
 
     const transactionInvariantCheck = evaluateTransactionPlanInvariantsV1({
       decision: input.decision,
@@ -91,7 +98,7 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
    * It intentionally contains no PlanSession and must never be used to infer transaction semantics.
    */
   planFlatCompat(input: StrategyFirstAdaptivePlannerFacadeV1Input): StrategyFirstBuildPlannerV1Result {
-    const base = alignFirstNextRow(normalizeTerminalResult(this.planBase(input), input.decision));
+    const base = alignFirstNextRow(normalizeTerminalResult(this.planBase(input, true), input.decision));
     const withChanges: StrategyFirstBuildPlannerV1Result = {
       ...base,
       changes: input.previousResult
@@ -113,7 +120,10 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
       : failClosedFlatStrategyResult(withChanges, input.decision, invariantCheck);
   }
 
-  private planBase(input: StrategyFirstAdaptivePlannerFacadeV1Input): StrategyFirstBuildPlannerV1Result {
+  private planBase(
+    input: StrategyFirstAdaptivePlannerFacadeV1Input,
+    useFlatCompatibilityContinuity: boolean,
+  ): StrategyFirstBuildPlannerV1Result {
     let strategies = this.registry.getStrategies(
       input.decision.state.heroId,
       input.decision.rulesetId,
@@ -139,7 +149,9 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
       strategies,
       previousSession,
       previousContract,
-      previousRecommendedBuild: input.previousResult?.recommendedBuild,
+      previousRecommendedBuild: useFlatCompatibilityContinuity
+        ? input.previousResult?.recommendedBuild
+        : undefined,
       recentPurchasedItemIds: input.recentPurchasedItemIds ?? [],
       recentSoldItemIds: input.recentSoldItemIds ?? [],
     });
