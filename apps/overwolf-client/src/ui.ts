@@ -2,6 +2,7 @@ import type { AdaptiveRecommendationResultV1 } from '@deadlock-live-probe/shared
 import type {
   AdaptivePresentedAlternative,
   AdaptivePresentedPlanItem,
+  AdaptivePresentedPlanStep,
   AdaptivePresentedStrategy,
 } from './adaptive-recommendation-presentation';
 import { buildAdaptiveRecommendationPresentation } from './adaptive-recommendation-presentation';
@@ -115,13 +116,21 @@ export function showAdaptiveRecommendation(data: AdaptiveRecommendationResultV1)
     confidenceFill.style.width = `${view.confidence.value}%`;
   }
 
-  const planItems = isInGameOverlay()
+  const inGame = isInGameOverlay();
+  const planItems = inGame
     ? view.plan.items.filter((item) => item.status !== 'OWNED')
     : view.plan.items;
+  const planSteps = inGame
+    ? view.plan.steps.filter((step) => step.state !== 'COMPLETED' && step.state !== 'SKIPPED' && step.state !== 'INVALIDATED')
+    : view.plan.steps;
 
   renderStrategy(view.strategy);
   renderReasons(view.reasons);
-  renderPlan(planItems, view.plan.remainingCount);
+  if (view.plan.steps.length > 0) {
+    renderTransactionPlan(planSteps, view.plan.remainingCount);
+  } else {
+    renderPlan(planItems, view.plan.remainingCount);
+  }
   // rankedImmediateCandidates are diagnostic only. A user-facing alternative requires a dedicated curated contract.
   renderAlternatives([]);
   clearAdaptiveError();
@@ -248,6 +257,53 @@ function renderReasons(reasons: readonly string[]): void {
     const li = document.createElement('li');
     li.textContent = reason;
     list.appendChild(li);
+  }
+}
+
+function renderTransactionPlan(steps: readonly AdaptivePresentedPlanStep[], remainingCount: number): void {
+  const container = document.getElementById('rec-plan');
+  const moreEl = document.getElementById('rec-plan-more');
+  if (!container) return;
+
+  container.replaceChildren();
+  if (steps.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-row';
+    empty.textContent = 'No transaction is required right now.';
+    container.appendChild(empty);
+    if (moreEl) moreEl.textContent = '';
+    return;
+  }
+
+  for (const step of steps) {
+    const visualStatus = step.state === 'NEXT'
+      ? 'next'
+      : step.state === 'COMPLETED'
+        ? 'owned'
+        : 'planned';
+    const card = document.createElement('article');
+    card.className = `plan-item transaction-step slot-${step.item?.slot ?? 'unknown'} status-${visualStatus}`;
+    card.setAttribute('data-plan-step-id', step.stepId);
+    card.setAttribute('data-plan-step-state', step.state);
+
+    const position = document.createElement('span');
+    position.className = 'plan-position';
+    position.textContent = String(step.position);
+
+    const details = document.createElement('div');
+    details.className = 'plan-details';
+    const strong = document.createElement('strong');
+    strong.textContent = step.item?.name ?? step.actionLabel;
+    const small = document.createElement('small');
+    small.textContent = [step.stateLabel, step.actionLabel, step.detailLabel].filter(Boolean).join(' · ');
+    details.append(strong, small);
+
+    card.append(position, details);
+    container.appendChild(card);
+  }
+
+  if (moreEl) {
+    moreEl.textContent = remainingCount > 0 ? `+${remainingCount} more` : '';
   }
 }
 
