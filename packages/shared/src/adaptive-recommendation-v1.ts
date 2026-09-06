@@ -1,3 +1,5 @@
+import type { AdaptivePlanSessionV1 } from './adaptive-transaction-plan-v1';
+
 export const ADAPTIVE_ACTION_TYPES_V1 = [
   'BUY',
   'UPGRADE',
@@ -197,5 +199,7 @@ export interface AdaptiveRecommendationResultV1 {
   configVersion: string;
   plannerMethod?: 'STRATEGY_FIRST' | 'LEGACY_GREEDY';
   strategy?: AdaptiveRecommendationStrategyV1;
+  /** Transaction-first source of truth. Optional only for legacy/persisted V1 compatibility. */
+  planSession?: AdaptivePlanSessionV1;
   evidence: AdaptiveEvidenceProvenanceV1;
 }
