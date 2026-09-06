@@ -20,6 +20,8 @@ export class ConsensusStrategyFallbackV1Service {
         const optionGoalIds: string[] = [];
         for (const candidate of group.candidates) {
           const goalId = `fallback:${group.groupId}:choice:${candidate.itemId}`;
+          const candidateLifecycle = lifecycleFor(candidate.itemId, skeleton, graph);
+          const isTemp = candidateLifecycle === 'TEMPORARY_EARLY';
           goals.push({
             goalId,
             type: 'BRANCH',
@@ -28,8 +30,8 @@ export class ConsensusStrategyFallbackV1Service {
             minSelect: 1,
             maxSelect: 1,
             prerequisiteGoalIds: [...prerequisiteGoalIds],
-            hard: group.minSelect > 0,
-            lifecycleByItemId: { [candidate.itemId]: lifecycleFor(candidate.itemId, skeleton, graph) },
+            hard: group.minSelect > 0 && !isTemp,
+            lifecycleByItemId: { [candidate.itemId]: candidateLifecycle },
             rationaleCodes: ['CONSENSUS_FALLBACK_CHOICE', `GROUP:${group.groupId}`, `CONFIDENCE:${group.confidence.toFixed(3)}`],
           });
           optionGoalIds.push(goalId);
@@ -45,7 +47,12 @@ export class ConsensusStrategyFallbackV1Service {
       }
 
       const goalId = `fallback:${group.groupId}`;
-      const hard = group.type === 'REQUIRED';
+      const lifecycleByItemId = Object.fromEntries(group.candidates.map((candidate) => [
+        candidate.itemId,
+        lifecycleFor(candidate.itemId, skeleton, graph),
+      ]));
+      const isTemporary = Object.values(lifecycleByItemId).some((lifecycle) => lifecycle === 'TEMPORARY_EARLY');
+      const hard = group.type === 'REQUIRED' && !isTemporary;
       goals.push({
         goalId,
         type: 'CORE',
@@ -55,10 +62,7 @@ export class ConsensusStrategyFallbackV1Service {
         maxSelect: Math.max(1, Math.min(group.maxSelect, Math.max(1, group.candidates.length))),
         prerequisiteGoalIds: [...prerequisiteGoalIds],
         hard,
-        lifecycleByItemId: Object.fromEntries(group.candidates.map((candidate) => [
-          candidate.itemId,
-          lifecycleFor(candidate.itemId, skeleton, graph),
-        ])),
+        lifecycleByItemId,
         rationaleCodes: [
           group.type === 'REQUIRED' ? 'CONSENSUS_FALLBACK_REQUIRED' : 'CONSENSUS_FALLBACK_OPTIONAL',
           `GROUP:${group.groupId}`,
@@ -107,13 +111,25 @@ function lifecycleFor(
   itemId: number,
   skeleton: ConsensusSkeletonV1,
   graph: RecommendationItemGraph,
-): BuildStrategyGoalV1['lifecycleByItemId'][number] {
-  const laterTargets = skeleton.groups.flatMap((group) => group.candidates.map((candidate) => candidate.itemId));
-  if (laterTargets.some((target) => graph.isComponentAncestor(itemId, target))) return 'UPGRADE_COMPONENT';
+): 'PERMANENT_CORE' | 'UPGRADE_COMPONENT' | 'TEMPORARY_EARLY' {
   const item = graph.getItem(itemId);
-  const isEarly = skeleton.groups.find((group) => group.candidates.some((c) => c.itemId === itemId))?.phase === 'EARLY';
-  if (isEarly || (item?.directPurchaseCost !== undefined && item.directPurchaseCost <= 800)) {
-    return 'TEMPORARY_EARLY';
+  const cost = item?.directPurchaseCost ?? 0;
+  const isEarly = skeleton.groups.some((group) =>
+    group.phase === 'EARLY' && group.candidates.some((candidate) => candidate.itemId === itemId),
+  );
+  const hasLaterPhases = skeleton.groups.some((group) => group.phase === 'MID' || group.phase === 'LATE');
+  if (hasLaterPhases && isEarly && cost <= 800) {
+    const upgradedLater = skeleton.groups.some((group) =>
+      group.phase !== 'EARLY' &&
+      group.candidates.some((candidate) => graph.isComponentAncestor(itemId, candidate.itemId)),
+    );
+    if (!upgradedLater) {
+      return 'TEMPORARY_EARLY';
+    }
   }
-  return 'PERMANENT_CORE';
+
+  const isComponent = skeleton.groups.some((group) =>
+    group.candidates.some((candidate) => candidate.itemId !== itemId && graph.isComponentAncestor(itemId, candidate.itemId)),
+  );
+  return isComponent ? 'UPGRADE_COMPONENT' : 'PERMANENT_CORE';
 }

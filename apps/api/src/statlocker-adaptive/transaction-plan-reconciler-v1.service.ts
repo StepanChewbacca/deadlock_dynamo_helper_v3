@@ -1,11 +1,12 @@
-import { createHash } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
-import { AdaptivePlanSessionV1, AdaptivePlanStepV1 } from '@deadlock-live-probe/shared';
-import { AdaptiveDecisionStateV1 } from './adaptive-decision-state-v1.service';
 import {
-  isPlanBarrierSatisfiedV1,
-  isTransactionStepSatisfiedV1,
-} from './transaction-plan-step-v1';
+  AdaptiveActionV1,
+  AdaptivePlanBarrierV1,
+  AdaptivePlanSessionV1,
+  AdaptivePlanStepV1,
+} from '@deadlock-live-probe/shared';
+import { AdaptiveDecisionStateV1 } from './adaptive-decision-state-v1.service';
+import { isPlanBarrierSatisfiedV1, isTransactionStepSatisfiedV1 } from './transaction-plan-step-v1';
 
 export interface ReconcileTransactionPlanV1Input {
   previous?: AdaptivePlanSessionV1;
@@ -48,7 +49,17 @@ export class TransactionPlanReconcilerV1Service {
       }
     }
 
-    const proposed = input.proposedSteps.map((step) => this.resolveCompletion(step, input.decision));
+    const completedStepIds = new Set<string>(
+      historical.filter((step) => step.state === 'COMPLETED').map((step) => step.stepId),
+    );
+    const proposed = input.proposedSteps.map((step) => {
+      const resolved = this.resolveCompletion(step, input.decision, completedStepIds);
+      if (resolved.state === 'COMPLETED') {
+        completedStepIds.add(resolved.stepId);
+      }
+      return resolved;
+    });
+
     const deduped = dedupeSteps([...historical, ...proposed]);
     const normalized = assignRuntimeStates(deduped, input.proposedReachable !== false);
     const state = input.proposedReachable === false
@@ -78,12 +89,17 @@ export class TransactionPlanReconcilerV1Service {
     return { ...withoutRevision, revision };
   }
 
-  private resolveCompletion(step: AdaptivePlanStepV1, decision: AdaptiveDecisionStateV1): AdaptivePlanStepV1 {
+  private resolveCompletion(
+    step: AdaptivePlanStepV1,
+    decision: AdaptiveDecisionStateV1,
+    completedStepIds?: ReadonlySet<string>,
+  ): AdaptivePlanStepV1 {
     if (step.kind === 'TRANSACTION' &&
       isTransactionStepSatisfiedV1(step, decision.state, decision.itemGraph)) {
       return { ...step, state: 'COMPLETED', blockingReasons: [] };
     }
-    if (step.kind === 'BARRIER' && step.barrier &&
+    const allPrereqsCompleted = !completedStepIds || step.prerequisiteStepIds.every((id) => completedStepIds.has(id));
+    if (step.kind === 'BARRIER' && step.barrier && allPrereqsCompleted &&
       isPlanBarrierSatisfiedV1(step.barrier, decision.state, decision.slots.unlockedFlexSlots)) {
       return { ...step, state: 'COMPLETED', blockingReasons: [] };
     }
@@ -123,53 +139,45 @@ function assignRuntimeStates(
     return { ...step, state: 'LOCKED' };
   });
 
-  if (!foundUnresolved) return { steps: normalized, state: 'COMPLETE' };
+  const allResolved = normalized.every((step) => step.state === 'COMPLETED' || step.state === 'SKIPPED');
+  if (allResolved) return { steps: normalized, state: 'COMPLETE' };
   if (waiting) return { steps: normalized, state: 'WAITING' };
   return { steps: normalized, state: 'ACTIVE', nextStepId };
 }
 
 function dedupeSteps(steps: readonly AdaptivePlanStepV1[]): AdaptivePlanStepV1[] {
   const seen = new Set<string>();
-  const result: AdaptivePlanStepV1[] = [];
+  const deduped: AdaptivePlanStepV1[] = [];
   for (const step of steps) {
     if (seen.has(step.stepId)) continue;
     seen.add(step.stepId);
-    result.push(step);
+    deduped.push(step);
   }
-  return result;
-}
-
-function createPlanSessionId(input: ReconcileTransactionPlanV1Input): string {
-  const identity = [
-    input.strategyId,
-    input.decision.state.matchId,
-    input.decision.state.playerSlot,
-    input.gameTimeSec,
-  ].join(':');
-  return `plan:${createHash('sha256').update(identity).digest('hex').slice(0, 24)}`;
+  return deduped;
 }
 
 function semanticSessionChanged(
   previous: AdaptivePlanSessionV1,
-  current: Omit<AdaptivePlanSessionV1, 'revision'>,
+  next: Omit<AdaptivePlanSessionV1, 'revision'>,
 ): boolean {
-  if (previous.state !== current.state || previous.nextStepId !== current.nextStepId) return true;
-  const previousSemantic = previous.steps.map(semanticStep);
-  const currentSemantic = current.steps.map(semanticStep);
-  return JSON.stringify(previousSemantic) !== JSON.stringify(currentSemantic);
+  if (previous.strategyId !== next.strategyId) return true;
+  if (previous.state !== next.state) return true;
+  if (previous.nextStepId !== next.nextStepId) return true;
+  if (previous.steps.length !== next.steps.length) return true;
+  return previous.steps.some((step, index) => {
+    const nextStep = next.steps[index];
+    return !nextStep || step.stepId !== nextStep.stepId || step.state !== nextStep.state;
+  });
 }
 
-function semanticStep(step: AdaptivePlanStepV1): unknown {
-  return {
-    stepId: step.stepId,
-    goalId: step.goalId,
-    kind: step.kind,
-    state: step.state,
-    action: step.action,
-    barrier: step.barrier,
-    prerequisiteStepIds: [...step.prerequisiteStepIds],
-    blockingReasons: [...step.blockingReasons],
-  };
+function createPlanSessionId(input: ReconcileTransactionPlanV1Input): string {
+  const salt = `${input.strategyId}:${input.gameTimeSec}:${input.proposedSteps.length}`;
+  let hash = 0;
+  for (let index = 0; index < salt.length; index += 1) {
+    hash = ((hash << 5) - hash) + salt.charCodeAt(index);
+    hash |= 0;
+  }
+  return `session:${Math.abs(hash).toString(16).padStart(8, '0')}`;
 }
 
 function unique(values: readonly string[]): string[] {
