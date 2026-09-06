@@ -8,6 +8,18 @@ import {
   OverwolfLiveEventDto,
 } from '@deadlock-live-probe/shared';
 
+const EXPLICIT_FLEX_EVENT_KEYS = new Set([
+  'flex_slots',
+  'unlocked_flex_slots',
+  'flex_slot_count',
+]);
+
+const EXPLICIT_FLEX_PAYLOAD_KEYS = [
+  'unlocked_flex_slots',
+  'flex_slots',
+  'flex_slot_count',
+] as const;
+
 @Injectable()
 export class LiveMatchStateService {
   private readonly snapshotIntervalSec = 30;
@@ -153,6 +165,14 @@ export class LiveMatchStateService {
       return false;
     }
 
+    const observedFlexSlots = this.extractExplicitFlexSlots(event);
+    if (observedFlexSlots !== undefined) {
+      const changed = state.unlockedFlexSlots !== observedFlexSlots;
+      state.unlockedFlexSlots = observedFlexSlots;
+      state.flexSlotsSource = `overwolf:${event.key ?? 'payload'}`;
+      return changed;
+    }
+
     if (event.key?.startsWith('roster')) {
       this.applyRosterPayload(state, event.payload, event.key, clientId, localSteamId);
       return false;
@@ -163,6 +183,21 @@ export class LiveMatchStateService {
     }
 
     return false;
+  }
+
+  private extractExplicitFlexSlots(event: OverwolfLiveEventDto): number | undefined {
+    if (event.key && EXPLICIT_FLEX_EVENT_KEYS.has(event.key)) {
+      const scalar = this.getNonNegativeInteger(event.payload);
+      if (scalar !== undefined) return scalar;
+    }
+
+    if (!this.isRecord(event.payload)) return undefined;
+    for (const key of EXPLICIT_FLEX_PAYLOAD_KEYS) {
+      if (!(key in event.payload)) continue;
+      const value = this.getNonNegativeInteger(event.payload[key]);
+      if (value !== undefined) return value;
+    }
+    return undefined;
   }
 
   private extractMatchId(events: OverwolfLiveEventDto[]): string | undefined {
@@ -261,56 +296,24 @@ export class LiveMatchStateService {
       this.getNumericValue(payload, 'hero_healing') ??
       this.getNumericValue(payload, 'healing');
 
-    if (playerName !== undefined) {
-      player.playerName = playerName;
-    }
+    if (playerName !== undefined) player.playerName = playerName;
     if ('is_local' in payload || 'isLocal' in payload) {
-      player.isLocal =
-        this.getBooleanValue(payload, 'is_local') ||
-        this.getBooleanValue(payload, 'isLocal');
+      player.isLocal = this.getBooleanValue(payload, 'is_local') || this.getBooleanValue(payload, 'isLocal');
     }
-    if (heroName !== undefined) {
-      player.heroName = heroName;
-    }
-    if (heroId !== undefined) {
-      player.heroId = heroId;
-    }
-    if (teamId !== undefined) {
-      player.teamId = teamId;
-    }
-    if (lane !== undefined) {
-      player.lane = lane;
-    }
-    if (level !== undefined) {
-      player.level = level;
-    }
-    if (souls !== undefined) {
-      player.souls = souls;
-    }
-    if (health !== undefined) {
-      player.health = health;
-    }
-    if (maxHealth !== undefined) {
-      player.maxHealth = maxHealth;
-    }
-    if (kills !== undefined) {
-      player.kills = kills;
-    }
-    if (deaths !== undefined) {
-      player.deaths = deaths;
-    }
-    if (assists !== undefined) {
-      player.assists = assists;
-    }
-    if (heroDamage !== undefined) {
-      player.heroDamage = heroDamage;
-    }
-    if (objectDamage !== undefined) {
-      player.objectDamage = objectDamage;
-    }
-    if (healing !== undefined) {
-      player.healing = healing;
-    }
+    if (heroName !== undefined) player.heroName = heroName;
+    if (heroId !== undefined) player.heroId = heroId;
+    if (teamId !== undefined) player.teamId = teamId;
+    if (lane !== undefined) player.lane = lane;
+    if (level !== undefined) player.level = level;
+    if (souls !== undefined) player.souls = souls;
+    if (health !== undefined) player.health = health;
+    if (maxHealth !== undefined) player.maxHealth = maxHealth;
+    if (kills !== undefined) player.kills = kills;
+    if (deaths !== undefined) player.deaths = deaths;
+    if (assists !== undefined) player.assists = assists;
+    if (heroDamage !== undefined) player.heroDamage = heroDamage;
+    if (objectDamage !== undefined) player.objectDamage = objectDamage;
+    if (healing !== undefined) player.healing = healing;
   }
 
   private applyItemsPayload(
@@ -320,34 +323,24 @@ export class LiveMatchStateService {
     clientId: string,
     localSteamId?: string,
   ): boolean {
-    if (!this.isRecord(payload)) {
-      return false;
-    }
+    if (!this.isRecord(payload)) return false;
 
     const playerKey = this.resolvePlayerKey(payload, eventKey, clientId, localSteamId);
-    if (!playerKey) {
-      return false;
-    }
+    if (!playerKey) return false;
 
     const itemsValue = payload.items;
-    if (!Array.isArray(itemsValue)) {
-      return false;
-    }
+    if (!Array.isArray(itemsValue)) return false;
 
     const player = this.getOrCreatePlayer(state, playerKey);
     const nextItems: MinimalItemState[] = [];
 
     for (const item of itemsValue) {
-      if (!this.isRecord(item)) {
-        continue;
-      }
+      if (!this.isRecord(item)) continue;
 
       const id = this.getNumericValue(item, 'id');
       const name = this.getStringValue(item, 'name');
       const className = this.getStringValue(item, 'class_name');
-      if (id === undefined || name === undefined || className === undefined) {
-        continue;
-      }
+      if (id === undefined || name === undefined || className === undefined) continue;
 
       nextItems.push({
         id,
@@ -372,77 +365,44 @@ export class LiveMatchStateService {
   ): string | undefined {
     const steamId = this.getStringValue(payload, 'steam_id');
     const rosterSlot = this.rosterSlotForEvent(eventKey);
-    const isLocal =
-      this.getBooleanValue(payload, 'is_local') ||
-      this.getBooleanValue(payload, 'isLocal');
+    const isLocal = this.getBooleanValue(payload, 'is_local') || this.getBooleanValue(payload, 'isLocal');
 
-    if (isLocal && rosterSlot) {
-      this.clientLocalRosterSlots.set(clientId, rosterSlot);
-    }
+    if (isLocal && rosterSlot) this.clientLocalRosterSlots.set(clientId, rosterSlot);
+    if (steamId && steamId !== '0') return steamId;
+    if (isLocal && localSteamId) return localSteamId;
+    if (rosterSlot && this.clientLocalRosterSlots.get(clientId) === rosterSlot && localSteamId) return localSteamId;
+    if (!steamId) return undefined;
+    if (rosterSlot) return `bot:${rosterSlot}`;
 
-    if (steamId && steamId !== '0') {
-      return steamId;
-    }
-
-    if (isLocal && localSteamId) {
-      return localSteamId;
-    }
-
-    if (
-      rosterSlot &&
-      this.clientLocalRosterSlots.get(clientId) === rosterSlot &&
-      localSteamId
-    ) {
-      return localSteamId;
-    }
-
-    if (!steamId) {
-      return undefined;
-    }
-
-    if (rosterSlot) {
-      return `bot:${rosterSlot}`;
-    }
-
-    const teamId =
-      this.getNumericValue(payload, 'team_id') ??
-      this.getNumericValue(payload, 'team') ??
-      'unknown';
+    const teamId = this.getNumericValue(payload, 'team_id') ?? this.getNumericValue(payload, 'team') ?? 'unknown';
     const heroId = this.getNumericValue(payload, 'hero_id') ?? 'unknown';
     const playerName = this.getStringValue(payload, 'player_name') ?? 'unknown';
     return `bot:${teamId}:${heroId}:${playerName}`;
   }
 
   private rosterSlotForEvent(eventKey: string): string | undefined {
-    if (eventKey.startsWith('roster_')) {
-      return eventKey;
-    }
-    if (eventKey.startsWith('items_')) {
-      return `roster_${eventKey.slice('items_'.length)}`;
-    }
+    if (eventKey.startsWith('roster_')) return eventKey;
+    if (eventKey.startsWith('items_')) return `roster_${eventKey.slice('items_'.length)}`;
     return undefined;
   }
 
   private captureSnapshotIfNeeded(state: MinimalMatchState, force: boolean): void {
-    if (!state.matchId || state.matchId === 'unknown') {
-      return;
-    }
+    if (!state.matchId || state.matchId === 'unknown') return;
 
     const existing = this.snapshots.get(state.matchId) ?? [];
     const latest = existing[existing.length - 1];
     const gameTimeSec = state.gameTimeSec;
     const intervalElapsed =
       gameTimeSec !== undefined &&
-      (latest?.gameTimeSec === undefined ||
-        gameTimeSec - latest.gameTimeSec >= this.snapshotIntervalSec);
+      (latest?.gameTimeSec === undefined || gameTimeSec - latest.gameTimeSec >= this.snapshotIntervalSec);
 
-    if (!force && !intervalElapsed && existing.length > 0) {
-      return;
-    }
+    if (!force && !intervalElapsed && existing.length > 0) return;
 
     const snapshot: MinimalMatchSnapshot = {
       matchId: state.matchId,
       gameTimeSec,
+      unlockedFlexSlots: state.unlockedFlexSlots,
+      flexSlotsSource: state.flexSlotsSource,
       capturedAt: new Date().toISOString(),
       playersBySteamId: Object.entries(state.playersBySteamId).reduce<
         Record<string, MinimalMatchSnapshot['playersBySteamId'][string]>
@@ -470,20 +430,12 @@ export class LiveMatchStateService {
   }
 
   private itemIdentityKey(items: MinimalItemState[]): string {
-    return items
-      .map((item) => item.id)
-      .sort((a, b) => a - b)
-      .join(',');
+    return items.map((item) => item.id).sort((a, b) => a - b).join(',');
   }
 
-  private getOrCreatePlayer(
-    state: MinimalMatchState,
-    steamId: string,
-  ): MinimalPlayerState {
+  private getOrCreatePlayer(state: MinimalMatchState, steamId: string): MinimalPlayerState {
     const existing = state.playersBySteamId[steamId];
-    if (existing) {
-      return existing;
-    }
+    if (existing) return existing;
 
     const created: MinimalPlayerState = {
       steamId,
@@ -495,55 +447,42 @@ export class LiveMatchStateService {
   }
 
   private getScalarString(value: unknown): string | undefined {
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      return String(value);
-    }
-    if (typeof value !== 'string') {
-      return undefined;
-    }
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+    if (typeof value !== 'string') return undefined;
     const trimmed = value.trim();
     return trimmed || undefined;
   }
 
-  private getStringValue(
-    record: Record<string, unknown>,
-    key: string,
-  ): string | undefined {
+  private getStringValue(record: Record<string, unknown>, key: string): string | undefined {
     const value = record[key];
     return typeof value === 'string' && value.length > 0 ? value : undefined;
   }
 
-  private getNumericValue(
-    record: Record<string, unknown>,
-    key: string,
-  ): number | undefined {
+  private getNumericValue(record: Record<string, unknown>, key: string): number | undefined {
     const value = record[key];
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      return value;
-    }
-
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
     if (typeof value === 'string' && value.trim() !== '') {
       const parsed = Number(value);
       return Number.isFinite(parsed) ? parsed : undefined;
     }
-
     return undefined;
+  }
+
+  private getNonNegativeInteger(value: unknown): number | undefined {
+    const numeric = typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim() !== ''
+        ? Number(value)
+        : undefined;
+    if (!Number.isInteger(numeric) || Number(numeric) < 0) return undefined;
+    return Number(numeric);
   }
 
   private getBooleanValue(record: Record<string, unknown>, key: string): boolean {
     const value = record[key];
-    if (typeof value === 'boolean') {
-      return value;
-    }
-
-    if (typeof value === 'number') {
-      return value !== 0;
-    }
-
-    if (typeof value === 'string') {
-      return value === 'true' || value === '1';
-    }
-
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    if (typeof value === 'string') return value === 'true' || value === '1';
     return false;
   }
 
