@@ -69,6 +69,8 @@ export interface MinimalPlayerSnapshot {
 export interface MinimalMatchSnapshot {
   matchId: string;
   gameTimeSec?: number;
+  unlockedFlexSlots?: number;
+  flexSlotsSource?: string;
   capturedAt: string;
   playersBySteamId: Record<string, MinimalPlayerSnapshot>;
 }
