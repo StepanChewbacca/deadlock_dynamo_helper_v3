@@ -95,6 +95,11 @@ export class AdaptiveDecisionStateV1Service {
         order: { parentItemId: 'ASC', componentOrder: 'ASC', componentItemId: 'ASC' },
       }),
     ]);
+
+    const expectedRulesetId = catalogRulesetId(version);
+    const pinnedEconomyRules = expectedRulesetId
+      ? await this.economyRulesStore.resolveExact(expectedRulesetId, version.payloadSha256)
+      : undefined;
     const catalog = buildRecommendationRulesetCatalogV1({
       version: {
         catalogVersionId: version.catalogVersionId,
@@ -128,8 +133,12 @@ export class AdaptiveDecisionStateV1Service {
         componentItemId: Number(row.componentItemId),
         componentOrder: row.componentOrder,
       })),
+      upgradePricingPolicy: pinnedEconomyRules?.upgradePricingPolicy,
     });
     const compiled = compileStrictRecommendationCatalogV1(catalog);
+    const exactEconomyRules = pinnedEconomyRules?.rulesetId === compiled.rulesetId
+      ? pinnedEconomyRules
+      : await this.economyRulesStore.resolveExact(compiled.rulesetId, version.payloadSha256);
 
     const ownedItemIds = local.items.map((item) => item.id).sort((a, b) => a - b);
     const heldByItemId = buildInventoryInstancesForRecommendation(ownedItemIds, compiled.graph);
@@ -140,15 +149,18 @@ export class AdaptiveDecisionStateV1Service {
       nextInstanceSequence: heldByItemId.size + 1,
     };
 
-    const exactEconomyRules = await this.economyRulesStore?.resolveExact?.(
-      compiled.rulesetId,
-      version.payloadSha256,
-    );
+    const slotRules = slotRulesFromEconomyRulesV1(exactEconomyRules);
+    const flexCapacity = Number.isInteger(match.unlockedFlexSlots) && Number(match.unlockedFlexSlots) >= 0
+      ? {
+          unlockedFlexSlots: Number(match.unlockedFlexSlots),
+          evidence: 'OBSERVED' as const,
+        }
+      : { evidence: 'UNKNOWN' as const };
     const slots = deriveAdaptiveSlotStateV1(
       ownedItemIds,
       compiled.graph,
-      slotRulesFromEconomyRulesV1(exactEconomyRules),
-      { evidence: 'UNKNOWN' },
+      slotRules,
+      flexCapacity,
     );
     const investment = deriveAdaptiveInvestmentStateV1(ownedItemIds, compiled.graph, exactEconomyRules);
 
@@ -204,6 +216,11 @@ export class AdaptiveDecisionStateV1Service {
       stateRevision,
     };
   }
+}
+
+function catalogRulesetId(version: RecommendationItemCatalogVersionV1): string | undefined {
+  const value = version.rulesetKey ?? version.clientVersion;
+  return typeof value === 'string' && value.trim() ? value : undefined;
 }
 
 function resolveLocalSteamId(match: MinimalMatchState, requested?: string): string {
@@ -280,6 +297,7 @@ function computeStateRevision(
     matchId: match.matchId,
     localSteamId,
     gameTimeSec: match.gameTimeSec,
+    unlockedFlexSlots: match.unlockedFlexSlots,
     rulesetId: version.rulesetKey,
     catalogSha256: version.payloadSha256,
     ownedItemIds,
