@@ -1,11 +1,11 @@
 import type {
   AdaptiveActionTypeV1,
   AdaptiveActionV1,
-  AdaptivePlanBarrierV1,
-  AdaptivePlanStepStateV1,
-  AdaptivePlanStepV1,
+  AdaptivePlanActionStatusV1,
+  AdaptivePlanActionV1,
+  AdaptivePlanRequirementV1,
   AdaptiveRecommendationResultV1,
-  AdaptiveRecommendationStrategyV1,
+  AdaptiveSituationalContextV1,
 } from '@deadlock-live-probe/shared';
 import {
   ADAPTIVE_ITEM_CATALOG,
@@ -24,23 +24,17 @@ export interface AdaptivePresentedItem {
 }
 
 export interface AdaptivePresentedPlanItem {
+  readonly planActionId: string;
   readonly item: AdaptivePresentedItem;
   readonly position: number;
-  readonly status: 'OWNED' | 'NEXT' | 'PLANNED';
+  readonly status: AdaptivePlanActionStatusV1;
   readonly statusLabel: string;
-}
-
-export interface AdaptivePresentedPlanStep {
-  readonly stepId: string;
-  readonly goalId: string;
-  readonly position: number;
-  readonly state: AdaptivePlanStepStateV1;
-  readonly stateLabel: string;
-  readonly kind: 'TRANSACTION' | 'BARRIER';
   readonly actionLabel: string;
-  readonly item?: AdaptivePresentedItem;
-  readonly soldItem?: AdaptivePresentedItem;
-  readonly detailLabel?: string;
+  readonly requirements: readonly string[];
+  readonly sourceItems: readonly AdaptivePresentedItem[];
+  readonly replacedItem?: AdaptivePresentedItem;
+  readonly situationalPurposeLabel?: string;
+  readonly againstLabel?: string;
 }
 
 export interface AdaptivePresentedAlternative {
@@ -51,23 +45,8 @@ export interface AdaptivePresentedAlternative {
   readonly scoreLabel: string;
 }
 
-export interface AdaptivePresentedStrategy {
-  readonly idLabel: string;
-  readonly commitmentLabel: string;
-  readonly buildStatusLabel: string;
-  readonly progressLabel: string;
-  readonly progressValue: number;
-  readonly currentGoalLabel?: string;
-  readonly branchLabel?: string;
-  readonly slotLabel: string;
-  readonly investmentLabel?: string;
-  readonly situationalLabel?: string;
-}
-
 export interface AdaptiveRecommendationPresentation {
   readonly sourceLabel: string;
-  readonly plannerMethodLabel: string;
-  readonly isStrategyFirst: boolean;
   readonly stateLabel: string;
   readonly stateTone: 'ahead' | 'even' | 'behind' | 'unknown';
   readonly healthLabel: string;
@@ -78,11 +57,11 @@ export interface AdaptiveRecommendationPresentation {
   readonly replacedItem?: AdaptivePresentedItem;
   readonly confidence: { readonly label: string; readonly value: number };
   readonly reasons: readonly string[];
-  readonly strategy?: AdaptivePresentedStrategy;
+  readonly primaryRequirements: readonly string[];
+  readonly situationalPurposeLabel?: string;
+  readonly againstLabel?: string;
   readonly plan: {
-    readonly isTransactionPlan: boolean;
     readonly items: readonly AdaptivePresentedPlanItem[];
-    readonly steps: readonly AdaptivePresentedPlanStep[];
     readonly remainingCount: number;
   };
   readonly alternatives: readonly AdaptivePresentedAlternative[];
@@ -96,10 +75,9 @@ const REASON_LABELS: Readonly<Record<string, string>> = {
   STATLOCKER_UNAVAILABLE_PRESERVE_PLAN: 'Statlocker is updating; keeping the last safe plan',
   FRESH_LEGALITY_FALLBACK: 'Adjusted to a legal purchase',
   NO_FRESH_LEGAL_TRANSACTION: 'No safe purchase is available right now',
-  WAIT_FOR_FLEX: 'Waiting for a Flex slot to unlock',
-  WAIT_FOR_GOLD: 'Saving souls for the planned transaction',
-  WAIT_FOR_SHOP: 'Waiting for the next shop opportunity',
-  TRANSACTION_PLAN_FAIL_CLOSED: 'Build path is being recalculated safely',
+  PLAN_REQUIREMENTS_BLOCKED: 'Waiting for the requirements of the next purchase',
+  SEMANTIC_TRANSACTION_PATH: 'Following the legal upgrade path',
+  MULTI_STEP_UPGRADE_PATH: 'Complete the next upgrade step first',
 };
 
 const GAME_STATE_LABELS = {
@@ -109,22 +87,28 @@ const GAME_STATE_LABELS = {
   UNKNOWN: 'Game state updating',
 } as const;
 
-const PLAN_STATUS_LABELS = {
+const PLAN_ACTION_STATUS_LABELS: Readonly<Record<AdaptivePlanActionStatusV1, string>> = {
   OWNED: 'Owned',
-  NEXT: 'Next',
-  PLANNED: 'Planned',
-} as const;
-
-const PLAN_STEP_STATE_LABELS: Readonly<Record<AdaptivePlanStepStateV1, string>> = {
-  LOCKED: 'Locked',
-  BLOCKED: 'Blocked',
   READY: 'Ready',
-  NEXT: 'Next',
-  IN_PROGRESS: 'In progress',
+  BLOCKED: 'Blocked',
+  PLANNED: 'Planned',
   COMPLETED: 'Completed',
-  INVALIDATED: 'Replanned',
-  SKIPPED: 'Skipped',
 };
+
+const SITUATIONAL_PURPOSE_LABELS: Readonly<Record<string, string>> = {
+  CATCH: 'Catch',
+  ANTI_CC: 'Anti-CC',
+  CLEANSE: 'Cleanse',
+  ANTI_BULLET: 'Anti-bullet',
+  ANTI_SPIRIT: 'Anti-spirit',
+  ANTI_BURST: 'Anti-burst',
+  ANTI_HEAL: 'Anti-heal',
+  MOBILITY: 'Mobility',
+  TEAM_UTILITY: 'Team utility',
+  SURVIVAL: 'Survival',
+};
+
+const ALTERNATIVE_DISPLAY_LIMIT = 3;
 
 export function buildAdaptiveRecommendationPresentation(
   recommendation: AdaptiveRecommendationResultV1,
@@ -146,21 +130,12 @@ export function buildAdaptiveRecommendationPresentation(
   const hasDegradedEvidence = recommendation.evidence.families.some(
     (family) => family.freshness !== 'FRESH',
   ) || recommendation.evidence.degradedReasons.length > 0;
-  const orderedPlan = [...recommendation.recommendedBuild]
-    .sort((left, right) => left.position - right.position);
-  const transactionSteps = recommendation.planSession?.steps.map((step, index) =>
-    presentPlanStep(step, index + 1),
-  ) ?? [];
-
-  const isStrategyFirst = Boolean(
-    recommendation.plannerMethod === 'STRATEGY_FIRST' || recommendation.strategy,
-  );
-  const plannerMethodLabel = isStrategyFirst ? 'Strategy-First' : 'Legacy';
+  const semanticPlan = buildPresentedSemanticPlan(recommendation);
+  const primaryPlanAction = recommendation.planActions?.[0];
+  const primarySituational = primaryPlanAction?.situational;
 
   return {
-    sourceLabel: recommendation.strategy ? 'Strategy-first Adaptive' : 'Statlocker Adaptive',
-    plannerMethodLabel,
-    isStrategyFirst,
+    sourceLabel: 'Statlocker Adaptive',
     stateLabel: GAME_STATE_LABELS[recommendation.gameState] ?? GAME_STATE_LABELS.UNKNOWN,
     stateTone: recommendation.gameState.toLowerCase() as AdaptiveRecommendationPresentation['stateTone'],
     healthLabel: recommendation.ready
@@ -180,178 +155,110 @@ export function buildAdaptiveRecommendationPresentation(
     reasons: recommendation.nextAction.reasonCodes
       .slice(0, 3)
       .map(humanizeReasonCode),
-    strategy: recommendation.strategy
-      ? presentStrategy(recommendation.strategy)
-      : undefined,
+    primaryRequirements: primaryPlanAction?.requirements.map(presentRequirement) ?? [],
+    situationalPurposeLabel: presentSituationalPurpose(primarySituational),
+    againstLabel: presentAgainst(primarySituational),
     plan: {
-      isTransactionPlan: recommendation.planSession !== undefined,
-      items: orderedPlan.map((planned) => ({
-        item: presentItem(planned.itemId),
-        position: planned.position,
-        status: planned.status,
-        statusLabel: PLAN_STATUS_LABELS[planned.status],
-      })),
-      steps: transactionSteps,
+      items: semanticPlan,
       remainingCount: 0,
     },
-    // rankedImmediateCandidates intentionally stay diagnostic until a curated alternative contract exists.
-    alternatives: [],
+    alternatives: buildAlternatives(recommendation, primaryItemId),
     evidenceLabel: freshEvidenceCount > 0
       ? `${freshEvidenceCount} fresh Statlocker signal${freshEvidenceCount === 1 ? '' : 's'}`
       : 'Statlocker evidence is updating',
   };
 }
 
-function presentPlanStep(step: AdaptivePlanStepV1, position: number): AdaptivePresentedPlanStep {
-  const itemId = planStepTargetItemId(step);
-  const item = itemId === undefined ? undefined : presentItem(itemId);
-  const soldItem = step.action?.type === 'SELL_AND_BUY'
-    ? presentItem(step.action.sellItemId)
+function buildPresentedSemanticPlan(
+  recommendation: AdaptiveRecommendationResultV1,
+): readonly AdaptivePresentedPlanItem[] {
+  const semantic = recommendation.planActions;
+  if (semantic && semantic.length > 0) {
+    const seen = new Set<string>();
+    return [...semantic]
+      .sort((left, right) => left.sequence - right.sequence || left.planActionId.localeCompare(right.planActionId))
+      .filter((action) => {
+        if (seen.has(action.planActionId)) return false;
+        seen.add(action.planActionId);
+        return true;
+      })
+      .map(presentPlanAction)
+      .filter((entry): entry is AdaptivePresentedPlanItem => entry !== undefined);
+  }
+
+  return [...recommendation.recommendedBuild]
+    .sort((left, right) => left.position - right.position)
+    .map((planned) => ({
+      planActionId: `legacy:${planned.position}:${planned.itemId}`,
+      item: presentItem(planned.itemId),
+      position: planned.position,
+      status: planned.status === 'OWNED' ? 'OWNED' : planned.status === 'NEXT' ? 'READY' : 'PLANNED',
+      statusLabel: planned.status === 'OWNED' ? 'Owned' : planned.status === 'NEXT' ? 'Ready' : 'Planned',
+      actionLabel: planned.status === 'OWNED' ? 'Owned' : 'Build',
+      requirements: [],
+      sourceItems: [],
+    }));
+}
+
+function presentPlanAction(action: AdaptivePlanActionV1): AdaptivePresentedPlanItem | undefined {
+  const itemId = action.targetItemId ?? resolveActionItemId(action.action) ?? action.sourceItemIds[0];
+  if (!Number.isSafeInteger(itemId) || Number(itemId) <= 0) return undefined;
+  const replacedItem = action.action.type === 'REPLACE'
+    ? presentActionSellItem(action.action)
     : undefined;
+
   return {
-    stepId: step.stepId,
-    goalId: step.goalId,
-    position,
-    state: step.state,
-    stateLabel: PLAN_STEP_STATE_LABELS[step.state],
-    kind: step.kind,
-    actionLabel: planStepActionLabel(step),
-    item,
-    soldItem,
-    detailLabel: planStepDetailLabel(step, item, soldItem),
+    planActionId: action.planActionId,
+    item: presentItem(Number(itemId)),
+    position: action.sequence,
+    status: action.status,
+    statusLabel: PLAN_ACTION_STATUS_LABELS[action.status],
+    actionLabel: humanizeActionType(action.action.type),
+    requirements: action.requirements.map(presentRequirement),
+    sourceItems: action.sourceItemIds.map(presentItem),
+    replacedItem,
+    situationalPurposeLabel: presentSituationalPurpose(action.situational),
+    againstLabel: presentAgainst(action.situational),
   };
 }
 
-function planStepActionLabel(step: AdaptivePlanStepV1): string {
-  if (step.action?.type === 'BUY') return 'Buy';
-  if (step.action?.type === 'UPGRADE') return 'Upgrade';
-  if (step.action?.type === 'SELL_AND_BUY') return 'Replace';
-  if (step.barrier?.type === 'WAIT_FOR_GOLD') return 'Wait for Gold';
-  if (step.barrier?.type === 'WAIT_FOR_FLEX') return 'Wait for Flex';
-  if (step.barrier?.type === 'WAIT_FOR_SHOP') return 'Wait for Shop';
-  if (step.barrier?.type === 'WAIT_FOR_PREREQUISITE') return 'Wait for Prerequisite';
-  return step.kind === 'BARRIER' ? 'Wait' : 'Plan';
-}
-
-function planStepDetailLabel(
-  step: AdaptivePlanStepV1,
-  item: AdaptivePresentedItem | undefined,
-  soldItem: AdaptivePresentedItem | undefined,
-): string | undefined {
-  const action = step.action;
-  if (action?.type === 'SELL_AND_BUY') {
-    return `Sell ${describeItem(soldItem, `item #${action.sellItemId}`)} before purchase`;
+function presentRequirement(requirement: AdaptivePlanRequirementV1): string {
+  switch (requirement.type) {
+    case 'SOULS':
+      return requirement.evidence === 'UNKNOWN'
+        ? `Need ${formatSouls(requirement.requiredSouls)} souls - current souls unknown`
+        : `Save until ${formatSouls(requirement.requiredSouls)} souls`;
+    case 'FLEX_SLOT':
+      return requirement.evidence === 'UNKNOWN'
+        ? 'Requires flex slot - unlock state unknown'
+        : `Requires ${requirement.requiredFlexSlots} flex slot${requirement.requiredFlexSlots === 1 ? '' : 's'}`;
+    case 'SELL_ITEM':
+      return `Sell ${describeItem(presentItem(requirement.itemId), `item #${requirement.itemId}`)} before purchase`;
+    case 'UPGRADE_COMPONENT': {
+      const names = requirement.itemIds.map((itemId) => describeItem(presentItem(itemId), `item #${itemId}`));
+      return `Upgrade ${names.join(' + ')}`;
+    }
+    case 'SHOP_OPPORTUNITY':
+      return requirement.evidence === 'UNKNOWN'
+        ? 'Wait for a confirmed shop opportunity'
+        : requirement.available === false
+          ? 'Reach the shop before purchase'
+          : 'Shop available';
   }
-  if (action?.type === 'UPGRADE') {
-    const consumed = action.consumedItemIds.map((itemId) => describeItem(presentItem(itemId), `item #${itemId}`));
-    return consumed.length > 0 ? `Uses ${consumed.join(' + ')}` : 'Consumes the required upgrade component';
-  }
-  if (action?.type === 'BUY') {
-    return item?.costLabel;
-  }
-  const barrier = step.barrier;
-  if (!barrier) return undefined;
-  return barrierDetailLabel(barrier, step);
 }
 
-function barrierDetailLabel(barrier: AdaptivePlanBarrierV1, step: AdaptivePlanStepV1): string {
-  if (barrier.type === 'WAIT_FOR_GOLD') {
-    return `Save until ${barrier.requiredSouls.toLocaleString('en-US')} souls`;
-  }
-  if (barrier.type === 'WAIT_FOR_FLEX') {
-    const current = step.projectedBefore.unlockedFlexSlots === undefined
-      ? '?'
-      : String(step.projectedBefore.unlockedFlexSlots);
-    return `Waiting for Flex · ${current} / ${barrier.requiredUnlockedFlexSlots} unlocked`;
-  }
-  if (barrier.type === 'WAIT_FOR_SHOP') {
-    return 'Wait until the shop is available';
-  }
-  return `Waiting for ${humanizeToken(barrier.prerequisiteGoalId)}`;
+function presentSituationalPurpose(context: AdaptiveSituationalContextV1 | undefined): string | undefined {
+  if (!context) return undefined;
+  return SITUATIONAL_PURPOSE_LABELS[context.purpose] ?? humanizeReasonCode(context.purpose);
 }
 
-function planStepTargetItemId(step: AdaptivePlanStepV1): number | undefined {
-  if (step.action) return step.action.buyItemId;
-  if (step.barrier && 'targetItemId' in step.barrier) return step.barrier.targetItemId;
-  return undefined;
-}
-
-function presentStrategy(strategy: AdaptiveRecommendationStrategyV1): AdaptivePresentedStrategy {
-  const total = Math.max(0, strategy.progress.totalHardGoals);
-  const satisfied = Math.max(0, Math.min(total, strategy.progress.satisfiedHardGoals));
-  const currentGoalLabel = strategy.currentGoal
-    ? `${titleCase(strategy.currentGoal.type)} · ${humanizeToken(strategy.currentGoal.goalId)}`
-    : undefined;
-  const committedBranches = strategy.committedBranches ?? {};
-  const selectedBranches = strategy.selectedBranches ?? {};
-  const branches = Object.entries(committedBranches).length > 0
-    ? committedBranches
-    : selectedBranches;
-  const branchLabel = Object.keys(branches).length > 0
-    ? Object.entries(branches)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([group, goal]) => `${humanizeToken(group)}: ${humanizeToken(goal)}`)
-      .join(' · ')
-    : undefined;
-  const slot = strategy.slotPlan;
-  const flex = slot.unlockedFlexSlots === undefined
-    ? `${slot.currentFlexUsed}/? flex`
-    : `${slot.currentFlexUsed}/${slot.unlockedFlexSlots} flex`;
-  const investmentObjectives = strategy.investmentObjectives ?? [];
-  const activeInvestment = investmentObjectives.find((objective) => objective.state === 'ACTIVE')
-    ?? investmentObjectives.find((objective) => objective.state === 'SATISFIED');
-
-  return {
-    idLabel: strategyLabel(strategy.strategyId),
-    commitmentLabel: titleCase(strategy.commitment),
-    buildStatusLabel: humanizeSentence(strategy.buildStatus),
-    progressLabel: `${satisfied} / ${total} core goals`,
-    progressValue: total === 0 ? 100 : Math.round((satisfied / total) * 100),
-    currentGoalLabel,
-    branchLabel,
-    slotLabel: `${slot.currentUsedSlots} slots · ${flex} · ${slot.reservedSituationalSlots} reserved`,
-    investmentLabel: activeInvestment ? investmentLabel(activeInvestment) : undefined,
-    situationalLabel: strategy.situationalDecision
-      ? situationalLabel(strategy.situationalDecision)
-      : undefined,
-  };
-}
-
-function investmentLabel(
-  objective: AdaptiveRecommendationStrategyV1['investmentObjectives'][number],
-): string {
-  const current = formatNumber(objective.currentValue);
-  if (objective.targetValue === undefined) {
-    return `${titleCase(objective.type)} ${current} · ${titleCase(objective.state)}`;
-  }
-  const distance = objective.distance ?? Math.max(0, objective.targetValue - objective.currentValue);
-  return `${titleCase(objective.type)} ${current} / ${formatNumber(objective.targetValue)} · ${formatNumber(distance)} to objective`;
-}
-
-function situationalLabel(
-  decision: NonNullable<AdaptiveRecommendationStrategyV1['situationalDecision']>,
-): string {
-  const item = presentItem(decision.targetItemId);
-  return `${formatPurpose(decision.purpose)} window · ${item.known ? item.name : item.diagnosticLabel} · ${toPercent(decision.confidence)}%`;
-}
-
-function strategyLabel(strategyId: string): string {
-  const parts = strategyId.split(':').filter(Boolean);
-  const meaningful = parts.filter((part) => !['strategy', 'hero', 'archetype'].includes(part.toLowerCase()) && !/^\d+$/.test(part));
-  return humanizeToken(meaningful[meaningful.length - 1] ?? strategyId);
-}
-
-function humanizeToken(value: string): string {
-  return value.trim().replace(/[_:-]+/g, ' ').replace(/\s+/g, ' ').toLowerCase();
-}
-
-function titleCase(value: string): string {
-  const normalized = value.trim().replace(/[_-]+/g, ' ').toLowerCase();
-  return normalized.replace(/(^|\s)\S/g, (char) => char.toUpperCase());
-}
-
-function formatNumber(value: number): string {
-  return Math.max(0, Math.round(Number.isFinite(value) ? value : 0)).toLocaleString('en-US');
+function presentAgainst(context: AdaptiveSituationalContextV1 | undefined): string | undefined {
+  if (!context) return undefined;
+  const names = context.targetEnemies
+    .map((target) => target.enemyHeroName?.trim())
+    .filter((name): name is string => Boolean(name));
+  const unique = [...new Set(names)];
+  return unique.length > 0 ? `Against: ${unique.join(', ')}` : undefined;
 }
 
 function resolveActionItemId(
@@ -406,12 +313,52 @@ function buildHeadline(
     case 'HOLD':
       return itemName ? `Hold for ${itemName}` : 'Hold your souls';
     case 'WAIT':
-      return 'Wait before buying';
+      return itemName ? `Wait for ${itemName}` : 'Wait before buying';
     case 'CONTINUE_CORE':
       return itemName ? `Continue toward ${itemName}` : 'Continue the core build';
     case 'ABSTAIN':
       return 'No safe purchase yet';
   }
+}
+
+function buildAlternatives(
+  recommendation: AdaptiveRecommendationResultV1,
+  primaryItemId: number | undefined,
+): readonly AdaptivePresentedAlternative[] {
+  const alternatives: AdaptivePresentedAlternative[] = [];
+  const seen = new Set<string>();
+
+  for (const candidate of recommendation.rankedImmediateCandidates) {
+    const itemId = resolveActionItemId(candidate.action);
+    const key = itemId === undefined
+      ? `action:${candidate.action.type}`
+      : `item:${itemId}`;
+    if (
+      candidate.action.actionKey === recommendation.nextAction.actionKey
+      || itemId === primaryItemId
+      || seen.has(key)
+    ) {
+      continue;
+    }
+
+    seen.add(key);
+    const item = itemId === undefined ? undefined : presentItem(itemId);
+    const replacedItem = candidate.action.type === 'REPLACE'
+      ? presentActionSellItem(candidate.action)
+      : undefined;
+    alternatives.push({
+      actionLabel: humanizeActionType(candidate.action.type),
+      headline: buildHeadline(candidate.action, item, replacedItem),
+      item,
+      replacedItem,
+      scoreLabel: `${toPercent(candidate.score)}% fit`,
+    });
+    if (alternatives.length === ALTERNATIVE_DISPLAY_LIMIT) {
+      break;
+    }
+  }
+
+  return alternatives;
 }
 
 function presentActionSellItem(action: AdaptiveActionV1): AdaptivePresentedItem | undefined {
@@ -430,9 +377,7 @@ function describeReplacement(
 }
 
 function describeItem(item: AdaptivePresentedItem | undefined, fallback: string): string {
-  if (!item) {
-    return fallback;
-  }
+  if (!item) return fallback;
   return item.known ? item.name : `item ${item.diagnosticLabel}`;
 }
 
@@ -457,32 +402,18 @@ function confidenceLabel(type: AdaptiveActionTypeV1, value: number): string {
 }
 
 function humanizeReasonCode(code: string): string {
-  if (REASON_LABELS[code]) {
-    return REASON_LABELS[code];
-  }
+  if (REASON_LABELS[code]) return REASON_LABELS[code];
   const normalized = code.trim().toLowerCase().replace(/[_-]+/g, ' ');
   return normalized
     ? normalized.charAt(0).toUpperCase() + normalized.slice(1)
     : 'Recommendation updated';
 }
 
+function formatSouls(value: number): string {
+  return Math.max(0, Math.round(value)).toLocaleString('en-US');
+}
+
 function toPercent(value: number): number {
   const finite = Number.isFinite(Number(value)) ? Number(value) : 0;
   return Math.round(Math.max(0, Math.min(1, finite)) * 100);
-}
-
-function humanizeSentence(value: string): string {
-  const normalized = value.trim().replace(/[_-]+/g, ' ').toLowerCase();
-  return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : '';
-}
-
-function formatPurpose(purpose: string): string {
-  const acronyms: Record<string, string> = { cc: 'CC', dps: 'DPS', aoe: 'AoE', hp: 'HP' };
-  return purpose
-    .trim()
-    .replace(/[_-]+/g, ' ')
-    .toLowerCase()
-    .split(/\s+/)
-    .map((word) => acronyms[word] ?? (word.charAt(0).toUpperCase() + word.slice(1)))
-    .join(' ');
 }
