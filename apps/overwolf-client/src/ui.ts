@@ -15,9 +15,7 @@ export function updateStatus(text: string, statusClass?: 'connected' | 'error' |
 
 export function updateLastEvent(text: string): void {
   const el = document.getElementById('last-event');
-  if (el) {
-    el.textContent = text;
-  }
+  if (el) el.textContent = text;
 }
 
 let sendCount = 0;
@@ -25,9 +23,7 @@ let sendCount = 0;
 export function incrementSends(): void {
   sendCount++;
   const el = document.getElementById('last-send');
-  if (el) {
-    el.textContent = String(sendCount);
-  }
+  if (el) el.textContent = String(sendCount);
 }
 
 export function logConsole(message: string): void {
@@ -42,16 +38,8 @@ export function logConsole(message: string): void {
 export function updateIndicator(text: string, active: boolean): void {
   const textEl = document.getElementById('indicator-text');
   const dotEl = document.getElementById('indicator-dot');
-  if (textEl) {
-    textEl.textContent = text;
-  }
-  if (dotEl) {
-    if (active) {
-      dotEl.classList.add('active');
-    } else {
-      dotEl.classList.remove('active');
-    }
-  }
+  if (textEl) textEl.textContent = text;
+  if (dotEl) dotEl.classList.toggle('active', active);
 }
 
 let hasAdaptiveRecommendation = false;
@@ -64,17 +52,11 @@ export function showAdaptiveRecommendation(data: AdaptiveRecommendationResultV1)
   const nameEl = document.getElementById('rec-item-name');
   const headlineEl = document.getElementById('rec-headline');
 
-  if (!panel || !nameEl || !headlineEl) {
-    return;
-  }
+  if (!panel || !nameEl || !headlineEl) return;
 
   hasAdaptiveRecommendation = true;
-  if (emptyEl) {
-    emptyEl.style.display = 'none';
-  }
-  if (activeEl) {
-    activeEl.style.display = 'flex';
-  }
+  if (emptyEl) emptyEl.style.display = 'none';
+  if (activeEl) activeEl.style.display = 'flex';
   panel.style.display = 'flex';
 
   setText('rec-source', view.sourceLabel);
@@ -93,6 +75,9 @@ export function showAdaptiveRecommendation(data: AdaptiveRecommendationResultV1)
       view.replacedItem
         ? `Sell ${view.replacedItem.known ? view.replacedItem.name : view.replacedItem.diagnosticLabel}`
         : undefined,
+      view.situationalPurposeLabel ? `Situational - ${view.situationalPurposeLabel}` : undefined,
+      view.againstLabel,
+      ...view.primaryRequirements,
       view.primaryItem?.diagnosticLabel,
     ].filter(Boolean).join(' · '),
   );
@@ -103,12 +88,10 @@ export function showAdaptiveRecommendation(data: AdaptiveRecommendationResultV1)
   setTone('rec-game-state', `state-${view.stateTone}`);
 
   const confidenceFill = document.getElementById('rec-confidence-fill');
-  if (confidenceFill) {
-    confidenceFill.style.width = `${view.confidence.value}%`;
-  }
+  if (confidenceFill) confidenceFill.style.width = `${view.confidence.value}%`;
 
   const planItems = isInGameOverlay()
-    ? view.plan.items.filter((item) => item.status !== 'OWNED')
+    ? view.plan.items.filter((item) => item.status !== 'OWNED' && item.status !== 'COMPLETED')
     : view.plan.items;
 
   renderReasons(view.reasons);
@@ -123,7 +106,7 @@ export function showAdaptiveError(message = 'Recommendation is updating'): void 
     setText('rec-health', 'Updating');
     setTone('rec-health', 'health-waiting');
     if (note) {
-      note.textContent = 'Connection interrupted — showing the last safe recommendation.';
+      note.textContent = 'Connection interrupted - showing the last safe recommendation.';
       note.style.display = 'flex';
       note.title = message;
     }
@@ -131,9 +114,7 @@ export function showAdaptiveError(message = 'Recommendation is updating'): void 
   }
 
   const emptyEl = document.getElementById('guide-empty');
-  if (emptyEl) {
-    emptyEl.style.display = 'flex';
-  }
+  if (emptyEl) emptyEl.style.display = 'flex';
   setText('guide-empty-title', 'Statlocker is reconnecting');
   setText('guide-empty-copy', 'The recommendation will appear here as soon as fresh data arrives.');
 }
@@ -143,15 +124,9 @@ export function hideSituationalPanel(): void {
   const activeEl = document.getElementById('guide-active');
   const panel = document.getElementById('situational-recommendation-panel');
 
-  if (panel) {
-    panel.style.display = 'none';
-  }
-  if (activeEl) {
-    activeEl.style.display = 'none';
-  }
-  if (emptyEl) {
-    emptyEl.style.display = 'flex';
-  }
+  if (panel) panel.style.display = 'none';
+  if (activeEl) activeEl.style.display = 'none';
+  if (emptyEl) emptyEl.style.display = 'flex';
   setText('guide-empty-title', 'Waiting for match data');
   setText('guide-empty-copy', 'Your Statlocker recommendation will appear automatically when the match is detected.');
   hasAdaptiveRecommendation = false;
@@ -160,9 +135,7 @@ export function hideSituationalPanel(): void {
 
 function renderReasons(reasons: readonly string[]): void {
   const container = document.getElementById('rec-reasons');
-  if (!container) {
-    return;
-  }
+  if (!container) return;
   container.replaceChildren();
   const visibleReasons = reasons.length > 0
     ? reasons
@@ -179,9 +152,7 @@ function renderPlan(
   remainingCount: number,
 ): void {
   const container = document.getElementById('rec-plan');
-  if (!container) {
-    return;
-  }
+  if (!container) return;
   container.replaceChildren();
 
   if (items.length === 0) {
@@ -199,6 +170,7 @@ function renderPlan(
 function createPlanItem(planned: AdaptivePresentedPlanItem): HTMLElement {
   const row = document.createElement('div');
   row.className = `plan-item slot-${planned.item.slot} status-${planned.status.toLowerCase()}`;
+  row.setAttribute('data-plan-action-id', planned.planActionId);
 
   const position = document.createElement('span');
   position.className = 'plan-position';
@@ -209,7 +181,13 @@ function createPlanItem(planned: AdaptivePresentedPlanItem): HTMLElement {
   const name = document.createElement('strong');
   name.textContent = planned.item.name;
   const meta = document.createElement('small');
-  meta.textContent = [planned.statusLabel, planned.item.costLabel].filter(Boolean).join(' · ');
+  meta.textContent = [
+    planned.statusLabel,
+    planned.actionLabel,
+    planned.situationalPurposeLabel ? `Situational - ${planned.situationalPurposeLabel}` : undefined,
+    planned.againstLabel,
+    ...planned.requirements,
+  ].filter(Boolean).join(' · ');
   details.append(name, meta);
 
   row.append(position, details);
@@ -219,9 +197,7 @@ function createPlanItem(planned: AdaptivePresentedPlanItem): HTMLElement {
 function renderAlternatives(alternatives: readonly AdaptivePresentedAlternative[]): void {
   const container = document.getElementById('rec-alternatives');
   const section = document.getElementById('rec-alternatives-section');
-  if (!container || !section) {
-    return;
-  }
+  if (!container || !section) return;
   container.replaceChildren();
   section.style.display = alternatives.length > 0 ? 'block' : 'none';
   alternatives.forEach((alternative) => {
@@ -252,16 +228,12 @@ function isInGameOverlay(): boolean {
 
 function setText(id: string, text: string): void {
   const element = document.getElementById(id);
-  if (element) {
-    element.textContent = text;
-  }
+  if (element) element.textContent = text;
 }
 
 function setTone(id: string, tone: string): void {
   const element = document.getElementById(id);
-  if (element) {
-    element.className = tone;
-  }
+  if (element) element.className = tone;
 }
 
 function itemGlyph(slot: string | undefined): string {
