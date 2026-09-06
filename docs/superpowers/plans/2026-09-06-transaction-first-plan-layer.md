@@ -2,29 +2,29 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make `PlanSession.planSteps[]` the source of truth for the adaptive Build Path so every displayed future target is backed by an explicit legal transaction or blocking condition, including exact `SELL_AND_BUY` replacement semantics under slot pressure.
+**Goal:** Make `AdaptivePlanSessionV1.steps[]` the source of truth for the adaptive Build Path so every displayed future target is backed by an explicit legal transaction or blocking condition, including exact `SELL_AND_BUY` replacement semantics under slot pressure.
 
-**Architecture:** Keep the merged strategy-first planner, BuildContract, slot planner, investment logic, item graph, and deterministic candidate generator. Insert a transaction-plan compiler/reconciler after strategy resolution: strategy goals compile to transaction/barrier steps, the path is replay-validated, reconciled with the previous persistent plan session, and only then projected to `nextAction` and the legacy `recommendedBuild[]` compatibility shape.
+**Architecture:** Keep the merged strategy-first planner, BuildContract, slot planner, investment logic, item graph, and deterministic candidate generator. Insert a transaction-plan compiler/validator/reconciler after strategy resolution: strategy goals compile to transaction/barrier steps, the path is replay-validated, reconciled with the previous persistent plan session, and only then projected to `nextAction` and the legacy `recommendedBuild[]` compatibility shape.
 
-**Tech Stack:** TypeScript 5.9, NestJS 11, Yarn 1 workspaces, Jest/ts-jest, `@deadlock-live-probe/build-domain`, `@deadlock-live-probe/shared`, existing strategy-first adaptive planner and Overwolf client.
+**Tech Stack:** TypeScript 5.9, NestJS 11, Yarn 1 workspaces, Jest/ts-jest, `@deadlock-live-probe/build-domain`, `@deadlock-live-probe/shared`, current strategy-first adaptive planner, current Overwolf client.
 
 **Spec:** `docs/superpowers/specs/2026-09-06-transaction-first-plan-layer-design.md`
 
 ## Global Constraints
 
-- `planSteps[]` is the new source of truth. `recommendedBuild[]` is compatibility projection only.
-- `SELL_AND_BUY` is one user-facing strategic step but must validate as deterministic `SELL -> BUY`.
-- No standalone user-facing strategic SELL is allowed merely to make room for a later purchase.
-- Future blocked targets may remain visible only through explicit barrier steps.
-- A barrier never becomes `NEXT`; unsatisfied leading barriers derive runtime `HOLD`.
+- `AdaptivePlanSessionV1.steps[]` is the new source of truth. `recommendedBuild[]` is compatibility projection only.
+- `SELL_AND_BUY` is one user-facing strategic step but validates as deterministic replacement semantics equivalent to `SELL -> BUY`.
+- No standalone user-facing strategic SELL may be emitted merely to make room for a later purchase.
+- Future blocked targets remain visible only through explicit barrier steps.
+- A barrier never becomes `NEXT`; an unsatisfied leading barrier derives runtime `HOLD`.
 - `NEXT` must always be executable under the current exact decision state.
-- No future target may exist without a legal projected slot path.
-- Unknown flex capacity, unknown sell semantics, or unknown affordability never become guessed plan steps.
+- No future target may exist in the transaction plan without a legal projected slot path.
+- Unknown flex capacity, unknown sell semantics, and unknown affordability never become guessed plan steps.
 - Stable step identity and partial suffix replanning are mandatory.
-- Existing `RecommendationItemGraph`, candidate generator legality, BuildContract, branch commitment, and strategy selection remain authoritative.
+- Existing `RecommendationItemGraph`, candidate generator legality, BuildContract, branch commitment, slot planner, investment policy, and strategy selection remain authoritative.
 - No hero-name or item-name production special cases.
 - All production code comments are English.
-- No direct implementation on `main`.
+- No implementation directly on `main`.
 
 ---
 
@@ -33,28 +33,20 @@
 ### New shared contract
 
 - `packages/shared/src/adaptive-transaction-plan-v1.ts`
-  - public `AdaptivePlanSessionV1`, `AdaptivePlanStepV1`, transaction/barrier/projection types.
-- `packages/shared/src/index.ts`
-  - exports transaction-plan contract.
 - `packages/shared/src/adaptive-recommendation-v1.ts`
-  - adds optional `planSession` to `AdaptiveRecommendationResultV1` during compatibility migration.
+- `packages/shared/src/index.ts`
 - `packages/shared/test/adaptive-transaction-plan-v1.test.js`
-  - contract serialization/shape tests.
+- `packages/shared/package.json`
 
 ### New API units
 
 - `apps/api/src/statlocker-adaptive/transaction-plan-step-v1.ts`
-  - stable semantic step IDs, projection helpers, step completion predicates.
 - `apps/api/src/statlocker-adaptive/transaction-plan-compiler-v1.service.ts`
-  - compiles strategy goals + slot obligations + candidate generator evidence into transaction/barrier steps.
 - `apps/api/src/statlocker-adaptive/transaction-plan-validator-v1.service.ts`
-  - deterministic path replay and hard invariant validation.
 - `apps/api/src/statlocker-adaptive/transaction-plan-reconciler-v1.service.ts`
-  - persistent plan-session reconciliation and suffix replanning.
 - `apps/api/src/statlocker-adaptive/transaction-plan-projection-v1.ts`
-  - derives `nextAction`, legacy `recommendedBuild[]`, and legacy diff inputs from `PlanSession`.
+- `apps/api/src/statlocker-adaptive/transaction-plan-diff-v1.ts`
 - `apps/api/src/statlocker-adaptive/transaction-plan-invariants-v1.ts`
-  - cross-contract serving invariants and metrics payload.
 
 ### Existing API units to modify
 
@@ -63,13 +55,14 @@
 - `apps/api/src/statlocker-adaptive/strategy-first-legacy-planner-adapter-v1.service.ts`
 - `apps/api/src/statlocker-adaptive/adaptive-planner-serving-router-v1.service.ts`
 - `apps/api/src/statlocker-adaptive/adaptive-recommendation-observability-v1.service.ts`
+- `apps/api/src/statlocker-adaptive/strategy-first-promotion-gate-v1.service.ts`
 - `apps/api/src/statlocker-adaptive/statlocker-adaptive.module.ts`
 
 ### Overwolf units to modify
 
 - `apps/overwolf-client/src/adaptive-recommendation-presentation.ts`
 - `apps/overwolf-client/src/adaptive-recommendation-presentation.spec.ts`
-- relevant desktop/in-game renderers already consuming that presentation model.
+- `apps/overwolf-client/src/ui.ts`
 
 ### New/focused API tests
 
@@ -77,42 +70,75 @@
 - `apps/api/test/transaction-plan-compiler-v1.spec.ts`
 - `apps/api/test/transaction-plan-validator-v1.spec.ts`
 - `apps/api/test/transaction-plan-reconciler-v1.spec.ts`
+- `apps/api/test/transaction-plan-projection-v1.spec.ts`
+- `apps/api/test/transaction-plan-diff-v1.spec.ts`
+- `apps/api/test/transaction-plan-invariants-v1.spec.ts`
 - `apps/api/test/strategy-first-transaction-plan-v1.integration.spec.ts`
 - `apps/api/test/transaction-plan-full-slot-regression.spec.ts`
 
 ---
 
-### Task 1: Lock the current production failure as a RED regression
+### Task 1: Lock the current full-slot failure as a RED regression
 
 **Files:**
 - Create: `apps/api/test/transaction-plan-full-slot-regression.spec.ts`
-- Reuse fixtures/helpers from existing strategy-first planner tests.
 
 **Interfaces:**
 - Consumes: current `StrategyFirstAdaptivePlannerFacadeV1Service.plan()`.
-- Produces: failing regression that proves flat future targets can exist without explicit replacement/flex semantics.
+- Produces: a failing test demonstrating that a flat future target can be shown without a source-of-truth replacement/flex transaction.
 
-- [ ] **Step 1: Add a full-slot regression fixture**
+- [ ] **Step 1: Write the full-slot replacement regression**
 
-Construct a strategy with an unfinished hard goal whose target requires one more slot than the exact current inventory permits. Include one legally sellable temporary item and one valid replacement target.
+Build a strategy fixture with:
 
-Assert current behavior is insufficient: the future target appears as `PLANNED` while the result has no source-of-truth transaction step naming the sold item.
+```text
+12/12 base slots occupied
+known flex state with no extra current capacity
+one sellable temporary item 101
+a hard remaining target 202
+known legal REPLACE_ITEM(101 -> 202)
+```
 
-- [ ] **Step 2: Add a second fixture with no valid exit path**
+Assert that the desired contract is:
 
-Use full capacity, no legal sell transition, no upgrade compression, and insufficient unlocked flex. Assert a normal future `PLANNED` target must eventually be forbidden.
+```text
+planSession.steps contains SELL_AND_BUY(101, 202)
+```
+
+and never merely:
+
+```text
+recommendedBuild contains 202 PLANNED
+with no structured transaction
+```
+
+- [ ] **Step 2: Write the no-exit-path regression**
+
+Build a full inventory where target 202 has:
+
+```text
+no upgrade compression
+no legal replacement
+no currently/provably unlockable required flex path
+```
+
+Desired result:
+
+```text
+planSession.state = REPLAN_REQUIRED
+nextAction.type = HOLD
+202 is not emitted as a normal transaction target
+```
 
 - [ ] **Step 3: Run the focused test and record RED**
-
-Run:
 
 ```bash
 yarn workspace @deadlock-live-probe/api test --runTestsByPath test/transaction-plan-full-slot-regression.spec.ts
 ```
 
-Expected: FAIL because the current public result has no transaction-plan source of truth and/or still emits the flattened target.
+Expected: FAIL because current `AdaptiveRecommendationResultV1` has no transaction-plan source of truth.
 
-- [ ] **Step 4: Commit only the regression fixture**
+- [ ] **Step 4: Commit the RED regression**
 
 ```bash
 git add apps/api/test/transaction-plan-full-slot-regression.spec.ts
@@ -133,18 +159,21 @@ git commit -m "test(adaptive): reproduce flat full-slot build path"
 **Interfaces:**
 - Produces:
   - `AdaptivePlanSessionV1`
+  - `AdaptivePlanSessionStateV1`
   - `AdaptivePlanStepV1`
+  - `AdaptivePlanStepStateV1`
+  - `AdaptivePlanStepKindV1`
+  - `AdaptivePlanStepBlockReasonV1`
   - `AdaptivePlannedTransactionV1`
   - `AdaptivePlanBarrierV1`
   - `AdaptivePlanProjectionV1`
-  - `AdaptivePlanStepStateV1`
 
-- [ ] **Step 1: Write contract tests first**
+- [ ] **Step 1: Write the shared contract test**
 
-Test these shapes:
+The test must construct and JSON-roundtrip both shapes:
 
 ```ts
-const replacement: AdaptivePlanStepV1 = {
+const replacement = {
   stepId: 'step:replace',
   goalId: 'goal:late-core',
   kind: 'TRANSACTION',
@@ -156,16 +185,30 @@ const replacement: AdaptivePlanStepV1 = {
   },
   prerequisiteStepIds: [],
   blockingReasons: [],
-  projectedBefore: projectionBefore,
-  projectedAfter: projectionAfter,
+  projectedBefore: {
+    inventoryItemIds: [101],
+    spendableSouls: 1000,
+    usedByType: { weapon: 0, vitality: 1, spirit: 0 },
+    flexUsed: 0,
+    unlockedFlexSlots: 0,
+    activeItemsUsed: 0,
+  },
+  projectedAfter: {
+    inventoryItemIds: [202],
+    spendableSouls: 200,
+    usedByType: { weapon: 0, vitality: 1, spirit: 0 },
+    flexUsed: 0,
+    unlockedFlexSlots: 0,
+    activeItemsUsed: 0,
+  },
   reasonCodes: ['SLOT_REPLACEMENT'],
 };
 ```
 
-and barrier:
+and:
 
 ```ts
-const wait: AdaptivePlanStepV1 = {
+const waitForFlex = {
   stepId: 'step:flex',
   goalId: 'goal:late-core',
   kind: 'BARRIER',
@@ -177,24 +220,38 @@ const wait: AdaptivePlanStepV1 = {
   },
   prerequisiteStepIds: [],
   blockingReasons: ['INSUFFICIENT_FLEX'],
-  projectedBefore: projectionBefore,
+  projectedBefore: replacement.projectedBefore,
   reasonCodes: ['WAIT_FOR_FLEX'],
 };
 ```
 
-- [ ] **Step 2: Implement the contract exactly as the spec**
+- [ ] **Step 2: Implement the types exactly as the design spec**
 
-`AdaptiveRecommendationResultV1` gains:
+Add to `AdaptiveRecommendationResultV1`:
 
 ```ts
 planSession?: AdaptivePlanSessionV1;
 ```
 
-Keep `recommendedBuild` mandatory for compatibility during migration.
+Keep `recommendedBuild` mandatory during migration.
 
-- [ ] **Step 3: Export the types from shared index**
+- [ ] **Step 3: Export the new contract**
 
-- [ ] **Step 4: Run shared build/tests**
+Add to `packages/shared/src/index.ts`:
+
+```ts
+export * from './adaptive-transaction-plan-v1';
+```
+
+- [ ] **Step 4: Add the test to the shared test script**
+
+Append this command to the existing `test` script:
+
+```text
+&& node test/adaptive-transaction-plan-v1.test.js
+```
+
+- [ ] **Step 5: Run shared tests**
 
 ```bash
 yarn workspace @deadlock-live-probe/shared test
@@ -202,7 +259,7 @@ yarn workspace @deadlock-live-probe/shared test
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add packages/shared
@@ -211,41 +268,69 @@ git commit -m "feat(shared): add adaptive transaction plan contract"
 
 ---
 
-### Task 3: Implement stable step identity and deterministic projection helpers
+### Task 3: Implement stable step identity and exact projection helpers
 
 **Files:**
 - Create: `apps/api/src/statlocker-adaptive/transaction-plan-step-v1.ts`
 - Create: `apps/api/test/transaction-plan-step-v1.spec.ts`
 
 **Interfaces:**
-- Produces:
 
 ```ts
+export interface TransactionPlanStepIdentityV1 {
+  strategyId: string;
+  goalId: string;
+  kind: 'TRANSACTION' | 'BARRIER';
+  type: string;
+  targetItemId?: number;
+  sellItemId?: number;
+  consumedItemIds?: readonly number[];
+  branchId?: string;
+}
+
 export function transactionPlanStepIdV1(input: TransactionPlanStepIdentityV1): string;
-export function planProjectionFromDecisionStateV1(...): AdaptivePlanProjectionV1;
-export function isPlanBarrierSatisfiedV1(...): boolean;
-export function isTransactionStepSatisfiedV1(...): boolean;
+
+export function planProjectionFromDecisionStateV1(
+  state: RecommendationDecisionState,
+  graph: RecommendationItemGraph,
+  rules: RecommendationCandidateGeneratorRules,
+): AdaptivePlanProjectionV1;
+
+export function isPlanBarrierSatisfiedV1(
+  barrier: AdaptivePlanBarrierV1,
+  decision: RecommendationDecisionState,
+  unlockedFlexSlots?: number,
+): boolean;
+
+export function isTransactionStepSatisfiedV1(
+  step: AdaptivePlanStepV1,
+  decision: RecommendationDecisionState,
+  graph: RecommendationItemGraph,
+): boolean;
 ```
 
-- [ ] **Step 1: Add RED tests for stable IDs**
+- [ ] **Step 1: Write RED tests for stable IDs**
 
-Same semantic replacement under different recommendation ticks must produce the same `stepId`; changing `sellItemId` must change it.
+Same strategy/goal/action pair across two ticks must produce the same `stepId`. Changing `sellItemId` from 101 to 102 must produce a different ID.
 
-- [ ] **Step 2: Add RED tests for completion semantics**
+- [ ] **Step 2: Write RED completion tests**
 
 Cover:
 
-- BUY target owned;
-- UPGRADE target/descendant owned and consumed components removed;
-- SELL_AND_BUY target owned and sold item absent;
-- WAIT_FOR_FLEX satisfied only at required threshold;
-- WAIT_FOR_GOLD satisfied only with observed sufficient wallet.
+```text
+BUY target owned
+UPGRADE target/descendant owned and consumed component gone
+SELL_AND_BUY buy target satisfied and sold item absent
+WAIT_FOR_FLEX exact threshold
+WAIT_FOR_GOLD verified threshold
+WAIT_FOR_SHOP exact available state
+```
 
 - [ ] **Step 3: Implement deterministic helpers**
 
-Use item-graph target satisfaction for upgrade lineage. Do not use item names.
+Use `RecommendationItemGraph.isTargetSatisfied()` for target/upgrade lineage. Sort `consumedItemIds` before fingerprinting.
 
-- [ ] **Step 4: Run focused test**
+- [ ] **Step 4: Run the test**
 
 ```bash
 yarn workspace @deadlock-live-probe/api test --runTestsByPath test/transaction-plan-step-v1.spec.ts
@@ -262,7 +347,7 @@ git commit -m "feat(adaptive): add transaction plan step semantics"
 
 ---
 
-### Task 4: Compile exact transaction steps from legal candidate actions
+### Task 4: Compile exact plan steps from candidate actions
 
 **Files:**
 - Create: `apps/api/src/statlocker-adaptive/transaction-plan-compiler-v1.service.ts`
@@ -270,25 +355,28 @@ git commit -m "feat(adaptive): add transaction plan step semantics"
 - Modify: `apps/api/src/statlocker-adaptive/statlocker-adaptive.module.ts`
 
 **Interfaces:**
-- Consumes:
-  - `BuildStrategySpecV1`
-  - `BuildContractV1`
-  - `BuildSlotPlanV1`
-  - current/projected `RecommendationDecisionState`
-  - `RecommendationItemGraph`
-  - scored/search-selected `RecommendationCandidate[]`
-- Produces:
 
 ```ts
-export interface CompileTransactionPlanV1Input { ... }
+export interface CompileTransactionPlanV1Input {
+  strategy: BuildStrategySpecV1;
+  contract: BuildContractV1;
+  slotPlan: BuildSlotPlanV1;
+  decision: AdaptiveDecisionStateV1;
+  selectedCandidates: readonly RecommendationCandidate[];
+}
+
 export interface CompileTransactionPlanV1Result {
   steps: readonly AdaptivePlanStepV1[];
   reachable: boolean;
   reasonCodes: readonly string[];
 }
+
+export class TransactionPlanCompilerV1Service {
+  compile(input: CompileTransactionPlanV1Input): CompileTransactionPlanV1Result;
+}
 ```
 
-- [ ] **Step 1: RED tests for candidate mapping**
+- [ ] **Step 1: Write RED mapping tests**
 
 Required mappings:
 
@@ -298,17 +386,95 @@ UPGRADE_ITEM  -> UPGRADE
 REPLACE_ITEM  -> SELL_AND_BUY
 ```
 
-`SELL_ITEM` is never emitted as a normal user-facing strategic step.
+`SELL_ITEM` must not map to a normal user-facing transaction step.
 
-- [ ] **Step 2: RED test that a replacement preserves the pair**
+- [ ] **Step 2: Write RED replacement-pair test**
 
-Given `REPLACE_ITEM(sell=101,buy=202)`, assert the step contains both IDs and never flattens to only `202`.
+For `REPLACE_ITEM(sellItemId=101,buyItemId=202)`, assert both IDs survive in one `SELL_AND_BUY` step.
 
 - [ ] **Step 3: Implement candidate-to-step conversion**
 
-Use the candidate as the legality proof. Populate `projectedBefore/After` with deterministic projection snapshots.
+For each selected transaction candidate:
 
-- [ ] **Step 4: Run tests**
+1. capture `projectedBefore`;
+2. project the candidate with existing deterministic build-domain logic;
+3. capture `projectedAfter`;
+4. generate stable `stepId`;
+5. attach goal and slot-transition reason codes.
+
+- [ ] **Step 4: Register the service in `StatlockerAdaptiveModule`**
+
+- [ ] **Step 5: Run the focused test**
+
+```bash
+yarn workspace @deadlock-live-probe/api test --runTestsByPath test/transaction-plan-compiler-v1.spec.ts
+```
+
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add apps/api/src/statlocker-adaptive/transaction-plan-compiler-v1.service.ts apps/api/src/statlocker-adaptive/statlocker-adaptive.module.ts apps/api/test/transaction-plan-compiler-v1.spec.ts
+git commit -m "feat(adaptive): compile legal candidates into plan steps"
+```
+
+---
+
+### Task 5: Compile explicit barriers for known deferable blockers
+
+**Files:**
+- Modify: `apps/api/src/statlocker-adaptive/transaction-plan-compiler-v1.service.ts`
+- Modify: `apps/api/test/transaction-plan-compiler-v1.spec.ts`
+
+**Interfaces:**
+
+Add a private/pure classifier with this behavior:
+
+```ts
+function deferredBarrierForCandidateV1(
+  candidate: RecommendationCandidate,
+  targetItemId: number,
+  decision: AdaptiveDecisionStateV1,
+): AdaptivePlanBarrierV1 | undefined;
+```
+
+- [ ] **Step 1: Write RED deferable-blocker tests**
+
+Expected mappings when all other semantics are known:
+
+```text
+UNAFFORDABLE     -> WAIT_FOR_GOLD
+SHOP_UNAVAILABLE -> WAIT_FOR_SHOP
+known flex shortage with known required threshold -> WAIT_FOR_FLEX
+```
+
+For `WAIT_FOR_GOLD` before a replacement use:
+
+```text
+requiredSouls = max(0, buyCost - sellRefund)
+```
+
+not full buy price.
+
+- [ ] **Step 2: Write RED tests for non-deferable unknowns**
+
+These must never become optimistic barriers:
+
+```text
+SPENDABLE_SOULS_UNKNOWN
+FLEX_SLOT_CAPACITY_UNKNOWN
+SELL_TRANSITION_UNKNOWN
+ITEM_UNAVAILABLE_IN_RULESET
+```
+
+Expected compiler result: no speculative transaction; `reachable=false` if no alternate coherent path exists.
+
+- [ ] **Step 3: Implement `WAIT_FOR_FLEX` threshold calculation**
+
+Use projected slot usage and known `unlockedFlexSlots`; never derive current capacity from `maxFlexSlots` alone.
+
+- [ ] **Step 4: Run compiler tests**
 
 ```bash
 yarn workspace @deadlock-live-probe/api test --runTestsByPath test/transaction-plan-compiler-v1.spec.ts
@@ -319,105 +485,59 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/api/src/statlocker-adaptive/transaction-plan-compiler-v1.service.ts apps/api/src/statlocker-adaptive/statlocker-adaptive.module.ts apps/api/test/transaction-plan-compiler-v1.spec.ts
-git commit -m "feat(adaptive): compile legal candidates into plan steps"
-```
-
----
-
-### Task 5: Add explicit deferred barriers instead of speculative future items
-
-**Files:**
-- Modify: `apps/api/src/statlocker-adaptive/transaction-plan-compiler-v1.service.ts`
-- Modify: `apps/api/test/transaction-plan-compiler-v1.spec.ts`
-
-**Interfaces:**
-- Adds deferability classification for currently infeasible target actions.
-
-- [ ] **Step 1: RED tests for deferable blockers**
-
-Only these conditions may compile into barriers when all other semantics are known:
-
-```text
-UNAFFORDABLE       -> WAIT_FOR_GOLD
-SHOP_UNAVAILABLE   -> WAIT_FOR_SHOP
-known locked flex  -> WAIT_FOR_FLEX
-```
-
-- [ ] **Step 2: RED tests for non-deferable unknowns**
-
-These must not become optimistic barriers:
-
-```text
-SPENDABLE_SOULS_UNKNOWN
-FLEX_SLOT_CAPACITY_UNKNOWN
-SELL_TRANSITION_UNKNOWN
-ITEM_UNAVAILABLE_IN_RULESET
-MISSING_UPGRADE_COMPONENT without a compiled prerequisite path
-```
-
-Expected result: `reachable=false` or the goal remains unresolved with `REPLAN_REQUIRED` evidence.
-
-- [ ] **Step 3: Implement deferability classifier**
-
-For flex, derive the required flex usage from projected slot usage and require known `unlockedFlexSlots`/ruleset evidence. Never infer future flex from `maxFlexSlots` alone.
-
-- [ ] **Step 4: Run focused tests**
-
-- [ ] **Step 5: Commit**
-
-```bash
 git add apps/api/src/statlocker-adaptive/transaction-plan-compiler-v1.service.ts apps/api/test/transaction-plan-compiler-v1.spec.ts
-git commit -m "feat(adaptive): compile explicit plan barriers"
+git commit -m "feat(adaptive): compile explicit transaction barriers"
 ```
 
 ---
 
-### Task 6: Make replacement choice strategic and forbid naked slot-release SELL
+### Task 6: Make slot replacement atomic and strategic
 
 **Files:**
 - Modify: `apps/api/src/statlocker-adaptive/strategy-first-build-planner-v1.service.ts`
-- Modify: `apps/api/test/strategy-first-transaction-plan-v1.integration.spec.ts`
+- Create: `apps/api/test/strategy-first-transaction-plan-v1.integration.spec.ts`
 
 **Interfaces:**
-- Existing candidate generator still supplies `SELL_ITEM` and `REPLACE_ITEM`.
-- Planner search must prefer/require `REPLACE_ITEM` for a user-facing slot replacement.
+- Existing candidate generator continues producing `SELL_ITEM` and `REPLACE_ITEM`.
+- User-facing slot replacement must use `REPLACE_ITEM`, later projected to `SELL_AND_BUY`.
 
-- [ ] **Step 1: RED test: full inventory + valid replacement**
+- [ ] **Step 1: Write RED full-inventory replacement test**
 
-Assert the planner path chooses a `REPLACE_ITEM` candidate and the final plan emits one `SELL_AND_BUY` step.
+Given a full inventory and `BuildSlotPlanV1.futureTransitions` requiring replacement, assert the selected search action is `REPLACE_ITEM`, not `SELL_ITEM` followed by a future hope to buy.
 
-- [ ] **Step 2: RED test: naked `SELL_ITEM` cannot become `NEXT` merely to make room**
+- [ ] **Step 2: Write RED naked-sell prohibition test**
 
-Even when `BuildSlotPlanV1.futureTransitions` says `SELL_TEMPORARY`, the user-facing first transaction must not be standalone SELL.
+When a slot plan says `SELL_TEMPORARY`, standalone `SELL_ITEM` may remain an internal candidate but must not become the served first action for the slot-release goal.
 
-- [ ] **Step 3: Implement replacement filtering**
+- [ ] **Step 3: Change candidate relevance for slot-release goals**
 
-For slot-release obligations:
+Use:
 
 ```text
-SELL_TEMPORARY / REPLACE
- -> search legal REPLACE_ITEM pairs
- -> score pair as one strategic transition
+REPLACE / SELL_TEMPORARY
+ -> legal REPLACE_ITEM pairs only for the user-facing acquisition path
 ```
 
-Continue using `preservesResolvedHardGoalsAfterCandidate()` and branch protection as hard filters.
+Keep existing `preservesResolvedHardGoalsAfterCandidate()` as a hard filter.
 
-- [ ] **Step 4: Add strategic replacement cost checks**
+- [ ] **Step 4: Add replacement-protection tests**
 
-Protect:
+A replacement must not sell:
 
-- satisfied hard goals;
-- committed-branch evidence;
-- near-term required upgrade components;
-- hard investment objectives;
-- recently purchased items unless improvement exceeds the existing churn threshold.
+```text
+an item satisfying a hard completed goal
+a committed branch evidence item
+a required near-term upgrade component
+a protected recently purchased item without sufficient improvement
+```
 
-- [ ] **Step 5: Run planner/integration tests**
+- [ ] **Step 5: Run the integration test**
 
 ```bash
 yarn workspace @deadlock-live-probe/api test --runTestsByPath test/strategy-first-transaction-plan-v1.integration.spec.ts
 ```
+
+Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
@@ -436,56 +556,72 @@ git commit -m "fix(adaptive): make slot replacement an atomic plan transition"
 - Modify: `apps/api/src/statlocker-adaptive/statlocker-adaptive.module.ts`
 
 **Interfaces:**
-- Produces:
 
 ```ts
+export interface TransactionPlanViolationV1 {
+  stepId?: string;
+  code: string;
+  reasonCodes: readonly string[];
+}
+
 export interface TransactionPlanValidationV1 {
   valid: boolean;
-  violations: readonly {
-    stepId?: string;
-    code: string;
-    reasonCodes: readonly string[];
-  }[];
+  violations: readonly TransactionPlanViolationV1[];
+}
+
+export class TransactionPlanValidatorV1Service {
+  validate(input: {
+    session: AdaptivePlanSessionV1;
+    decision: AdaptiveDecisionStateV1;
+  }): TransactionPlanValidationV1;
 }
 ```
 
-- [ ] **Step 1: RED tests for path-level slot legality**
+- [ ] **Step 1: Write RED valid-path tests**
 
-Cover chained:
+Cover:
 
 ```text
-full -> upgrade compression -> buy
+full -> upgrade compression -> BUY
 full -> SELL_AND_BUY
-full -> WAIT_FOR_FLEX -> buy
+full -> WAIT_FOR_FLEX -> BUY
 ```
 
-and invalid:
+- [ ] **Step 2: Write RED invalid-path tests**
+
+Cover:
 
 ```text
-full -> BUY
+full -> BUY with no exit
+projectedAfter mismatch
+SELL_AND_BUY with invalid final slot state
+transaction before unsatisfied prerequisite
 ```
 
-- [ ] **Step 2: RED test for composite replacement**
+- [ ] **Step 3: Implement deterministic replay**
 
-Replay `SELL_AND_BUY` as atomic candidate semantics / exact `SELL -> BUY`; final projection must equal stored `projectedAfter`.
+For every transaction step, regenerate equivalent candidate/action semantics against the projected state and require the reproduced projection to equal stored `projectedAfter`. Barrier steps do not mutate inventory.
 
-- [ ] **Step 3: RED tests for prerequisite ordering and duplicate terminal targets**
+- [ ] **Step 4: Register the validator**
 
-- [ ] **Step 4: Implement validator**
-
-Use deterministic candidate/projected-state helpers only. If the stored projection cannot be reproduced, reject the revision.
-
-- [ ] **Step 5: Run focused tests and commit**
+- [ ] **Step 5: Run the test**
 
 ```bash
 yarn workspace @deadlock-live-probe/api test --runTestsByPath test/transaction-plan-validator-v1.spec.ts
+```
+
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
 git add apps/api/src/statlocker-adaptive/transaction-plan-validator-v1.service.ts apps/api/src/statlocker-adaptive/statlocker-adaptive.module.ts apps/api/test/transaction-plan-validator-v1.spec.ts
 git commit -m "feat(adaptive): validate transaction plan reachability"
 ```
 
 ---
 
-### Task 8: Add persistent `PlanSession` reconciliation and stable suffix replanning
+### Task 8: Add persistent `PlanSession` reconciliation and suffix replanning
 
 **Files:**
 - Create: `apps/api/src/statlocker-adaptive/transaction-plan-reconciler-v1.service.ts`
@@ -493,7 +629,6 @@ git commit -m "feat(adaptive): validate transaction plan reachability"
 - Modify: `apps/api/src/statlocker-adaptive/statlocker-adaptive.module.ts`
 
 **Interfaces:**
-- Produces:
 
 ```ts
 export interface ReconcileTransactionPlanV1Input {
@@ -501,148 +636,179 @@ export interface ReconcileTransactionPlanV1Input {
   strategyId: string;
   gameTimeSec: number;
   proposedSteps: readonly AdaptivePlanStepV1[];
-  currentDecision: RecommendationDecisionState;
-  itemGraph: RecommendationItemGraph;
+  decision: AdaptiveDecisionStateV1;
 }
 
-export function reconcile(...): AdaptivePlanSessionV1;
+export class TransactionPlanReconcilerV1Service {
+  reconcile(input: ReconcileTransactionPlanV1Input): AdaptivePlanSessionV1;
+}
 ```
 
-- [ ] **Step 1: RED test: stable steps survive a normal tick**
+- [ ] **Step 1: Write RED stable-prefix test**
 
-Unchanged semantic steps keep the same `stepId`; completed step changes state rather than disappearing.
+Two identical semantic proposals on consecutive ticks must preserve every unchanged `stepId`.
 
-- [ ] **Step 2: RED test: purchase completes one step and preserves suffix**
+- [ ] **Step 2: Write RED completion test**
 
-- [ ] **Step 3: RED test: one changed goal invalidates/rebuilds only affected suffix**
+After the player performs the current transaction, the same step becomes `COMPLETED`; later unchanged steps preserve identity/order.
 
-- [ ] **Step 4: RED test: strategy switch creates a new `planSessionId`**
+- [ ] **Step 3: Write RED suffix-only replan test**
 
-- [ ] **Step 5: Implement prefix preservation and revision rules**
+If the third semantic step changes while steps 1-2 remain valid, preserve steps 1-2 and replace only the suffix beginning at step 3.
 
-Rules:
+- [ ] **Step 4: Write RED strategy-switch test**
 
-```text
-same strategy + same semantic prefix -> preserve
-completed existing step -> status update
-first incompatible semantic step -> invalidate suffix and replace
-strategy identity change -> new session
-```
+A different `strategyId` creates a new `planSessionId`.
 
-- [ ] **Step 6: Run tests and commit**
+- [ ] **Step 5: Implement session state and revision rules**
+
+Increment `revision` when serialized step/status/next/session state changes. Set `nextStepId` only for a transaction step marked `NEXT`.
+
+- [ ] **Step 6: Register the reconciler and run tests**
 
 ```bash
 yarn workspace @deadlock-live-probe/api test --runTestsByPath test/transaction-plan-reconciler-v1.spec.ts
+```
+
+Expected: PASS.
+
+- [ ] **Step 7: Commit**
+
+```bash
 git add apps/api/src/statlocker-adaptive/transaction-plan-reconciler-v1.service.ts apps/api/src/statlocker-adaptive/statlocker-adaptive.module.ts apps/api/test/transaction-plan-reconciler-v1.spec.ts
 git commit -m "feat(adaptive): persist and reconcile transaction plan sessions"
 ```
 
 ---
 
-### Task 9: Derive `nextAction` and legacy build projection from `PlanSession`
+### Task 9: Derive `nextAction` and legacy build rows from `PlanSession`
 
 **Files:**
 - Create: `apps/api/src/statlocker-adaptive/transaction-plan-projection-v1.ts`
 - Create: `apps/api/test/transaction-plan-projection-v1.spec.ts`
 
 **Interfaces:**
-- Produces:
 
 ```ts
-export function nextActionFromPlanSessionV1(...): AdaptiveActionV1;
-export function recommendedBuildFromPlanSessionV1(...): readonly AdaptivePlannedItemV1[];
+export function nextActionFromPlanSessionV1(
+  session: AdaptivePlanSessionV1,
+): AdaptiveActionV1;
+
+export function recommendedBuildFromPlanSessionV1(input: {
+  session: AdaptivePlanSessionV1;
+  ownedItemIds: readonly number[];
+}): readonly AdaptivePlannedItemV1[];
 ```
 
-- [ ] **Step 1: RED test: transaction `NEXT` maps exactly**
+- [ ] **Step 1: Write RED action-mapping tests**
 
 Mappings:
 
 ```text
-BUY          -> BUY
-UPGRADE      -> UPGRADE
-SELL_AND_BUY -> REPLACE
+BUY          -> AdaptiveActionV1.type BUY
+UPGRADE      -> AdaptiveActionV1.type UPGRADE
+SELL_AND_BUY -> AdaptiveActionV1.type REPLACE with sellItemId + buyItemId
 ```
 
-The existing public action type may remain `REPLACE` for V1 compatibility while the plan step is named `SELL_AND_BUY`.
+- [ ] **Step 2: Write RED barrier-to-HOLD test**
 
-- [ ] **Step 2: RED test: leading barrier returns HOLD**
-
-Example:
+For:
 
 ```text
 WAIT_FOR_FLEX BLOCKED
 BUY X LOCKED
 ```
 
-Expected:
+assert:
 
-```ts
-nextAction.type === 'HOLD'
-nextAction.targetItemId === X
-reasonCodes includes WAIT_FOR_FLEX
+```text
+nextAction.type = HOLD
+nextAction.targetItemId = X
+reasonCodes contain WAIT_FOR_FLEX
+session.nextStepId is undefined
 ```
 
-- [ ] **Step 3: RED test: legacy flat rows are a one-way projection**
+- [ ] **Step 3: Write RED one-way projection test**
 
-The replacement target may appear as `NEXT/PLANNED`, but the sold item is never inferred back from `recommendedBuild`.
+`recommendedBuild[]` may contain the buy target, but no planner code may use the flat row to infer `sellItemId` or barrier semantics.
 
-- [ ] **Step 4: Implement projection helpers and commit**
+- [ ] **Step 4: Implement projection helpers**
+
+- [ ] **Step 5: Run tests**
 
 ```bash
 yarn workspace @deadlock-live-probe/api test --runTestsByPath test/transaction-plan-projection-v1.spec.ts
+```
+
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
 git add apps/api/src/statlocker-adaptive/transaction-plan-projection-v1.ts apps/api/test/transaction-plan-projection-v1.spec.ts
 git commit -m "feat(adaptive): derive adaptive output from plan session"
 ```
 
 ---
 
-### Task 10: Integrate transaction planning into `StrategyFirstBuildPlannerV1Service`
+### Task 10: Integrate transaction planning into the strategy-first planner
 
 **Files:**
 - Modify: `apps/api/src/statlocker-adaptive/strategy-first-build-planner-v1.service.ts`
 - Modify: `apps/api/test/strategy-first-transaction-plan-v1.integration.spec.ts`
 
 **Interfaces:**
-- `StrategyFirstBuildPlannerV1Input` gains:
+
+Add to planner input:
 
 ```ts
 previousPlanSession?: AdaptivePlanSessionV1;
 ```
 
-- `StrategyFirstBuildPlannerV1Result` gains:
+Add to planner result:
 
 ```ts
 planSession: AdaptivePlanSessionV1;
 ```
 
-- [ ] **Step 1: RED integration test for end-to-end compile**
+- [ ] **Step 1: Write RED end-to-end integration assertion**
 
-`BuildContract -> search -> compiler -> validator -> reconciler -> nextAction/recommendedBuild` must return a valid session.
+Require the order:
 
-- [ ] **Step 2: Replace direct `buildRecommendedBuild()` authority**
+```text
+BuildContract
+ -> selected search candidates
+ -> TransactionPlanCompiler
+ -> TransactionPlanReconciler
+ -> TransactionPlanValidator
+ -> nextAction/recommendedBuild projection
+```
 
-Keep the old method temporarily only as fallback comparison. Normal strategy-first output must be generated from `planSession` projection.
+- [ ] **Step 2: Inject compiler/reconciler/validator or construct them consistently with current service style**
 
-- [ ] **Step 3: Add fail-closed behavior**
+Do not let `buildRecommendedBuild()` remain authoritative.
+
+- [ ] **Step 3: Add fail-closed transaction-plan behavior**
 
 If validation fails:
 
 ```text
-BuildContract.status = REPLAN_REQUIRED
+contract.status = REPLAN_REQUIRED
 planSession.state = REPLAN_REQUIRED
 nextAction = HOLD
 recommendedBuild = owned-only compatibility projection
+rankedImmediateCandidates = []
 ```
 
-Never return the speculative old flat path after transaction validation failure.
-
-- [ ] **Step 4: Run integration + existing planner tests**
+- [ ] **Step 4: Run integration and existing planner tests**
 
 ```bash
 yarn workspace @deadlock-live-probe/api test --runTestsByPath \
   test/strategy-first-transaction-plan-v1.integration.spec.ts \
   test/adaptive-build-planner-v1.spec.ts
 ```
+
+Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
@@ -653,37 +819,63 @@ git commit -m "feat(adaptive): make transaction plan the strategy output source"
 
 ---
 
-### Task 11: Thread previous plan session through the facade and adapter
+### Task 11: Thread previous `PlanSession` through facade and adapter continuity
 
 **Files:**
 - Modify: `apps/api/src/statlocker-adaptive/strategy-first-adaptive-planner-facade-v1.service.ts`
 - Modify: `apps/api/src/statlocker-adaptive/strategy-first-legacy-planner-adapter-v1.service.ts`
-- Modify: API tests that construct `AdaptiveRecommendationResultV1`.
+- Modify: `apps/api/test/strategy-first-transaction-plan-v1.integration.spec.ts`
 
 **Interfaces:**
-- `StrategyFirstPreviousResultV1` includes `planSession`.
-- Facade passes `previousPlanSession` into the planner.
-- Adapter returns `planSession` to the outer adaptive result.
 
-- [ ] **Step 1: RED test that two consecutive facade calls preserve `planSessionId`**
+Extend `StrategyFirstPreviousResultV1` to include:
 
-- [ ] **Step 2: RED test that a strategy identity switch creates a new session**
+```ts
+'planSession'
+```
+
+Facade passes:
+
+```ts
+previousPlanSession: input.previousResult?.planSession
+```
+
+Adapter returns:
+
+```ts
+planSession: result.planSession
+```
+
+- [ ] **Step 1: Write RED consecutive-call test**
+
+Two facade calls in the same strategy must preserve `planSessionId`.
+
+- [ ] **Step 2: Write RED recovery-without-previous test**
+
+When `previousResult` is absent, current exact state creates a valid new session without reading legacy `recommendedBuild` transaction semantics.
 
 - [ ] **Step 3: Implement continuity threading**
 
-No new Redis/DB persistence in this phase. Existing previous-result continuity is the persistence boundary. If previous state is absent after process recovery, the planner deterministically starts a new session from exact current state.
+Do not add a new database/Redis store in this phase.
 
-- [ ] **Step 4: Run focused tests and commit**
+- [ ] **Step 4: Run the integration test**
 
 ```bash
 yarn workspace @deadlock-live-probe/api test --runTestsByPath test/strategy-first-transaction-plan-v1.integration.spec.ts
-git add apps/api/src/statlocker-adaptive/strategy-first-adaptive-planner-facade-v1.service.ts apps/api/src/statlocker-adaptive/strategy-first-legacy-planner-adapter-v1.service.ts apps/api/test
-git commit -m "feat(adaptive): persist plan session across recommendation ticks"
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add apps/api/src/statlocker-adaptive/strategy-first-adaptive-planner-facade-v1.service.ts apps/api/src/statlocker-adaptive/strategy-first-legacy-planner-adapter-v1.service.ts apps/api/test/strategy-first-transaction-plan-v1.integration.spec.ts
+git commit -m "feat(adaptive): preserve transaction plan across recommendation ticks"
 ```
 
 ---
 
-### Task 12: Replace old build diff semantics with transaction-plan diff semantics
+### Task 12: Replace item-list churn diff with stable transaction-plan diff
 
 **Files:**
 - Create: `apps/api/src/statlocker-adaptive/transaction-plan-diff-v1.ts`
@@ -691,31 +883,50 @@ git commit -m "feat(adaptive): persist plan session across recommendation ticks"
 - Modify: `apps/api/src/statlocker-adaptive/strategy-first-adaptive-planner-facade-v1.service.ts`
 
 **Interfaces:**
-- Produces plan changes:
 
-```text
-KEEP_STEP
-COMPLETE_STEP
-INSERT_STEP
-INVALIDATE_STEP
-REPLACE_STEP
-BLOCK_STEP
-UNBLOCK_STEP
+```ts
+export type TransactionPlanChangeTypeV1 =
+  | 'KEEP_STEP'
+  | 'COMPLETE_STEP'
+  | 'INSERT_STEP'
+  | 'INVALIDATE_STEP'
+  | 'REPLACE_STEP'
+  | 'BLOCK_STEP'
+  | 'UNBLOCK_STEP';
+
+export interface TransactionPlanChangeV1 {
+  type: TransactionPlanChangeTypeV1;
+  stepId: string;
+  replacementStepId?: string;
+}
+
+export function diffTransactionPlansV1(
+  previous: AdaptivePlanSessionV1 | undefined,
+  current: AdaptivePlanSessionV1,
+): readonly TransactionPlanChangeV1[];
 ```
 
-Legacy `AdaptiveBuildPlanChangeV1[]` remains derived for older clients.
+- [ ] **Step 1: Write RED status-only diff test**
 
-- [ ] **Step 1: RED tests for stable step diff**
+A step moving `NEXT -> COMPLETED` must be `COMPLETE_STEP`, not delete/insert churn.
 
-A status-only change must not look like build churn.
+- [ ] **Step 2: Write RED suffix replacement test**
 
-- [ ] **Step 2: RED test for one replacement suffix change**
+Unchanged prefix emits `KEEP_STEP`; only changed suffix emits replacement/insertion/invalidation.
 
-Only the affected step/suffix changes.
+- [ ] **Step 3: Implement transaction diff**
 
-- [ ] **Step 3: Implement plan diff and legacy projection**
+Keep legacy `AdaptiveBuildPlanChangeV1[]` derived separately from projected `recommendedBuild[]` until old clients are retired.
 
-- [ ] **Step 4: Run tests and commit**
+- [ ] **Step 4: Run tests**
+
+```bash
+yarn workspace @deadlock-live-probe/api test --runTestsByPath test/transaction-plan-diff-v1.spec.ts
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
 
 ```bash
 git add apps/api/src/statlocker-adaptive/transaction-plan-diff-v1.ts apps/api/src/statlocker-adaptive/strategy-first-adaptive-planner-facade-v1.service.ts apps/api/test/transaction-plan-diff-v1.spec.ts
@@ -733,25 +944,35 @@ git commit -m "feat(adaptive): diff stable transaction plan steps"
 - Modify: `apps/api/src/statlocker-adaptive/adaptive-planner-serving-router-v1.service.ts`
 
 **Interfaces:**
-- Hard checks:
 
-```text
-FUTURE_TARGET_WITHOUT_STEP
-PROJECTED_SLOT_VIOLATION
-REPLACE_WITHOUT_VALIDATED_BUY
-NEXT_STEP_MISMATCH
-NEXT_NOT_EXECUTABLE
-UNKNOWN_SLOT_PATH
-COMPATIBILITY_PROJECTION_DIVERGENCE
+```ts
+export type TransactionPlanInvariantCodeV1 =
+  | 'FUTURE_TARGET_WITHOUT_STEP'
+  | 'PROJECTED_SLOT_VIOLATION'
+  | 'REPLACE_WITHOUT_VALIDATED_BUY'
+  | 'NEXT_STEP_MISMATCH'
+  | 'NEXT_NOT_EXECUTABLE'
+  | 'UNKNOWN_SLOT_PATH'
+  | 'COMPATIBILITY_PROJECTION_DIVERGENCE';
+
+export interface TransactionPlanInvariantCheckV1 {
+  valid: boolean;
+  violations: readonly {
+    code: TransactionPlanInvariantCodeV1;
+    stepId?: string;
+  }[];
+}
 ```
 
-- [ ] **Step 1: Add RED invariant tests**
+- [ ] **Step 1: Write RED invariant tests**
 
-- [ ] **Step 2: Implement fail-closed check**
+Create one failing fixture for each invariant code.
 
-A transaction-first serving result that fails an invariant may not be promoted; serving router uses explicitly marked safe fallback.
+- [ ] **Step 2: Implement the invariant checker**
 
-- [ ] **Step 3: Add observability counters/log payloads**
+A strategy-first transaction result that fails a hard invariant must not be promoted as transaction-first serving.
+
+- [ ] **Step 3: Add observability fields**
 
 Record:
 
@@ -759,116 +980,137 @@ Record:
 planSessionId
 revision
 preservedPrefixLength
-step churn
-replacement pairs
-blocked reasons
-projected slots before/after
-validation status
+inserted/completed/invalidated step counts
+replacement pair count
+first barrier reason
+projected slot usage before/after
+validator result
 ```
 
-- [ ] **Step 4: Run tests and commit**
+- [ ] **Step 4: Run tests**
 
 ```bash
 yarn workspace @deadlock-live-probe/api test --runTestsByPath test/transaction-plan-invariants-v1.spec.ts
-git add apps/api/src/statlocker-adaptive apps/api/test/transaction-plan-invariants-v1.spec.ts
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add apps/api/src/statlocker-adaptive/transaction-plan-invariants-v1.ts apps/api/src/statlocker-adaptive/adaptive-recommendation-observability-v1.service.ts apps/api/src/statlocker-adaptive/adaptive-planner-serving-router-v1.service.ts apps/api/test/transaction-plan-invariants-v1.spec.ts
 git commit -m "feat(adaptive): enforce transaction plan serving invariants"
 ```
 
 ---
 
-### Task 14: Make the Overwolf presentation transaction-first
+### Task 14: Render transaction semantics in Overwolf
 
 **Files:**
 - Modify: `apps/overwolf-client/src/adaptive-recommendation-presentation.ts`
 - Modify: `apps/overwolf-client/src/adaptive-recommendation-presentation.spec.ts`
-- Modify: actual desktop/overlay rendering files that consume the presentation rows, discovered from imports of `adaptive-recommendation-presentation.ts`.
+- Modify: `apps/overwolf-client/src/ui.ts`
 
 **Interfaces:**
-- Presentation row must include:
+
+Extend the presentation model with a transaction-row shape containing:
 
 ```ts
-{
+export interface AdaptivePresentedPlanStep {
   stepId: string;
   state: string;
-  primaryItemId?: number;
   actionType?: 'BUY' | 'UPGRADE' | 'SELL_AND_BUY';
+  primaryItemId?: number;
   sellItemId?: number;
-  consumedItemIds?: readonly number[];
+  consumedItemIds: readonly number[];
   barrierType?: 'WAIT_FOR_GOLD' | 'WAIT_FOR_FLEX' | 'WAIT_FOR_SHOP' | 'WAIT_FOR_PREREQUISITE';
   reasonCodes: readonly string[];
 }
 ```
 
-- [ ] **Step 1: RED presentation test for `SELL_AND_BUY`**
+- [ ] **Step 1: Write RED presentation test for `SELL_AND_BUY`**
 
-The rendered model must contain both sell and buy item identities.
-
-Expected user semantics:
+Presentation must retain both IDs and produce semantics equivalent to:
 
 ```text
 Buy Mystic Expansion
 Sell Extra Regen before purchase
 ```
 
-- [ ] **Step 2: RED presentation test for `UPGRADE`**
+- [ ] **Step 2: Write RED presentation test for `UPGRADE`**
 
-Do not make an upgrade look like a new independent slot purchase.
+Upgrade must render as component -> target, not as an independent new-slot purchase.
 
-- [ ] **Step 3: RED presentation test for `WAIT_FOR_FLEX`**
+- [ ] **Step 3: Write RED presentation test for `WAIT_FOR_FLEX`**
 
-Blocked future step remains visible with its requirement.
+Blocked target remains visible with required/current flex information.
 
-- [ ] **Step 4: Implement transaction-first presentation**
+- [ ] **Step 4: Implement plan-session-first presentation**
 
-The client never decides what to sell. It only renders structured server output.
+`buildAdaptiveRecommendationPresentation()` uses `data.planSession` when present. `ui.ts` renders the structured step. The client never chooses or infers `sellItemId`.
 
-- [ ] **Step 5: Keep legacy fallback path explicit**
+- [ ] **Step 5: Keep legacy fallback explicit**
 
-If `planSession` is absent, old presentation may still render `recommendedBuild`, but mark it internally as legacy/fallback and do not synthesize replacement annotations.
+If `planSession` is absent, render existing `recommendedBuild` unchanged. Do not synthesize sale/upgrade annotations.
 
-- [ ] **Step 6: Run Overwolf tests/build and commit**
+- [ ] **Step 6: Run Overwolf tests**
 
 ```bash
-yarn workspace @deadlock-live-probe/overwolf-client test
+yarn workspace @deadlock-live-probe/overwolf-client test --runTestsByPath src/adaptive-recommendation-presentation.spec.ts
+```
+
+Expected: PASS.
+
+- [ ] **Step 7: Run Overwolf build**
+
+```bash
 yarn workspace @deadlock-live-probe/overwolf-client build
-git add apps/overwolf-client
+```
+
+Expected: PASS.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add apps/overwolf-client/src/adaptive-recommendation-presentation.ts apps/overwolf-client/src/adaptive-recommendation-presentation.spec.ts apps/overwolf-client/src/ui.ts
 git commit -m "feat(overwolf): render transaction-first build path"
 ```
 
 ---
 
-### Task 15: Close the original full-slot regression and add golden replay cases
+### Task 15: Close the full-slot regression and add golden transaction replays
 
 **Files:**
 - Modify: `apps/api/test/transaction-plan-full-slot-regression.spec.ts`
-- Modify/create: relevant adaptive replay fixture/spec files under `apps/api/test/`.
+- Modify: `apps/api/test/strategy-first-transaction-plan-v1.integration.spec.ts`
+- Modify: `apps/api/test/transaction-plan-validator-v1.spec.ts`
 
 **Interfaces:**
-- Golden cases:
+- Golden cases are test data only; no new production interface.
+
+- [ ] **Step 1: Convert Task 1 RED assertions to GREEN**
+
+- [ ] **Step 2: Add these golden cases**
 
 ```text
-1.  full slots -> SELL_AND_BUY
-2.  full slots -> upgrade compression -> later BUY
-3.  full slots -> WAIT_FOR_FLEX -> BUY
-4.  full slots -> no legal exit -> REPLAN_REQUIRED
-5.  replacement candidate unaffordable until refund+wallet threshold -> WAIT_FOR_GOLD then SELL_AND_BUY
-6.  unknown sell transition -> never replace
-7.  committed branch item cannot be sold for unrelated target
-8.  satisfied hard goal item cannot be silently sacrificed
-9.  recently purchased item resists churn
-10. player manually buys planned item -> step completes, suffix preserved
-11. player manually buys alternate valid branch -> affected suffix replans
+1. full slots -> SELL_AND_BUY
+2. full slots -> upgrade compression -> later BUY
+3. full slots -> WAIT_FOR_FLEX -> BUY
+4. full slots -> no legal exit -> REPLAN_REQUIRED
+5. replacement currently unaffordable -> WAIT_FOR_GOLD -> SELL_AND_BUY
+6. unknown sell transition -> no replacement
+7. committed branch evidence cannot be sold for unrelated target
+8. satisfied hard-goal item cannot be silently sacrificed
+9. recent purchase resists churn
+10. manual purchase completes existing step and preserves suffix
+11. manual alternate branch purchase replans affected suffix
 12. upgrade descendant satisfies lower target without duplicate BUY
-13. leading barrier -> HOLD while build remains IN_PROGRESS/WAITING
-14. no semantic change -> same session and stable step IDs
-15. strategy switch -> new session
+13. leading barrier -> HOLD while build remains WAITING/IN_PROGRESS
+14. unchanged semantics -> same session and stable step IDs
+15. strategy switch -> new plan session
 ```
 
-- [ ] **Step 1: Convert Task 1 regressions from RED to GREEN assertions**
-
-- [ ] **Step 2: Add all golden cases**
-
-- [ ] **Step 3: Add aggregate replay assertions**
+- [ ] **Step 3: Add aggregate zero-tolerance assertions**
 
 ```text
 futureTargetWithoutStepRate = 0
@@ -879,7 +1121,7 @@ nextStepMismatchRate = 0
 clientInferredReplacementRate = 0
 ```
 
-- [ ] **Step 4: Run focused replay suite**
+- [ ] **Step 4: Run the focused golden suite**
 
 ```bash
 yarn workspace @deadlock-live-probe/api test --runTestsByPath \
@@ -888,65 +1130,70 @@ yarn workspace @deadlock-live-probe/api test --runTestsByPath \
   test/transaction-plan-validator-v1.spec.ts
 ```
 
+Expected: PASS.
+
 - [ ] **Step 5: Commit**
 
 ```bash
-git add apps/api/test
+git add apps/api/test/transaction-plan-full-slot-regression.spec.ts apps/api/test/strategy-first-transaction-plan-v1.integration.spec.ts apps/api/test/transaction-plan-validator-v1.spec.ts
 git commit -m "test(adaptive): gate transaction-first slot planning"
 ```
 
 ---
 
-### Task 16: Add shadow comparison before source-of-truth cutover
+### Task 16: Add a transaction-specific shadow promotion gate
 
 **Files:**
 - Modify: `apps/api/src/statlocker-adaptive/adaptive-planner-serving-router-v1.service.ts`
 - Modify: `apps/api/src/statlocker-adaptive/strategy-first-promotion-gate-v1.service.ts`
-- Modify: related serving-router/promotion tests.
+- Create: `apps/api/test/transaction-plan-serving-shadow-v1.spec.ts`
 
 **Interfaces:**
-- Compare:
 
-```text
-legacy/flat target path
-vs
-transaction-first planSession
+Add a transaction-plan rollout mode with exactly these values:
+
+```ts
+export type TransactionPlanServingModeV1 = 'FLAT_COMPAT' | 'TRANSACTION_SHADOW' | 'TRANSACTION_PRIMARY';
 ```
 
-Diagnostics:
+- [ ] **Step 1: Write RED shadow test**
+
+In `TRANSACTION_SHADOW`, generate/validate/log `planSession` but return the currently configured user-visible path unchanged.
+
+- [ ] **Step 2: Write RED promotion-block test**
+
+Any hard transaction invariant blocks `TRANSACTION_PRIMARY` and increments the promotion-block diagnostic.
+
+- [ ] **Step 3: Implement transaction-specific mode**
+
+Do not reuse strategy-first-vs-legacy mode as a proxy; the two rollouts solve different risks.
+
+- [ ] **Step 4: Add shadow comparison diagnostics**
+
+Record:
 
 ```text
 next action agreement
 future target agreement
 replacement requirement disagreement
-blocked future step count
-plan reachability
+barrier count
+plan validation
 step churn
 slot projection violations
 ```
 
-- [ ] **Step 1: Add a `TRANSACTION_SHADOW` serving mode or equivalent promotion gate**
-
-Do not conflate it with strategy-first-vs-legacy shadow; strategy-first is already a separate concern.
-
-- [ ] **Step 2: Ensure shadow generation cannot mutate the shown recommendation**
-
-- [ ] **Step 3: Gate promotion on zero hard invariants**
-
-Required before user-facing cutover:
-
-```text
-projectedSlotViolationRate = 0
-futureTargetWithoutStepRate = 0
-replaceWithoutValidatedBuyRate = 0
-nextStepMismatchRate = 0
-transactionPlanValidationFailureRate = 0
-```
-
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Run tests**
 
 ```bash
-git add apps/api/src/statlocker-adaptive apps/api/test
+yarn workspace @deadlock-live-probe/api test --runTestsByPath test/transaction-plan-serving-shadow-v1.spec.ts
+```
+
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add apps/api/src/statlocker-adaptive/adaptive-planner-serving-router-v1.service.ts apps/api/src/statlocker-adaptive/strategy-first-promotion-gate-v1.service.ts apps/api/test/transaction-plan-serving-shadow-v1.spec.ts
 git commit -m "feat(adaptive): shadow transaction-first plan serving"
 ```
 
@@ -958,25 +1205,25 @@ git commit -m "feat(adaptive): shadow transaction-first plan serving"
 - Modify: `apps/api/src/statlocker-adaptive/strategy-first-build-planner-v1.service.ts`
 - Modify: `apps/api/src/statlocker-adaptive/strategy-first-adaptive-planner-facade-v1.service.ts`
 - Modify: `apps/api/src/statlocker-adaptive/adaptive-planner-serving-router-v1.service.ts`
-- Modify: relevant tests.
+- Modify: `apps/api/test/strategy-first-transaction-plan-v1.integration.spec.ts`
 
 **Interfaces:**
-- `planSession` is mandatory for promoted strategy-first results.
-- `recommendedBuild` is always produced by `recommendedBuildFromPlanSessionV1()`.
+- Promoted strategy-first results require a valid `planSession`.
+- `recommendedBuild` always comes from `recommendedBuildFromPlanSessionV1()`.
 
-- [ ] **Step 1: Delete/disable direct `buildRecommendedBuild()` use**
+- [ ] **Step 1: Remove direct `buildRecommendedBuild()` authority**
 
-No code path may append strategy goal targets directly to the UI build list.
+Delete the code path that iterates unresolved strategy goals and directly appends bare item rows to `recommendedBuild`.
 
-- [ ] **Step 2: Make compatibility projection one-way**
+- [ ] **Step 2: Remove previous flat-build transaction inference**
 
-Planner never reads `recommendedBuild` to infer sell/upgrade/slot semantics. It may only use previous `planSession` for plan continuity.
+`previousRecommendedBuild` may remain temporarily for legacy UI diff only. It must not influence sell/upgrade/slot transition reconstruction.
 
 - [ ] **Step 3: Preserve emergency legacy fallback explicitly**
 
-If the serving router falls back to the old planner, `planSession` is absent and diagnostics mark `LEGACY_FLAT_PLAN_FALLBACK`.
+A router-level legacy fallback has no `planSession` and logs `LEGACY_FLAT_PLAN_FALLBACK`.
 
-- [ ] **Step 4: Run full API/shared/Overwolf verification**
+- [ ] **Step 4: Run full shared/API/Overwolf verification**
 
 ```bash
 yarn workspace @deadlock-live-probe/shared test
@@ -997,51 +1244,52 @@ git commit -m "feat(adaptive): promote transaction-first plan source of truth"
 
 ---
 
-### Task 18: Production evidence gate for the exact observed bug class
+### Task 18: Verify the exact bug class on production/shadow decisions
 
 **Files:**
-- Modify: existing recommendation diagnostics/replay workflow if needed.
-- No model training.
+- Modify: `apps/api/src/statlocker-adaptive/adaptive-recommendation-observability-v1.service.ts` only if the required evidence is not already emitted by Task 13.
+- Modify: existing recommendation diagnostics workflow only if it cannot currently export the Task 13 fields.
 
 **Interfaces:**
-- Collect read-only production/shadow evidence for full/near-full inventory decisions.
-
-- [ ] **Step 1: Capture decisions where `itemCount >= base slot capacity` or flex is used**
-
-For each, persist:
+- No new recommendation behavior.
+- Evidence record for each slot-pressure decision must include:
 
 ```text
 exact current inventory
-exact slot state
-planSession revision
-future transaction steps
-replacement pairs
-barrier steps
+slot capacity and unlocked flex evidence
+planSessionId + revision
+transaction/barrier steps
+SELL_AND_BUY pairs
 nextAction
-projected slot state per step
+projected slot state per transaction
+transaction-plan validation result
 ```
 
-- [ ] **Step 2: Verify the screenshot-class condition cannot occur**
+- [ ] **Step 1: Run transaction shadow on real decisions with slot pressure**
 
-Forbidden evidence pattern:
+Select decisions where current category overflow/flex usage or full base capacity makes slot reasoning relevant.
+
+- [ ] **Step 2: Check the forbidden production pattern**
+
+There must be zero decisions satisfying:
 
 ```text
 future purchase target displayed
-AND no free projected slot
-AND no preceding UPGRADE/SELL_AND_BUY/WAIT_FOR_FLEX path
+AND projected capacity unavailable
+AND no preceding UPGRADE / SELL_AND_BUY / WAIT_FOR_FLEX path
 ```
 
-- [ ] **Step 3: Require a production window with zero hard violations before retiring fallback**
+- [ ] **Step 3: Record actual sample counts and zero-tolerance results in release evidence**
 
-Do not invent a traffic count in code. Record the observed decision count and use the existing release review to approve the cutover only after meaningful slot-pressure coverage exists.
+Do not hardcode an invented traffic count. Promotion review uses the observed sample and requires meaningful slot-pressure coverage.
 
-- [ ] **Step 4: Document release evidence in the PR/release ledger**
+- [ ] **Step 4: Promote to `TRANSACTION_PRIMARY` only after all hard gates remain zero**
 
 ---
 
 ## Release gates
 
-### Correctness gates
+### Correctness
 
 ```text
 futureTargetWithoutStepRate = 0
@@ -1053,7 +1301,7 @@ unknownSlotPathServedRate = 0
 clientInferredReplacementRate = 0
 ```
 
-### Continuity gates
+### Continuity
 
 ```text
 unchangedSemanticPlanStepChurnRate = 0
@@ -1061,7 +1309,7 @@ fullRebuildWithoutStrategyOrGoalChangeRate = 0
 completedStepIdentityLossRate = 0
 ```
 
-### Composite replacement gates
+### Composite replacement
 
 ```text
 nakedSlotReleaseSellRate = 0
@@ -1070,12 +1318,12 @@ replacementBreaksCommittedBranchRate = 0
 replacementFinalSlotViolationRate = 0
 ```
 
-### UI gates
+### UI
 
 ```text
-SELL_AND_BUY always names sold + bought item
-UPGRADE is rendered as upgrade, not independent new-slot BUY
-blocked future targets always show the barrier reason
+SELL_AND_BUY always exposes sold + bought item
+UPGRADE renders as upgrade, not independent new-slot BUY
+blocked future targets render their barrier reason
 legacy fallback never invents replacement annotations
 ```
 
@@ -1083,30 +1331,29 @@ legacy fallback never invents replacement annotations
 
 ## PR sequence
 
-Recommended implementation sequence to keep reviews small:
-
 ```text
-PR A - Shared contract + RED production regression
-PR B - Step semantics + compiler + barriers
-PR C - Validator + reconciler + persistent PlanSession
-PR D - Strategy planner integration + replacement correctness
-PR E - Projection + facade/adapter + invariants/observability
-PR F - Overwolf transaction presentation
-PR G - Golden replay + shadow promotion gate
-PR H - Source-of-truth cutover + release evidence
+PR A - RED production regression + shared contract
+PR B - Step identity + compiler + barriers
+PR C - Atomic replacement + validator
+PR D - Reconciler + persistent PlanSession
+PR E - Projection + strategy planner/facade integration
+PR F - Diff + invariants + observability
+PR G - Overwolf transaction presentation
+PR H - Golden replay + transaction shadow gate
+PR I - Source-of-truth cutover + production evidence
 ```
 
-Each PR is stacked or merged only after its own focused tests are green. Do not combine UI cutover with the first planner-domain changes.
+Each PR must have its focused tests green before the next PR is merged or stacked for review.
 
 ## What not to do
 
-- Do not solve this by adding `sellItemId` annotations to `AdaptivePlannedItemV1` while leaving flat items authoritative.
-- Do not let the UI choose a sell target.
-- Do not generate `SELL` now and hope the later `BUY` remains stable after replanning.
+- Do not merely add `sellItemId` annotations to `AdaptivePlannedItemV1` while leaving flat items authoritative.
+- Do not let Overwolf choose a sell target.
+- Do not emit standalone SELL now and hope the later BUY remains stable after replanning.
 - Do not assume all four flex slots are unlocked because `maxFlexSlots = 4`.
 - Do not hide unreachable future goals by silently dropping slot diagnostics.
-- Do not use a larger ML model to infer slot legality.
-- Do not rewrite archetype mining or BuildStrategySpec in this change.
+- Do not use ML to infer slot legality.
+- Do not rewrite archetype mining, BuildStrategySpec, or Behavioral/Value models in this roadmap.
 
 ## Final target state
 
@@ -1116,11 +1363,11 @@ Strategy
   -> PlanSession
        step 1 UPGRADE A -> B          COMPLETED
        step 2 SELL_AND_BUY C -> D     NEXT
-       step 3 WAIT_FOR_FLEX D2        BLOCKED
-       step 4 BUY D2                  LOCKED
-  -> nextAction = step 2
-  -> recommendedBuild = compatibility projection
-  -> UI renders exact transaction semantics
+       step 3 WAIT_FOR_FLEX E         BLOCKED
+       step 4 BUY E                   LOCKED
+  -> nextAction = step 2 transaction
+  -> recommendedBuild = one-way compatibility projection
+  -> Overwolf renders exact transaction semantics
 ```
 
-The bug class is closed only when a future item can no longer exist in user-visible Build Path without a replayable transaction/barrier path that explains where its slot comes from.
+The bug class is closed only when a future item can no longer exist in the user-visible Build Path without a replayable transaction/barrier path explaining exactly where its slot comes from.
