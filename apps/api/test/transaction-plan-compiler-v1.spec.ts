@@ -1,0 +1,187 @@
+import {
+  RecommendationItemDefinition,
+  buildInventoryInstancesForRecommendation,
+  createRecommendationItemGraph,
+  generateRecommendationCandidates,
+  observedFact,
+  unknownFact,
+} from '@deadlock-live-probe/build-domain';
+import { AdaptiveDecisionStateV1 } from '../src/statlocker-adaptive/adaptive-decision-state-v1.service';
+import { candidateGeneratorRulesFromSlotStateV1, deriveAdaptiveSlotStateV1, unknownAdaptiveInvestmentStateV1 } from '../src/statlocker-adaptive/adaptive-economy-v1';
+import { BuildContractV1, BuildSlotPlanV1, BuildStrategySpecV1 } from '../src/statlocker-adaptive/build-strategy-v1';
+import { TransactionPlanCompilerV1Service } from '../src/statlocker-adaptive/transaction-plan-compiler-v1.service';
+
+const catalogSha256 = 'c'.repeat(64);
+const items: RecommendationItemDefinition[] = [
+  {
+    itemId: 101, name: 'Component', slotType: 'weapon', active: false, availableRulesetIds: ['r1'],
+    directPurchaseCost: 500, upgradeRecipes: [], sellTransition: { soulsRefund: 250, returnedItemIds: [] }, maxCopies: 1,
+  },
+  {
+    itemId: 202, name: 'Target', slotType: 'weapon', active: false, availableRulesetIds: ['r1'],
+    directPurchaseCost: 1200,
+    upgradeRecipes: [{ recipeId: 'upgrade-202', consumedItemIds: [101], soulsCost: 700 }],
+    sellTransition: { soulsRefund: 600, returnedItemIds: [] }, maxCopies: 1,
+  },
+  ...[102, 103, 104].map((itemId): RecommendationItemDefinition => ({
+    itemId, name: `Core ${itemId}`, slotType: 'weapon', active: false, availableRulesetIds: ['r1'],
+    directPurchaseCost: 500, upgradeRecipes: [], maxCopies: 1,
+  })),
+];
+const graph = createRecommendationItemGraph(items);
+const slotRules = { baseSlots: 12, baseSlotsByType: { weapon: 4, vitality: 4, spirit: 4 } as const, maxFlexSlots: 4, maxActiveItems: 4 };
+
+function decision(
+  ownedItemIds: readonly number[],
+  souls: number | undefined,
+  unlockedFlexSlots: number | undefined = 0,
+  shop: 'AVAILABLE' | 'UNAVAILABLE' = 'AVAILABLE',
+): AdaptiveDecisionStateV1 {
+  const held = buildInventoryInstancesForRecommendation(ownedItemIds, graph);
+  const evidence = unlockedFlexSlots === undefined ? 'UNKNOWN' as const : 'OBSERVED' as const;
+  return {
+    state: {
+      decisionId: 'd', matchId: 'm', playerSlot: 0, gameTimeSec: 1000, rulesetId: 'r1', heroId: 1,
+      inventory: {
+        initializedFromSnapshot: true,
+        heldByItemId: held,
+        lifecycleCountByItemId: new Map(ownedItemIds.map((itemId) => [itemId, 1])),
+        nextInstanceSequence: held.size + 1,
+      },
+      economy: {
+        spendableSouls: souls === undefined ? unknownFact('test') : observedFact(souls, 'test'),
+        shopOpportunity: observedFact(shop, 'test'),
+      },
+    },
+    itemGraph: graph,
+    catalogVersionId: 'catalog', catalogSha256, rulesetId: 'r1', localSteamId: 'p',
+    allyHeroIds: [], enemyHeroIds: [], allyItemIds: [], enemyItemIds: [],
+    slots: deriveAdaptiveSlotStateV1(ownedItemIds, graph, slotRules, { unlockedFlexSlots, evidence }),
+    investment: unknownAdaptiveInvestmentStateV1(), economyRulesEvidence: 'UNKNOWN', stateRevision: 'revision',
+  };
+}
+
+function strategy(lifecycle: 'PERMANENT_CORE' | 'REPLACEMENT_TARGET' = 'PERMANENT_CORE'): BuildStrategySpecV1 {
+  return {
+    schemaVersion: 1, strategyId: 's', heroId: 1, rulesetId: 'r1', sourcePatchId: 'p', support: 1, stability: 1,
+    representativeTraceId: 'trace',
+    goals: [{
+      goalId: 'target', type: 'CORE', phase: 'LATE', targetItemIds: [202], minSelect: 1, maxSelect: 1,
+      prerequisiteGoalIds: [], hard: true, lifecycleByItemId: { 202: lifecycle }, rationaleCodes: ['CORE'],
+    }],
+    branchGroups: [], situationalWindows: [],
+    investmentPolicy: { objectives: [], preferredWeights: { weapon: 1, vitality: 0, spirit: 0 } },
+    slotPolicy: { reservedSituationalSlots: 0, maxTemporarySlots: 1 },
+    terminalPolicy: { requiredGoalIds: ['target'], allowWaiveSoftGoals: true },
+  };
+}
+
+function contract(temporaryItemIds: readonly number[] = []): BuildContractV1 {
+  return {
+    strategyId: 's', status: 'IN_PROGRESS', commitment: 'COMMITTED', currentGoalId: 'target',
+    goalStates: { target: 'ACTIVE' }, selectedBranches: {}, committedBranches: {}, temporaryItemIds,
+    reservedSituationalWindowIds: [], remainingHardGoalIds: ['target'], completionReasonCodes: [],
+  };
+}
+
+function slotPlan(requirement: BuildSlotPlanV1['futureTransitions'][number]['requirement'], sourceItemId?: number, requiredUnlockedFlexSlots?: number): BuildSlotPlanV1 {
+  return {
+    currentUsedSlots: 4, currentFlexUsed: 0, unlockedFlexSlots: 0, reservedSituationalSlots: 0, feasible: requirement !== 'BLOCKED',
+    reasonCodes: [],
+    futureTransitions: [{
+      targetGoalId: 'target', targetItemId: 202, requirement, sourceItemId, requiredUnlockedFlexSlots, reasonCodes: [],
+    }],
+  };
+}
+
+function candidatesFor(value: AdaptiveDecisionStateV1) {
+  return generateRecommendationCandidates({
+    state: value.state,
+    itemGraph: graph,
+    rules: candidateGeneratorRulesFromSlotStateV1(value.slots),
+  });
+}
+
+describe('transaction plan compiler v1', () => {
+  const compiler = new TransactionPlanCompilerV1Service();
+
+  it('maps BUY_ITEM to BUY', () => {
+    const d = decision([], 5000);
+    const buy = candidatesFor(d).find((candidate) => candidate.action.type === 'BUY_ITEM' && candidate.action.itemId === 202)!;
+    const result = compiler.compile({ strategy: strategy(), contract: contract(), slotPlan: slotPlan('NONE'), decision: d, selectedCandidates: [buy] });
+    expect(result.reachable).toBe(true);
+    expect(result.steps[0]).toMatchObject({ kind: 'TRANSACTION', action: { type: 'BUY', buyItemId: 202 } });
+  });
+
+  it('maps UPGRADE_ITEM to UPGRADE with consumed components', () => {
+    const d = decision([101], 5000);
+    const upgrade = candidatesFor(d).find((candidate) => candidate.action.type === 'UPGRADE_ITEM' && candidate.action.itemId === 202)!;
+    const result = compiler.compile({ strategy: strategy(), contract: contract(), slotPlan: slotPlan('UPGRADE', 101), decision: d, selectedCandidates: [upgrade] });
+    expect(result.steps[0]).toMatchObject({
+      kind: 'TRANSACTION',
+      action: { type: 'UPGRADE', buyItemId: 202, consumedItemIds: [101], recipeId: 'upgrade-202' },
+    });
+  });
+
+  it('maps REPLACE_ITEM to one SELL_AND_BUY step and preserves both ids', () => {
+    const d = decision([101, 102, 103, 104], 5000);
+    const replace = candidatesFor(d).find((candidate) =>
+      candidate.action.type === 'REPLACE_ITEM' && candidate.action.sellItemId === 101 && candidate.action.buyItemId === 202,
+    )!;
+    const result = compiler.compile({ strategy: strategy('REPLACEMENT_TARGET'), contract: contract([101]), slotPlan: slotPlan('SELL_TEMPORARY', 101), decision: d, selectedCandidates: [replace] });
+    expect(result.steps[0]).toMatchObject({
+      kind: 'TRANSACTION',
+      action: { type: 'SELL_AND_BUY', sellItemId: 101, buyItemId: 202 },
+    });
+  });
+
+  it('never exposes a standalone SELL_ITEM as a transaction plan step', () => {
+    const d = decision([101], 5000);
+    const sell = candidatesFor(d).find((candidate) => candidate.action.type === 'SELL_ITEM' && candidate.action.itemId === 101)!;
+    const result = compiler.compile({ strategy: strategy(), contract: contract([101]), slotPlan: slotPlan('SELL_TEMPORARY', 101), decision: d, selectedCandidates: [sell] });
+    expect(result.steps.some((step) => step.kind === 'TRANSACTION' && step.action?.type === 'SELL_AND_BUY')).toBe(false);
+    expect(result.steps.some((step) => step.kind === 'TRANSACTION')).toBe(false);
+  });
+
+  it('creates WAIT_FOR_GOLD and a locked transaction when exact funds are insufficient', () => {
+    const d = decision([], 500);
+    const result = compiler.compile({ strategy: strategy(), contract: contract(), slotPlan: slotPlan('NONE'), decision: d, selectedCandidates: [] });
+    expect(result.reachable).toBe(true);
+    expect(result.steps[0]).toMatchObject({ kind: 'BARRIER', barrier: { type: 'WAIT_FOR_GOLD', targetItemId: 202, requiredSouls: 1200 } });
+    expect(result.steps[1]).toMatchObject({ kind: 'TRANSACTION', action: { type: 'BUY', buyItemId: 202 } });
+  });
+
+  it('uses post-refund required souls for an unaffordable replacement', () => {
+    const d = decision([101, 102, 103, 104], 500);
+    const result = compiler.compile({ strategy: strategy('REPLACEMENT_TARGET'), contract: contract([101]), slotPlan: slotPlan('SELL_TEMPORARY', 101), decision: d, selectedCandidates: [] });
+    expect(result.steps[0]).toMatchObject({ kind: 'BARRIER', barrier: { type: 'WAIT_FOR_GOLD', targetItemId: 202, requiredSouls: 950 } });
+    expect(result.steps[1]).toMatchObject({ kind: 'TRANSACTION', action: { type: 'SELL_AND_BUY', sellItemId: 101, buyItemId: 202 } });
+  });
+
+  it('creates WAIT_FOR_SHOP only when shop unavailability is known', () => {
+    const d = decision([], 5000, 0, 'UNAVAILABLE');
+    const result = compiler.compile({ strategy: strategy(), contract: contract(), slotPlan: slotPlan('NONE'), decision: d, selectedCandidates: [] });
+    expect(result.steps[0]).toMatchObject({ kind: 'BARRIER', barrier: { type: 'WAIT_FOR_SHOP', targetItemId: 202 } });
+  });
+
+  it('creates WAIT_FOR_FLEX for a known future flex threshold', () => {
+    const d = decision([101, 102, 103, 104], 5000, 0);
+    const result = compiler.compile({ strategy: strategy(), contract: contract(), slotPlan: slotPlan('FLEX_UNLOCK', undefined, 1), decision: d, selectedCandidates: [] });
+    expect(result.steps[0]).toMatchObject({ kind: 'BARRIER', barrier: { type: 'WAIT_FOR_FLEX', targetItemId: 202, requiredUnlockedFlexSlots: 1 } });
+  });
+
+  it('fails closed instead of inventing barriers for unknown wallet or flex capacity', () => {
+    const unknownWallet = decision([], undefined, 0);
+    const walletResult = compiler.compile({ strategy: strategy(), contract: contract(), slotPlan: slotPlan('NONE'), decision: unknownWallet, selectedCandidates: [] });
+    expect(walletResult.reachable).toBe(false);
+
+    const unknownFlex = decision([101, 102, 103, 104], 5000, undefined);
+    const flexResult = compiler.compile({
+      strategy: strategy(), contract: contract(),
+      slotPlan: { ...slotPlan('FLEX_UNLOCK', undefined, 1), unlockedFlexSlots: undefined },
+      decision: unknownFlex, selectedCandidates: [],
+    });
+    expect(flexResult.reachable).toBe(false);
+    expect(flexResult.steps.some((step) => step.barrier?.type === 'WAIT_FOR_FLEX')).toBe(false);
+  });
+});
