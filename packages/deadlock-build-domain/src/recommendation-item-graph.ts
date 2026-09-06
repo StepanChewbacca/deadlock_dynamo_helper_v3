@@ -1,4 +1,7 @@
-import { RecommendationItemDefinition } from './recommendation-action-domain';
+import {
+  ItemUpgradeRecipe,
+  RecommendationItemDefinition,
+} from './recommendation-action-domain';
 
 export interface RecommendationItemLineageEdge {
   parentItemId: number;
@@ -8,6 +11,7 @@ export interface RecommendationItemLineageEdge {
 export interface RecommendationItemGraph {
   getItem(itemId: number): RecommendationItemDefinition | undefined;
   getAllItems(): readonly RecommendationItemDefinition[];
+  getExecutableUpgradeRecipes(itemId: number): readonly ItemUpgradeRecipe[];
   getDirectComponentIds(itemId: number): readonly number[];
   getDirectUpgradeIds(itemId: number): readonly number[];
   getTransitiveComponentIds(itemId: number): readonly number[];
@@ -115,6 +119,7 @@ export function createRecommendationItemGraph(
   return {
     getItem: (itemId) => byId.get(itemId),
     getAllItems: () => allItems,
+    getExecutableUpgradeRecipes: (itemId) => byId.get(itemId)?.upgradeRecipes ?? [],
     getDirectComponentIds: (itemId) => directComponents.get(itemId) ?? [],
     getDirectUpgradeIds: (itemId) => directUpgrades.get(itemId) ?? [],
     getTransitiveComponentIds: (itemId) => transitiveComponents.get(itemId) ?? [],
