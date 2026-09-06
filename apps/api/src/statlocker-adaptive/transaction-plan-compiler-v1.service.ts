@@ -3,14 +3,15 @@ import {
   RecommendationCandidate,
   RecommendationDecisionState,
   RecommendationFeasibilityReason,
-  reconstructedFact,
   generateRecommendationCandidates,
   projectRecommendationCandidateState,
+  reconstructedFact,
 } from '@deadlock-live-probe/build-domain';
 import {
   AdaptivePlanBarrierV1,
   AdaptivePlanStepBlockReasonV1,
   AdaptivePlanStepV1,
+  AdaptivePlannedTransactionV1,
 } from '@deadlock-live-probe/shared';
 import { AdaptiveDecisionStateV1 } from './adaptive-decision-state-v1.service';
 import {
@@ -67,8 +68,34 @@ export class TransactionPlanCompilerV1Service {
     let state = input.decision.state;
     let slots = input.decision.slots;
     let contract = input.contract;
-    let guard = 0;
 
+    const selectedPrelude = this.selectedPreludeCandidate(input, state, contract);
+    if (selectedPrelude) {
+      const goalId = selectedPreludeGoalId(input, selectedPrelude);
+      const compiledPrelude = this.compileExactCandidate({
+        input,
+        candidate: selectedPrelude,
+        goalId,
+        state,
+        slots,
+        contract,
+        previousStepId: undefined,
+        reasonCodes: ['SELECTED_IMMEDIATE_TRANSACTION'],
+      });
+      if (!compiledPrelude) {
+        return {
+          steps,
+          reachable: false,
+          reasonCodes: ['SELECTED_IMMEDIATE_TRANSACTION_NOT_REPLAYABLE'],
+        };
+      }
+      steps.push(compiledPrelude.step);
+      state = compiledPrelude.state;
+      slots = compiledPrelude.slots;
+      reasonCodes.push('SELECTED_IMMEDIATE_TRANSACTION_COMPILED');
+    }
+
+    let guard = 0;
     while (guard < Math.max(1, input.strategy.goals.length * 3)) {
       guard += 1;
       contract = this.contracts.resolve({
@@ -90,7 +117,7 @@ export class TransactionPlanCompilerV1Service {
         return {
           steps,
           reachable: !unresolved,
-          reasonCodes: unique([...reasonCodes, ...(unresolved ? ['NO_REACHABLE_TRANSACTION_GOAL'] : [])]),
+          reasonCodes: unique([...reasonCodes, ...(unresolved ? ['NO_REACHABLE_TRANSACTION_GOAL'] : ['NO_HARD_ITEM_GOALS_REMAIN'])]),
         };
       }
       const targetItemId = goal.targetItemIds.find((itemId) =>
@@ -111,6 +138,7 @@ export class TransactionPlanCompilerV1Service {
         entry.targetGoalId === goal.goalId && entry.targetItemId === targetItemId,
       );
 
+      const previousStepId = steps.length > 0 ? steps[steps.length - 1].stepId : undefined;
       const compiled = this.compileGoal({
         input,
         goal,
@@ -119,7 +147,7 @@ export class TransactionPlanCompilerV1Service {
         state,
         slots,
         contract,
-        previousStepId: steps.at(-1)?.stepId,
+        previousStepId,
       });
       steps.push(...compiled.steps);
       reasonCodes.push(...compiled.reasonCodes);
@@ -147,6 +175,32 @@ export class TransactionPlanCompilerV1Service {
         ...(unresolved ? ['MANDATORY_GOALS_REMAIN_WITHOUT_COMPILED_PATH'] : ['TRANSACTION_PATH_REACHABLE']),
       ]),
     };
+  }
+
+  private selectedPreludeCandidate(
+    input: CompileTransactionPlanV1Input,
+    state: RecommendationDecisionState,
+    contract: BuildContractV1,
+  ): RecommendationCandidate | undefined {
+    const selected = input.selectedCandidates.find((candidate) =>
+      candidate.feasible &&
+      candidate.recommendationEligible &&
+      candidate.action.type !== 'SELL_ITEM' &&
+      candidate.action.type !== 'WAIT_SAVE' &&
+      transactionForCandidate(candidate) !== undefined,
+    );
+    if (!selected) return undefined;
+    const targetItemId = candidateTargetItemId(selected);
+    if (targetItemId === undefined) return undefined;
+    const currentGoal = input.strategy.goals.find((goal) => goal.goalId === contract.currentGoalId);
+    if (currentGoal?.targetItemIds.some((itemId) =>
+      itemId === targetItemId || input.decision.itemGraph.isComponentAncestor(targetItemId, itemId),
+    )) {
+      return undefined;
+    }
+    const regenerated = this.candidates(state, input.decision.slots, input)
+      .find((candidate) => candidate.actionId === selected.actionId);
+    return regenerated?.feasible && regenerated.recommendationEligible ? regenerated : undefined;
   }
 
   private compileGoal(args: {
@@ -309,23 +363,62 @@ export class TransactionPlanCompilerV1Service {
       };
     }
 
-    const action = transactionForCandidate(preferred);
-    if (!action) {
+    const compiled = this.compileExactCandidate({
+      input: args.input,
+      candidate: preferred,
+      goalId: args.goal.goalId,
+      state,
+      slots,
+      contract: args.contract,
+      previousStepId,
+      reasonCodes: reasons,
+    });
+    if (!compiled) {
       return { steps, state, slots, reachable: false, reasonCodes: unique([...reasons, 'USER_FACING_TRANSACTION_NOT_AVAILABLE']) };
     }
-    const rules = candidateGeneratorRulesFromSlotStateV1(slots);
-    const before = planProjectionFromDecisionStateV1(state, args.input.decision.itemGraph, rules);
-    const nextState = projectRecommendationCandidateState(state, preferred, args.input.decision.itemGraph);
+    steps.push(compiled.step);
+    return {
+      steps,
+      state: compiled.state,
+      slots: compiled.slots,
+      reachable: true,
+      reasonCodes: unique(reasons),
+    };
+  }
+
+  private compileExactCandidate(args: {
+    input: CompileTransactionPlanV1Input;
+    candidate: RecommendationCandidate;
+    goalId: string;
+    state: RecommendationDecisionState;
+    slots: AdaptiveSlotStateV1;
+    contract: BuildContractV1;
+    previousStepId?: string;
+    reasonCodes: readonly string[];
+  }): { step: AdaptivePlanStepV1; state: RecommendationDecisionState; slots: AdaptiveSlotStateV1 } | undefined {
+    const regenerated = this.candidates(args.state, args.slots, args.input)
+      .find((candidate) => candidate.actionId === args.candidate.actionId);
+    if (!regenerated?.feasible || !regenerated.recommendationEligible) return undefined;
+    if (!candidateAllowed(regenerated, args.input, args.goalId, args.contract, args.state)) return undefined;
+    const action = transactionForCandidate(regenerated);
+    if (!action) return undefined;
+
+    const before = planProjectionFromDecisionStateV1(
+      args.state,
+      args.input.decision.itemGraph,
+      candidateGeneratorRulesFromSlotStateV1(args.slots),
+    );
+    const nextState = projectRecommendationCandidateState(args.state, regenerated, args.input.decision.itemGraph);
     const nextSlots = deriveAdaptiveSlotStateV1(
       heldIds(nextState),
       args.input.decision.itemGraph,
       {
-        baseSlots: slots.baseSlots,
-        baseSlotsByType: slots.baseSlotsByType,
-        maxFlexSlots: slots.maxFlexSlots,
-        maxActiveItems: slots.maxActiveItems,
+        baseSlots: args.slots.baseSlots,
+        baseSlotsByType: args.slots.baseSlotsByType,
+        maxFlexSlots: args.slots.maxFlexSlots,
+        maxActiveItems: args.slots.maxActiveItems,
       },
-      { unlockedFlexSlots: slots.unlockedFlexSlots, evidence: slots.evidence },
+      { unlockedFlexSlots: args.slots.unlockedFlexSlots, evidence: args.slots.evidence },
     );
     const after = planProjectionFromDecisionStateV1(
       nextState,
@@ -334,27 +427,30 @@ export class TransactionPlanCompilerV1Service {
     );
     const stepId = transactionPlanStepIdV1({
       strategyId: args.input.strategy.strategyId,
-      goalId: args.goal.goalId,
+      goalId: args.goalId,
       kind: 'TRANSACTION',
       type: action.type,
       targetItemId: action.buyItemId,
       sellItemId: action.type === 'SELL_AND_BUY' ? action.sellItemId : undefined,
       consumedItemIds: action.type === 'UPGRADE' ? action.consumedItemIds : undefined,
-      branchId: branchIdForGoal(args.input.strategy, args.goal.goalId),
+      branchId: branchIdForGoal(args.input.strategy, args.goalId),
     });
-    steps.push({
-      stepId,
-      goalId: args.goal.goalId,
-      kind: 'TRANSACTION',
-      state: steps.length === 0 && !previousStepId ? 'READY' : 'LOCKED',
-      action,
-      prerequisiteStepIds: previousStepId ? [previousStepId] : [],
-      blockingReasons: [],
-      projectedBefore: before,
-      projectedAfter: after,
-      reasonCodes: unique([...reasons, `CANDIDATE:${preferred.actionId}`]),
-    });
-    return { steps, state: nextState, slots: nextSlots, reachable: true, reasonCodes: unique(reasons) };
+    return {
+      step: {
+        stepId,
+        goalId: args.goalId,
+        kind: 'TRANSACTION',
+        state: args.previousStepId ? 'LOCKED' : 'READY',
+        action,
+        prerequisiteStepIds: args.previousStepId ? [args.previousStepId] : [],
+        blockingReasons: [],
+        projectedBefore: before,
+        projectedAfter: after,
+        reasonCodes: unique([...args.reasonCodes, `CANDIDATE:${regenerated.actionId}`]),
+      },
+      state: nextState,
+      slots: nextSlots,
+    };
   }
 
   private candidates(
@@ -385,7 +481,7 @@ export class TransactionPlanCompilerV1Service {
       candidateTargetItemId(candidate) === targetItemId &&
       candidateMatchesTransition(candidate, transition),
     );
-    if (selected && candidateAllowed(selected, input, goal, contract, state)) {
+    if (selected && candidateAllowed(selected, input, goal.goalId, contract, state)) {
       const regenerated = candidates.find((candidate) => candidate.actionId === selected.actionId);
       if (regenerated) return regenerated;
     }
@@ -393,7 +489,7 @@ export class TransactionPlanCompilerV1Service {
     return candidates
       .filter((candidate) => candidateTargetItemId(candidate) === targetItemId)
       .filter((candidate) => candidateMatchesTransition(candidate, transition))
-      .filter((candidate) => candidateAllowed(candidate, input, goal, contract, state))
+      .filter((candidate) => candidateAllowed(candidate, input, goal.goalId, contract, state))
       .sort((a, b) => candidatePreference(a) - candidatePreference(b) || a.actionId.localeCompare(b.actionId))[0];
   }
 
@@ -486,20 +582,36 @@ function nextGoal(
   return candidates[0];
 }
 
+function selectedPreludeGoalId(
+  input: CompileTransactionPlanV1Input,
+  candidate: RecommendationCandidate,
+): string {
+  const targetItemId = candidateTargetItemId(candidate);
+  if (
+    targetItemId !== undefined &&
+    input.contract.activeSituationalDecision?.targetItemId === targetItemId
+  ) {
+    return `situational:${input.contract.activeSituationalDecision.windowId}`;
+  }
+  return `strategic-transaction:${targetItemId ?? candidate.actionId}`;
+}
+
 function candidateAllowed(
   candidate: RecommendationCandidate,
   input: CompileTransactionPlanV1Input,
-  goal: BuildStrategyGoalV1,
+  currentGoalId: string,
   contract: BuildContractV1,
   state: RecommendationDecisionState,
 ): boolean {
   if (!candidate.recommendationEligible) return false;
-  if (candidate.action.type !== 'REPLACE_ITEM') return candidate.action.type !== 'SELL_ITEM' && candidate.action.type !== 'WAIT_SAVE';
+  if (candidate.action.type !== 'REPLACE_ITEM') {
+    return candidate.action.type !== 'SELL_ITEM' && candidate.action.type !== 'WAIT_SAVE';
+  }
   if (input.recentPurchasedItemIds?.includes(candidate.action.sellItemId)) return false;
   if (input.decision.itemGraph.isComponentAncestor(candidate.action.sellItemId, candidate.action.buyItemId)) return false;
   const afterSell = heldIds(state).filter((itemId) => itemId !== candidate.action.sellItemId);
   for (const hardGoal of input.strategy.goals.filter((entry) =>
-    entry.hard && contract.goalStates[entry.goalId] === 'SATISFIED' && entry.goalId !== goal.goalId,
+    entry.hard && contract.goalStates[entry.goalId] === 'SATISFIED' && entry.goalId !== currentGoalId,
   )) {
     const satisfied = hardGoal.targetItemIds.filter((itemId) =>
       input.decision.itemGraph.isTargetSatisfied(itemId, afterSell),
@@ -507,7 +619,7 @@ function candidateAllowed(
     if (satisfied < hardGoal.minSelect) return false;
   }
   for (const committedGoalId of Object.values(contract.committedBranches)) {
-    if (committedGoalId === goal.goalId) continue;
+    if (committedGoalId === currentGoalId) continue;
     const committedGoal = input.strategy.goals.find((entry) => entry.goalId === committedGoalId);
     if (!committedGoal) continue;
     const satisfied = committedGoal.targetItemIds.filter((itemId) =>
@@ -550,19 +662,19 @@ function candidateTargetItemId(candidate: RecommendationCandidate): number | und
   return undefined;
 }
 
-function transactionForCandidate(candidate: RecommendationCandidate) {
+function transactionForCandidate(candidate: RecommendationCandidate): AdaptivePlannedTransactionV1 | undefined {
   const action = candidate.action;
-  if (action.type === 'BUY_ITEM') return { type: 'BUY' as const, buyItemId: action.itemId };
+  if (action.type === 'BUY_ITEM') return { type: 'BUY', buyItemId: action.itemId };
   if (action.type === 'UPGRADE_ITEM') {
     return {
-      type: 'UPGRADE' as const,
+      type: 'UPGRADE',
       buyItemId: action.itemId,
       consumedItemIds: [...action.consumedItemIds].sort((a, b) => a - b),
       recipeId: action.recipeId,
     };
   }
   if (action.type === 'REPLACE_ITEM') {
-    return { type: 'SELL_AND_BUY' as const, sellItemId: action.sellItemId, buyItemId: action.buyItemId };
+    return { type: 'SELL_AND_BUY', sellItemId: action.sellItemId, buyItemId: action.buyItemId };
   }
   return undefined;
 }
