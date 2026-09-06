@@ -51,11 +51,21 @@ export interface AdaptiveItemScoreV1 {
   version: 'adaptive-evidence-scorer-v1';
 }
 
+export interface ExactEnemyContributionV1 {
+  enemyHeroId: number;
+  deltaWpa: number;
+  sampleSize: number;
+  confidence: number;
+  normalized: number;
+  priority: number;
+}
+
 export interface ExactEnemyAggregateV1 {
   raw: number;
   normalized: number;
   confidence: number;
   usedCount: number;
+  contributions: readonly ExactEnemyContributionV1[];
 }
 
 @Injectable()
@@ -278,7 +288,7 @@ export function aggregateExactEnemyEvidenceV1(
   shrinkK: number,
 ): ExactEnemyAggregateV1 {
   const enemySet = new Set(enemyHeroIds);
-  const contributions = slices
+  const contributions: ExactEnemyContributionV1[] = slices
     .filter((slice) => slice.heroId === heroId && enemySet.has(slice.enemyHeroId))
     .map((slice) => {
       const item = slice.items.find((entry) => entry.itemId === itemId);
@@ -287,27 +297,37 @@ export function aggregateExactEnemyEvidenceV1(
       const normalized = normalizeWpa(item.deltaWpa);
       return {
         enemyHeroId: slice.enemyHeroId,
-        raw: item.deltaWpa,
+        deltaWpa: item.deltaWpa,
+        sampleSize: item.count,
         normalized,
         confidence,
         priority: Math.abs(normalized * confidence),
       };
     })
-    .filter((entry): entry is NonNullable<typeof entry> => entry !== undefined)
+    .filter((entry): entry is ExactEnemyContributionV1 => entry !== undefined)
     .sort((a, b) => b.priority - a.priority || b.confidence - a.confidence || a.enemyHeroId - b.enemyHeroId)
     .slice(0, Math.max(0, Math.floor(maxMatchups)));
 
-  if (contributions.length === 0) return { raw: 0, normalized: 0, confidence: 0, usedCount: 0 };
+  if (contributions.length === 0) {
+    return { raw: 0, normalized: 0, confidence: 0, usedCount: 0, contributions: [] };
+  }
   const confidenceSum = contributions.reduce((sum, entry) => sum + entry.confidence, 0);
-  if (confidenceSum <= 0) return { raw: 0, normalized: 0, confidence: 0, usedCount: contributions.length };
+  if (confidenceSum <= 0) {
+    return { raw: 0, normalized: 0, confidence: 0, usedCount: contributions.length, contributions };
+  }
   return {
-    raw: contributions.reduce((sum, entry) => sum + entry.raw * entry.confidence, 0) / confidenceSum,
+    raw: contributions.reduce((sum, entry) => sum + entry.deltaWpa * entry.confidence, 0) / confidenceSum,
     normalized: clamp11(
       contributions.reduce((sum, entry) => sum + entry.normalized * entry.confidence, 0) / confidenceSum,
     ),
     confidence: clamp01(confidenceSum / contributions.length),
     usedCount: contributions.length,
+    contributions,
   };
+}
+
+export function exactEnemySlicesFromEvidenceV1(value: unknown): readonly StatlockerVsHeroSliceV1[] {
+  return asExactSlices(value);
 }
 
 function scoreChainFit(
