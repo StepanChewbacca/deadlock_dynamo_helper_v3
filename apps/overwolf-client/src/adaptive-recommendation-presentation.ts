@@ -1,6 +1,9 @@
 import type {
   AdaptiveActionTypeV1,
   AdaptiveActionV1,
+  AdaptivePlanBarrierV1,
+  AdaptivePlanStepStateV1,
+  AdaptivePlanStepV1,
   AdaptiveRecommendationResultV1,
   AdaptiveRecommendationStrategyV1,
 } from '@deadlock-live-probe/shared';
@@ -25,6 +28,19 @@ export interface AdaptivePresentedPlanItem {
   readonly position: number;
   readonly status: 'OWNED' | 'NEXT' | 'PLANNED';
   readonly statusLabel: string;
+}
+
+export interface AdaptivePresentedPlanStep {
+  readonly stepId: string;
+  readonly goalId: string;
+  readonly position: number;
+  readonly state: AdaptivePlanStepStateV1;
+  readonly stateLabel: string;
+  readonly kind: 'TRANSACTION' | 'BARRIER';
+  readonly actionLabel: string;
+  readonly item?: AdaptivePresentedItem;
+  readonly soldItem?: AdaptivePresentedItem;
+  readonly detailLabel?: string;
 }
 
 export interface AdaptivePresentedAlternative {
@@ -65,6 +81,7 @@ export interface AdaptiveRecommendationPresentation {
   readonly strategy?: AdaptivePresentedStrategy;
   readonly plan: {
     readonly items: readonly AdaptivePresentedPlanItem[];
+    readonly steps: readonly AdaptivePresentedPlanStep[];
     readonly remainingCount: number;
   };
   readonly alternatives: readonly AdaptivePresentedAlternative[];
@@ -78,6 +95,10 @@ const REASON_LABELS: Readonly<Record<string, string>> = {
   STATLOCKER_UNAVAILABLE_PRESERVE_PLAN: 'Statlocker is updating; keeping the last safe plan',
   FRESH_LEGALITY_FALLBACK: 'Adjusted to a legal purchase',
   NO_FRESH_LEGAL_TRANSACTION: 'No safe purchase is available right now',
+  WAIT_FOR_FLEX: 'Waiting for a Flex slot to unlock',
+  WAIT_FOR_GOLD: 'Saving souls for the planned transaction',
+  WAIT_FOR_SHOP: 'Waiting for the next shop opportunity',
+  TRANSACTION_PLAN_FAIL_CLOSED: 'Build path is being recalculated safely',
 };
 
 const GAME_STATE_LABELS = {
@@ -92,6 +113,17 @@ const PLAN_STATUS_LABELS = {
   NEXT: 'Next',
   PLANNED: 'Planned',
 } as const;
+
+const PLAN_STEP_STATE_LABELS: Readonly<Record<AdaptivePlanStepStateV1, string>> = {
+  LOCKED: 'Locked',
+  BLOCKED: 'Blocked',
+  READY: 'Ready',
+  NEXT: 'Next',
+  IN_PROGRESS: 'In progress',
+  COMPLETED: 'Completed',
+  INVALIDATED: 'Replanned',
+  SKIPPED: 'Skipped',
+};
 
 export function buildAdaptiveRecommendationPresentation(
   recommendation: AdaptiveRecommendationResultV1,
@@ -115,6 +147,9 @@ export function buildAdaptiveRecommendationPresentation(
   ) || recommendation.evidence.degradedReasons.length > 0;
   const orderedPlan = [...recommendation.recommendedBuild]
     .sort((left, right) => left.position - right.position);
+  const transactionSteps = recommendation.planSession?.steps.map((step, index) =>
+    presentPlanStep(step, index + 1),
+  ) ?? [];
 
   const isStrategyFirst = Boolean(
     recommendation.plannerMethod === 'STRATEGY_FIRST' || recommendation.strategy,
@@ -154,6 +189,7 @@ export function buildAdaptiveRecommendationPresentation(
         status: planned.status,
         statusLabel: PLAN_STATUS_LABELS[planned.status],
       })),
+      steps: transactionSteps,
       remainingCount: 0,
     },
     // rankedImmediateCandidates intentionally stay diagnostic until a curated alternative contract exists.
@@ -162,6 +198,80 @@ export function buildAdaptiveRecommendationPresentation(
       ? `${freshEvidenceCount} fresh Statlocker signal${freshEvidenceCount === 1 ? '' : 's'}`
       : 'Statlocker evidence is updating',
   };
+}
+
+function presentPlanStep(step: AdaptivePlanStepV1, position: number): AdaptivePresentedPlanStep {
+  const itemId = planStepTargetItemId(step);
+  const item = itemId === undefined ? undefined : presentItem(itemId);
+  const soldItem = step.action?.type === 'SELL_AND_BUY'
+    ? presentItem(step.action.sellItemId)
+    : undefined;
+  return {
+    stepId: step.stepId,
+    goalId: step.goalId,
+    position,
+    state: step.state,
+    stateLabel: PLAN_STEP_STATE_LABELS[step.state],
+    kind: step.kind,
+    actionLabel: planStepActionLabel(step),
+    item,
+    soldItem,
+    detailLabel: planStepDetailLabel(step, item, soldItem),
+  };
+}
+
+function planStepActionLabel(step: AdaptivePlanStepV1): string {
+  if (step.action?.type === 'BUY') return 'Buy';
+  if (step.action?.type === 'UPGRADE') return 'Upgrade';
+  if (step.action?.type === 'SELL_AND_BUY') return 'Replace';
+  if (step.barrier?.type === 'WAIT_FOR_GOLD') return 'Wait for Gold';
+  if (step.barrier?.type === 'WAIT_FOR_FLEX') return 'Wait for Flex';
+  if (step.barrier?.type === 'WAIT_FOR_SHOP') return 'Wait for Shop';
+  if (step.barrier?.type === 'WAIT_FOR_PREREQUISITE') return 'Wait for Prerequisite';
+  return step.kind === 'BARRIER' ? 'Wait' : 'Plan';
+}
+
+function planStepDetailLabel(
+  step: AdaptivePlanStepV1,
+  item: AdaptivePresentedItem | undefined,
+  soldItem: AdaptivePresentedItem | undefined,
+): string | undefined {
+  const action = step.action;
+  if (action?.type === 'SELL_AND_BUY') {
+    return `Sell ${describeItem(soldItem, `item #${action.sellItemId}`)} before purchase`;
+  }
+  if (action?.type === 'UPGRADE') {
+    const consumed = action.consumedItemIds.map((itemId) => describeItem(presentItem(itemId), `item #${itemId}`));
+    return consumed.length > 0 ? `Uses ${consumed.join(' + ')}` : 'Consumes the required upgrade component';
+  }
+  if (action?.type === 'BUY') {
+    return item?.costLabel;
+  }
+  const barrier = step.barrier;
+  if (!barrier) return undefined;
+  return barrierDetailLabel(barrier, step);
+}
+
+function barrierDetailLabel(barrier: AdaptivePlanBarrierV1, step: AdaptivePlanStepV1): string {
+  if (barrier.type === 'WAIT_FOR_GOLD') {
+    return `Save until ${barrier.requiredSouls.toLocaleString('en-US')} souls`;
+  }
+  if (barrier.type === 'WAIT_FOR_FLEX') {
+    const current = step.projectedBefore.unlockedFlexSlots === undefined
+      ? '?'
+      : String(step.projectedBefore.unlockedFlexSlots);
+    return `Waiting for Flex · ${current} / ${barrier.requiredUnlockedFlexSlots} unlocked`;
+  }
+  if (barrier.type === 'WAIT_FOR_SHOP') {
+    return 'Wait until the shop is available';
+  }
+  return `Waiting for ${humanizeToken(barrier.prerequisiteGoalId)}`;
+}
+
+function planStepTargetItemId(step: AdaptivePlanStepV1): number | undefined {
+  if (step.action) return step.action.buyItemId;
+  if (step.barrier && 'targetItemId' in step.barrier) return step.barrier.targetItemId;
+  return undefined;
 }
 
 function presentStrategy(strategy: AdaptiveRecommendationStrategyV1): AdaptivePresentedStrategy {
