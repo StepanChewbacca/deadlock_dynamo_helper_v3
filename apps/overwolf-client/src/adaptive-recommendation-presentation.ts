@@ -80,6 +80,7 @@ export interface AdaptiveRecommendationPresentation {
   readonly reasons: readonly string[];
   readonly strategy?: AdaptivePresentedStrategy;
   readonly plan: {
+    readonly isTransactionPlan: boolean;
     readonly items: readonly AdaptivePresentedPlanItem[];
     readonly steps: readonly AdaptivePresentedPlanStep[];
     readonly remainingCount: number;
@@ -183,6 +184,7 @@ export function buildAdaptiveRecommendationPresentation(
       ? presentStrategy(recommendation.strategy)
       : undefined,
     plan: {
+      isTransactionPlan: recommendation.planSession !== undefined,
       items: orderedPlan.map((planned) => ({
         item: presentItem(planned.itemId),
         position: planned.position,

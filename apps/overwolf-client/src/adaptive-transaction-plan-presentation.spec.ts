@@ -134,4 +134,20 @@ describe('adaptive transaction plan presentation', () => {
 
     expect(view.plan.steps[0].soldItem).toBeUndefined();
   });
+
+  it('keeps an empty planSession authoritative over the flat compatibility projection', () => {
+    const view = buildAdaptiveRecommendationPresentation(baseRecommendation({
+      recommendedBuild: [{
+        itemId: 3862866912, position: 1, status: 'NEXT', score: 0, confidence: 0, skeletonStrength: 0, contextualSupport: 0,
+        reasonCodes: [],
+      }],
+      planSession: {
+        planSessionId: 'p', strategyId: 's', revision: 1, createdAtGameTimeSec: 1, updatedAtGameTimeSec: 1,
+        state: 'COMPLETE', reasonCodes: [], steps: [],
+      },
+    }));
+
+    expect(view.plan.isTransactionPlan).toBe(true);
+    expect(view.plan.steps).toEqual([]);
+  });
 });

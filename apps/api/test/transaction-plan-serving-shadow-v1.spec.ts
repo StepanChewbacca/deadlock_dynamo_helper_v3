@@ -66,7 +66,7 @@ function router(transactionMode: 'FLAT_COMPAT' | 'TRANSACTION_SHADOW' | 'TRANSAC
 describe('transaction plan serving shadow v1', () => {
   it('computes transaction plan in TRANSACTION_SHADOW but serves flat strategy output', () => {
     const { value, calls, strategy } = router('TRANSACTION_SHADOW', false);
-    const result = value.plan(decision());
+    const result = value.plan({ decision: decision() } as any);
     expect(strategy.plan).toHaveBeenCalledTimes(1);
     expect(strategy.planFlatCompat).toHaveBeenCalledTimes(1);
     expect(result.nextAction.type).toBe('SELL');
@@ -76,7 +76,7 @@ describe('transaction plan serving shadow v1', () => {
 
   it('serves transaction output only when TRANSACTION_PRIMARY is promotable', () => {
     const { value, strategy } = router('TRANSACTION_PRIMARY', true);
-    const result = value.plan(decision());
+    const result = value.plan({ decision: decision() } as any);
     expect(result.nextAction.type).toBe('REPLACE');
     expect(result.planSession?.planSessionId).toBe('p');
     expect(strategy.planFlatCompat).not.toHaveBeenCalled();
@@ -84,7 +84,7 @@ describe('transaction plan serving shadow v1', () => {
 
   it('blocks configured TRANSACTION_PRIMARY when hard transaction gates are not promotable', () => {
     const { value, calls } = router('TRANSACTION_PRIMARY', false);
-    const result = value.plan(decision());
+    const result = value.plan({ decision: decision() } as any);
     expect(result.nextAction.type).toBe('SELL');
     expect(calls.blocked).toBe(1);
     expect(calls.shadow).toBe(1);

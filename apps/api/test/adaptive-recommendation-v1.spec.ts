@@ -376,6 +376,73 @@ describe('AdaptiveRecommendationV1Service', () => {
     expect(h.replay.persist.mock.calls[0][0].result.nextAction.type).toBe('WAIT');
   });
 
+  it('fails a stale transaction plan closed instead of selecting an unrelated fresh action', async () => {
+    const plan = plannerResult();
+    plan.planSession = {
+      planSessionId: 'plan-a',
+      strategyId: 'strategy-a',
+      revision: 1,
+      createdAtGameTimeSec: 700,
+      updatedAtGameTimeSec: 700,
+      state: 'ACTIVE',
+      nextStepId: 'buy-1',
+      reasonCodes: [],
+      steps: [{
+        stepId: 'buy-1',
+        goalId: 'goal-1',
+        kind: 'TRANSACTION',
+        state: 'NEXT',
+        action: { type: 'BUY', buyItemId: 1 },
+        prerequisiteStepIds: [],
+        blockingReasons: [],
+        projectedBefore: {
+          inventoryItemIds: [],
+          spendableSouls: 1000,
+          usedByType: { weapon: 0, vitality: 0, spirit: 0 },
+          flexUsed: 0,
+          unlockedFlexSlots: 3,
+          activeItemsUsed: 0,
+        },
+        projectedAfter: {
+          inventoryItemIds: [1],
+          spendableSouls: 500,
+          usedByType: { weapon: 1, vitality: 0, spirit: 0 },
+          flexUsed: 0,
+          unlockedFlexSlots: 3,
+          activeItemsUsed: 0,
+        },
+        reasonCodes: [],
+      }],
+    };
+    const h = harness({
+      plan,
+      states: [
+        decision({ wallet: 1000, revision: 'revision-a' }),
+        decision({ wallet: undefined, revision: 'revision-b' }),
+      ],
+    });
+
+    const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
+
+    expect(result.planSession).toMatchObject({
+      state: 'REPLAN_REQUIRED',
+      nextStepId: undefined,
+      reasonCodes: expect.arrayContaining(['FRESH_NEXT_TRANSACTION_NOT_EXECUTABLE']),
+    });
+    expect(result.nextAction).toMatchObject({
+      actionKey: 'HOLD',
+      type: 'HOLD',
+      reasonCodes: ['TRANSACTION_PLAN_FRESH_LEGALITY_MISMATCH'],
+    });
+    expect(result.recommendedBuild).toEqual([]);
+    expect(result.rankedImmediateCandidates).toEqual([]);
+    expect(result.confidence).toBe(0);
+    expect(result.blockers).toEqual(expect.arrayContaining([
+      'STATE_CHANGED_LEGALITY_RECHECK',
+      'TRANSACTION_PLAN_FRESH_LEGALITY_MISMATCH',
+    ]));
+  });
+
   it('persists replay input from the same fresh state revision as the published result', async () => {
     const h = harness({
       states: [

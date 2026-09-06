@@ -6,9 +6,14 @@ const projection = {
   usedByType: { weapon: 0, vitality: 0, spirit: 0 }, flexUsed: 0, unlockedFlexSlots: 0, activeItemsUsed: 0,
 };
 
-function step(stepId: string, state: AdaptivePlanStepV1['state'], itemId: number): AdaptivePlanStepV1 {
+function step(
+  stepId: string,
+  state: AdaptivePlanStepV1['state'],
+  itemId: number,
+  goalId = `goal:${stepId}`,
+): AdaptivePlanStepV1 {
   return {
-    stepId, goalId: `goal:${stepId}`, kind: 'TRANSACTION', state,
+    stepId, goalId, kind: 'TRANSACTION', state,
     action: { type: 'BUY', buyItemId: itemId }, prerequisiteStepIds: [], blockingReasons: [], projectedBefore: projection, reasonCodes: [],
   };
 }
@@ -30,8 +35,8 @@ describe('transaction plan diff v1', () => {
   });
 
   it('keeps an unchanged prefix and only changes the suffix', () => {
-    const previous = session([step('a', 'COMPLETED', 1), step('b', 'NEXT', 2), step('c', 'LOCKED', 3)]);
-    const current = session([step('a', 'COMPLETED', 1), step('b', 'NEXT', 2), step('d', 'LOCKED', 4)]);
+    const previous = session([step('a', 'COMPLETED', 1), step('b', 'NEXT', 2), step('c', 'LOCKED', 3, 'goal:suffix')]);
+    const current = session([step('a', 'COMPLETED', 1), step('b', 'NEXT', 2), step('d', 'LOCKED', 4, 'goal:suffix')]);
     const changes = diffTransactionPlansV1(previous, current);
     expect(changes).toContainEqual({ type: 'KEEP_STEP', stepId: 'a' });
     expect(changes).toContainEqual({ type: 'KEEP_STEP', stepId: 'b' });

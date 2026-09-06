@@ -490,7 +490,11 @@ export class TransactionPlanCompilerV1Service {
       .filter((candidate) => candidateTargetItemId(candidate) === targetItemId)
       .filter((candidate) => candidateMatchesTransition(candidate, transition))
       .filter((candidate) => candidateAllowed(candidate, input, goal.goalId, contract, state))
-      .sort((a, b) => candidatePreference(a) - candidatePreference(b) || a.actionId.localeCompare(b.actionId))[0];
+      .sort((a, b) =>
+        candidateFeasibilityPreference(a) - candidateFeasibilityPreference(b) ||
+        candidatePreference(a) - candidatePreference(b) ||
+        a.actionId.localeCompare(b.actionId),
+      )[0];
   }
 
   private bestDiagnosticCandidate(
@@ -502,6 +506,7 @@ export class TransactionPlanCompilerV1Service {
       .filter((candidate) => candidateTargetItemId(candidate) === targetItemId)
       .filter((candidate) => candidateMatchesTransition(candidate, transition))
       .sort((a, b) =>
+        candidateFeasibilityPreference(a) - candidateFeasibilityPreference(b) ||
         a.reasons.filter((reason) => reason !== 'FEASIBLE').length - b.reasons.filter((reason) => reason !== 'FEASIBLE').length ||
         candidatePreference(a) - candidatePreference(b) ||
         a.actionId.localeCompare(b.actionId),
@@ -607,9 +612,10 @@ function candidateAllowed(
   if (candidate.action.type !== 'REPLACE_ITEM') {
     return candidate.action.type !== 'SELL_ITEM' && candidate.action.type !== 'WAIT_SAVE';
   }
-  if (input.recentPurchasedItemIds?.includes(candidate.action.sellItemId)) return false;
-  if (input.decision.itemGraph.isComponentAncestor(candidate.action.sellItemId, candidate.action.buyItemId)) return false;
-  const afterSell = heldIds(state).filter((itemId) => itemId !== candidate.action.sellItemId);
+  const { buyItemId, sellItemId } = candidate.action;
+  if (input.recentPurchasedItemIds?.includes(sellItemId)) return false;
+  if (input.decision.itemGraph.isComponentAncestor(sellItemId, buyItemId)) return false;
+  const afterSell = heldIds(state).filter((itemId) => itemId !== sellItemId);
   for (const hardGoal of input.strategy.goals.filter((entry) =>
     entry.hard && contract.goalStates[entry.goalId] === 'SATISFIED' && entry.goalId !== currentGoalId,
   )) {
@@ -652,6 +658,11 @@ function candidatePreference(candidate: RecommendationCandidate): number {
   if (candidate.action.type === 'REPLACE_ITEM') return 1;
   if (candidate.action.type === 'BUY_ITEM') return 2;
   return 10;
+}
+
+function candidateFeasibilityPreference(candidate: RecommendationCandidate): number {
+  if (candidate.feasible) return 0;
+  return candidate.reasons.some((reason) => NON_DEFERABLE_REASONS.has(reason)) ? 2 : 1;
 }
 
 function candidateTargetItemId(candidate: RecommendationCandidate): number | undefined {

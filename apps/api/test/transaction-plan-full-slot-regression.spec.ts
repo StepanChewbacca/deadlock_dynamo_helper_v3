@@ -11,10 +11,10 @@ import { StrategyFirstTransactionPlanV1Service } from '../src/statlocker-adaptiv
 import { BuildStrategySpecV1 } from '../src/statlocker-adaptive/build-strategy-v1';
 
 const catalogSha256 = 'b'.repeat(64);
-const items: RecommendationItemDefinition[] = [101, 102, 103, 104, 202].map((itemId) => ({
+const items: RecommendationItemDefinition[] = [101, 102, 103, 104, 202, 105, 106, 107, 108, 109, 110, 111, 112].map((itemId) => ({
   itemId,
   name: `Item ${itemId}`,
-  slotType: 'weapon',
+  slotType: itemId === 202 || itemId <= 104 ? 'weapon' : itemId >= 109 ? 'spirit' : 'vitality',
   active: false,
   availableRulesetIds: ['r1'],
   directPurchaseCost: 800,
@@ -84,6 +84,18 @@ function strategy(withTemporaryExit: boolean): BuildStrategySpecV1 {
       goalId: 'owned-104', type: 'CORE', phase: 'EARLY', targetItemIds: [104], minSelect: 1, maxSelect: 1,
       prerequisiteGoalIds: [], hard: true, lifecycleByItemId: { 104: 'PERMANENT_CORE' }, rationaleCodes: ['CORE'],
     },
+    ...[105, 106, 107, 108, 109, 110, 111, 112].map((itemId) => ({
+      goalId: `owned-${itemId}`,
+      type: 'CORE' as const,
+      phase: 'EARLY' as const,
+      targetItemIds: [itemId],
+      minSelect: 1,
+      maxSelect: 1,
+      prerequisiteGoalIds: [],
+      hard: true,
+      lifecycleByItemId: { [itemId]: 'PERMANENT_CORE' as const },
+      rationaleCodes: ['CORE'],
+    })),
     ...(withTemporaryExit ? [{
       goalId: 'temporary-101', type: 'CORE' as const, phase: 'EARLY' as const, targetItemIds: [101], minSelect: 0, maxSelect: 1,
       prerequisiteGoalIds: [], hard: false, lifecycleByItemId: { 101: 'TEMPORARY_EARLY' as const }, rationaleCodes: ['TEMPORARY'],
@@ -127,9 +139,10 @@ const emptyEvidence = {
 describe('transaction-first full-slot regression', () => {
   const planner = new StrategyFirstBuildPlannerV1Service(fakeScorer);
   const transactionPlan = new StrategyFirstTransactionPlanV1Service();
+  const fullInventory = [101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112];
 
   it('represents a legal full-slot replacement as one SELL_AND_BUY plan step', () => {
-    const d = decision([101, 102, 103, 104]);
+    const d = decision(fullInventory);
     const raw = planner.plan({ decision: d, evidence: emptyEvidence, strategies: [strategy(true)] });
     const result = transactionPlan.apply({ result: raw, decision: d });
 
@@ -143,7 +156,7 @@ describe('transaction-first full-slot regression', () => {
   });
 
   it('fails closed when a full inventory has no legal replacement, upgrade, or possible flex exit path', () => {
-    const d = decision([101, 102, 103, 104], 0);
+    const d = decision(fullInventory, 0);
     const raw = planner.plan({ decision: d, evidence: emptyEvidence, strategies: [strategy(false)] });
     const result = transactionPlan.apply({ result: raw, decision: d });
 

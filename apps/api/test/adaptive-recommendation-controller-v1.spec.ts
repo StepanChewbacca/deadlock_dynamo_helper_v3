@@ -53,7 +53,10 @@ function harness() {
       }],
     })),
   };
-  const strategyPromotion = { status: jest.fn(() => ({ allowed: false })) };
+  const strategyPromotion = {
+    status: jest.fn(() => ({ allowed: false })),
+    transactionStatus: jest.fn(() => ({ allowed: false })),
+  };
   const strategyOperations = {
     getStatus: jest.fn(() => ({
       inFlightKeys: [],

@@ -126,7 +126,7 @@ export function showAdaptiveRecommendation(data: AdaptiveRecommendationResultV1)
 
   renderStrategy(view.strategy);
   renderReasons(view.reasons);
-  if (view.plan.steps.length > 0) {
+  if (view.plan.isTransactionPlan) {
     renderTransactionPlan(planSteps, view.plan.remainingCount);
   } else {
     renderPlan(planItems, view.plan.remainingCount);

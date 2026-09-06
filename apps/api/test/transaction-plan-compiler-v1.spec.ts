@@ -23,9 +23,11 @@ const items: RecommendationItemDefinition[] = [
     upgradeRecipes: [{ recipeId: 'upgrade-202', consumedItemIds: [101], soulsCost: 700 }],
     sellTransition: { soulsRefund: 600, returnedItemIds: [] }, maxCopies: 1,
   },
-  ...[102, 103, 104].map((itemId): RecommendationItemDefinition => ({
+  ...[102, 103, 104, 105].map((itemId): RecommendationItemDefinition => ({
     itemId, name: `Core ${itemId}`, slotType: 'weapon', active: false, availableRulesetIds: ['r1'],
-    directPurchaseCost: 500, upgradeRecipes: [], maxCopies: 1,
+    directPurchaseCost: 500, upgradeRecipes: [],
+    sellTransition: itemId === 102 ? { soulsRefund: 250, returnedItemIds: [] } : undefined,
+    maxCopies: 1,
   })),
 ];
 const graph = createRecommendationItemGraph(items);
@@ -34,11 +36,11 @@ const slotRules = { baseSlots: 12, baseSlotsByType: { weapon: 4, vitality: 4, sp
 function decision(
   ownedItemIds: readonly number[],
   souls: number | undefined,
-  unlockedFlexSlots: number | undefined = 0,
+  unlockedFlexSlots: number | 'UNKNOWN' = 0,
   shop: 'AVAILABLE' | 'UNAVAILABLE' = 'AVAILABLE',
 ): AdaptiveDecisionStateV1 {
   const held = buildInventoryInstancesForRecommendation(ownedItemIds, graph);
-  const evidence = unlockedFlexSlots === undefined ? 'UNKNOWN' as const : 'OBSERVED' as const;
+  const evidence = unlockedFlexSlots === 'UNKNOWN' ? 'UNKNOWN' as const : 'OBSERVED' as const;
   return {
     state: {
       decisionId: 'd', matchId: 'm', playerSlot: 0, gameTimeSec: 1000, rulesetId: 'r1', heroId: 1,
@@ -56,19 +58,32 @@ function decision(
     itemGraph: graph,
     catalogVersionId: 'catalog', catalogSha256, rulesetId: 'r1', localSteamId: 'p',
     allyHeroIds: [], enemyHeroIds: [], allyItemIds: [], enemyItemIds: [],
-    slots: deriveAdaptiveSlotStateV1(ownedItemIds, graph, slotRules, { unlockedFlexSlots, evidence }),
+    slots: deriveAdaptiveSlotStateV1(ownedItemIds, graph, slotRules, {
+      unlockedFlexSlots: unlockedFlexSlots === 'UNKNOWN' ? undefined : unlockedFlexSlots,
+      evidence,
+    }),
     investment: unknownAdaptiveInvestmentStateV1(), economyRulesEvidence: 'UNKNOWN', stateRevision: 'revision',
   };
 }
 
-function strategy(lifecycle: 'PERMANENT_CORE' | 'REPLACEMENT_TARGET' = 'PERMANENT_CORE'): BuildStrategySpecV1 {
+function strategy(
+  lifecycle: 'PERMANENT_CORE' | 'REPLACEMENT_TARGET' = 'PERMANENT_CORE',
+  includeTemporarySource = true,
+): BuildStrategySpecV1 {
   return {
     schemaVersion: 1, strategyId: 's', heroId: 1, rulesetId: 'r1', sourcePatchId: 'p', support: 1, stability: 1,
     representativeTraceId: 'trace',
-    goals: [{
-      goalId: 'target', type: 'CORE', phase: 'LATE', targetItemIds: [202], minSelect: 1, maxSelect: 1,
-      prerequisiteGoalIds: [], hard: true, lifecycleByItemId: { 202: lifecycle }, rationaleCodes: ['CORE'],
-    }],
+    goals: [
+      ...(includeTemporarySource ? [{
+        goalId: 'temporary-source', type: 'CORE' as const, phase: 'EARLY' as const,
+        targetItemIds: [102], minSelect: 0, maxSelect: 1, prerequisiteGoalIds: [], hard: false,
+        lifecycleByItemId: { 102: 'TEMPORARY_EARLY' as const }, rationaleCodes: ['TEMPORARY'],
+      }] : []),
+      {
+        goalId: 'target', type: 'CORE', phase: 'LATE', targetItemIds: [202], minSelect: 1, maxSelect: 1,
+        prerequisiteGoalIds: [], hard: true, lifecycleByItemId: { 202: lifecycle }, rationaleCodes: ['CORE'],
+      },
+    ],
     branchGroups: [], situationalWindows: [],
     investmentPolicy: { objectives: [], preferredWeights: { weapon: 1, vitality: 0, spirit: 0 } },
     slotPolicy: { reservedSituationalSlots: 0, maxTemporarySlots: 1 },
@@ -124,28 +139,28 @@ describe('transaction plan compiler v1', () => {
   });
 
   it('maps REPLACE_ITEM to one SELL_AND_BUY step and preserves both ids', () => {
-    const d = decision([101, 102, 103, 104], 5000);
+    const d = decision([102, 103, 104, 105], 5000);
     const replace = candidatesFor(d).find((candidate) =>
-      candidate.action.type === 'REPLACE_ITEM' && candidate.action.sellItemId === 101 && candidate.action.buyItemId === 202,
+      candidate.action.type === 'REPLACE_ITEM' && candidate.action.sellItemId === 102 && candidate.action.buyItemId === 202,
     )!;
-    const result = compiler.compile({ strategy: strategy('REPLACEMENT_TARGET'), contract: contract([101]), slotPlan: slotPlan('SELL_TEMPORARY', 101), decision: d, selectedCandidates: [replace] });
+    const result = compiler.compile({ strategy: strategy('REPLACEMENT_TARGET'), contract: contract([102]), slotPlan: slotPlan('SELL_TEMPORARY', 102), decision: d, selectedCandidates: [replace] });
     expect(result.steps[0]).toMatchObject({
       kind: 'TRANSACTION',
-      action: { type: 'SELL_AND_BUY', sellItemId: 101, buyItemId: 202 },
+      action: { type: 'SELL_AND_BUY', sellItemId: 102, buyItemId: 202 },
     });
   });
 
   it('ignores a selected naked SELL_ITEM and compiles the slot exit as SELL_AND_BUY instead', () => {
-    const d = decision([101], 5000);
-    const sell = candidatesFor(d).find((candidate) => candidate.action.type === 'SELL_ITEM' && candidate.action.itemId === 101)!;
-    const result = compiler.compile({ strategy: strategy(), contract: contract([101]), slotPlan: slotPlan('SELL_TEMPORARY', 101), decision: d, selectedCandidates: [sell] });
+    const d = decision([102, 103, 104, 105], 5000);
+    const sell = candidatesFor(d).find((candidate) => candidate.action.type === 'SELL_ITEM' && candidate.action.itemId === 102)!;
+    const result = compiler.compile({ strategy: strategy(), contract: contract([102]), slotPlan: slotPlan('SELL_TEMPORARY', 102), decision: d, selectedCandidates: [sell] });
     expect(result.steps).toEqual(expect.arrayContaining([
       expect.objectContaining({
         kind: 'TRANSACTION',
-        action: { type: 'SELL_AND_BUY', sellItemId: 101, buyItemId: 202 },
+        action: { type: 'SELL_AND_BUY', sellItemId: 102, buyItemId: 202 },
       }),
     ]));
-    expect(result.steps.some((step) => step.reasonCodes.some((code) => code.includes('SELL_ITEM:101')))).toBe(false);
+    expect(result.steps.some((step) => step.reasonCodes.some((code) => code.includes('SELL_ITEM:102')))).toBe(false);
   });
 
   it('creates WAIT_FOR_GOLD and a locked transaction when exact funds are insufficient', () => {
@@ -157,10 +172,10 @@ describe('transaction plan compiler v1', () => {
   });
 
   it('uses post-refund required souls for an unaffordable replacement', () => {
-    const d = decision([101, 102, 103, 104], 500);
-    const result = compiler.compile({ strategy: strategy('REPLACEMENT_TARGET'), contract: contract([101]), slotPlan: slotPlan('SELL_TEMPORARY', 101), decision: d, selectedCandidates: [] });
+    const d = decision([102, 103, 104, 105], 500);
+    const result = compiler.compile({ strategy: strategy('REPLACEMENT_TARGET'), contract: contract([102]), slotPlan: slotPlan('SELL_TEMPORARY', 102), decision: d, selectedCandidates: [] });
     expect(result.steps[0]).toMatchObject({ kind: 'BARRIER', barrier: { type: 'WAIT_FOR_GOLD', targetItemId: 202, requiredSouls: 950 } });
-    expect(result.steps[1]).toMatchObject({ kind: 'TRANSACTION', action: { type: 'SELL_AND_BUY', sellItemId: 101, buyItemId: 202 } });
+    expect(result.steps[1]).toMatchObject({ kind: 'TRANSACTION', action: { type: 'SELL_AND_BUY', sellItemId: 102, buyItemId: 202 } });
   });
 
   it('creates WAIT_FOR_SHOP only when shop unavailability is known', () => {
@@ -170,8 +185,8 @@ describe('transaction plan compiler v1', () => {
   });
 
   it('creates WAIT_FOR_FLEX for a known future flex threshold', () => {
-    const d = decision([101, 102, 103, 104], 5000, 0);
-    const result = compiler.compile({ strategy: strategy(), contract: contract(), slotPlan: slotPlan('FLEX_UNLOCK', undefined, 1), decision: d, selectedCandidates: [] });
+    const d = decision([102, 103, 104, 105], 5000, 0);
+    const result = compiler.compile({ strategy: strategy('PERMANENT_CORE', false), contract: contract(), slotPlan: slotPlan('FLEX_UNLOCK', undefined, 1), decision: d, selectedCandidates: [] });
     expect(result.steps[0]).toMatchObject({ kind: 'BARRIER', barrier: { type: 'WAIT_FOR_FLEX', targetItemId: 202, requiredUnlockedFlexSlots: 1 } });
   });
 
@@ -180,9 +195,9 @@ describe('transaction plan compiler v1', () => {
     const walletResult = compiler.compile({ strategy: strategy(), contract: contract(), slotPlan: slotPlan('NONE'), decision: unknownWallet, selectedCandidates: [] });
     expect(walletResult.reachable).toBe(false);
 
-    const unknownFlex = decision([101, 102, 103, 104], 5000, undefined);
+    const unknownFlex = decision([102, 103, 104, 105], 5000, 'UNKNOWN');
     const flexResult = compiler.compile({
-      strategy: strategy(), contract: contract(),
+      strategy: strategy('PERMANENT_CORE', false), contract: contract(),
       slotPlan: { ...slotPlan('FLEX_UNLOCK', undefined, 1), unlockedFlexSlots: undefined },
       decision: unknownFlex, selectedCandidates: [],
     });

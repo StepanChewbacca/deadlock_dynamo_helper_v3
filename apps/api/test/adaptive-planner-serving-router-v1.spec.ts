@@ -24,13 +24,22 @@ function result(label: string): any {
 }
 
 function setup(mode: 'LEGACY' | 'SHADOW' | 'STRATEGY', promotable: boolean) {
-  const strategy = { plan: jest.fn(() => ({ ...result('strategy'), strategy: { strategyId: 's1' } })) } as any;
+  const strategyResult = { ...result('strategy'), strategy: { strategyId: 's1' } };
+  const strategy = {
+    plan: jest.fn(() => strategyResult),
+    planFlatCompat: jest.fn(() => result('flat')),
+  } as any;
   const promotion = {
     configuredMode: jest.fn(() => mode),
     canServeStrategy: jest.fn(() => promotable),
     recordShadowSuccess: jest.fn(),
     recordShadowFailure: jest.fn(),
     recordPromotionBlocked: jest.fn(),
+    transactionConfiguredMode: jest.fn(() => 'TRANSACTION_PRIMARY'),
+    canServeTransactionPlan: jest.fn(() => true),
+    recordTransactionShadowSuccess: jest.fn(),
+    recordTransactionShadowFailure: jest.fn(),
+    recordTransactionPromotionBlocked: jest.fn(),
   } as any;
   const router = new AdaptivePlannerServingRouterV1Service(
     strategy,
@@ -91,6 +100,7 @@ describe('adaptive planner serving router v1', () => {
     expect(strategy.plan).toHaveBeenCalledTimes(1);
     expect(legacy.plan).toHaveBeenCalledTimes(1);
     expect(promotion.recordPromotionBlocked).toHaveBeenCalledTimes(1);
+    expect(served.planSession).toBeUndefined();
   });
 
   it('fails safely to legacy when the shadow strategy planner throws', () => {

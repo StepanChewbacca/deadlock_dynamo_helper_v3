@@ -226,7 +226,7 @@ describe('strategy-first runtime continuity v1', () => {
       selectedBranches: { boots: 'boots-a' },
       committedBranches: { boots: 'boots-a' },
     });
-    expect(captured.previousRecommendedBuild).toEqual([]);
+    expect(captured.previousRecommendedBuild).toBeUndefined();
     expect(captured.recentPurchasedItemIds).toEqual([1]);
   });
 

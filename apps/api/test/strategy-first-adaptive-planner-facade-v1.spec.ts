@@ -43,7 +43,11 @@ describe('strategy-first adaptive planner facade v1', () => {
     const result = facade().plan({ decision: decision([1]), evidence });
 
     expect(result.contract.status).toBe('COMPLETE');
-    expect(result.nextAction).toEqual({ actionKey: 'HOLD', type: 'HOLD', reasonCodes: ['BUILD_CONTRACT_COMPLETE'] });
+    expect(result.nextAction).toEqual({
+      actionKey: 'HOLD',
+      type: 'HOLD',
+      reasonCodes: ['PLAN_SESSION_CREATED', 'TRANSACTION_PLAN_COMPLETE'],
+    });
     expect(result.recommendedBuild).toEqual([
       expect.objectContaining({ itemId: 1, status: 'OWNED' }),
     ]);
