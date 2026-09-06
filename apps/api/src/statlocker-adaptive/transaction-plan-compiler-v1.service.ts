@@ -167,17 +167,23 @@ export class TransactionPlanCompilerV1Service {
       commitment: contract.commitment,
     });
     const terminalGoalIds = new Set(input.strategy.terminalPolicy.requiredGoalIds);
+    const selectedBranchGoals = new Set(Object.values(finalContract.selectedBranches));
+    const branchGoalIds = new Set(
+      input.strategy.branchGroups.flatMap((group) => group.optionGoalIds),
+    );
     const uncompiledHardGoals = input.strategy.goals.filter((goal) =>
       goal.hard &&
+      (!branchGoalIds.has(goal.goalId) || selectedBranchGoals.has(goal.goalId)) &&
       !compiledGoalIds.has(goal.goalId) &&
       !goal.targetItemIds.some((itemId) => input.decision.itemGraph.isTargetSatisfied(itemId, heldIds(state))),
     );
     const unsatisfiedTerminalGoals = input.strategy.goals.filter((goal) =>
       goal.hard &&
       terminalGoalIds.has(goal.goalId) &&
+      (!branchGoalIds.has(goal.goalId) || selectedBranchGoals.has(goal.goalId)) &&
       !goal.targetItemIds.some((itemId) => input.decision.itemGraph.isTargetSatisfied(itemId, heldIds(state))),
     );
-    const unresolved = uncompiledHardGoals.length > 0 || unsatisfiedTerminalGoals.length > 0;
+    const unresolved = finalContract.status !== 'COMPLETE' && (uncompiledHardGoals.length > 0 || unsatisfiedTerminalGoals.length > 0);
     return {
       steps,
       reachable: !unresolved,
@@ -546,6 +552,7 @@ export class TransactionPlanCompilerV1Service {
       .filter((candidate) => candidateMatchesTransition(candidate, transition))
       .filter((candidate) => candidateAllowed(candidate, input, goal.goalId, contract, state))
       .sort((a, b) =>
+        candidateSourceMatchPreference(a, b, transition) ||
         candidateFeasibilityPreference(a) - candidateFeasibilityPreference(b) ||
         candidatePreference(a) - candidatePreference(b) ||
         a.actionId.localeCompare(b.actionId),
@@ -567,6 +574,7 @@ export class TransactionPlanCompilerV1Service {
       .filter((candidate) => candidateTargetItemId(candidate) === targetItemId)
       .filter((candidate) => candidateMatchesTransition(candidate, transition))
       .sort((a, b) =>
+        candidateSourceMatchPreference(a, b, transition) ||
         candidateFeasibilityPreference(a) - candidateFeasibilityPreference(b) ||
         a.reasons.filter((reason) => reason !== 'FEASIBLE').length - b.reasons.filter((reason) => reason !== 'FEASIBLE').length ||
         candidatePreference(a) - candidatePreference(b) ||
@@ -716,10 +724,20 @@ function candidateMatchesTransition(
     return candidate.action.type === 'UPGRADE_ITEM';
   }
   if (transition.requirement === 'SELL_TEMPORARY' || transition.requirement === 'REPLACE') {
-    return candidate.action.type === 'REPLACE_ITEM' &&
-      (transition.sourceItemId === undefined || candidate.action.sellItemId === transition.sourceItemId);
+    return candidate.action.type === 'REPLACE_ITEM';
   }
   return false;
+}
+
+function candidateSourceMatchPreference(
+  a: RecommendationCandidate,
+  b: RecommendationCandidate,
+  transition: BuildSlotPlanTransitionV1 | undefined,
+): number {
+  if (transition?.sourceItemId === undefined) return 0;
+  const aMatch = a.action.type === 'REPLACE_ITEM' && a.action.sellItemId === transition.sourceItemId ? 1 : 0;
+  const bMatch = b.action.type === 'REPLACE_ITEM' && b.action.sellItemId === transition.sourceItemId ? 1 : 0;
+  return bMatch - aMatch;
 }
 
 function candidatePreference(candidate: RecommendationCandidate): number {

@@ -153,7 +153,7 @@ export class BuildSlotPlannerV1Service {
     };
   }
 
-  private canFit(itemIds: readonly number[], input: BuildSlotPlannerV1Input): boolean {
+  public canFit(itemIds: readonly number[], input: BuildSlotPlannerV1Input): boolean {
     const rules = candidateGeneratorRulesFromSlotStateV1(input.slots);
     const usage = recommendationSlotUsageFor(itemIds, input.itemGraph, rules);
     const requiredFlex = minimumRequiredFlex(usage.flexUsed, usage.itemCount, input.strategy.slotPolicy.reservedSituationalSlots, input.slots.baseSlots);
@@ -184,17 +184,24 @@ function findReplacementSource(
     const item = input.itemGraph.getItem(sourceItemId);
     const sameCategory = targetItem && item && item.slotType === targetItem.slotType ? 1 : 0;
     const isTemp = input.contract.temporaryItemIds.includes(sourceItemId) ? 1 : 0;
+    const isHardGoal = input.strategy.goals.some((g) =>
+      g.hard && g.targetItemIds.some((targetId) => input.itemGraph.isTargetSatisfied(targetId, [sourceItemId]))
+    );
+    const expendableTier = isTemp ? 2 : (!isHardGoal ? 1 : 0);
     const cost = item?.directPurchaseCost ?? 0;
-    return { sourceItemId, sameCategory, isTemp, cost };
+    return { sourceItemId, sameCategory, expendableTier, cost };
   }).sort((a, b) =>
-    b.isTemp - a.isTemp ||
+    b.expendableTier - a.expendableTier ||
     b.sameCategory - a.sameCategory ||
     a.cost - b.cost ||
     a.sourceItemId - b.sourceItemId,
   );
 
   for (const { sourceItemId, cost: sourceCost } of candidateScores) {
+    if (input.itemGraph.isComponentAncestor(sourceItemId, targetItemId)) continue;
+    if (input.itemGraph.isComponentAncestor(targetItemId, sourceItemId)) continue;
     if (isReadyUpgradeComponentForPendingHardGoal(input, sourceItemId, targetItemId)) continue;
+
     const afterExit = input.ownedItemIds.filter((itemId) => itemId !== sourceItemId);
     const targetCost = targetItem?.directPurchaseCost ?? 0;
     const preservesTerminalGoals = terminalHardGoals.every((goal) => {
@@ -222,6 +229,7 @@ function isReadyUpgradeComponentForPendingHardGoal(
     })
     .filter((goal) => !goal.targetItemIds.includes(currentTargetItemId))
     .some((goal) => goal.targetItemIds.some((targetItemId) => {
+      if (input.itemGraph.isComponentAncestor(sourceItemId, targetItemId)) return true;
       const target = input.itemGraph.getItem(targetItemId);
       return target?.upgradeRecipes.some((recipe) =>
         recipe.consumedItemIds.includes(sourceItemId) &&
