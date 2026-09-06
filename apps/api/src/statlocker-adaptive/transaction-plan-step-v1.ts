@@ -44,8 +44,8 @@ export function planProjectionFromDecisionStateV1(
   const inventoryItemIds = [...state.inventory.heldByItemId.keys()].sort((a, b) => a - b);
   const usage = recommendationSlotUsageFor(inventoryItemIds, graph, rules);
   const unlockedFlexSlots = rules.flexCapacityEvidence === 'UNKNOWN'
-    ? undefined
-    : rules.unlockedFlexSlots;
+    ? (usage.flexUsed > 0 ? usage.flexUsed : undefined)
+    : Math.max(usage.flexUsed, rules.unlockedFlexSlots ?? 0);
   return {
     inventoryItemIds,
     spendableSouls: state.economy.spendableSouls.evidence === 'UNKNOWN'

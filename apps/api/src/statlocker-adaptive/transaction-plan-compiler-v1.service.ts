@@ -125,17 +125,16 @@ export class TransactionPlanCompilerV1Service {
         continue;
       }
 
-      const freshSlotPlan = this.slotPlanner.plan({
-        strategy: input.strategy,
-        contract,
-        itemGraph: input.decision.itemGraph,
-        ownedItemIds: heldIds(state),
-        slots,
-      });
-      const transition = freshSlotPlan.futureTransitions.find((entry) =>
-        entry.targetGoalId === goal.goalId && entry.targetItemId === targetItemId,
-      ) ?? input.slotPlan.futureTransitions.find((entry) =>
-        entry.targetGoalId === goal.goalId && entry.targetItemId === targetItemId,
+      const transition = this.slotPlanner.transitionForTarget(
+        {
+          strategy: input.strategy,
+          contract,
+          itemGraph: input.decision.itemGraph,
+          ownedItemIds: heldIds(state),
+          slots,
+        },
+        goal.goalId,
+        targetItemId,
       );
 
       const previousStepId = steps.length > 0 ? steps[steps.length - 1].stepId : undefined;
@@ -308,12 +307,58 @@ export class TransactionPlanCompilerV1Service {
     }
 
     if (!preferred || !preferred.feasible) {
-      const diagnostic = preferred ?? this.bestDiagnosticCandidate(candidates, args.targetItemId, args.transition);
+      const diagnostic = preferred ?? this.bestDiagnosticCandidate(
+        candidates,
+        args.targetItemId,
+        args.transition,
+        args.input,
+        args.goal.goalId,
+        args.contract,
+        state,
+      );
       if (!diagnostic) {
         return { steps, state, slots, reachable: false, reasonCodes: unique([...reasons, 'NO_TRANSACTION_CANDIDATE']) };
       }
       if (diagnostic.reasons.some((reason) => NON_DEFERABLE_REASONS.has(reason))) {
         return { steps, state, slots, reachable: false, reasonCodes: unique([...reasons, ...diagnostic.reasons]) };
+      }
+
+      if (
+        (diagnostic.reasons.includes('FLEX_SLOT_CAPACITY_UNKNOWN') || diagnostic.reasons.includes('SLOT_LIMIT_EXCEEDED')) &&
+        (slots.unlockedFlexSlots === undefined || slots.unlockedFlexSlots < slots.maxFlexSlots)
+      ) {
+        const requiredFlex = Math.min(
+          slots.maxFlexSlots,
+          Math.max((slots.unlockedFlexSlots ?? slots.provedFlexLowerBound ?? 0) + 1, 1),
+        );
+        const barrier = this.barrierStep(
+          args.input.strategy.strategyId,
+          args.goal.goalId,
+          {
+            type: 'WAIT_FOR_FLEX',
+            targetItemId: args.targetItemId,
+            requiredUnlockedFlexSlots: requiredFlex,
+          },
+          'INSUFFICIENT_FLEX',
+          state,
+          slots,
+          args.input,
+          previousStepId,
+          reasons,
+        );
+        steps.push(barrier);
+        previousStepId = barrier.stepId;
+        slots = deriveAdaptiveSlotStateV1(
+          heldIds(state),
+          args.input.decision.itemGraph,
+          {
+            baseSlots: slots.baseSlots,
+            baseSlotsByType: slots.baseSlotsByType,
+            maxFlexSlots: slots.maxFlexSlots,
+            maxActiveItems: slots.maxActiveItems,
+          },
+          { unlockedFlexSlots: requiredFlex, evidence: 'RECONSTRUCTED' },
+        );
       }
 
       if (diagnostic.reasons.includes('SHOP_UNAVAILABLE') || diagnostic.reasons.includes('SHOP_OPPORTUNITY_UNKNOWN')) {
@@ -511,8 +556,14 @@ export class TransactionPlanCompilerV1Service {
     candidates: readonly RecommendationCandidate[],
     targetItemId: number,
     transition: BuildSlotPlanTransitionV1 | undefined,
+    input: CompileTransactionPlanV1Input,
+    goalId: string,
+    contract: BuildContractV1,
+    state: RecommendationDecisionState,
   ): RecommendationCandidate | undefined {
-    return candidates
+    const allowed = candidates.filter((candidate) => candidateAllowed(candidate, input, goalId, contract, state));
+    const pool = allowed.length > 0 ? allowed : candidates;
+    return pool
       .filter((candidate) => candidateTargetItemId(candidate) === targetItemId)
       .filter((candidate) => candidateMatchesTransition(candidate, transition))
       .sort((a, b) =>

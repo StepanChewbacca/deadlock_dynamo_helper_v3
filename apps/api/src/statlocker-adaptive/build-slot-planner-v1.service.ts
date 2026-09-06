@@ -31,7 +31,16 @@ export class BuildSlotPlannerV1Service {
     const reasonCodes: string[] = [];
     let feasible = true;
 
-    for (const goalId of input.contract.remainingHardGoalIds) {
+    const goalsToPlan = input.contract.remainingHardGoalIds.length > 0
+      ? input.contract.remainingHardGoalIds
+      : input.strategy.goals
+          .filter((goal) => {
+            const state = input.contract.goalStates[goal.goalId];
+            return state !== 'SATISFIED' && state !== 'SKIPPED' && state !== 'WAIVED';
+          })
+          .map((goal) => goal.goalId);
+
+    for (const goalId of goalsToPlan) {
       const goal = goalById.get(goalId);
       if (!goal || input.contract.goalStates[goalId] === 'SKIPPED') continue;
       const targetItemId = goal.targetItemIds.find((itemId) => !input.itemGraph.isTargetSatisfied(itemId, owned));
@@ -58,7 +67,7 @@ export class BuildSlotPlannerV1Service {
     };
   }
 
-  private transitionForTarget(
+  public transitionForTarget(
     input: BuildSlotPlannerV1Input,
     goalId: string,
     targetItemId: number,
@@ -110,15 +119,16 @@ export class BuildSlotPlannerV1Service {
       }
     }
 
+    const currentUnlocked = input.slots.unlockedFlexSlots ?? input.slots.provedFlexLowerBound;
     const requiredFlex = requiredFlexAfterAdd(input.ownedItemIds, targetItemId, input);
     if (requiredFlex > 0 && requiredFlex <= input.slots.maxFlexSlots &&
-      (input.slots.unlockedFlexSlots === undefined || requiredFlex > input.slots.unlockedFlexSlots)) {
+      (currentUnlocked === undefined || requiredFlex > currentUnlocked)) {
       return {
         targetGoalId: goalId,
         targetItemId,
         requirement: 'FLEX_UNLOCK',
         requiredUnlockedFlexSlots: requiredFlex,
-        reasonCodes: input.slots.unlockedFlexSlots === undefined
+        reasonCodes: currentUnlocked === undefined
           ? ['FLEX_CAPACITY_UNKNOWN', 'TARGET_REQUIRES_FLEX']
           : ['TARGET_LOCKED_UNTIL_FLEX_UNLOCK'],
       };
@@ -148,9 +158,10 @@ export class BuildSlotPlannerV1Service {
     const usage = recommendationSlotUsageFor(itemIds, input.itemGraph, rules);
     const requiredFlex = minimumRequiredFlex(usage.flexUsed, usage.itemCount, input.strategy.slotPolicy.reservedSituationalSlots, input.slots.baseSlots);
     if (requiredFlex > input.slots.maxFlexSlots) return false;
-    if (input.slots.unlockedFlexSlots === undefined) {
+    const currentUnlocked = input.slots.unlockedFlexSlots ?? input.slots.provedFlexLowerBound;
+    if (currentUnlocked === undefined) {
       if (requiredFlex > 0) return false;
-    } else if (requiredFlex > input.slots.unlockedFlexSlots) {
+    } else if (requiredFlex > currentUnlocked) {
       return false;
     }
     return usage.activeItemsUsed <= input.slots.maxActiveItems;

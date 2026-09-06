@@ -234,6 +234,7 @@ export function finalLegalityRules(decision: AdaptiveDecisionStateV1) {
     unlockedFlexSlots: slots.unlockedFlexSlots,
     flexCapacityEvidence: slots.evidence,
     maxActiveItems: slots.maxActiveItems,
+    allowSellOnlyActions: true,
   };
 }
 
@@ -256,7 +257,10 @@ function selectFreshTransactionPlanAction(
       changed: true,
     };
   }
-  const candidate = feasibleByActionKey.get(selected.actionKey);
+  const candidate = feasibleByActionKey.get(selected.actionKey)
+    ?? (selected.type === 'REPLACE' ? feasibleByActionKey.get(`REPLACE_ITEM:${selected.sellItemId}->${selected.buyItemId}`) : undefined)
+    ?? (selected.type === 'BUY' && (selected.buyItemId || selected.itemId) ? feasibleByActionKey.get(`BUY_ITEM:${selected.buyItemId ?? selected.itemId}`) : undefined)
+    ?? (selected.type === 'SELL' && (selected.sellItemId || selected.itemId) ? feasibleByActionKey.get(`SELL_ITEM:${selected.sellItemId ?? selected.itemId}`) : undefined);
   if (!candidate) {
     return {
       action: {

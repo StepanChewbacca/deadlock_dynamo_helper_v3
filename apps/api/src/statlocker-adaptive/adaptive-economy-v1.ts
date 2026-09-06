@@ -156,12 +156,13 @@ export function candidateGeneratorRulesFromSlotStateV1(
     'allowSellOnlyActions' | 'generateTargetedWaitActions'
   >> = {},
 ): RecommendationCandidateGeneratorRules {
+  const effectiveUnlocked = slots.unlockedFlexSlots ?? (slots.provedFlexLowerBound > 0 ? slots.provedFlexLowerBound : undefined);
   return {
     baseSlots: slots.baseSlots,
     baseSlotsByType: slots.baseSlotsByType,
     maxFlexSlots: slots.maxFlexSlots,
-    unlockedFlexSlots: slots.unlockedFlexSlots,
-    flexCapacityEvidence: slots.evidence,
+    unlockedFlexSlots: effectiveUnlocked,
+    flexCapacityEvidence: effectiveUnlocked !== undefined && slots.evidence === 'UNKNOWN' ? 'OBSERVED' : slots.evidence,
     maxActiveItems: slots.maxActiveItems,
     allowSellOnlyActions: overrides.allowSellOnlyActions ?? true,
     generateTargetedWaitActions: overrides.generateTargetedWaitActions ?? true,
@@ -192,9 +193,11 @@ export function deriveAdaptiveSlotStateV1(
     allowSellOnlyActions: true,
     generateTargetedWaitActions: true,
   });
+  const provedLowerBound = Math.min(maxFlexSlots, usage.flexUsed);
   const unlocked = capacity.evidence === 'UNKNOWN' || capacity.unlockedFlexSlots === undefined
     ? undefined
-    : Math.min(maxFlexSlots, Math.max(0, Math.floor(capacity.unlockedFlexSlots)));
+    : Math.min(maxFlexSlots, Math.max(provedLowerBound, Math.floor(capacity.unlockedFlexSlots)));
+  const evidence = capacity.evidence;
   const freeBaseSlotsByType: Record<InventorySlotType, number> = {
     weapon: Math.max(0, baseSlotsByType.weapon - usage.usedByType.weapon),
     vitality: Math.max(0, baseSlotsByType.vitality - usage.usedByType.vitality),
@@ -211,14 +214,14 @@ export function deriveAdaptiveSlotStateV1(
     usedSlotsByType: usage.usedByType,
     overflowByType: usage.overflowByType,
     usedFlexSlots: usage.flexUsed,
-    provedFlexLowerBound: usage.flexUsed,
+    provedFlexLowerBound: provedLowerBound,
     freeBaseSlots: freeBaseSlotsByType.weapon + freeBaseSlotsByType.vitality + freeBaseSlotsByType.spirit,
     freeBaseSlotsByType,
     freeFlexSlots: unlocked === undefined ? undefined : Math.max(0, unlocked - usage.flexUsed),
     totalCapacity: unlocked === undefined ? undefined : baseSlots + unlocked,
     activeItemsUsed: usage.activeItemsUsed,
     freeActiveItemSlots: Math.max(0, maxActiveItems - usage.activeItemsUsed),
-    evidence: capacity.evidence,
+    evidence,
   };
 }
 
