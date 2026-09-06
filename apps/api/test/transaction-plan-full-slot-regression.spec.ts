@@ -7,6 +7,7 @@ import {
 import { AdaptiveDecisionStateV1 } from '../src/statlocker-adaptive/adaptive-decision-state-v1.service';
 import { deriveAdaptiveSlotStateV1, unknownAdaptiveInvestmentStateV1 } from '../src/statlocker-adaptive/adaptive-economy-v1';
 import { StrategyFirstBuildPlannerV1Service } from '../src/statlocker-adaptive/strategy-first-build-planner-v1.service';
+import { StrategyFirstTransactionPlanV1Service } from '../src/statlocker-adaptive/strategy-first-transaction-plan-v1.service';
 import { BuildStrategySpecV1 } from '../src/statlocker-adaptive/build-strategy-v1';
 
 const catalogSha256 = 'b'.repeat(64);
@@ -22,15 +23,15 @@ const items: RecommendationItemDefinition[] = [101, 102, 103, 104, 202].map((ite
   maxCopies: 1,
 }));
 const graph = createRecommendationItemGraph(items);
-const slotRules = {
-  baseSlots: 12,
-  baseSlotsByType: { weapon: 4, vitality: 4, spirit: 4 } as const,
-  maxFlexSlots: 4,
-  maxActiveItems: 4,
-};
 
-function decision(ownedItemIds: readonly number[]): AdaptiveDecisionStateV1 {
+function decision(ownedItemIds: readonly number[], maxFlexSlots = 4): AdaptiveDecisionStateV1 {
   const held = buildInventoryInstancesForRecommendation(ownedItemIds, graph);
+  const slotRules = {
+    baseSlots: 12,
+    baseSlotsByType: { weapon: 4, vitality: 4, spirit: 4 } as const,
+    maxFlexSlots,
+    maxActiveItems: 4,
+  };
   return {
     state: {
       decisionId: 'slot-regression',
@@ -125,31 +126,32 @@ const emptyEvidence = {
 
 describe('transaction-first full-slot regression', () => {
   const planner = new StrategyFirstBuildPlannerV1Service(fakeScorer);
+  const transactionPlan = new StrategyFirstTransactionPlanV1Service();
 
   it('represents a legal full-slot replacement as one SELL_AND_BUY plan step', () => {
-    const result = planner.plan({
-      decision: decision([101, 102, 103, 104]),
-      evidence: emptyEvidence,
-      strategies: [strategy(true)],
-    });
+    const d = decision([101, 102, 103, 104]);
+    const raw = planner.plan({ decision: d, evidence: emptyEvidence, strategies: [strategy(true)] });
+    const result = transactionPlan.apply({ result: raw, decision: d });
 
-    expect(result.planSession?.steps).toEqual(expect.arrayContaining([
+    expect(result.planSession.steps).toEqual(expect.arrayContaining([
       expect.objectContaining({
         kind: 'TRANSACTION',
         action: { type: 'SELL_AND_BUY', sellItemId: 101, buyItemId: 202 },
       }),
     ]));
+    expect(result.nextAction).toMatchObject({ type: 'REPLACE', sellItemId: 101, buyItemId: 202 });
   });
 
-  it('fails closed when a full inventory has no legal slot exit path', () => {
-    const result = planner.plan({
-      decision: decision([101, 102, 103, 104]),
-      evidence: emptyEvidence,
-      strategies: [strategy(false)],
-    });
+  it('fails closed when a full inventory has no legal replacement, upgrade, or possible flex exit path', () => {
+    const d = decision([101, 102, 103, 104], 0);
+    const raw = planner.plan({ decision: d, evidence: emptyEvidence, strategies: [strategy(false)] });
+    const result = transactionPlan.apply({ result: raw, decision: d });
 
-    expect(result.planSession?.state).toBe('REPLAN_REQUIRED');
+    expect(result.planSession.state).toBe('REPLAN_REQUIRED');
     expect(result.nextAction.type).toBe('HOLD');
-    expect(result.planSession?.steps.some((step) => step.kind === 'TRANSACTION' && step.action && 'buyItemId' in step.action && step.action.buyItemId === 202)).toBe(false);
+    expect(result.planSession.steps.some((step) =>
+      step.kind === 'TRANSACTION' && step.action && step.action.buyItemId === 202,
+    )).toBe(false);
+    expect(result.recommendedBuild.every((row) => row.status === 'OWNED')).toBe(true);
   });
 });
