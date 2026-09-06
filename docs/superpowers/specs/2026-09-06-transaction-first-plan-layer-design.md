@@ -2,109 +2,96 @@
 
 ## Context
 
-The strategy-first planner is already on `main` and correctly models strategy identity, build status, goals, branch commitment, slot planning, investment objectives, and short receding-horizon search. The current failure is at the next boundary: the planner still emits `recommendedBuild: AdaptivePlannedItemV1[]` as the user-facing build path. That representation stores only `itemId + OWNED/NEXT/PLANNED`, so transaction semantics such as upgrade consumption, replacement, future flex requirements, and explicit slot-release obligations are flattened away.
+The strategy-first planner is already on `main` and models strategy identity, build status, goals, branch commitment, slot planning, investment objectives, and a short receding-horizon search. The remaining failure is at the next boundary: the planner still emits `recommendedBuild: AdaptivePlannedItemV1[]` as the user-facing Build Path. That representation stores only `itemId + OWNED/NEXT/PLANNED`, so upgrade consumption, replacement, future flex requirements, and explicit slot-release obligations are flattened away.
 
-The current shared contract already exposes `strategy.slotPlan.futureTransitions`, including `requirement`, `sourceItemId`, and `requiredUnlockedFlexSlots`, while `StrategyFirstBuildPlannerV1Service.buildRecommendedBuild()` turns unresolved goals back into flat item rows. This permits a logically coherent strategy layer to become an incoherent UI path.
+The current shared contract already exposes `strategy.slotPlan.futureTransitions`, including `requirement`, `sourceItemId`, and `requiredUnlockedFlexSlots`. `StrategyFirstBuildPlannerV1Service.buildRecommendedBuild()` then converts unresolved strategy goals back into flat item rows. A coherent strategy can therefore become an incoherent user-visible path.
 
-This design replaces the flat build path as source of truth with a persistent transaction plan.
+This design replaces the flat Build Path as source of truth with a persistent transaction plan.
 
 ## Goal
 
 Every future build target shown to the user must belong to an explicit, replayable plan step whose slot, inventory, recipe, affordability, and prerequisite semantics are known.
 
-The system must be able to answer, for every displayed target:
+For every displayed target the system must be able to answer:
 
-1. What exact action will eventually obtain this target?
-2. If inventory capacity is insufficient, what exact prior transition creates capacity?
-3. If the target is blocked, what condition must become true first?
+1. What exact action obtains this target?
+2. If current inventory has no capacity, what exact prior transition creates capacity?
+3. If the target is blocked, what exact condition must become true first?
 4. If an existing item must be sold, which item and why?
 5. Which strategic goal is this step advancing?
 
-A future item without such an answer is not allowed in the build path.
+A future item without those answers is not allowed in the Build Path.
 
 ## Chosen architecture
 
-Use the existing strategy-first architecture and insert a transaction-first planning layer between `BuildContractV1` and the API/UI projection.
+Keep the merged strategy-first architecture and insert a transaction-first layer between `BuildContractV1` and API/UI projection.
 
 ```text
 BuildStrategySpec
       -> StrategySession
       -> BuildContract
-      -> Transaction Plan Compiler / Replanner
+      -> Transaction Plan Compiler
+      -> Transaction Plan Validator
+      -> Plan Reconciler
       -> PlanSession
-          -> planSteps[]          source of truth
-          -> nextAction           derived from first executable step
+          -> steps[]              source of truth
+          -> nextAction           derived
           -> recommendedBuild[]   compatibility projection only
       -> API / Overwolf
 ```
 
-Do not replace the existing deterministic candidate generator, item graph, slot rules, economy rules, strategy selector, BuildContract, or contextual scorer. They remain authoritative for their current responsibilities.
+Do not replace the deterministic candidate generator, item graph, slot rules, economy rules, strategy selector, BuildContract, or contextual scorer. They remain authoritative for their current responsibilities.
 
 ## Core semantic separation
 
 ### Build goal
 
-Describes what the selected strategy wants to achieve.
-
-Examples:
-
-- complete a core power spike;
-- choose one branch;
-- satisfy a hard investment objective;
-- reserve a situational response window.
+Describes what the selected strategy wants to achieve: a core spike, branch, investment objective, situational reservation, or terminal obligation.
 
 ### Plan step
 
 Describes the concrete transaction or blocking condition required to advance a goal.
 
-Examples:
-
-- `BUY`;
-- `UPGRADE`;
-- `SELL_AND_BUY`;
-- wait until enough souls are available;
-- wait until enough flex slots are unlocked.
-
 ### Next action
 
-The first transaction that is executable now.
+The first transaction step that is executable now.
 
-A barrier may be the first incomplete plan step, but a barrier is never `NEXT`. If a barrier is first, the runtime action is `HOLD` with a structured waiting reason.
+A barrier may be the first incomplete plan step, but a barrier is never `NEXT`. If an unsatisfied barrier is first, the runtime action is `HOLD` with a structured waiting reason.
 
 ## Domain contracts
 
-### `PlanSessionV1`
-
-`PlanSessionV1` is the source of truth for the current match/player transaction plan.
+### `AdaptivePlanSessionV1`
 
 ```ts
-export type PlanSessionStateV1 =
+export type AdaptivePlanSessionStateV1 =
   | 'ACTIVE'
   | 'WAITING'
   | 'REPLAN_REQUIRED'
   | 'COMPLETE';
 
-export interface PlanSessionV1 {
+export interface AdaptivePlanSessionV1 {
   planSessionId: string;
   strategyId: string;
   revision: number;
   createdAtGameTimeSec: number;
   updatedAtGameTimeSec: number;
-  state: PlanSessionStateV1;
-  steps: readonly PlanStepV1[];
+  state: AdaptivePlanSessionStateV1;
+  steps: readonly AdaptivePlanStepV1[];
   nextStepId?: string;
   reasonCodes: readonly string[];
 }
 ```
 
-The session is persistent across recommendation ticks. A new tick reconciles the current plan against the current exact state and replans only the affected suffix.
+`PlanSession` persists across recommendation ticks through the existing previous-result continuity path. No new database/Redis dependency is required for the first implementation. If previous result state is absent after process recovery, the planner starts a new session deterministically from the current exact state.
 
-`revision` changes when plan structure changes. Merely marking an existing step complete does not require a new semantic plan identity.
+`revision` increments whenever the serialized session meaningfully changes: step structure, step status, next step, session state, or reasons. Stable `stepId` values, not a frozen revision, provide continuity across revisions.
 
-### `PlanStepV1`
+`nextStepId` is present only when a transaction step is actually `NEXT`. If the plan is waiting behind a barrier, `nextStepId` is absent and `nextAction` is `HOLD`.
+
+### `AdaptivePlanStepV1`
 
 ```ts
-export type PlanStepStateV1 =
+export type AdaptivePlanStepStateV1 =
   | 'LOCKED'
   | 'BLOCKED'
   | 'READY'
@@ -114,19 +101,25 @@ export type PlanStepStateV1 =
   | 'INVALIDATED'
   | 'SKIPPED';
 
-export type PlanStepKindV1 = 'TRANSACTION' | 'BARRIER';
+export type AdaptivePlanStepKindV1 = 'TRANSACTION' | 'BARRIER';
 
-export interface PlanStepV1 {
+export type AdaptivePlanStepBlockReasonV1 =
+  | 'INSUFFICIENT_GOLD'
+  | 'INSUFFICIENT_FLEX'
+  | 'SHOP_UNAVAILABLE'
+  | 'PREREQUISITE_NOT_MET';
+
+export interface AdaptivePlanStepV1 {
   stepId: string;
   goalId: string;
-  kind: PlanStepKindV1;
-  state: PlanStepStateV1;
-  action?: PlannedTransactionV1;
-  barrier?: PlanBarrierV1;
+  kind: AdaptivePlanStepKindV1;
+  state: AdaptivePlanStepStateV1;
+  action?: AdaptivePlannedTransactionV1;
+  barrier?: AdaptivePlanBarrierV1;
   prerequisiteStepIds: readonly string[];
-  blockingReasons: readonly PlanStepBlockReasonV1[];
-  projectedBefore: PlanProjectionV1;
-  projectedAfter?: PlanProjectionV1;
+  blockingReasons: readonly AdaptivePlanStepBlockReasonV1[];
+  projectedBefore: AdaptivePlanProjectionV1;
+  projectedAfter?: AdaptivePlanProjectionV1;
   reasonCodes: readonly string[];
 }
 ```
@@ -136,7 +129,7 @@ Exactly one of `action` or `barrier` is present according to `kind`.
 ### Transaction actions
 
 ```ts
-export type PlannedTransactionV1 =
+export type AdaptivePlannedTransactionV1 =
   | {
       type: 'BUY';
       buyItemId: number;
@@ -154,14 +147,12 @@ export type PlannedTransactionV1 =
     };
 ```
 
-A standalone `SELL` is not part of the normal user-facing transaction plan. If the planner needs to free capacity for a future purchase, the strategic intent is represented as `SELL_AND_BUY`. This prevents the plan from telling the user to sell an item without proving the replacement transaction.
-
-The deterministic domain may continue to expose atomic `SELL_ITEM` candidates for internal search and diagnostics.
+A standalone `SELL` is not part of the normal user-facing plan. If capacity must be freed for a target, the strategic intent is `SELL_AND_BUY`. The deterministic domain may continue exposing `SELL_ITEM` for internal candidate generation and diagnostics.
 
 ### Barrier steps
 
 ```ts
-export type PlanBarrierV1 =
+export type AdaptivePlanBarrierV1 =
   | {
       type: 'WAIT_FOR_GOLD';
       targetItemId: number;
@@ -184,12 +175,18 @@ export type PlanBarrierV1 =
 
 A barrier does not mutate inventory. Completion is derived from exact current state.
 
+For a future `SELL_AND_BUY`, `WAIT_FOR_GOLD.requiredSouls` means the minimum wallet balance required before starting the composite transaction. With known buy cost and sell refund:
+
+```text
+requiredSouls = max(0, buyCost - sellRefund)
+```
+
+The user is not told to sell early while waiting for that threshold.
+
 ### Projection
 
-`PlanProjectionV1` captures enough deterministic projected state to prove reachability without duplicating the entire live decision payload.
-
 ```ts
-export interface PlanProjectionV1 {
+export interface AdaptivePlanProjectionV1 {
   inventoryItemIds: readonly number[];
   spendableSouls?: number;
   usedByType: Readonly<Record<'weapon' | 'vitality' | 'spirit', number>>;
@@ -199,13 +196,13 @@ export interface PlanProjectionV1 {
 }
 ```
 
-The plan compiler must be able to replay each step from `projectedBefore` to `projectedAfter` using the same deterministic transition functions used by live candidate generation.
+Projection stores the minimal deterministic resource state needed to audit the path. The validator must be able to reproduce each `projectedAfter` from `projectedBefore` using the same deterministic transition semantics used by candidate generation.
 
 ## `SELL_AND_BUY` semantics
 
 For planner and UI, `SELL_AND_BUY` is one atomic strategic step.
 
-For validation, it is two deterministic transitions:
+For validation it is the deterministic sequence:
 
 ```text
 S0
@@ -215,37 +212,37 @@ S0
  -> S2
 ```
 
-The composite step exists only if both transitions are valid in sequence.
+The existing `REPLACE_ITEM` candidate already represents this composite legality. The transaction plan should use that candidate as its primary legality proof and revalidate the projected state before serving.
 
-Validation must prove:
+A composite step exists only if all of these hold:
 
-- sold item is currently projected-owned;
-- sell semantics and refund are known;
-- post-sale inventory is legal;
-- the new item is ruleset-available;
-- the post-sale wallet can afford the buy;
-- the final inventory is slot-legal;
-- active-item limits are legal;
-- completed hard goals are not broken unless the BuildContract explicitly authorizes replacement;
+- sold item is projected-owned;
+- exact sell semantics/refund are known;
+- post-sale state is legal;
+- target is ruleset-available;
+- post-sale wallet can afford the target;
+- final inventory is slot-legal;
+- active-item limits remain legal;
+- completed hard goals are preserved unless replacement is explicitly authorized;
 - committed branch invariants are preserved;
-- replacement does not downgrade a satisfied upgrade lineage accidentally.
+- no accidental lineage downgrade occurs.
 
-If any condition fails, no `SELL_AND_BUY` step may be emitted.
+If any condition fails, no `SELL_AND_BUY` step is emitted.
 
 ## How the planner chooses what to sell
 
-Sale choice must be strategic, not merely the cheapest item or first removable slot occupant.
+Sale choice is strategic, never merely the cheapest item or first slot occupant.
 
-Candidate sale targets are filtered in this order:
+Hard filtering order:
 
-1. The item is legally sellable and exact sell semantics are known.
-2. The item is not required by a currently satisfied hard goal unless that goal explicitly permits replacement.
-3. The item is not evidence of a committed branch that the plan still depends on.
-4. The item is not a required component for a planned near-term upgrade unless the replacement supersedes that goal.
-5. Selling it does not make an already completed hard investment requirement invalid without an explicit replan.
-6. The replacement transaction is legal after the sale.
+1. Item is legally sellable and sell semantics are known.
+2. Item is not required by a satisfied hard goal unless that goal explicitly permits replacement.
+3. Item is not evidence of a committed branch still required by the contract.
+4. Item is not a near-term required upgrade component unless the replacement supersedes that goal.
+5. Sale does not silently invalidate a satisfied hard investment obligation.
+6. Final replacement transaction is legal.
 
-The remaining sale candidates are scored by strategic replacement cost:
+Remaining pairs are scored as one transition:
 
 ```text
 replacementUtility =
@@ -260,26 +257,28 @@ replacementUtility =
   - recentPurchasePenalty
 ```
 
-The planner may choose `HOLD/WAIT` instead of replacing an item if every legal replacement has negative net strategic utility.
+If every legal replacement has negative strategic utility, the planner may wait instead of selling something just to keep buying.
 
 ## Full-inventory invariant
 
 For every future inventory-increasing transaction, the projected state after all preceding steps must be legal.
 
-If capacity is unavailable, exactly one of the following must exist before the purchase:
+If capacity is unavailable, the plan must contain one of these before the purchase:
 
-- a component-consuming `UPGRADE`;
-- a `SELL_AND_BUY` replacement;
-- a prior transaction that compresses inventory;
-- a `WAIT_FOR_FLEX` barrier that explicitly names the required flex capacity.
+- component-consuming `UPGRADE`;
+- `SELL_AND_BUY` replacement;
+- another prior transaction that compresses inventory;
+- `WAIT_FOR_FLEX` with an exact required unlocked-flex threshold.
 
-If no such path exists, the goal remains visible only at the strategy/goal level and the plan state becomes `REPLAN_REQUIRED`. It must not appear as a normal `PLANNED` item.
+If no path exists, the strategic goal may remain visible in strategy metadata, but the transaction plan is `REPLAN_REQUIRED`. The target must not appear as a normal user-visible `PLANNED` purchase.
+
+Unknown flex capacity only blocks paths that require additional flex. It does not forbid already-provable upgrades or replacements that do not increase flex demand.
 
 ## Stable step identity
 
-`stepId` identifies semantic intent rather than a recommendation tick.
+`stepId` identifies semantic intent, not a recommendation tick.
 
-Use a deterministic fingerprint derived from:
+Fingerprint inputs:
 
 ```text
 strategyId
@@ -290,17 +289,11 @@ strategyId
 + branch identity where relevant
 ```
 
-This allows the reconciler to distinguish:
-
-- same step, changed status;
-- same goal, changed transaction;
-- removed goal;
-- newly inserted barrier;
-- newly inserted replacement.
+This distinguishes same-step status updates from a changed transaction or changed goal.
 
 ## Reconciliation and partial replanning
 
-Each recommendation tick performs:
+Each tick performs:
 
 ```text
 previous PlanSession
@@ -309,141 +302,119 @@ previous PlanSession
 + current BuildContract
  -> reconcile completed/invalidated steps
  -> locate first affected step
- -> preserve valid prefix
- -> rebuild only affected suffix
- -> revalidate entire resulting path
+ -> preserve valid semantic prefix
+ -> rebuild affected suffix
+ -> replay-validate complete resulting path
 ```
 
-A step becomes `COMPLETED` only from exact current state and item-graph semantics, never from display order or target-name matching.
+Completion comes only from exact state and item-graph semantics.
 
-Examples:
+- `BUY X`: completed when X/valid satisfying descendant is owned according to goal semantics.
+- `UPGRADE A -> B`: completed when B or a satisfying descendant is owned and consumed components are absent as expected.
+- `SELL_AND_BUY A -> B`: completed when B is satisfied and A is no longer held, subject to item-graph equivalence rules.
+- `WAIT_FOR_FLEX`: completed when exact/reconstructed unlocked flex reaches the threshold.
+- `WAIT_FOR_GOLD`: completed when verified wallet reaches the threshold.
 
-- `BUY X` completes when X is owned or a documented exact successor semantics says the goal is already satisfied.
-- `UPGRADE A -> B` completes when B or a satisfying descendant is owned and consumed components are absent as expected.
-- `SELL_AND_BUY A -> B` completes only when B is owned and A is no longer held, unless the item graph defines a transformed successor relation that proves equivalent semantics.
-- `WAIT_FOR_FLEX` completes when observed/reconstructed unlocked flex reaches the required threshold.
-
-If the player manually deviates, only the affected suffix is replanned unless the StrategySession itself changes to `DIVERGED/OOD`.
+A manual player deviation replans the affected suffix unless StrategySession itself changes to `DIVERGED/OOD`.
 
 ## Planning algorithm
 
-The current strategy-first beam search remains useful, but its output changes from a list of candidate targets to a path of transaction candidates.
+The existing strategy-first beam remains, but the externally meaningful output becomes a transaction path.
 
-### Step 1 - resolve current semantic goal
+### 1. Resolve semantic goal
 
-Use the existing BuildContract and investment/situational logic.
+Use existing BuildContract, investment, branch, and situational logic.
 
-### Step 2 - compile target obligations
+### 2. Compile acquisition obligations
 
-For active and near-future hard goals, compile explicit acquisition obligations:
+Map active and near-future hard goals to target item/family obligations and valid acquisition modes.
 
-```text
-Goal -> target item/family -> legal acquisition modes
-```
+### 3. Generate legal transactions
 
-### Step 3 - generate legal transactions
+Use `generateRecommendationCandidates()` as authoritative transaction source at each projected node. Do not reimplement BUY/UPGRADE/REPLACE legality in the compiler.
 
-Use `generateRecommendationCandidates()` as the authoritative transaction source for the current projected node.
+### 4. Add barriers only for known deferable blockers
 
-Do not synthesize BUY/UPGRADE/REPLACE legality in the plan compiler.
+Allowed deferable blockers:
 
-### Step 4 - add barriers only when the target remains strategically valid but cannot yet be executed
+- known insufficient wallet -> `WAIT_FOR_GOLD`;
+- known insufficient currently unlocked flex, while the target would fit within known maximum topology -> `WAIT_FOR_FLEX`;
+- known shop unavailable -> `WAIT_FOR_SHOP`.
 
-Examples:
+Unknown wallet, unknown flex capacity, unknown sell transition, unavailable ruleset item, or otherwise ambiguous feasibility are not optimistic barriers. They cause the path to remain unprovable and therefore `REPLAN_REQUIRED`/safe hold.
 
-- insufficient wallet -> `WAIT_FOR_GOLD`;
-- insufficient current flex but future strategy permits flex dependency -> `WAIT_FOR_FLEX`;
-- shop unavailable -> `WAIT_FOR_SHOP`.
+### 5. Search 2-5 transactions ahead
 
-A barrier must be supported by a known condition. Unknown slot capacity does not become `WAIT_FOR_FLEX`; it becomes `REPLAN_REQUIRED` or degraded/hold because the planner cannot prove the required future state.
+Beam node carries exact projected inventory, wallet, slots, investment, contract state, transaction steps, necessary barriers, and cumulative utility.
 
-### Step 5 - search 2-5 transaction steps ahead
+### 6. Compile and reconcile `PlanSession`
 
-The beam node carries:
-
-- projected exact inventory;
-- projected wallet;
-- projected slot state;
-- projected investment state;
-- BuildContract state;
-- transaction steps;
-- barriers that must occur before a future transaction;
-- cumulative utility.
-
-### Step 6 - compile `PlanSession`
-
-The best coherent path is converted to stable steps, then reconciled against the previous session.
+Convert the coherent path to stable semantic steps, reconcile with previous session, then validate the entire result.
 
 ## Relationship to existing slot planner
 
-`BuildSlotPlannerV1Service` continues to represent strategic slot obligations and future transition requirements.
-
-Its current `futureTransitions` are no longer directly rendered as build items. Instead they become constraints consumed by the transaction plan compiler.
-
-Mapping examples:
+`BuildSlotPlannerV1Service` remains the strategic slot-obligation source. Its `futureTransitions` become constraints consumed by transaction compilation, not UI rows.
 
 ```text
-requirement = UPGRADE
- -> emitted path must contain an upgrade/compression step before target acquisition
+UPGRADE
+ -> path contains legal upgrade/compression before target
 
-requirement = REPLACE
- -> emitted path must contain SELL_AND_BUY(sourceItemId, targetItemId)
+REPLACE
+ -> path contains SELL_AND_BUY(sourceItemId, targetItemId)
 
-requirement = SELL_TEMPORARY
- -> compile to SELL_AND_BUY of the temporary item and target; do not emit naked SELL
+SELL_TEMPORARY
+ -> path resolves as SELL_AND_BUY; never naked strategic SELL
 
-requirement = FLEX_UNLOCK
- -> emit WAIT_FOR_FLEX before target transaction
+FLEX_UNLOCK
+ -> path contains WAIT_FOR_FLEX before acquisition
 
-requirement = BLOCKED
- -> no target transaction; session REPLAN_REQUIRED unless another legal strategy path exists
+BLOCKED
+ -> no acquisition transaction; try another coherent path or REPLAN_REQUIRED
 ```
 
 ## Next action derivation
 
-`nextAction` is derived from the first incomplete transaction step that is executable now.
-
 Rules:
 
-- only transaction steps may become `NEXT`;
-- a barrier never becomes `NEXT`;
-- if the first incomplete step is an unsatisfied barrier, runtime returns `HOLD` with barrier reason codes;
-- if the first transaction is not legal under current exact state, the plan must replan before serving; it may not return stale `NEXT`;
-- `nextAction.targetItemId` must agree with `planSession.nextStepId`.
+- only transaction steps can be `NEXT`;
+- a barrier is never `NEXT`;
+- if the first incomplete step is an unsatisfied barrier, runtime returns `HOLD` with barrier target/reasons;
+- a transaction that is no longer legal under current exact state is invalidated/replanned before serving;
+- if `planSession.nextStepId` is present, it references the exact step whose structured transaction maps to `nextAction`.
 
 ## API migration
 
-Introduce a new source-of-truth field on the adaptive recommendation result:
+Add:
 
 ```ts
 planSession?: AdaptivePlanSessionV1;
 ```
 
-During migration, keep existing fields:
+to `AdaptiveRecommendationResultV1` during migration.
+
+Keep:
 
 ```ts
 recommendedBuild: readonly AdaptivePlannedItemV1[];
 nextAction: AdaptiveActionV1;
 ```
 
-but derive them from `planSession`.
+but derive both from `planSession` for transaction-first strategy serving.
 
-The compatibility projection must never influence planning decisions.
+After promotion, transaction-first strategy results require `planSession`; the field remains optional only because persisted older/legacy fallback results still exist.
 
-Recommended V1-compatible mapping:
+Legacy projection rules:
 
-- owned inventory -> `OWNED` rows;
-- transaction target of the current `NEXT` step -> `NEXT`;
+- exact owned inventory -> `OWNED`;
+- current transaction target -> `NEXT`;
 - future transaction targets -> `PLANNED`;
-- barrier-only target may be projected as `PLANNED` only if the UI also receives and renders its blocking transaction/barrier metadata; otherwise omit it from legacy projection.
+- blocked future targets may be included in the compatibility list only while the new client also receives `planSession`; old clients must not be given misleading annotations inferred locally.
 
-The new Overwolf UI must consume `planSession.steps` directly.
+Planner never reads the flat projection to reconstruct transaction semantics.
 
 ## UI semantics
 
-Each path row renders a transaction, not just a target item.
-
-Examples:
+Rows render transactions/barriers, not bare target items.
 
 ```text
 NEXT
@@ -451,34 +422,32 @@ Upgrade Debuff Reducer -> Dispel Magic
 
 PLANNED
 Buy Mystic Expansion
-Before purchase: sell Extra Regen
+Sell Extra Regen before purchase
 
 BLOCKED
 Spirit Resilience
-Waiting for Flex Slot 1/2
+Waiting for flex 1/2
 ```
 
-For `SELL_AND_BUY`, copy should be generated from structured IDs, never inferred by the client.
-
-The UI may visually emphasize the buy target, but the sale is mandatory visible information near the target.
+For `SELL_AND_BUY`, both item identities come from server structured data. Client-side sell choice is forbidden.
 
 ## Observability
 
-Log plan-level diagnostics on every changed revision:
+On each changed session revision log:
 
 - `planSessionId`;
 - `revision`;
 - preserved prefix length;
-- inserted/removed/invalidated step IDs;
-- first blocked reason;
+- inserted/invalidated/completed step IDs;
+- first barrier reason;
 - next step/action;
-- every `SELL_AND_BUY` pair;
-- projected slot state before/after each future transaction;
-- plan reachability result;
-- reason for replan;
-- whether output used transaction-first or compatibility fallback.
+- every replacement pair;
+- projected slot state before/after future transactions;
+- replay validation result;
+- replan reason;
+- transaction-first vs legacy fallback source.
 
-Add counters:
+Counters:
 
 ```text
 transaction_plan_generated_total
@@ -494,66 +463,60 @@ transaction_plan_step_churn_total
 
 Fail closed when correctness cannot be proven.
 
-Examples:
+- Unknown flex on a path that requires additional flex -> no speculative future buy.
+- Unknown sell transition -> no replacement using that item.
+- Projected slot violation -> discard path.
+- Stored projection differs from deterministic replay -> reject revision.
+- Current state invalidates preserved suffix -> replan suffix.
+- No coherent reachable path -> strategy/goal metadata remains, plan state becomes `REPLAN_REQUIRED`, runtime action becomes safe `HOLD`.
 
-- unknown flex capacity where a future item needs extra capacity -> HOLD/REPLAN_REQUIRED;
-- unknown sell transition -> no SELL_AND_BUY using that item;
-- projected path violates slot capacity -> discard path;
-- projection differs from deterministic replay -> discard plan revision;
-- current state no longer matches preserved prefix assumptions -> invalidate suffix and replan;
-- no coherent reachable path -> BuildContract remains strategy-aware but plan state is `REPLAN_REQUIRED`.
-
-The planner must never hide a failure by falling back to a flat item list that violates transaction invariants.
+The system must never hide a transaction-plan failure by falling back to an internally generated flat strategy item list. An explicit legacy planner fallback is allowed only through the serving router and is marked as legacy.
 
 ## Legacy planner boundary
 
-The serving router may continue to support legacy fallback during migration, but transaction-first promotion must have a separate gate.
+Serving router can retain emergency legacy fallback during migration. Transaction-first promotion has its own gate. A legacy result has no `planSession` and is explicitly diagnosed as `LEGACY_FLAT_PLAN_FALLBACK`.
 
-A legacy fallback result is explicitly marked and must not pretend to have a transaction plan.
-
-Once transaction-first replay and production gates pass, user-facing strategy-first serving must require `planSession` completeness. Legacy flat-plan serving may remain only as emergency fallback until separately retired.
+Once transaction-first replay/shadow gates pass, user-facing strategy-first serving requires a valid transaction plan.
 
 ## Hard invariants
 
-1. Zero future target items without a `PlanStep`.
-2. Zero `BUY` into a projected illegal slot state.
-3. Zero `SELL_AND_BUY` without deterministic `SELL -> BUY` validation.
-4. Zero client-side inference of what item should be sold.
+1. Zero future target items without a plan step.
+2. Zero BUY into projected illegal slot state.
+3. Zero SELL_AND_BUY without validated replacement semantics.
+4. Zero client-side inference of the sold item.
 5. Zero hidden flex assumptions.
-6. Zero naked strategic SELL generated only to make room.
-7. Zero full-plan rebuild on every normal state tick.
-8. Zero `NEXT` steps that are not executable now.
-9. Zero step completion inferred from UI ordering/name equality.
-10. Zero future `PLANNED` target with unknown slot-release path.
-11. Zero mismatch between `nextAction` and `planSession.nextStepId`.
-12. Zero compatibility projection influence on planner search.
+6. Zero naked strategic SELL created only to make room.
+7. Zero complete-plan regeneration on normal unchanged semantics.
+8. Zero NEXT transactions that are not executable now.
+9. Zero step completion inferred from display order or names.
+10. Zero future planned target with unknown slot-release path.
+11. Zero mismatch between `nextAction` and the transaction referenced by `planSession.nextStepId`.
+12. Zero influence from compatibility `recommendedBuild[]` back into transaction search/replacement semantics.
 
 ## Testing strategy
 
-### Unit tests
+### Unit
 
-- stable `stepId` generation;
-- barrier completion;
-- composite replacement validation;
+- stable step ID;
+- barriers;
+- replacement validation;
 - protected-goal sale filtering;
-- slot projection across chained steps;
-- partial replan prefix preservation;
-- completion reconciliation against upgrade lineage.
+- chained slot projection;
+- partial prefix preservation;
+- upgrade-lineage completion.
 
-### Integration tests
+### Integration
 
 - strategy goal -> transaction plan -> next action;
 - full inventory -> explicit replacement;
 - full inventory -> upgrade compression;
 - full inventory -> wait for flex;
 - no slot path -> replan required;
-- manual player deviation -> suffix replan only;
+- player deviation -> suffix replan;
 - strategy switch -> new plan session;
-- legacy projection derived from plan session.
+- flat projection derived from plan session.
 
 ### Golden replay gates
-
-Add fixtures for the observed production class of failure and require:
 
 ```text
 futureTargetWithoutStepRate = 0
@@ -567,21 +530,21 @@ clientInferredReplacementRate = 0
 
 ## Rollout
 
-1. Domain contracts and tests only.
-2. Transaction plan compiler behind feature flag.
-3. Shadow generation beside current strategy-first output.
-4. Compare current flat path against transaction path; record mismatches.
-5. Make `recommendedBuild[]` a derived compatibility projection.
-6. Update desktop UI to transaction rows.
-7. Update in-game overlay.
-8. Promote transaction-first source of truth after replay and shadow gates.
+1. Shared domain contract and RED production regression.
+2. Compiler/barriers/validator.
+3. Persistent reconciler.
+4. Strategy-first integration behind transaction shadow gate.
+5. Compare old flat projection against transaction path.
+6. Make `recommendedBuild[]` a derived projection.
+7. Update Overwolf presentation.
+8. Promote transaction-first source of truth after replay/shadow gates.
 9. Keep emergency legacy fallback explicitly marked.
-10. Retire direct flat-plan generation after one stable production window.
+10. Retire direct flat strategy-plan generation after a stable production evidence window.
 
 ## Non-goals
 
-This change does not redesign archetype mining, BuildStrategySpec semantics, Behavioral/Value ML, Statlocker evidence collection, or BuildLM. It fixes the semantic boundary between strategy planning and executable/user-visible build progression.
+Do not redesign archetype mining, BuildStrategySpec, Behavioral/Value ML, Statlocker evidence, or BuildLM. This change fixes the semantic boundary between strategy planning and executable/user-visible build progression.
 
 ## Success criterion
 
-For any recommendation screen, a reviewer can start from the current inventory and replay every future displayed transaction/barrier in order without encountering an unexplained item, impossible slot state, hidden sale, or undefined prerequisite.
+For any recommendation, a reviewer can start from the exact current inventory and replay every future displayed transaction/barrier in order without encountering an unexplained item, impossible slot state, hidden sale, or undefined prerequisite.
