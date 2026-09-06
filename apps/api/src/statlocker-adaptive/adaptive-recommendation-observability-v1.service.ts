@@ -7,6 +7,11 @@ import {
   StrategyFirstInvariantSummaryV1,
   StrategyFirstInvariantViolationCodeV1,
 } from './strategy-first-invariants-v1';
+import {
+  TransactionPlanInvariantCheckV1,
+  TransactionPlanInvariantSummaryV1,
+  TransactionPlanInvariantViolationCodeV1,
+} from './transaction-plan-invariants-v1';
 
 export interface AdaptiveRecommendationObservabilityLatencyV1 {
   count: number;
@@ -29,6 +34,8 @@ export interface AdaptiveRecommendationObservabilityCountersV1 {
   replaceCount: number;
   postCommitReplacementCount: number;
   externallyDivergedChoiceStateCount: number;
+  transactionPlanSessionSwitchCount: number;
+  transactionPlanRevisionCount: number;
 }
 
 export interface AdaptiveRecommendationObservabilityStatusV1 {
@@ -36,13 +43,14 @@ export interface AdaptiveRecommendationObservabilityStatusV1 {
   plannerLatencyMs: AdaptiveRecommendationObservabilityLatencyV1;
   counters: AdaptiveRecommendationObservabilityCountersV1;
   strategyFirstRelease: StrategyFirstInvariantSummaryV1;
+  transactionPlanRelease: TransactionPlanInvariantSummaryV1;
   reasonCodeCounts: Record<string, number>;
 }
 
 export interface AdaptiveRecommendationOutcomeV1 {
   evidence: StatlockerEvidenceBundleV1;
   decision: AdaptiveDecisionStateV1;
-  previousResult?: Pick<AdaptiveRecommendationResultV1, 'nextAction' | 'nextTargetItemId' | 'recommendedBuild'>;
+  previousResult?: Pick<AdaptiveRecommendationResultV1, 'nextAction' | 'nextTargetItemId' | 'recommendedBuild' | 'planSession'>;
   result: AdaptiveRecommendationResultV1;
   plannerLatencyMs?: number;
   legalityFallback?: boolean;
@@ -63,11 +71,23 @@ const RELEASE_CODES: readonly StrategyFirstInvariantViolationCodeV1[] = [
   'NEXT_ACTION_BUILD_MISMATCH',
 ];
 
+const TRANSACTION_RELEASE_CODES: readonly TransactionPlanInvariantViolationCodeV1[] = [
+  'FUTURE_TARGET_WITHOUT_STEP',
+  'PROJECTED_SLOT_VIOLATION',
+  'REPLACE_WITHOUT_VALIDATED_BUY',
+  'NEXT_STEP_MISMATCH',
+  'NEXT_NOT_EXECUTABLE',
+  'UNKNOWN_SLOT_PATH',
+  'COMPATIBILITY_PROJECTION_DIVERGENCE',
+];
+
 @Injectable()
 export class AdaptiveRecommendationObservabilityV1Service {
   private readonly logger = new Logger(AdaptiveRecommendationObservabilityV1Service.name);
   private readonly invariantViolationDecisionCounts = new Map<StrategyFirstInvariantViolationCodeV1, number>();
+  private readonly transactionInvariantViolationDecisionCounts = new Map<TransactionPlanInvariantViolationCodeV1, number>();
   private evaluatedStrategyDecisions = 0;
+  private evaluatedTransactionPlanDecisions = 0;
   private readonly status = {
     updatedAt: new Date(0).toISOString(),
     plannerLatencyMs: {
@@ -90,6 +110,8 @@ export class AdaptiveRecommendationObservabilityV1Service {
       replaceCount: 0,
       postCommitReplacementCount: 0,
       externallyDivergedChoiceStateCount: 0,
+      transactionPlanSessionSwitchCount: 0,
+      transactionPlanRevisionCount: 0,
     } satisfies AdaptiveRecommendationObservabilityCountersV1,
     reasonCodeCounts: {} as Record<string, number>,
   };
@@ -152,6 +174,19 @@ export class AdaptiveRecommendationObservabilityV1Service {
     this.touch();
   }
 
+  recordTransactionPlanInvariantCheck(check: TransactionPlanInvariantCheckV1): void {
+    this.evaluatedTransactionPlanDecisions += 1;
+    const codes = new Set(check.violations.map((violation) => violation.code));
+    for (const code of codes) {
+      this.transactionInvariantViolationDecisionCounts.set(
+        code,
+        (this.transactionInvariantViolationDecisionCounts.get(code) ?? 0) + 1,
+      );
+    }
+    this.recordReasonCodes([...codes].map((code) => `TRANSACTION_PLAN_INVARIANT:${code}`));
+    this.touch();
+  }
+
   recordRecommendationOutcome(outcome: AdaptiveRecommendationOutcomeV1): void {
     if (outcome.result.nextAction.type === 'SELL') this.status.counters.sellCount += 1;
     if (outcome.result.nextAction.type === 'REPLACE') this.status.counters.replaceCount += 1;
@@ -168,7 +203,17 @@ export class AdaptiveRecommendationObservabilityV1Service {
       ) {
         this.status.counters.planSwitchCount += 1;
       }
-      if (!sameBuild(outcome.previousResult.recommendedBuild, outcome.result.recommendedBuild)) {
+      if (outcome.previousResult.planSession && outcome.result.planSession) {
+        if (outcome.previousResult.planSession.planSessionId !== outcome.result.planSession.planSessionId) {
+          this.status.counters.transactionPlanSessionSwitchCount += 1;
+        }
+        if (outcome.previousResult.planSession.revision !== outcome.result.planSession.revision) {
+          this.status.counters.transactionPlanRevisionCount += 1;
+        }
+        if (!samePlanSession(outcome.previousResult.planSession, outcome.result.planSession)) {
+          this.status.counters.planChurnCount += 1;
+        }
+      } else if (!sameBuild(outcome.previousResult.recommendedBuild, outcome.result.recommendedBuild)) {
         this.status.counters.planChurnCount += 1;
       }
     }
@@ -181,6 +226,8 @@ export class AdaptiveRecommendationObservabilityV1Service {
         evidenceUsable: outcome.evidence.usable,
         nextActionType: outcome.result.nextAction.type,
         legalityFallback: outcome.legalityFallback ?? false,
+        planSessionId: outcome.result.planSession?.planSessionId,
+        planRevision: outcome.result.planSession?.revision,
       })}`,
     );
   }
@@ -191,6 +238,7 @@ export class AdaptiveRecommendationObservabilityV1Service {
       plannerLatencyMs: { ...this.status.plannerLatencyMs },
       counters: { ...this.status.counters },
       strategyFirstRelease: this.strategyFirstReleaseSummary(),
+      transactionPlanRelease: this.transactionPlanReleaseSummary(),
       reasonCodeCounts: { ...this.status.reasonCodeCounts },
     };
   }
@@ -216,6 +264,29 @@ export class AdaptiveRecommendationObservabilityV1Service {
       coreWithoutExitSlotRate: rate('CORE_WITHOUT_EXIT_SLOT'),
       unexplainedSituationalRate: rate('UNEXPLAINED_SITUATIONAL'),
       nextActionBuildMismatchRate: rate('NEXT_ACTION_BUILD_MISMATCH'),
+    };
+  }
+
+  private transactionPlanReleaseSummary(): TransactionPlanInvariantSummaryV1 {
+    const rate = (code: TransactionPlanInvariantViolationCodeV1): number => {
+      if (this.evaluatedTransactionPlanDecisions === 0) return 0;
+      return (this.transactionInvariantViolationDecisionCounts.get(code) ?? 0) /
+        this.evaluatedTransactionPlanDecisions;
+    };
+    for (const code of TRANSACTION_RELEASE_CODES) {
+      if (!this.transactionInvariantViolationDecisionCounts.has(code)) {
+        this.transactionInvariantViolationDecisionCounts.set(code, 0);
+      }
+    }
+    return {
+      evaluatedDecisions: this.evaluatedTransactionPlanDecisions,
+      futureTargetWithoutStepRate: rate('FUTURE_TARGET_WITHOUT_STEP'),
+      projectedSlotViolationRate: rate('PROJECTED_SLOT_VIOLATION'),
+      replaceWithoutValidatedBuyRate: rate('REPLACE_WITHOUT_VALIDATED_BUY'),
+      nextStepMismatchRate: rate('NEXT_STEP_MISMATCH'),
+      nextNotExecutableRate: rate('NEXT_NOT_EXECUTABLE'),
+      unknownSlotPathRate: rate('UNKNOWN_SLOT_PATH'),
+      compatibilityProjectionDivergenceRate: rate('COMPATIBILITY_PROJECTION_DIVERGENCE'),
     };
   }
 
@@ -247,4 +318,17 @@ function sameBuild(
     item.position === b[index]?.position &&
     item.status === b[index]?.status,
   );
+}
+
+function samePlanSession(
+  a: NonNullable<AdaptiveRecommendationResultV1['planSession']>,
+  b: NonNullable<AdaptiveRecommendationResultV1['planSession']>,
+): boolean {
+  if (a.planSessionId !== b.planSessionId || a.state !== b.state || a.nextStepId !== b.nextStepId) return false;
+  if (a.steps.length !== b.steps.length) return false;
+  return a.steps.every((step, index) => {
+    const other = b.steps[index];
+    if (!other) return false;
+    return step.stepId === other.stepId && step.state === other.state;
+  });
 }
