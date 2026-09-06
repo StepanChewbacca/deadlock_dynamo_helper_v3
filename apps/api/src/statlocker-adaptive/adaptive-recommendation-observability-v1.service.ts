@@ -1,5 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { AdaptiveRecommendationResultV1 } from '@deadlock-live-probe/shared';
+import {
+  AdaptivePlanProjectionV1,
+  AdaptivePlanSessionV1,
+  AdaptiveRecommendationResultV1,
+} from '@deadlock-live-probe/shared';
 import { AdaptiveDecisionStateV1 } from './adaptive-decision-state-v1.service';
 import { StatlockerEvidenceBundleV1 } from './statlocker-evidence.service';
 import {
@@ -7,6 +11,7 @@ import {
   StrategyFirstInvariantSummaryV1,
   StrategyFirstInvariantViolationCodeV1,
 } from './strategy-first-invariants-v1';
+import { TransactionPlanChangeV1 } from './transaction-plan-diff-v1';
 import {
   TransactionPlanInvariantCheckV1,
   TransactionPlanInvariantSummaryV1,
@@ -36,6 +41,41 @@ export interface AdaptiveRecommendationObservabilityCountersV1 {
   externallyDivergedChoiceStateCount: number;
   transactionPlanSessionSwitchCount: number;
   transactionPlanRevisionCount: number;
+  transactionPlanDecisionCount: number;
+  transactionPlanPreservedPrefixStepCount: number;
+  transactionPlanInsertedStepCount: number;
+  transactionPlanCompletedStepCount: number;
+  transactionPlanInvalidatedStepCount: number;
+  transactionPlanReplacedStepCount: number;
+  transactionPlanBlockedStepCount: number;
+  transactionPlanUnblockedStepCount: number;
+  transactionPlanReplacementPairCount: number;
+  transactionPlanValidationFailureCount: number;
+}
+
+export interface TransactionPlanProjectedSlotUsageV1 {
+  usedByType: AdaptivePlanProjectionV1['usedByType'];
+  flexUsed: number;
+  unlockedFlexSlots?: number;
+  activeItemsUsed: number;
+}
+
+export interface TransactionPlanObservabilitySnapshotV1 {
+  planSessionId: string;
+  revision: number;
+  preservedPrefixLength: number;
+  insertedStepCount: number;
+  completedStepCount: number;
+  invalidatedStepCount: number;
+  replacedStepCount: number;
+  blockedStepCount: number;
+  unblockedStepCount: number;
+  replacementPairCount: number;
+  firstBarrierReason?: string;
+  projectedSlotBefore?: TransactionPlanProjectedSlotUsageV1;
+  projectedSlotAfter?: TransactionPlanProjectedSlotUsageV1;
+  validatorValid: boolean;
+  validatorViolationCodes: readonly string[];
 }
 
 export interface AdaptiveRecommendationObservabilityStatusV1 {
@@ -44,6 +84,7 @@ export interface AdaptiveRecommendationObservabilityStatusV1 {
   counters: AdaptiveRecommendationObservabilityCountersV1;
   strategyFirstRelease: StrategyFirstInvariantSummaryV1;
   transactionPlanRelease: TransactionPlanInvariantSummaryV1;
+  latestTransactionPlan?: TransactionPlanObservabilitySnapshotV1;
   reasonCodeCounts: Record<string, number>;
 }
 
@@ -55,6 +96,19 @@ export interface AdaptiveRecommendationOutcomeV1 {
   plannerLatencyMs?: number;
   legalityFallback?: boolean;
   legalityFallbackReasonCodes?: readonly string[];
+}
+
+export interface RecordTransactionPlanOutcomeV1Input {
+  previous?: AdaptivePlanSessionV1;
+  current: AdaptivePlanSessionV1;
+  changes: readonly TransactionPlanChangeV1[];
+  validation: {
+    valid: boolean;
+    violations: readonly {
+      code: string;
+      reasonCodes: readonly string[];
+    }[];
+  };
 }
 
 const RELEASE_CODES: readonly StrategyFirstInvariantViolationCodeV1[] = [
@@ -88,6 +142,7 @@ export class AdaptiveRecommendationObservabilityV1Service {
   private readonly transactionInvariantViolationDecisionCounts = new Map<TransactionPlanInvariantViolationCodeV1, number>();
   private evaluatedStrategyDecisions = 0;
   private evaluatedTransactionPlanDecisions = 0;
+  private latestTransactionPlan?: TransactionPlanObservabilitySnapshotV1;
   private readonly status = {
     updatedAt: new Date(0).toISOString(),
     plannerLatencyMs: {
@@ -112,6 +167,16 @@ export class AdaptiveRecommendationObservabilityV1Service {
       externallyDivergedChoiceStateCount: 0,
       transactionPlanSessionSwitchCount: 0,
       transactionPlanRevisionCount: 0,
+      transactionPlanDecisionCount: 0,
+      transactionPlanPreservedPrefixStepCount: 0,
+      transactionPlanInsertedStepCount: 0,
+      transactionPlanCompletedStepCount: 0,
+      transactionPlanInvalidatedStepCount: 0,
+      transactionPlanReplacedStepCount: 0,
+      transactionPlanBlockedStepCount: 0,
+      transactionPlanUnblockedStepCount: 0,
+      transactionPlanReplacementPairCount: 0,
+      transactionPlanValidationFailureCount: 0,
     } satisfies AdaptiveRecommendationObservabilityCountersV1,
     reasonCodeCounts: {} as Record<string, number>,
   };
@@ -187,6 +252,64 @@ export class AdaptiveRecommendationObservabilityV1Service {
     this.touch();
   }
 
+  recordTransactionPlanOutcome(input: RecordTransactionPlanOutcomeV1Input): void {
+    const preservedPrefixLength = transactionPlanPreservedPrefixLength(input.previous, input.current);
+    const count = (type: TransactionPlanChangeV1['type']): number =>
+      input.changes.filter((change) => change.type === type).length;
+    const insertedStepCount = count('INSERT_STEP');
+    const completedStepCount = count('COMPLETE_STEP');
+    const invalidatedStepCount = count('INVALIDATE_STEP');
+    const replacedStepCount = count('REPLACE_STEP');
+    const blockedStepCount = count('BLOCK_STEP');
+    const unblockedStepCount = count('UNBLOCK_STEP');
+    const replacementPairCount = input.current.steps.filter((step) =>
+      step.kind === 'TRANSACTION' && step.action?.type === 'SELL_AND_BUY',
+    ).length;
+    const firstBarrier = input.current.steps.find((step) => step.kind === 'BARRIER' && step.barrier);
+    const firstTransaction = input.current.steps.find((step) => step.kind === 'TRANSACTION' && step.action);
+
+    this.status.counters.transactionPlanDecisionCount += 1;
+    this.status.counters.transactionPlanPreservedPrefixStepCount += preservedPrefixLength;
+    this.status.counters.transactionPlanInsertedStepCount += insertedStepCount;
+    this.status.counters.transactionPlanCompletedStepCount += completedStepCount;
+    this.status.counters.transactionPlanInvalidatedStepCount += invalidatedStepCount;
+    this.status.counters.transactionPlanReplacedStepCount += replacedStepCount;
+    this.status.counters.transactionPlanBlockedStepCount += blockedStepCount;
+    this.status.counters.transactionPlanUnblockedStepCount += unblockedStepCount;
+    this.status.counters.transactionPlanReplacementPairCount += replacementPairCount;
+    if (!input.validation.valid) this.status.counters.transactionPlanValidationFailureCount += 1;
+
+    const validatorViolationCodes = [...new Set(input.validation.violations.map((violation) => violation.code))].sort();
+    this.latestTransactionPlan = {
+      planSessionId: input.current.planSessionId,
+      revision: input.current.revision,
+      preservedPrefixLength,
+      insertedStepCount,
+      completedStepCount,
+      invalidatedStepCount,
+      replacedStepCount,
+      blockedStepCount,
+      unblockedStepCount,
+      replacementPairCount,
+      firstBarrierReason: firstBarrier
+        ? firstBarrier.blockingReasons[0] ?? firstBarrier.barrier?.type ?? firstBarrier.reasonCodes[0]
+        : undefined,
+      projectedSlotBefore: firstTransaction
+        ? projectedSlotUsage(firstTransaction.projectedBefore)
+        : undefined,
+      projectedSlotAfter: firstTransaction?.projectedAfter
+        ? projectedSlotUsage(firstTransaction.projectedAfter)
+        : undefined,
+      validatorValid: input.validation.valid,
+      validatorViolationCodes,
+    };
+    this.recordReasonCodes(validatorViolationCodes.map((code) => `TRANSACTION_PLAN_VALIDATOR:${code}`));
+    if (this.latestTransactionPlan.firstBarrierReason) {
+      this.recordReasonCodes([`TRANSACTION_BARRIER:${this.latestTransactionPlan.firstBarrierReason}`]);
+    }
+    this.touch();
+  }
+
   recordRecommendationOutcome(outcome: AdaptiveRecommendationOutcomeV1): void {
     if (outcome.result.nextAction.type === 'SELL') this.status.counters.sellCount += 1;
     if (outcome.result.nextAction.type === 'REPLACE') this.status.counters.replaceCount += 1;
@@ -239,6 +362,9 @@ export class AdaptiveRecommendationObservabilityV1Service {
       counters: { ...this.status.counters },
       strategyFirstRelease: this.strategyFirstReleaseSummary(),
       transactionPlanRelease: this.transactionPlanReleaseSummary(),
+      latestTransactionPlan: this.latestTransactionPlan
+        ? cloneTransactionSnapshot(this.latestTransactionPlan)
+        : undefined,
       reasonCodeCounts: { ...this.status.reasonCodeCounts },
     };
   }
@@ -299,6 +425,43 @@ export class AdaptiveRecommendationObservabilityV1Service {
   private touch(): void {
     this.status.updatedAt = new Date().toISOString();
   }
+}
+
+function transactionPlanPreservedPrefixLength(
+  previous: AdaptivePlanSessionV1 | undefined,
+  current: AdaptivePlanSessionV1,
+): number {
+  if (!previous || previous.strategyId !== current.strategyId) return 0;
+  let index = 0;
+  while (index < previous.steps.length && index < current.steps.length) {
+    if (previous.steps[index]?.stepId !== current.steps[index]?.stepId) break;
+    index += 1;
+  }
+  return index;
+}
+
+function projectedSlotUsage(projection: AdaptivePlanProjectionV1): TransactionPlanProjectedSlotUsageV1 {
+  return {
+    usedByType: { ...projection.usedByType },
+    flexUsed: projection.flexUsed,
+    unlockedFlexSlots: projection.unlockedFlexSlots,
+    activeItemsUsed: projection.activeItemsUsed,
+  };
+}
+
+function cloneTransactionSnapshot(
+  snapshot: TransactionPlanObservabilitySnapshotV1,
+): TransactionPlanObservabilitySnapshotV1 {
+  return {
+    ...snapshot,
+    projectedSlotBefore: snapshot.projectedSlotBefore
+      ? { ...snapshot.projectedSlotBefore, usedByType: { ...snapshot.projectedSlotBefore.usedByType } }
+      : undefined,
+    projectedSlotAfter: snapshot.projectedSlotAfter
+      ? { ...snapshot.projectedSlotAfter, usedByType: { ...snapshot.projectedSlotAfter.usedByType } }
+      : undefined,
+    validatorViolationCodes: [...snapshot.validatorViolationCodes],
+  };
 }
 
 function sameAction(
