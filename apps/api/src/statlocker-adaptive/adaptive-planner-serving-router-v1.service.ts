@@ -13,10 +13,12 @@ import { AdaptiveEvidenceScorerV1Service } from './adaptive-evidence-scorer-v1.s
 import { AdaptivePhaseEligibilityV1Service } from './adaptive-phase-eligibility-v1.service';
 import { StrategyFirstLegacyPlannerAdapterV1Service } from './strategy-first-legacy-planner-adapter-v1.service';
 import { StrategyFirstPromotionGateV1Service } from './strategy-first-promotion-gate-v1.service';
+import { TransactionPlanValidationV1 } from './transaction-plan-validator-v1.service';
 
 export type AdaptivePlannerServingResultV1 = AdaptiveBuildPlannerResultV1 & {
   strategy?: AdaptiveRecommendationStrategyV1;
   planSession?: AdaptivePlanSessionV1;
+  transactionPlanValidation?: TransactionPlanValidationV1;
 };
 
 @Injectable()
@@ -148,10 +150,17 @@ export class AdaptivePlannerServingRouterV1Service {
       planState: session?.state,
       stepCount: session?.steps.length ?? 0,
       firstBarrierReason: session?.steps.find((step) => step.kind === 'BARRIER' && step.state === 'BLOCKED')?.barrier?.type,
+      validatorValid: transactionResult.transactionPlanValidation?.valid,
+      validatorViolations: transactionResult.transactionPlanValidation?.violations.map((violation) => ({
+        stepId: violation.stepId,
+        code: violation.code,
+        reasonCodes: violation.reasonCodes,
+      })) ?? [],
       transaction: strategyDiagnostics(input, transactionResult),
       flat: {
         ...strategyDiagnostics(input, flatResult),
         planSession: undefined,
+        transactionPlanValidation: undefined,
       },
     })}`);
   }
@@ -177,10 +186,24 @@ function strategyDiagnostics(
 ): Record<string, unknown> {
   const strategy = result.strategy;
   const session = result.planSession;
+  const slots = input.decision.slots;
   return {
     decisionId: input.decision.state.decisionId,
     stateRevision: input.decision.stateRevision,
     economyRulesEvidence: input.decision.economyRulesEvidence,
+    currentInventoryItemIds: [...input.decision.state.inventory.heldByItemId.keys()].sort((a, b) => a - b),
+    currentSlotState: {
+      baseSlots: slots.baseSlots,
+      baseSlotsByType: { ...slots.baseSlotsByType },
+      maxFlexSlots: slots.maxFlexSlots,
+      unlockedFlexSlots: slots.unlockedFlexSlots,
+      flexEvidence: slots.evidence,
+      usedSlots: slots.usedSlots,
+      usedSlotsByType: { ...slots.usedSlotsByType },
+      usedFlexSlots: slots.usedFlexSlots,
+      activeItemsUsed: slots.activeItemsUsed,
+      maxActiveItems: slots.maxActiveItems,
+    },
     strategyId: strategy?.strategyId,
     strategyStability: strategy?.stability,
     commitment: strategy?.commitment,
@@ -208,6 +231,16 @@ function strategyDiagnostics(
             barrier: step.barrier,
             projectedBefore: step.projectedBefore,
             projectedAfter: step.projectedAfter,
+          })),
+        }
+      : undefined,
+    transactionPlanValidation: result.transactionPlanValidation
+      ? {
+          valid: result.transactionPlanValidation.valid,
+          violations: result.transactionPlanValidation.violations.map((violation) => ({
+            stepId: violation.stepId,
+            code: violation.code,
+            reasonCodes: violation.reasonCodes,
           })),
         }
       : undefined,
