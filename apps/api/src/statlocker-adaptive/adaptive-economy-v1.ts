@@ -108,6 +108,25 @@ export const ADAPTIVE_UNIVERSAL_SLOT_RULES_V1: AdaptiveSlotRulesV1 = {
   maxActiveItems: 4,
 };
 
+export function createCanonicalEconomyRulesV1(
+  rulesetId: string,
+  catalogSha256: string,
+): RecommendationEconomyRulesV1 {
+  return {
+    rulesetId,
+    catalogSha256: catalogSha256.toLowerCase(),
+    baseSlots: 12,
+    baseSlotsByType: { weapon: 4, vitality: 4, spirit: 4 },
+    maxFlexSlots: 4,
+    maxActiveItems: 4,
+    investmentBreakpoints: {
+      weapon: [1600],
+      vitality: [1600],
+      spirit: [1600],
+    },
+  };
+}
+
 const VERIFIED_RECOMMENDATION_ECONOMY_RULES_V1: readonly RecommendationEconomyRulesV1[] = [];
 
 export function resolveRecommendationEconomyRulesV1(

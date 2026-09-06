@@ -11,7 +11,7 @@ import { RecommendationItemCatalogItemV1 } from '../deadlock-live/entities/recom
 import { RecommendationItemCatalogRecipeV1 } from '../deadlock-live/entities/recommendation-item-catalog-recipe-v1.entity';
 import { RecommendationItemCatalogVersionV1 } from '../deadlock-live/entities/recommendation-item-catalog-version-v1.entity';
 import { resolveRecommendationCatalogAssetSemantics } from '../deadlock-live/recommendation-catalog-asset-semantics';
-import { RecommendationEconomyRulesV1 } from './adaptive-economy-v1';
+import { RecommendationEconomyRulesV1, createCanonicalEconomyRulesV1 } from './adaptive-economy-v1';
 import {
   BuildStrategyMiningPipelineV1Result,
   BuildStrategyMiningPipelineV1Service,
@@ -116,6 +116,33 @@ export class StrategyFirstOperationsV1Service implements OnModuleInit {
         rules: entry.rules,
       });
       this.bootstrapEconomyRulesCount += 1;
+    }
+
+    if (this.bootstrapEconomyRulesCount === 0 && this.versionRepo?.find) {
+      try {
+        const versions = await this.versionRepo.find({
+          order: { importedAt: 'DESC' },
+          take: 5,
+        });
+        for (const version of versions) {
+          if (!version.rulesetKey || !version.payloadSha256) continue;
+          const existing = await this.economyRulesStore.resolveExact(
+            version.rulesetKey,
+            version.payloadSha256,
+          );
+          if (!existing) {
+            await this.publishEconomyRules({
+              snapshotId: `canonical:${version.rulesetKey}:${version.payloadSha256.slice(0, 16)}`,
+              source: 'canonical-deadlock-universal-v1',
+              verifiedAt: new Date(),
+              rules: createCanonicalEconomyRulesV1(version.rulesetKey, version.payloadSha256),
+            });
+            this.bootstrapEconomyRulesCount += 1;
+          }
+        }
+      } catch (error) {
+        this.logger.warn(`Failed to auto-bootstrap canonical economy rules: ${describeError(error)}`);
+      }
     }
   }
 

@@ -8,7 +8,6 @@ services:
       - '3000'
 
   api:
-    build: .
     image: ${DEADLOCK_API_IMAGE:-deadlock-adaptive-production:current}
     depends_on:
       - deadlock-live-events
