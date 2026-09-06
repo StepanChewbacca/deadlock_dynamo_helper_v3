@@ -6,6 +6,7 @@ import {
 } from '@deadlock-live-probe/build-domain';
 import {
   AdaptiveActionV1,
+  AdaptivePlanActionV1,
   AdaptiveRecommendationRequestV1,
   AdaptiveRecommendationResultV1,
   AdaptiveScoredActionV1,
@@ -15,6 +16,7 @@ import {
   AdaptiveDecisionStateV1,
   AdaptiveDecisionStateV1Service,
 } from './adaptive-decision-state-v1.service';
+import { buildAdaptivePlanActionsV1 } from './adaptive-plan-action-v1';
 import { AdaptiveRecommendationObservabilityV1Service } from './adaptive-recommendation-observability-v1.service';
 import { AdaptiveReplayV1Service } from './adaptive-replay-v1.service';
 import {
@@ -83,6 +85,7 @@ export class AdaptiveRecommendationV1Service {
       });
       this.observability.recordPlannerLatency(Date.now() - plannerStartedAt);
     }
+
     const freshCandidates = generateRecommendationCandidates({
       state: fresh.state,
       itemGraph: fresh.itemGraph,
@@ -90,11 +93,14 @@ export class AdaptiveRecommendationV1Service {
     });
     const feasibleByActionKey = new Map(
       freshCandidates
-        .filter((candidate) => candidate.feasible)
+        .filter((candidate) => candidate.feasible && candidate.recommendationEligible)
         .map((candidate) => [candidate.actionId, candidate]),
     );
 
     const blockers = new Set<string>(localEvidence.degradedReasons);
+    if (fresh.economyRulesEvidence === 'UNKNOWN') blockers.add('RULESET_ECONOMY_MECHANICS_UNKNOWN');
+    if (fresh.slots.flexEvidence === 'UNKNOWN') blockers.add('FLEX_CAPACITY_UNKNOWN');
+
     let result: AdaptiveRecommendationResultV1;
     let legalityFallback = false;
     let legalityFallbackReasonCodes: readonly string[] = [];
@@ -141,6 +147,14 @@ export class AdaptiveRecommendationV1Service {
       throw new Error('Adaptive planner did not produce a result');
     }
 
+    const semanticPlanActions = buildAdaptivePlanActionsV1({
+      stateRevision: fresh.stateRevision,
+      decision: fresh,
+      nextAction: result.nextAction,
+      recommendedBuild: result.recommendedBuild,
+    });
+    result = reconcileResultWithSemanticPlan(result, semanticPlanActions);
+
     this.observability.recordRecommendationOutcome({
       evidence: localEvidence,
       decision: fresh,
@@ -172,10 +186,51 @@ function finalLegalityRules(decision: AdaptiveDecisionStateV1) {
   if (!slots) return DEFAULT_RECOMMENDATION_CANDIDATE_RULES;
   return {
     ...DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
-    baseSlots: slots.baseSlots,
+    baseSlotsByType: slots.baseSlotsByType,
     maxFlexSlots: slots.maxFlexSlots,
     unlockedFlexSlots: slots.unlockedFlexSlots,
-    flexCapacityEvidence: slots.evidence,
+    flexCapacityEvidence: slots.flexEvidence,
+    maxActiveItems: slots.maxActiveItems,
+  };
+}
+
+function reconcileResultWithSemanticPlan(
+  result: AdaptiveRecommendationResultV1,
+  planActions: readonly AdaptivePlanActionV1[],
+): AdaptiveRecommendationResultV1 {
+  const first = planActions[0];
+  if (!first) return { ...result, planActions };
+
+  let nextAction = result.nextAction;
+  if (first.status === 'BLOCKED' && isTransactionAction(nextAction)) {
+    nextAction = {
+      actionKey: `WAIT_PLAN_REQUIREMENTS:${first.planActionId}`,
+      type: 'WAIT',
+      targetItemId: first.targetItemId,
+      reasonCodes: unique(['PLAN_REQUIREMENTS_BLOCKED', ...first.reasonCodes]),
+    };
+  } else if (
+    first.status === 'READY' &&
+    isTransactionAction(nextAction) &&
+    transactionTarget(nextAction) === transactionTarget(first.action) &&
+    nextAction.actionKey !== first.action.actionKey
+  ) {
+    nextAction = {
+      ...first.action,
+      reasonCodes: unique([...first.action.reasonCodes, 'SEMANTIC_TRANSACTION_PATH']),
+    };
+  } else if (
+    (nextAction.type === 'WAIT' || nextAction.type === 'HOLD' || nextAction.type === 'CONTINUE_CORE') &&
+    first.targetItemId !== undefined
+  ) {
+    nextAction = { ...nextAction, targetItemId: first.targetItemId };
+  }
+
+  return {
+    ...result,
+    nextAction,
+    nextTargetItemId: first.targetItemId ?? result.nextTargetItemId,
+    planActions,
   };
 }
 
@@ -257,6 +312,7 @@ function previousEvidenceFallback(
     },
     nextTargetItemId: targetItemId,
     recommendedBuild: preservedBuild,
+    planActions: undefined,
     changes: [],
     rankedImmediateCandidates: [],
     confidence: clamp01(previous.confidence * 0.5),
@@ -287,6 +343,7 @@ function emptyEvidenceFallback(
       type: wait ? 'WAIT' : 'ABSTAIN',
       reasonCodes: ['NO_USABLE_STATLOCKER_EVIDENCE'],
     },
+    planActions: [],
     recommendedBuild: [],
     changes: [],
     rankedImmediateCandidates: [],
@@ -361,6 +418,11 @@ function isTransactionAction(action: AdaptiveActionV1): boolean {
 
 function transactionTargetsNextItem(action: AdaptiveActionV1): boolean {
   return action.type === 'BUY' || action.type === 'UPGRADE' || action.type === 'REPLACE';
+}
+
+function transactionTarget(action: AdaptiveActionV1): number | undefined {
+  if (action.type === 'SELL') return action.targetItemId;
+  return action.targetItemId ?? action.buyItemId ?? action.itemId;
 }
 
 function selectedActionServesFreshNext(action: AdaptiveActionV1, targetItemId: number | undefined): boolean {
