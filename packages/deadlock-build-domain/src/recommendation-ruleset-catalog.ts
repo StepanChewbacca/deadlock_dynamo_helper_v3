@@ -61,10 +61,22 @@ export interface RecommendationMechanicsEnrichmentV1 {
   }[];
 }
 
+export interface RecommendationUpgradePricingPolicyV1 {
+  mode: 'TARGET_COST_MINUS_VERIFIED_COMPONENT_CREDIT';
+  componentCreditRatio: number;
+  evidence: Exclude<FactEvidence, 'UNKNOWN'>;
+  source: string;
+}
+
+export type UpgradeCostSourceV1 =
+  | 'MECHANICS_ENRICHMENT'
+  | 'RULESET_DERIVED_COMPONENT_CREDIT';
+
 export interface CatalogUpgradeRecipeV1 {
   recipeId: string;
   consumedItemIds: readonly number[];
   soulsCost: ObservedFact<number>;
+  costSource?: UpgradeCostSourceV1;
 }
 
 export interface RecommendationCatalogItemV1 {
@@ -116,6 +128,7 @@ export interface BuildRulesetCatalogInputV1 {
   items: readonly RawCatalogItemV1[];
   recipeEdges: readonly RawCatalogRecipeEdgeV1[];
   mechanics?: readonly RecommendationMechanicsEnrichmentV1[];
+  upgradePricingPolicy?: RecommendationUpgradePricingPolicyV1;
 }
 
 export interface CompiledRecommendationCatalogV1 {
@@ -138,6 +151,8 @@ export function buildRecommendationRulesetCatalogV1(
     itemsById.set(item.itemId, item);
   }
 
+  validateUpgradePricingPolicy(input.upgradePricingPolicy);
+
   const edgesByParent = new Map<number, RawCatalogRecipeEdgeV1[]>();
   for (const edge of input.recipeEdges) {
     if (!itemsById.has(edge.parentItemId)) throw new Error(`Recipe parent ${edge.parentItemId} does not exist`);
@@ -153,7 +168,14 @@ export function buildRecommendationRulesetCatalogV1(
   const mechanicsById = new Map((input.mechanics ?? []).map((entry) => [entry.itemId, entry]));
   const items = [...itemsById.values()]
     .sort((a, b) => a.itemId - b.itemId)
-    .map((raw) => buildCatalogItem(raw, edgesByParent.get(raw.itemId) ?? [], mechanicsById.get(raw.itemId), rulesetId));
+    .map((raw) => buildCatalogItem(
+      raw,
+      edgesByParent.get(raw.itemId) ?? [],
+      mechanicsById.get(raw.itemId),
+      rulesetId,
+      itemsById,
+      input.upgradePricingPolicy,
+    ));
   const coverage = calculateCoverage(items);
 
   return {
@@ -237,6 +259,8 @@ function buildCatalogItem(
   recipeEdges: readonly RawCatalogRecipeEdgeV1[],
   mechanics: RecommendationMechanicsEnrichmentV1 | undefined,
   rulesetId: string,
+  itemsById: ReadonlyMap<number, RawCatalogItemV1>,
+  upgradePricingPolicy: RecommendationUpgradePricingPolicyV1 | undefined,
 ): RecommendationCatalogItemV1 {
   const normalizedSlot = normalizeSlotType(raw.slotType);
   const activeItem = typeof raw.isActiveItem === 'boolean' ? raw.isActiveItem : undefined;
@@ -259,11 +283,17 @@ function buildCatalogItem(
   const enrichmentCost = recipeId
     ? mechanics?.upgradeRecipeCosts?.find((entry) => entry.recipeId === recipeId)?.soulsCost
     : undefined;
+  const derivedCost = recipeId && !enrichmentCost
+    ? deriveUpgradeCost(raw, sortedEdges, itemsById, upgradePricingPolicy)
+    : undefined;
   const upgradeRecipes: CatalogUpgradeRecipeV1[] = recipeId
     ? [{
         recipeId,
         consumedItemIds: sortedEdges.map((edge) => edge.componentItemId),
-        soulsCost: enrichmentCost ?? unknownFact<number>('upgrade-transaction-cost-unverified'),
+        soulsCost: enrichmentCost ?? derivedCost?.fact ?? unknownFact<number>('upgrade-transaction-cost-unverified'),
+        costSource: enrichmentCost
+          ? 'MECHANICS_ENRICHMENT'
+          : derivedCost?.source,
       }]
     : [];
 
@@ -292,6 +322,46 @@ function buildCatalogItem(
     },
     maxCopies: mechanics?.maxCopies ?? unknownFact<number>('duplicate-policy-unverified'),
   };
+}
+
+function deriveUpgradeCost(
+  target: RawCatalogItemV1,
+  recipeEdges: readonly RawCatalogRecipeEdgeV1[],
+  itemsById: ReadonlyMap<number, RawCatalogItemV1>,
+  policy: RecommendationUpgradePricingPolicyV1 | undefined,
+): { fact: ObservedFact<number>; source: UpgradeCostSourceV1 } | undefined {
+  if (!policy) return undefined;
+  if (policy.mode !== 'TARGET_COST_MINUS_VERIFIED_COMPONENT_CREDIT') return undefined;
+  if (!Number.isFinite(target.cost) || (target.cost as number) < 0) return undefined;
+
+  const componentCosts: number[] = [];
+  for (const edge of recipeEdges) {
+    const component = itemsById.get(edge.componentItemId);
+    if (!component || !Number.isFinite(component.cost) || (component.cost as number) < 0) return undefined;
+    componentCosts.push(component.cost as number);
+  }
+
+  const credited = componentCosts.reduce(
+    (sum, cost) => sum + cost * policy.componentCreditRatio,
+    0,
+  );
+  const derived = (target.cost as number) - credited;
+  if (!Number.isFinite(derived) || derived < 0) {
+    throw new Error(`Derived upgrade cost for item ${target.itemId} is invalid: ${derived}`);
+  }
+
+  return {
+    fact: reconstructedFact(derived, `upgrade-pricing:${policy.source}`),
+    source: 'RULESET_DERIVED_COMPONENT_CREDIT',
+  };
+}
+
+function validateUpgradePricingPolicy(policy: RecommendationUpgradePricingPolicyV1 | undefined): void {
+  if (!policy) return;
+  if (!policy.source.trim()) throw new Error('Upgrade pricing policy source is required');
+  if (!Number.isFinite(policy.componentCreditRatio) || policy.componentCreditRatio < 0 || policy.componentCreditRatio > 1) {
+    throw new Error(`Invalid upgrade pricing component credit ratio ${policy.componentCreditRatio}`);
+  }
 }
 
 function calculateCoverage(items: readonly RecommendationCatalogItemV1[]): RecommendationRulesetCatalogCoverageV1 {
