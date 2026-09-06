@@ -16,6 +16,7 @@ export const ADAPTIVE_INVESTMENT_TYPES_V1: readonly AdaptiveInvestmentTypeV1[] =
 ];
 
 export interface AdaptiveSlotStateV1 {
+  /** Compatibility aggregate. New code should use baseSlotsByType. */
   baseSlots: number;
   baseSlotsByType: Readonly<Record<InventorySlotType, number>>;
   maxFlexSlots: number;
@@ -23,15 +24,24 @@ export interface AdaptiveSlotStateV1 {
   unlockedFlexSlots?: number;
   usedSlots: number;
   usedSlotsByType: Readonly<Record<InventorySlotType, number>>;
+  /** Compatibility alias used by transaction-plan projections. */
+  usedByType: Readonly<Record<InventorySlotType, number>>;
   overflowByType: Readonly<Record<InventorySlotType, number>>;
   usedFlexSlots: number;
   provedFlexLowerBound: number;
   freeBaseSlots: number;
   freeBaseSlotsByType: Readonly<Record<InventorySlotType, number>>;
+  /** Compatibility alias used by exact-mechanics callers. */
+  freeBaseByType: Readonly<Record<InventorySlotType, number>>;
   freeFlexSlots?: number;
   totalCapacity?: number;
   activeItemsUsed: number;
+  /** Compatibility alias used by exact-mechanics callers. */
+  usedActiveItems: number;
   freeActiveItemSlots: number;
+  mechanicsEvidence: FactEvidence;
+  flexEvidence: FactEvidence;
+  /** Compatibility alias for flexEvidence. */
   evidence: FactEvidence;
 }
 
@@ -45,23 +55,39 @@ export interface AdaptiveInvestmentTrackStateV1 {
 
 export interface AdaptiveInvestmentStateV1 {
   tracks: Readonly<Record<AdaptiveInvestmentTypeV1, AdaptiveInvestmentTrackStateV1>>;
-  /**
-   * Phase acceleration currently accepts only RECONSTRUCTED evidence because achieved breakpoints
-   * come from inventory plus exact economy rules. This is a provenance contract, not a ranking of
-   * OBSERVED evidence; a future observed breakpoint source requires an explicit contract update.
-   */
   evidence: FactEvidence;
 }
 
 export interface RecommendationEconomyRulesV1 {
   rulesetId: string;
   catalogSha256: string;
-  baseSlots: number;
+  /** Compatibility aggregate; exact callers use baseSlotsByType. */
+  baseSlots?: number;
   baseSlotsByType: Readonly<Record<InventorySlotType, number>>;
   maxFlexSlots: number;
   maxActiveItems: number;
   investmentBreakpoints: Readonly<Record<AdaptiveInvestmentTypeV1, readonly number[]>>;
+  source?: string;
 }
+
+export interface AdaptiveFlexCapacityInputV1 {
+  unlockedFlexSlots?: number;
+  evidence: FactEvidence;
+}
+
+export interface AdaptiveSlotRulesV1 {
+  baseSlotsByType: Readonly<Record<InventorySlotType, number>>;
+  maxFlexSlots: number;
+  maxActiveItems: number;
+  evidence: FactEvidence;
+}
+
+export const UNKNOWN_ADAPTIVE_SLOT_RULES_V1: AdaptiveSlotRulesV1 = {
+  baseSlotsByType: { weapon: 0, vitality: 0, spirit: 0 },
+  maxFlexSlots: 0,
+  maxActiveItems: 0,
+  evidence: 'UNKNOWN',
+};
 
 export function isCanonicalAdaptiveInvestmentStateV1(value: unknown): value is AdaptiveInvestmentStateV1 {
   if (!isRecord(value) || !isFactEvidence(value.evidence)) return false;
@@ -84,28 +110,15 @@ export function isCanonicalAdaptiveInvestmentTrackV1(
       achievedBreakpoint > 0 && achievedBreakpoint <= value.currentValue);
 }
 
-export interface AdaptiveFlexCapacityInputV1 {
-  unlockedFlexSlots?: number;
-  evidence: FactEvidence;
-}
-
-export interface AdaptiveSlotRulesV1 {
-  baseSlots: number;
-  baseSlotsByType: Readonly<Record<InventorySlotType, number>>;
-  maxFlexSlots: number;
-  maxActiveItems: number;
-}
-
 /**
- * Compatibility fallback only. Serving correctness must prefer exact rules resolved by
- * rulesetId + catalogSha256. The values describe the current 4/4/4 + 4-flex shape, but
- * the UNKNOWN flex evidence remains fail-closed until the match-specific unlock count is known.
+ * Persisted-replay compatibility only. Production serving must resolve exact rules by
+ * rulesetId + catalogSha256 and must never select this record as a fallback.
  */
 export const ADAPTIVE_UNIVERSAL_SLOT_RULES_V1: AdaptiveSlotRulesV1 = {
-  baseSlots: 12,
   baseSlotsByType: { weapon: 4, vitality: 4, spirit: 4 },
   maxFlexSlots: 4,
   maxActiveItems: 4,
+  evidence: 'UNKNOWN',
 };
 
 export function createCanonicalEconomyRulesV1(
@@ -126,26 +139,46 @@ export function createCanonicalEconomyRulesV1(
     },
   };
 }
-
-const VERIFIED_RECOMMENDATION_ECONOMY_RULES_V1: readonly RecommendationEconomyRulesV1[] = [];
-
 export function resolveRecommendationEconomyRulesV1(
   rulesetId: string,
   catalogSha256: string,
-  registry: readonly RecommendationEconomyRulesV1[] = VERIFIED_RECOMMENDATION_ECONOMY_RULES_V1,
+  registry: readonly RecommendationEconomyRulesV1[] = loadRecommendationEconomyRulesRegistryV1(),
 ): RecommendationEconomyRulesV1 | undefined {
-  return registry.find((entry) => entry.rulesetId === rulesetId && entry.catalogSha256 === catalogSha256);
+  const normalizedSha = catalogSha256.trim().toLowerCase();
+  return registry.find((entry) =>
+    entry.rulesetId === rulesetId && entry.catalogSha256.trim().toLowerCase() === normalizedSha,
+  );
+}
+
+export function loadRecommendationEconomyRulesRegistryV1(
+  raw: string | undefined = process.env.ADAPTIVE_RECOMMENDATION_ECONOMY_RULES_JSON,
+): readonly RecommendationEconomyRulesV1[] {
+  if (!raw?.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+
+  return parsed
+    .map(parseRecommendationEconomyRuleV1)
+    .filter((entry): entry is RecommendationEconomyRulesV1 => entry !== undefined)
+    .sort((left, right) =>
+      left.rulesetId.localeCompare(right.rulesetId) || left.catalogSha256.localeCompare(right.catalogSha256),
+    );
 }
 
 export function slotRulesFromEconomyRulesV1(
   rules: RecommendationEconomyRulesV1 | undefined,
 ): AdaptiveSlotRulesV1 {
-  if (!rules) return ADAPTIVE_UNIVERSAL_SLOT_RULES_V1;
+  if (!rules) return UNKNOWN_ADAPTIVE_SLOT_RULES_V1;
   return {
-    baseSlots: rules.baseSlots,
     baseSlotsByType: rules.baseSlotsByType,
     maxFlexSlots: rules.maxFlexSlots,
     maxActiveItems: rules.maxActiveItems,
+    evidence: 'RECONSTRUCTED',
   };
 }
 
@@ -193,7 +226,9 @@ export function deriveAdaptiveSlotStateV1(
     allowSellOnlyActions: true,
     generateTargetedWaitActions: true,
   });
-  const provedLowerBound = Math.min(maxFlexSlots, usage.flexUsed);
+  const provedLowerBound = slotRules.evidence === 'UNKNOWN'
+    ? 0
+    : Math.min(maxFlexSlots, usage.flexUsed);
   const unlocked = capacity.evidence === 'UNKNOWN' || capacity.unlockedFlexSlots === undefined
     ? undefined
     : Math.min(maxFlexSlots, Math.max(provedLowerBound, Math.floor(capacity.unlockedFlexSlots)));
@@ -212,15 +247,20 @@ export function deriveAdaptiveSlotStateV1(
     unlockedFlexSlots: unlocked,
     usedSlots: usage.itemCount,
     usedSlotsByType: usage.usedByType,
+    usedByType: usage.usedByType,
     overflowByType: usage.overflowByType,
     usedFlexSlots: usage.flexUsed,
     provedFlexLowerBound: provedLowerBound,
     freeBaseSlots: freeBaseSlotsByType.weapon + freeBaseSlotsByType.vitality + freeBaseSlotsByType.spirit,
     freeBaseSlotsByType,
+    freeBaseByType: freeBaseSlotsByType,
     freeFlexSlots: unlocked === undefined ? undefined : Math.max(0, unlocked - usage.flexUsed),
     totalCapacity: unlocked === undefined ? undefined : baseSlots + unlocked,
     activeItemsUsed: usage.activeItemsUsed,
+    usedActiveItems: usage.activeItemsUsed,
     freeActiveItemSlots: Math.max(0, maxActiveItems - usage.activeItemsUsed),
+    mechanicsEvidence: slotRules.evidence,
+    flexEvidence: capacity.evidence,
     evidence,
   };
 }
@@ -314,6 +354,10 @@ export function deriveAdaptiveInvestmentDeltasV1(
   });
 }
 
+export function observedFlexCapacityV1(value: number, source: string): ObservedFact<number> {
+  return { value, evidence: 'OBSERVED', source };
+}
+
 function investmentTrack(
   type: AdaptiveInvestmentTypeV1,
   currentValue: number,
@@ -331,14 +375,69 @@ function investmentTrack(
   };
 }
 
+function parseRecommendationEconomyRuleV1(value: unknown): RecommendationEconomyRulesV1 | undefined {
+  if (!isRecord(value)) return undefined;
+  if (typeof value.rulesetId !== 'string' || !value.rulesetId.trim()) return undefined;
+  if (typeof value.catalogSha256 !== 'string' || !/^[a-fA-F0-9]{64}$/.test(value.catalogSha256.trim())) return undefined;
+  if (!isSlotCountRecord(value.baseSlotsByType)) return undefined;
+  if (!isNonNegativeInteger(value.maxFlexSlots) || !isNonNegativeInteger(value.maxActiveItems)) return undefined;
+  if (!isRecord(value.investmentBreakpoints)) return undefined;
+
+  const investmentBreakpoints = {
+    weapon: parseBreakpoints(value.investmentBreakpoints.weapon),
+    vitality: parseBreakpoints(value.investmentBreakpoints.vitality),
+    spirit: parseBreakpoints(value.investmentBreakpoints.spirit),
+  };
+  if (!investmentBreakpoints.weapon || !investmentBreakpoints.vitality || !investmentBreakpoints.spirit) return undefined;
+
+  return {
+    rulesetId: value.rulesetId,
+    catalogSha256: value.catalogSha256.toLowerCase(),
+    baseSlotsByType: normalizeBaseSlots(value.baseSlotsByType),
+    maxFlexSlots: value.maxFlexSlots,
+    maxActiveItems: value.maxActiveItems,
+    investmentBreakpoints: {
+      weapon: investmentBreakpoints.weapon,
+      vitality: investmentBreakpoints.vitality,
+      spirit: investmentBreakpoints.spirit,
+    },
+    source: typeof value.source === 'string' ? value.source : 'environment',
+  };
+}
+
+function parseBreakpoints(value: unknown): readonly number[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  if (!value.every((entry) => Number.isFinite(entry) && Number(entry) > 0)) return undefined;
+  return [...new Set(value.map(Number))].sort((left, right) => left - right);
+}
+
+function isSlotCountRecord(value: unknown): value is Record<InventorySlotType, number> {
+  if (!isRecord(value)) return false;
+  return (['weapon', 'vitality', 'spirit'] as const).every((type) => isNonNegativeInteger(value[type]));
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
+function normalizeBaseSlots(
+  value: Readonly<Record<InventorySlotType, number>>,
+): Record<InventorySlotType, number> {
+  return {
+    weapon: Math.max(0, Math.floor(value.weapon)),
+    vitality: Math.max(0, Math.floor(value.vitality)),
+    spirit: Math.max(0, Math.floor(value.spirit)),
+  };
+}
+
+function sumSlotValues(value: Readonly<Record<InventorySlotType, number>>): number {
+  return value.weapon + value.vitality + value.spirit;
+}
+
 function isFactEvidence(value: unknown): value is FactEvidence {
   return value === 'OBSERVED' || value === 'RECONSTRUCTED' || value === 'UNKNOWN';
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+function isRecord(value: unknown): value is Record<string, any> {
   return typeof value === 'object' && value !== null;
-}
-
-export function observedFlexCapacityV1(value: number, source: string): ObservedFact<number> {
-  return { value, evidence: 'OBSERVED', source };
 }
