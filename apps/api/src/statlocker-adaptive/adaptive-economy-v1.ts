@@ -1,9 +1,10 @@
 import {
   FactEvidence,
+  InventorySlotType,
   ObservedFact,
   RecommendationItemGraph,
+  RecommendationUpgradePricingPolicyV1,
 } from '@deadlock-live-probe/build-domain';
-import { InventorySlotType } from '@deadlock-live-probe/build-domain';
 
 export type AdaptiveInvestmentTypeV1 = 'weapon' | 'vitality' | 'spirit';
 
@@ -55,6 +56,7 @@ export interface RecommendationEconomyRulesV1 {
   maxFlexSlots: number;
   maxActiveItems: number;
   investmentBreakpoints: Readonly<Record<AdaptiveInvestmentTypeV1, readonly number[]>>;
+  upgradePricingPolicy?: RecommendationUpgradePricingPolicyV1;
   source?: string;
 }
 
@@ -326,6 +328,9 @@ function parseRecommendationEconomyRuleV1(value: unknown): RecommendationEconomy
     spirit: parseBreakpoints(value.investmentBreakpoints.spirit),
   };
   if (!investmentBreakpoints.weapon || !investmentBreakpoints.vitality || !investmentBreakpoints.spirit) return undefined;
+  const source = typeof value.source === 'string' && value.source.trim() ? value.source : 'environment';
+  const upgradePricingPolicy = parseUpgradePricingPolicy(value.upgradePricingPolicy, source);
+  if (value.upgradePricingPolicy !== undefined && !upgradePricingPolicy) return undefined;
 
   return {
     rulesetId: value.rulesetId,
@@ -338,7 +343,29 @@ function parseRecommendationEconomyRuleV1(value: unknown): RecommendationEconomy
       vitality: investmentBreakpoints.vitality,
       spirit: investmentBreakpoints.spirit,
     },
-    source: typeof value.source === 'string' ? value.source : 'environment',
+    upgradePricingPolicy,
+    source,
+  };
+}
+
+function parseUpgradePricingPolicy(
+  value: unknown,
+  source: string,
+): RecommendationUpgradePricingPolicyV1 | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) return undefined;
+  if (value.mode !== 'TARGET_COST_MINUS_VERIFIED_COMPONENT_CREDIT') return undefined;
+  if (typeof value.componentCreditRatio !== 'number' || !Number.isFinite(value.componentCreditRatio) ||
+      value.componentCreditRatio < 0 || value.componentCreditRatio > 1) return undefined;
+  const evidence = value.evidence;
+  if (evidence !== 'OBSERVED' && evidence !== 'RECONSTRUCTED') return undefined;
+  return {
+    mode: value.mode,
+    componentCreditRatio: value.componentCreditRatio,
+    evidence,
+    source: typeof value.source === 'string' && value.source.trim()
+      ? value.source
+      : `${source}:upgrade-pricing`,
   };
 }
 
