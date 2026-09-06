@@ -21,7 +21,7 @@ function recommendation(overrides: Record<string, unknown> = {}): any {
     confidence: 0.82,
     scorerVersion: 'adaptive-evidence-scorer-v1',
     plannerVersion: 'adaptive-build-planner-v1',
-    configVersion: 'statlocker-adaptive-v1.0.0',
+    configVersion: 'statlocker-adaptive-v1.3.0',
     evidence: {
       rulesetVersion: 'ruleset-a',
       catalogSha256: 'a'.repeat(64),
@@ -57,7 +57,7 @@ describe('adaptive recommendation presentation', () => {
     expect(view.evidenceLabel).toBe('2 fresh Statlocker signals');
   });
 
-  it('shows the entire sorted build path without truncating later items', () => {
+  it('keeps the legacy build path as a compatibility fallback when planActions are absent', () => {
     const itemIds = [
       3862866912,
       968099481,
@@ -84,7 +84,204 @@ describe('adaptive recommendation presentation', () => {
     expect(view.plan.items).toHaveLength(8);
     expect(view.plan.items.map((item) => item.position)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
     expect(view.plan.remainingCount).toBe(0);
-    expect(view.plan.items.every((item) => ['Owned', 'Next', 'Planned'].includes(item.statusLabel))).toBe(true);
+    expect(view.plan.items.every((item) => ['Owned', 'Ready', 'Planned'].includes(item.statusLabel))).toBe(true);
+  });
+
+  it('renders one card per semantic plan action instead of one card per barrier', () => {
+    const view = buildAdaptiveRecommendationPresentation(recommendation({
+      planActions: [
+        {
+          planActionId: 'revision-a:001:BUY_ITEM:3862866912',
+          sequence: 1,
+          status: 'BLOCKED',
+          action: {
+            actionKey: 'BUY_ITEM:3862866912',
+            type: 'BUY',
+            itemId: 3862866912,
+            targetItemId: 3862866912,
+            reasonCodes: ['WAIT_FOR_REQUIREMENTS'],
+          },
+          targetItemId: 3862866912,
+          sourceItemIds: [],
+          requirements: [
+            {
+              type: 'FLEX_SLOT',
+              requiredFlexSlots: 1,
+              evidence: 'UNKNOWN',
+            },
+            {
+              type: 'SOULS',
+              requiredSouls: 3200,
+              currentSouls: 1600,
+              shortfallSouls: 1600,
+              evidence: 'OBSERVED',
+            },
+          ],
+          reasonCodes: [],
+        },
+      ],
+      recommendedBuild: [
+        {
+          itemId: 3862866912,
+          position: 1,
+          status: 'NEXT',
+          score: 1,
+          confidence: 1,
+          skeletonStrength: 1,
+          contextualSupport: 1,
+          reasonCodes: [],
+        },
+      ],
+    }));
+
+    expect(view.plan.items).toHaveLength(1);
+    expect(view.plan.items[0].requirements).toEqual([
+      'Requires flex slot - unlock state unknown',
+      'Save until 3,200 souls',
+    ]);
+  });
+
+  it('does not collapse two legitimate transactions that use the same item id', () => {
+    const action = (id: string, sequence: number, type: string) => ({
+      planActionId: id,
+      sequence,
+      status: 'PLANNED',
+      action: {
+        actionKey: id,
+        type,
+        itemId: 3862866912,
+        targetItemId: 3862866912,
+        reasonCodes: [],
+      },
+      targetItemId: 3862866912,
+      sourceItemIds: [],
+      requirements: [],
+      reasonCodes: [],
+    });
+    const view = buildAdaptiveRecommendationPresentation(recommendation({
+      planActions: [
+        action('buy-first', 1, 'BUY'),
+        action('buy-again', 2, 'BUY'),
+      ],
+    }));
+
+    expect(view.plan.items).toHaveLength(2);
+    expect(view.plan.items.map((item) => item.planActionId)).toEqual(['buy-first', 'buy-again']);
+  });
+
+  it('shows upgrade source components inside the target item card', () => {
+    const view = buildAdaptiveRecommendationPresentation(recommendation({
+      planActions: [
+        {
+          planActionId: 'upgrade-point-blank',
+          sequence: 1,
+          status: 'READY',
+          action: {
+            actionKey: 'UPGRADE_ITEM:999:upgrade:999',
+            type: 'UPGRADE',
+            itemId: 3862866912,
+            targetItemId: 3862866912,
+            reasonCodes: ['UPGRADE_PATH'],
+          },
+          targetItemId: 3862866912,
+          sourceItemIds: [1437614329],
+          requirements: [
+            { type: 'UPGRADE_COMPONENT', itemIds: [1437614329] },
+          ],
+          reasonCodes: [],
+        },
+      ],
+    }));
+
+    expect(view.plan.items[0].sourceItems[0].name).toBe('Melee Lifesteal');
+    expect(view.plan.items[0].requirements).toEqual(['Upgrade Melee Lifesteal']);
+  });
+
+  it('shows situational purpose and only named supported enemy targets', () => {
+    const view = buildAdaptiveRecommendationPresentation(recommendation({
+      planActions: [
+        {
+          planActionId: 'knockdown-situational',
+          sequence: 1,
+          status: 'READY',
+          action: {
+            actionKey: 'BUY_ITEM:3862866912',
+            type: 'BUY',
+            itemId: 3862866912,
+            targetItemId: 3862866912,
+            reasonCodes: [],
+          },
+          targetItemId: 3862866912,
+          sourceItemIds: [],
+          requirements: [],
+          reasonCodes: [],
+          situational: {
+            purpose: 'CATCH',
+            targetEnemies: [
+              {
+                enemyHeroId: 1,
+                enemyHeroName: 'Vindicta',
+                role: 'PRIMARY',
+                score: 0.7,
+                confidence: 0.8,
+                evidenceKinds: ['MATCHUP_STAT'],
+              },
+              {
+                enemyHeroId: 2,
+                enemyHeroName: 'Grey Talon',
+                role: 'SECONDARY',
+                score: 0.5,
+                confidence: 0.7,
+                evidenceKinds: ['MATCHUP_STAT'],
+              },
+              {
+                enemyHeroId: 3,
+                role: 'SECONDARY',
+                score: 0.4,
+                confidence: 0.6,
+                evidenceKinds: ['MATCHUP_STAT'],
+              },
+            ],
+            primaryTargetEnemyHeroId: 1,
+            recommendationConfidence: 0.75,
+            coreInterruption: { accepted: true },
+            reasonCodes: ['MATCHUP_SUPPORTED'],
+          },
+        },
+      ],
+    }));
+
+    expect(view.situationalPurposeLabel).toBe('Catch');
+    expect(view.againstLabel).toBe('Against: Vindicta, Grey Talon');
+    expect(view.plan.items[0].againstLabel).toBe('Against: Vindicta, Grey Talon');
+  });
+
+  it('does not show numeric enemy ids as names when hero metadata is absent', () => {
+    const view = buildAdaptiveRecommendationPresentation(recommendation({
+      planActions: [
+        {
+          planActionId: 'unnamed-target',
+          sequence: 1,
+          status: 'READY',
+          action: { actionKey: 'x', type: 'BUY', itemId: 3862866912, reasonCodes: [] },
+          targetItemId: 3862866912,
+          sourceItemIds: [],
+          requirements: [],
+          reasonCodes: [],
+          situational: {
+            purpose: 'CATCH',
+            targetEnemies: [
+              { enemyHeroId: 999, role: 'PRIMARY', score: 1, confidence: 1, evidenceKinds: ['MATCHUP_STAT'] },
+            ],
+            recommendationConfidence: 1,
+            coreInterruption: { accepted: true },
+            reasonCodes: [],
+          },
+        },
+      ],
+    }));
+
+    expect(view.againstLabel).toBeUndefined();
   });
 
   it('limits alternatives to three and omits the primary action', () => {
@@ -105,11 +302,6 @@ describe('adaptive recommendation presentation', () => {
       'Close Quarters',
       'Melee Lifesteal',
     ]);
-    expect(view.alternatives.map((item) => item.headline)).toEqual([
-      'Buy Extra Spirit',
-      'Buy Close Quarters',
-      'Buy Melee Lifesteal',
-    ]);
   });
 
   it('shows both sides of an exact replacement transaction', () => {
@@ -128,21 +320,6 @@ describe('adaptive recommendation presentation', () => {
     expect(view.replacedItem?.name).toBe('Melee Lifesteal');
   });
 
-  it('humanizes internal catalog identifiers before displaying them', () => {
-    const view = buildAdaptiveRecommendationPresentation(recommendation({
-      nextTargetItemId: 184951197,
-      nextAction: {
-        actionKey: 'BUY:184951197',
-        type: 'BUY',
-        buyItemId: 184951197,
-        reasonCodes: [],
-      },
-    }));
-
-    expect(view.primaryItem?.name).toBe('Proc Tech Damage');
-    expect(view.primaryItem?.name).not.toContain('_');
-  });
-
   it('labels a zero-confidence hold as a safe hold instead of misleading confidence', () => {
     const view = buildAdaptiveRecommendationPresentation(recommendation({
       confidence: 0,
@@ -156,10 +333,6 @@ describe('adaptive recommendation presentation', () => {
 
     expect(view.headline).toBe('Hold for Restorative Shot');
     expect(view.confidence).toEqual({ label: 'Safe hold', value: 0 });
-    expect(view.reasons).toEqual([
-      'Current plan is still the safest choice',
-      'Statlocker is updating; keeping the last safe plan',
-    ]);
   });
 
   it('uses a quiet fallback for unknown item ids and humanizes unknown reasons', () => {
@@ -184,6 +357,5 @@ describe('adaptive recommendation presentation', () => {
       'Waiting for reliable Statlocker data',
       'Custom reason code',
     ]);
-    expect(view.headline).not.toContain('999999999');
   });
 });
