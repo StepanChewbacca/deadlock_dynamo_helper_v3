@@ -9,10 +9,12 @@ import {
 } from './adaptive-build-planner-v1.service';
 import { StrategyFirstAdaptivePlannerFacadeV1Service } from './strategy-first-adaptive-planner-facade-v1.service';
 import { StrategyFirstBuildPlannerV1Result } from './strategy-first-build-planner-v1.service';
+import { TransactionPlanValidationV1 } from './transaction-plan-validator-v1.service';
 
 export type StrategyFirstLegacyPlannerResultV1 = AdaptiveBuildPlannerResultV1 & {
   strategy: AdaptiveRecommendationStrategyV1;
   planSession: AdaptivePlanSessionV1;
+  transactionPlanValidation: TransactionPlanValidationV1;
 };
 
 export type StrategyFirstFlatCompatPlannerResultV1 = AdaptiveBuildPlannerResultV1 & {
@@ -36,6 +38,7 @@ export class StrategyFirstLegacyPlannerAdapterV1Service {
       ...this.toPlannerResult(result),
       strategy: toAdaptiveRecommendationStrategyV1(result),
       planSession: result.planSession,
+      transactionPlanValidation: result.transactionPlanValidation,
     };
   }
 
