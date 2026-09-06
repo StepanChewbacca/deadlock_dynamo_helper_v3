@@ -109,6 +109,10 @@ export class StrategyFirstPromotionGateV1Service {
     return this.transactionStatus().effectiveMode === 'TRANSACTION_PRIMARY';
   }
 
+  transactionPromotionApproved(): boolean {
+    return parseBoolean(process.env.ADAPTIVE_TRANSACTION_PLAN_PROMOTION_APPROVED);
+  }
+
   status(): StrategyFirstPromotionStatusV1 {
     const configuredMode = this.configuredMode();
     const release = this.observability.getStatus().strategyFirstRelease;

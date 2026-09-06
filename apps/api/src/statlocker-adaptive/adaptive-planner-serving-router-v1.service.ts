@@ -69,6 +69,18 @@ export class AdaptivePlannerServingRouterV1Service {
     }
 
     if (input.decision.economyRulesEvidence !== 'RECONSTRUCTED') {
+      if (
+        this.promotion.transactionConfiguredMode() === 'TRANSACTION_PRIMARY' &&
+        this.promotion.transactionPromotionApproved?.()
+      ) {
+        const safeResult = failClosedIfNeeded(transactionResult);
+        this.logger.warn(`transaction-plan-economy-evidence-unavailable ${JSON.stringify({
+          decisionId: input.decision.state.decisionId,
+          stateRevision: input.decision.stateRevision,
+          reasonCode: 'EXACT_ECONOMY_RULES_REQUIRED',
+        })}`);
+        return safeResult;
+      }
       const legacyResult = this.legacy.plan(input);
       this.promotion.recordShadowSuccess();
       this.promotion.recordPromotionBlocked();
@@ -106,6 +118,19 @@ export class AdaptivePlannerServingRouterV1Service {
     }
 
     if (!this.promotion.canServeTransactionPlan()) {
+      if (
+        transactionMode === 'TRANSACTION_PRIMARY' &&
+        this.promotion.transactionPromotionApproved?.()
+      ) {
+        const safeResult = failClosedIfNeeded(transactionResult);
+        this.logger.debug(`transaction-plan-serving-approved ${JSON.stringify({
+          decisionId: input.decision.state.decisionId,
+          stateRevision: input.decision.stateRevision,
+          failClosed: safeResult !== transactionResult,
+          reasonCode: 'EXPLICIT_TRANSACTION_PRIMARY_APPROVAL',
+        })}`);
+        return safeResult;
+      }
       const flat = this.strategy.planFlatCompat(input);
       this.promotion.recordTransactionShadowSuccess();
       this.promotion.recordTransactionPromotionBlocked();
@@ -178,6 +203,31 @@ export class AdaptivePlannerServingRouterV1Service {
       ...legacyDiagnostics(result),
     })}`);
   }
+}
+
+function failClosedIfNeeded(
+  result: AdaptivePlannerServingResultV1,
+): AdaptivePlannerServingResultV1 {
+  if (result.transactionPlanValidation?.valid === true || result.nextAction.type === 'HOLD') {
+    return result;
+  }
+  return {
+    ...result,
+    recommendedBuild: result.recommendedBuild.filter((item) => item.status === 'OWNED'),
+    nextAction: {
+      actionKey: 'HOLD',
+      type: 'HOLD',
+      reasonCodes: ['TRANSACTION_PLAN_FAIL_CLOSED', 'TRANSACTION_VALIDATION_FAILED'],
+    },
+    planSession: result.planSession
+      ? {
+          ...result.planSession,
+          state: 'REPLAN_REQUIRED',
+          nextStepId: undefined,
+          steps: [],
+        }
+      : undefined,
+  };
 }
 
 function strategyDiagnostics(

@@ -1,10 +1,10 @@
 import { AdaptivePlannerServingRouterV1Service } from '../src/statlocker-adaptive/adaptive-planner-serving-router-v1.service';
 
-function decision(): any {
+function decision(economyRulesEvidence: string = 'RECONSTRUCTED'): any {
   return {
     state: { decisionId: 'd', heroId: 1, gameTimeSec: 100 },
     stateRevision: 'r',
-    economyRulesEvidence: 'RECONSTRUCTED',
+    economyRulesEvidence,
   };
 }
 
@@ -35,6 +35,18 @@ function flatResult(): any {
   };
 }
 
+function failClosedTransactionResult(): any {
+  return {
+    ...transactionResult(),
+    nextAction: { actionKey: 'HOLD', type: 'HOLD', reasonCodes: ['TRANSACTION_PLAN_FAIL_CLOSED'] },
+    transactionPlanValidation: {
+      valid: false,
+      violations: [{ code: 'TRANSACTION_PATH_UNREACHABLE', reasonCodes: ['SHOP_OPPORTUNITY_UNKNOWN'] }],
+    },
+    planSession: { ...transactionResult().planSession, state: 'REPLAN_REQUIRED', steps: [] },
+  };
+}
+
 function router(transactionMode: 'FLAT_COMPAT' | 'TRANSACTION_SHADOW' | 'TRANSACTION_PRIMARY', promotable: boolean) {
   const calls = { shadow: 0, blocked: 0 };
   const strategy = {
@@ -49,6 +61,7 @@ function router(transactionMode: 'FLAT_COMPAT' | 'TRANSACTION_SHADOW' | 'TRANSAC
     recordPromotionBlocked: jest.fn(),
     transactionConfiguredMode: () => transactionMode,
     canServeTransactionPlan: () => promotable,
+    transactionPromotionApproved: () => false,
     recordTransactionShadowSuccess: () => { calls.shadow += 1; },
     recordTransactionShadowFailure: jest.fn(),
     recordTransactionPromotionBlocked: () => { calls.blocked += 1; },
@@ -88,5 +101,28 @@ describe('transaction plan serving shadow v1', () => {
     expect(result.nextAction.type).toBe('SELL');
     expect(calls.blocked).toBe(1);
     expect(calls.shadow).toBe(1);
+  });
+
+  it('serves a fail-closed transaction result when primary is explicitly approved but a validation failure blocks promotion', () => {
+    const { value, strategy } = router('TRANSACTION_PRIMARY', false);
+    (strategy.plan as jest.Mock).mockReturnValueOnce(failClosedTransactionResult());
+    (value as any).promotion.transactionPromotionApproved = () => true;
+
+    const result = value.plan({ decision: decision() } as any);
+
+    expect(result.nextAction.type).toBe('HOLD');
+    expect(result.planSession?.state).toBe('REPLAN_REQUIRED');
+    expect(strategy.planFlatCompat).not.toHaveBeenCalled();
+  });
+
+  it('does not fall back to legacy when primary is approved but exact economy evidence is unavailable', () => {
+    const { value, strategy } = router('TRANSACTION_PRIMARY', true);
+    (value as any).promotion.transactionPromotionApproved = () => true;
+
+    const result = value.plan({ decision: decision('UNKNOWN') } as any);
+
+    expect(result.nextAction.type).toBe('HOLD');
+    expect(result.planSession?.state).toBe('REPLAN_REQUIRED');
+    expect(strategy.planFlatCompat).not.toHaveBeenCalled();
   });
 });
