@@ -15,10 +15,13 @@ rsync -avz --delete \
   --exclude 'apps/overwolf-client/dist' \
   "$SCRIPT_DIR/" my-vps:~/apps/deadlock_dynamo_helper/
 
+echo "=== Building Docker image on my-vps... ==="
+ssh my-vps "cd ~/apps/deadlock_dynamo_helper && docker build -t deadlock-adaptive-production:current ."
+
 echo "=== Running DB migrations on my-vps... ==="
 ssh my-vps "cd ~/apps/deadlock_dynamo_helper && docker compose run --rm api node run-migrations.js"
 
 echo "=== Triggering Docker Compose build & start on my-vps... ==="
-ssh my-vps "cd ~/apps/deadlock_dynamo_helper && docker compose up --build -d"
+ssh my-vps "cd ~/apps/deadlock_dynamo_helper && docker compose up -d"
 
 echo "=== Deploy finished successfully! ==="
