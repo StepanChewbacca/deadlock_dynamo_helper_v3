@@ -11,6 +11,7 @@ import {
   reconstructedFact,
 } from './recommendation-action-domain';
 import { RecommendationItemGraph } from './recommendation-item-graph';
+import { resolveUpgradeExecutionPathV1 } from './recommendation-upgrade-execution';
 import { InventoryAcquisitionType, InventoryItemInstance, InventorySlotType, InventoryState } from './types';
 
 export interface RecommendationCandidateGeneratorRules {
@@ -50,6 +51,23 @@ export interface GenerateRecommendationCandidatesInput {
   rules?: RecommendationCandidateGeneratorRules;
 }
 
+export interface RecommendationTransitionResultV1 {
+  state: RecommendationDecisionState;
+  consumedItemIds: readonly number[];
+  removedItemIds: readonly number[];
+  addedItemIds: readonly number[];
+  soulsDelta: number;
+  beforeInventoryFingerprint: string;
+  afterInventoryFingerprint: string;
+}
+
+export class RecommendationTransitionValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RecommendationTransitionValidationError';
+  }
+}
+
 export function generateRecommendationCandidates(
   input: GenerateRecommendationCandidatesInput,
 ): RecommendationCandidate[] {
@@ -59,7 +77,15 @@ export function generateRecommendationCandidates(
   const candidates: RecommendationCandidate[] = [];
   const waitTargets = new Set<number>();
 
-  candidates.push(buildCandidate(state, { type: 'WAIT_SAVE' }, true, ['FEASIBLE'], 0, heldIds(state), state.economy.spendableSouls.value));
+  candidates.push(buildCandidate(
+    state,
+    { type: 'WAIT_SAVE' },
+    true,
+    ['FEASIBLE'],
+    0,
+    heldIds(state),
+    state.economy.spendableSouls.value,
+  ));
 
   for (const item of graph.getAllItems()) {
     const availability = rulesetAvailability(state.rulesetId, item);
@@ -79,7 +105,10 @@ export function generateRecommendationCandidates(
       applySlotReason(state, resulting, graph, rules, reasons);
       if (!checkActiveLimit(resulting, graph, rules)) reasons.push('ACTIVE_ITEM_LIMIT_EXCEEDED');
       const feasible = reasons.length === 0;
-      const suppression = recommendationSuppressionForTarget(state, graph, item.itemId);
+      const suppression = uniqueSuppressionReasons([
+        ...recommendationSuppressionForTarget(state, graph, item.itemId),
+        ...acquisitionSuppressionForDirectPurchase(state, graph, item.itemId),
+      ]);
       candidates.push(buildCandidate(
         state,
         buyAction,
@@ -236,6 +265,7 @@ function evaluateReplace(
       suppression.push('TARGET_SATISFIED_BY_OWNED_UPGRADE');
     }
   }
+  suppression.push(...acquisitionSuppressionForDirectPurchase(state, graph, bought.itemId));
   return buildCandidate(
     state,
     { type: 'REPLACE_ITEM', sellItemId: sold.itemId, buyItemId: bought.itemId },
@@ -244,8 +274,32 @@ function evaluateReplace(
     cost - refund,
     resulting,
     feasible && wallet !== undefined ? wallet + refund - cost : undefined,
-    suppression,
+    uniqueSuppressionReasons(suppression),
   );
+}
+
+function acquisitionSuppressionForDirectPurchase(
+  state: RecommendationDecisionState,
+  graph: RecommendationItemGraph,
+  targetItemId: number,
+): RecommendationSuppressionReason[] {
+  const ownedAncestors = [...state.inventory.heldByItemId.keys()]
+    .filter((itemId) => graph.isComponentAncestor(itemId, targetItemId));
+  if (ownedAncestors.length === 0) return [];
+
+  const resolution = resolveUpgradeExecutionPathV1(state, targetItemId, graph);
+  if (resolution.kind === 'DIRECT_BUY') return [];
+  if (resolution.kind === 'NOT_EXECUTABLE') {
+    const reasons: RecommendationSuppressionReason[] = ['OWNED_COMPONENT_REQUIRES_UPGRADE_PATH'];
+    if (resolution.reasonCodes.includes('UPGRADE_TRANSACTION_MECHANICS_UNKNOWN')) {
+      reasons.push('UPGRADE_TRANSACTION_MECHANICS_UNKNOWN');
+    }
+    if (resolution.reasonCodes.includes('DIRECT_PURCHASE_NOT_SUPPORTED')) {
+      reasons.push('DIRECT_PURCHASE_MODE_UNKNOWN');
+    }
+    return reasons;
+  }
+  return ['OWNED_COMPONENT_REQUIRES_UPGRADE_PATH'];
 }
 
 function recommendationSuppressionForTarget(
@@ -273,16 +327,25 @@ function applyShopObservabilityReasons(
   }
 }
 
-function applyPurchaseObservabilityReasons(state: RecommendationDecisionState, reasons: RecommendationFeasibilityReason[]): void {
+function applyPurchaseObservabilityReasons(
+  state: RecommendationDecisionState,
+  reasons: RecommendationFeasibilityReason[],
+): void {
   applyShopObservabilityReasons(state, reasons);
   if (state.economy.spendableSouls.evidence === 'UNKNOWN' || state.economy.spendableSouls.value === undefined) {
     reasons.push('SPENDABLE_SOULS_UNKNOWN');
   }
 }
 
-function applyAffordabilityReason(state: RecommendationDecisionState, cost: number, reasons: RecommendationFeasibilityReason[]): void {
+function applyAffordabilityReason(
+  state: RecommendationDecisionState,
+  cost: number,
+  reasons: RecommendationFeasibilityReason[],
+): void {
   const wallet = state.economy.spendableSouls.value;
-  if (state.economy.spendableSouls.evidence !== 'UNKNOWN' && wallet !== undefined && wallet < cost) reasons.push('UNAFFORDABLE');
+  if (state.economy.spendableSouls.evidence !== 'UNKNOWN' && wallet !== undefined && wallet < cost) {
+    reasons.push('UNAFFORDABLE');
+  }
 }
 
 function rulesetAvailability(rulesetId: string, item: RecommendationItemDefinition): boolean {
@@ -403,7 +466,10 @@ function applySellTransition(
 }
 
 function shouldTargetWait(reasons: readonly RecommendationFeasibilityReason[]): boolean {
-  return reasons.includes('UNAFFORDABLE') || reasons.includes('SPENDABLE_SOULS_UNKNOWN') || reasons.includes('SHOP_UNAVAILABLE') || reasons.includes('SHOP_OPPORTUNITY_UNKNOWN');
+  return reasons.includes('UNAFFORDABLE') ||
+    reasons.includes('SPENDABLE_SOULS_UNKNOWN') ||
+    reasons.includes('SHOP_UNAVAILABLE') ||
+    reasons.includes('SHOP_OPPORTUNITY_UNKNOWN');
 }
 
 function evidenceFor(state: RecommendationDecisionState, transactionEvidence: FactEvidence): RecommendationCandidateEvidence {
@@ -444,6 +510,12 @@ function uniqueReasons(reasons: readonly RecommendationFeasibilityReason[]): Rec
   return [...new Set(reasons)].sort();
 }
 
+function uniqueSuppressionReasons(
+  reasons: readonly RecommendationSuppressionReason[],
+): RecommendationSuppressionReason[] {
+  return [...new Set(reasons)].sort();
+}
+
 function dedupeAndSort(candidates: readonly RecommendationCandidate[]): RecommendationCandidate[] {
   const byId = new Map<string, RecommendationCandidate>();
   for (const candidate of candidates) if (!byId.has(candidate.actionId)) byId.set(candidate.actionId, candidate);
@@ -472,13 +544,26 @@ export function buildInventoryInstancesForRecommendation(
   return held;
 }
 
-export function projectRecommendationCandidateState(
+export function applyRecommendationCandidateTransitionV1(
   state: RecommendationDecisionState,
   candidate: RecommendationCandidate,
   graph: RecommendationItemGraph,
-): RecommendationDecisionState {
+): RecommendationTransitionResultV1 {
+  if (!candidate.feasible) {
+    throw new RecommendationTransitionValidationError(`Cannot apply infeasible candidate ${candidate.actionId}`);
+  }
+
+  const beforeItemIds = heldIds(state);
+  const expectedResulting = expectedResultingItemIds(state, candidate.action, graph);
+  if (!sameItemIds(expectedResulting, candidate.resultingItemIds)) {
+    throw new RecommendationTransitionValidationError(
+      `Candidate ${candidate.actionId} projected inventory does not match action semantics`,
+    );
+  }
+
+  validateWalletProjection(state, candidate);
   const inventory = inventoryFromProjectedIds(state, candidate, graph);
-  return {
+  const nextState: RecommendationDecisionState = {
     ...state,
     inventory,
     economy: {
@@ -488,6 +573,118 @@ export function projectRecommendationCandidateState(
         : reconstructedFact(candidate.spendableSoulsAfter, `candidate:${candidate.actionId}`),
     },
   };
+
+  const afterItemIds = [...inventory.heldByItemId.keys()].sort((a, b) => a - b);
+  const beforeSet = new Set(beforeItemIds);
+  const afterSet = new Set(afterItemIds);
+  const removedItemIds = beforeItemIds.filter((itemId) => !afterSet.has(itemId));
+  const addedItemIds = afterItemIds.filter((itemId) => !beforeSet.has(itemId));
+  const consumedItemIds = candidate.action.type === 'UPGRADE_ITEM'
+    ? [...candidate.action.consumedItemIds].sort((a, b) => a - b)
+    : [];
+
+  return {
+    state: nextState,
+    consumedItemIds,
+    removedItemIds,
+    addedItemIds,
+    soulsDelta: -candidate.effectiveCostSouls,
+    beforeInventoryFingerprint: inventoryFingerprint(beforeItemIds),
+    afterInventoryFingerprint: inventoryFingerprint(afterItemIds),
+  };
+}
+
+export function projectRecommendationCandidateState(
+  state: RecommendationDecisionState,
+  candidate: RecommendationCandidate,
+  graph: RecommendationItemGraph,
+): RecommendationDecisionState {
+  return applyRecommendationCandidateTransitionV1(state, candidate, graph).state;
+}
+
+function expectedResultingItemIds(
+  state: RecommendationDecisionState,
+  action: RecommendationAction,
+  graph: RecommendationItemGraph,
+): readonly number[] {
+  switch (action.type) {
+    case 'WAIT_SAVE':
+      return heldIds(state);
+    case 'BUY_ITEM': {
+      const item = graph.getItem(action.itemId);
+      if (!item || item.directPurchaseCost === undefined) {
+        throw new RecommendationTransitionValidationError(`BUY source mechanics missing for ${action.itemId}`);
+      }
+      return addItemIds(heldIds(state), [action.itemId]);
+    }
+    case 'UPGRADE_ITEM': {
+      const item = graph.getItem(action.itemId);
+      const recipe = item?.upgradeRecipes.find((entry) => entry.recipeId === action.recipeId);
+      if (!item || !recipe) {
+        throw new RecommendationTransitionValidationError(`Upgrade recipe ${action.recipeId} is not executable`);
+      }
+      const normalizedActionComponents = [...new Set(action.consumedItemIds)].sort((a, b) => a - b);
+      const normalizedRecipeComponents = [...new Set(recipe.consumedItemIds)].sort((a, b) => a - b);
+      if (!sameItemIds(normalizedActionComponents, normalizedRecipeComponents)) {
+        throw new RecommendationTransitionValidationError(`Upgrade recipe ${action.recipeId} component mismatch`);
+      }
+      for (const itemId of normalizedRecipeComponents) {
+        if (!state.inventory.heldByItemId.has(itemId)) {
+          throw new RecommendationTransitionValidationError(`Upgrade component ${itemId} is not owned`);
+        }
+      }
+      return upgradeInventory(state, item, normalizedRecipeComponents);
+    }
+    case 'SELL_ITEM': {
+      if (!state.inventory.heldByItemId.has(action.itemId)) {
+        throw new RecommendationTransitionValidationError(`Cannot sell non-owned item ${action.itemId}`);
+      }
+      const item = graph.getItem(action.itemId);
+      if (!item?.sellTransition) {
+        throw new RecommendationTransitionValidationError(`Sell transition for ${action.itemId} is unknown`);
+      }
+      return applySellTransition(state, item, graph);
+    }
+    case 'REPLACE_ITEM': {
+      if (!state.inventory.heldByItemId.has(action.sellItemId)) {
+        throw new RecommendationTransitionValidationError(`Cannot replace non-owned item ${action.sellItemId}`);
+      }
+      const sold = graph.getItem(action.sellItemId);
+      const bought = graph.getItem(action.buyItemId);
+      if (!sold?.sellTransition) {
+        throw new RecommendationTransitionValidationError(`Sell transition for ${action.sellItemId} is unknown`);
+      }
+      if (!bought || bought.directPurchaseCost === undefined) {
+        throw new RecommendationTransitionValidationError(`Direct purchase for ${action.buyItemId} is unknown`);
+      }
+      return addItemIds(applySellTransition(state, sold, graph), [bought.itemId]);
+    }
+  }
+}
+
+function validateWalletProjection(
+  state: RecommendationDecisionState,
+  candidate: RecommendationCandidate,
+): void {
+  const before = state.economy.spendableSouls.value;
+  const after = candidate.spendableSoulsAfter;
+  if (before === undefined || after === undefined) return;
+  const expected = before - candidate.effectiveCostSouls;
+  if (Math.abs(expected - after) > 0.000001) {
+    throw new RecommendationTransitionValidationError(
+      `Candidate ${candidate.actionId} wallet projection ${after} does not match expected ${expected}`,
+    );
+  }
+}
+
+function sameItemIds(left: readonly number[], right: readonly number[]): boolean {
+  const a = [...new Set(left)].sort((x, y) => x - y);
+  const b = [...new Set(right)].sort((x, y) => x - y);
+  return a.length === b.length && a.every((itemId, index) => itemId === b[index]);
+}
+
+function inventoryFingerprint(itemIds: readonly number[]): string {
+  return [...new Set(itemIds)].sort((a, b) => a - b).join(',');
 }
 
 function inventoryFromProjectedIds(
@@ -507,7 +704,9 @@ function inventoryFromProjectedIds(
       continue;
     }
     const item = graph.getItem(itemId);
-    if (!item) continue;
+    if (!item) {
+      throw new RecommendationTransitionValidationError(`Projected item ${itemId} is missing from graph`);
+    }
     const lifecycle = (lifecycleCountByItemId.get(itemId) ?? 0) + 1;
     lifecycleCountByItemId.set(itemId, lifecycle);
     held.set(itemId, {
