@@ -29,7 +29,7 @@ export function nextActionFromPlanSessionV1(session: AdaptivePlanSessionV1): Ada
     const action = next.action;
     if (action.type === 'BUY') {
       return {
-        actionKey: `BUY:${action.buyItemId}`,
+        actionKey: `BUY_ITEM:${action.buyItemId}`,
         type: 'BUY',
         itemId: action.buyItemId,
         buyItemId: action.buyItemId,
@@ -39,7 +39,9 @@ export function nextActionFromPlanSessionV1(session: AdaptivePlanSessionV1): Ada
     }
     if (action.type === 'UPGRADE') {
       return {
-        actionKey: `UPGRADE:${action.buyItemId}:${action.recipeId ?? ''}`,
+        actionKey: action.recipeId
+          ? `UPGRADE_ITEM:${action.buyItemId}:${action.recipeId}`
+          : `UPGRADE_ITEM:${action.buyItemId}`,
         type: 'UPGRADE',
         itemId: action.buyItemId,
         buyItemId: action.buyItemId,
@@ -48,7 +50,7 @@ export function nextActionFromPlanSessionV1(session: AdaptivePlanSessionV1): Ada
       };
     }
     return {
-      actionKey: `REPLACE:${action.sellItemId}->${action.buyItemId}`,
+      actionKey: `REPLACE_ITEM:${action.sellItemId}->${action.buyItemId}`,
       type: 'REPLACE',
       sellItemId: action.sellItemId,
       buyItemId: action.buyItemId,
