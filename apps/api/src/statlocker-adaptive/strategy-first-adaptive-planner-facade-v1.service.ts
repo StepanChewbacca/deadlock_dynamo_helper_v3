@@ -5,7 +5,10 @@ import { AdaptiveRecommendationObservabilityV1Service } from './adaptive-recomme
 import { diffAdaptiveBuildPlansV1 } from './build-plan-diff-v1';
 import { BuildStrategyRegistryV1Service } from './build-strategy-registry-v1.service';
 import { ConsensusStrategyFallbackV1Service } from './consensus-strategy-fallback-v1.service';
-import { StrategyFirstBuildPlannerV1Service } from './strategy-first-build-planner-v1.service';
+import {
+  StrategyFirstBuildPlannerV1Result,
+  StrategyFirstBuildPlannerV1Service,
+} from './strategy-first-build-planner-v1.service';
 import { BuildContractV1 } from './build-strategy-v1';
 import { BuildStrategySessionV1 } from './build-strategy-session-v1.service';
 import { StatlockerEvidenceBundleV1 } from './statlocker-evidence.service';
@@ -43,12 +46,74 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
     private readonly planner: StrategyFirstBuildPlannerV1Service,
     private readonly registry: BuildStrategyRegistryV1Service,
     private readonly fallback: ConsensusStrategyFallbackV1Service,
-    @Optional() private readonly transactionPlan?: StrategyFirstTransactionPlanV1Service,
     @Optional() private readonly situational?: StrategyFirstSituationalOverlayV1Service,
     @Optional() private readonly observability?: AdaptiveRecommendationObservabilityV1Service,
+    @Optional() private readonly transactionPlan?: StrategyFirstTransactionPlanV1Service,
   ) {}
 
   plan(input: StrategyFirstAdaptivePlannerFacadeV1Input): StrategyFirstTransactionPlanResultV1 {
+    const base = this.planBase(input);
+    const transactionFirst = (this.transactionPlan ?? new StrategyFirstTransactionPlanV1Service()).apply({
+      result: base,
+      decision: input.decision,
+      previousPlanSession: input.previousResult?.planSession,
+      recentPurchasedItemIds: input.recentPurchasedItemIds ?? [],
+    });
+    const withChanges = withLegacyChanges(transactionFirst, input);
+
+    const transactionInvariantCheck = evaluateTransactionPlanInvariantsV1({
+      decision: input.decision,
+      planSession: withChanges.planSession,
+      nextAction: withChanges.nextAction,
+      recommendedBuild: withChanges.recommendedBuild,
+    });
+    this.observability?.recordTransactionPlanInvariantCheck(transactionInvariantCheck);
+    const transactionSafe = transactionInvariantCheck.valid
+      ? withChanges
+      : failClosedTransactionPlanResult(withChanges, input.decision, transactionInvariantCheck);
+
+    const invariantCheck = evaluateStrategyFirstInvariantsV1({
+      decision: input.decision,
+      result: transactionSafe,
+      previousStrategy: input.previousResult?.strategy,
+    });
+    this.observability?.recordStrategyInvariantCheck(invariantCheck);
+    if (invariantCheck.valid) return withLegacyChanges(transactionSafe, input);
+
+    return withLegacyChanges(
+      failClosedStrategyResult(transactionSafe, input.decision, invariantCheck),
+      input,
+    );
+  }
+
+  /**
+   * Compatibility-only strategy result used by transaction shadow serving.
+   * It intentionally contains no PlanSession and must never be used to infer transaction semantics.
+   */
+  planFlatCompat(input: StrategyFirstAdaptivePlannerFacadeV1Input): StrategyFirstBuildPlannerV1Result {
+    const base = alignFirstNextRow(normalizeTerminalResult(this.planBase(input), input.decision));
+    const withChanges: StrategyFirstBuildPlannerV1Result = {
+      ...base,
+      changes: input.previousResult
+        ? diffAdaptiveBuildPlansV1(
+            input.previousResult.recommendedBuild,
+            base.recommendedBuild,
+            input.recentPurchasedItemIds ?? [],
+            input.recentSoldItemIds ?? [],
+          )
+        : [],
+    };
+    const invariantCheck = evaluateStrategyFirstInvariantsV1({
+      decision: input.decision,
+      result: withChanges,
+      previousStrategy: input.previousResult?.strategy,
+    });
+    return invariantCheck.valid
+      ? withChanges
+      : failClosedFlatStrategyResult(withChanges, input.decision, invariantCheck);
+  }
+
+  private planBase(input: StrategyFirstAdaptivePlannerFacadeV1Input): StrategyFirstBuildPlannerV1Result {
     let strategies = this.registry.getStrategies(
       input.decision.state.heroId,
       input.decision.rulesetId,
@@ -78,54 +143,13 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
       recentPurchasedItemIds: input.recentPurchasedItemIds ?? [],
       recentSoldItemIds: input.recentSoldItemIds ?? [],
     });
-    const overlaid = planned.contract.status === 'COMPLETE'
+    return planned.contract.status === 'COMPLETE'
       ? planned
       : this.situational?.apply({
           result: planned,
           decision: input.decision,
           evidence: input.evidence,
         }) ?? planned;
-    const transactionFirst = (this.transactionPlan ?? new StrategyFirstTransactionPlanV1Service()).apply({
-      result: overlaid,
-      decision: input.decision,
-      previousPlanSession: input.previousResult?.planSession,
-      recentPurchasedItemIds: input.recentPurchasedItemIds ?? [],
-    });
-    const withChanges: StrategyFirstTransactionPlanResultV1 = {
-      ...transactionFirst,
-      changes: input.previousResult
-        ? diffAdaptiveBuildPlansV1(
-            input.previousResult.recommendedBuild,
-            transactionFirst.recommendedBuild,
-            input.recentPurchasedItemIds ?? [],
-            input.recentSoldItemIds ?? [],
-          )
-        : [],
-    };
-
-    const transactionInvariantCheck = evaluateTransactionPlanInvariantsV1({
-      decision: input.decision,
-      planSession: withChanges.planSession,
-      nextAction: withChanges.nextAction,
-      recommendedBuild: withChanges.recommendedBuild,
-    });
-    this.observability?.recordTransactionPlanInvariantCheck(transactionInvariantCheck);
-    const transactionSafe = transactionInvariantCheck.valid
-      ? withChanges
-      : failClosedTransactionPlanResult(withChanges, input.decision, transactionInvariantCheck);
-
-    const invariantCheck = evaluateStrategyFirstInvariantsV1({
-      decision: input.decision,
-      result: transactionSafe,
-      previousStrategy: input.previousResult?.strategy,
-    });
-    this.observability?.recordStrategyInvariantCheck(invariantCheck);
-    if (invariantCheck.valid) return withLegacyChanges(transactionSafe, input);
-
-    return withLegacyChanges(
-      failClosedStrategyResult(transactionSafe, input.decision, invariantCheck),
-      input,
-    );
   }
 }
 
@@ -143,6 +167,51 @@ function withLegacyChanges(
           input.recentSoldItemIds ?? [],
         )
       : [],
+  };
+}
+
+function normalizeTerminalResult(
+  result: StrategyFirstBuildPlannerV1Result,
+  decision: AdaptiveDecisionStateV1,
+): StrategyFirstBuildPlannerV1Result {
+  if (result.contract.status !== 'COMPLETE') return result;
+  const owned = new Set(decision.state.inventory.heldByItemId.keys());
+  const recommendedBuild = result.recommendedBuild
+    .filter((row) => owned.has(row.itemId))
+    .sort((a, b) => a.position - b.position || a.itemId - b.itemId)
+    .map((row, index) => ({ ...row, position: index + 1, status: 'OWNED' as const }));
+  return {
+    ...result,
+    nextAction: {
+      actionKey: 'HOLD',
+      type: 'HOLD',
+      reasonCodes: ['BUILD_CONTRACT_COMPLETE'],
+    },
+    recommendedBuild,
+    rankedImmediateCandidates: [],
+    totalScore: 0,
+    confidence: 1,
+  };
+}
+
+function alignFirstNextRow(result: StrategyFirstBuildPlannerV1Result): StrategyFirstBuildPlannerV1Result {
+  if (
+    result.contract.status === 'COMPLETE' ||
+    result.contract.status === 'REPLAN_REQUIRED' ||
+    result.contract.status === 'OUT_OF_DISTRIBUTION'
+  ) {
+    return result;
+  }
+  const targetItemId = result.nextAction.targetItemId;
+  if (targetItemId === undefined) return result;
+  const targetExists = result.recommendedBuild.some((row) => row.itemId === targetItemId && row.status !== 'OWNED');
+  if (!targetExists) return result;
+  return {
+    ...result,
+    recommendedBuild: result.recommendedBuild.map((row) => {
+      if (row.status === 'OWNED') return row;
+      return { ...row, status: row.itemId === targetItemId ? 'NEXT' as const : 'PLANNED' as const };
+    }),
   };
 }
 
@@ -215,6 +284,41 @@ function failClosedBase(
       actionKey: 'HOLD',
       type: 'HOLD',
       reasonCodes: [failCode, ...violationReasons],
+    },
+    recommendedBuild,
+    rankedImmediateCandidates: [],
+    totalScore: 0,
+    confidence: 0,
+  };
+}
+
+function failClosedFlatStrategyResult(
+  result: StrategyFirstBuildPlannerV1Result,
+  decision: AdaptiveDecisionStateV1,
+  check: StrategyFirstInvariantCheckV1,
+): StrategyFirstBuildPlannerV1Result {
+  const owned = new Set(decision.state.inventory.heldByItemId.keys());
+  const violationReasons = check.violations.map((violation) => `INVARIANT:${violation.code}`);
+  const recommendedBuild = result.recommendedBuild
+    .filter((row) => owned.has(row.itemId))
+    .sort((a, b) => a.position - b.position || a.itemId - b.itemId)
+    .map((row, index) => ({ ...row, position: index + 1, status: 'OWNED' as const }));
+  return {
+    ...result,
+    contract: {
+      ...result.contract,
+      status: 'REPLAN_REQUIRED',
+      completionReasonCodes: unique([
+        ...result.contract.completionReasonCodes,
+        'STRATEGY_INVARIANT_FAIL_CLOSED',
+        ...violationReasons,
+      ]),
+    },
+    strategyPlan: { ...result.strategyPlan, buildStatus: 'REPLAN_REQUIRED' },
+    nextAction: {
+      actionKey: 'HOLD',
+      type: 'HOLD',
+      reasonCodes: ['STRATEGY_INVARIANT_FAIL_CLOSED', ...violationReasons],
     },
     recommendedBuild,
     rankedImmediateCandidates: [],
