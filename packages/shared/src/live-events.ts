@@ -1,29 +1,27 @@
-export type OverwolfLiveEventSource = 'onInfoUpdates2' | 'onNewEvents';
-
-export type OverwolfLiveEventDto = {
-  matchId?: string;
-  receivedAt: number;
-  source: OverwolfLiveEventSource;
-  feature?: string;
-  category?: string;
+export interface OverwolfLiveEventDto {
+  source?: string;
   key?: string;
-  payload: unknown;
-};
+  payload?: unknown;
+  matchId?: string;
+  sequence?: number;
+  timestampMs?: number;
+}
 
-export type OverwolfLiveBatchDto = {
+export interface OverwolfLiveBatchDto {
   clientId: string;
+  sentAt: string;
   events: OverwolfLiveEventDto[];
-};
+}
 
-export type MinimalItemState = {
+export interface MinimalItemState {
   id: number;
   name: string;
   className: string;
   enhanced: boolean;
   firstSeenAtSec?: number;
-};
+}
 
-export type MinimalPlayerState = {
+export interface MinimalPlayerState {
   steamId: string;
   playerName: string;
   isLocal?: boolean;
@@ -42,35 +40,35 @@ export type MinimalPlayerState = {
   objectDamage?: number;
   healing?: number;
   items: MinimalItemState[];
-};
+}
 
-export type MinimalMatchState = {
+export interface MinimalMatchState {
   matchId: string;
   gameTimeSec?: number;
+  unlockedFlexSlots?: number;
+  flexSlotsSource?: string;
   playersBySteamId: Record<string, MinimalPlayerState>;
   lastUpdatedAt: string;
-};
+}
 
-export type MinimalPlayerSnapshot = Pick<
-  MinimalPlayerState,
-  | 'steamId'
-  | 'heroId'
-  | 'teamId'
-  | 'level'
-  | 'souls'
-  | 'kills'
-  | 'deaths'
-  | 'assists'
-  | 'heroDamage'
-  | 'objectDamage'
-  | 'healing'
-> & {
+export interface MinimalPlayerSnapshot {
+  steamId: string;
+  heroId?: number;
+  teamId?: number;
+  level?: number;
+  souls?: number;
+  kills?: number;
+  deaths?: number;
+  assists?: number;
+  heroDamage?: number;
+  objectDamage?: number;
+  healing?: number;
   itemIds: number[];
-};
+}
 
-export type MinimalMatchSnapshot = {
+export interface MinimalMatchSnapshot {
   matchId: string;
   gameTimeSec?: number;
   capturedAt: string;
   playersBySteamId: Record<string, MinimalPlayerSnapshot>;
-};
+}
