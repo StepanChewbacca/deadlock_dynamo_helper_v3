@@ -1,4 +1,8 @@
 import {
+  RecommendationCandidate,
+  generateRecommendationCandidates,
+} from '@deadlock-live-probe/build-domain';
+import {
   AdaptiveActionV1,
   AdaptivePlanProjectionV1,
   AdaptivePlanSessionV1,
@@ -6,6 +10,7 @@ import {
   AdaptivePlannedItemV1,
 } from '@deadlock-live-probe/shared';
 import { AdaptiveDecisionStateV1 } from './adaptive-decision-state-v1.service';
+import { candidateGeneratorRulesFromSlotStateV1 } from './adaptive-economy-v1';
 
 export type TransactionPlanInvariantViolationCodeV1 =
   | 'FUTURE_TARGET_WITHOUT_STEP'
@@ -89,6 +94,7 @@ export function evaluateTransactionPlanInvariantsV1(
   }
 
   checkNextAlignment(input, targetByStep, violations);
+  checkNextExecutable(input, violations);
   checkCompatibilityProjection(input, targetByStep, violations);
 
   return {
@@ -197,6 +203,35 @@ function checkNextAlignment(
   }
 }
 
+function checkNextExecutable(
+  input: EvaluateTransactionPlanInvariantsV1Input,
+  violations: TransactionPlanInvariantViolationV1[],
+): void {
+  if (input.planSession.state !== 'ACTIVE' || !input.planSession.nextStepId) return;
+  const step = input.planSession.steps.find((entry) => entry.stepId === input.planSession.nextStepId);
+  if (!step || step.kind !== 'TRANSACTION' || step.state !== 'NEXT' || !step.action) return;
+
+  const candidates = generateRecommendationCandidates({
+    state: input.decision.state,
+    itemGraph: input.decision.itemGraph,
+    rules: candidateGeneratorRulesFromSlotStateV1(input.decision.slots, {
+      allowSellOnlyActions: true,
+      generateTargetedWaitActions: true,
+    }),
+  });
+  const semanticCandidates = candidates.filter((candidate) => candidateMatchesStep(candidate, step));
+  if (semanticCandidates.some((candidate) => candidate.feasible && candidate.recommendationEligible)) return;
+
+  violations.push({
+    code: 'NEXT_NOT_EXECUTABLE',
+    stepId: step.stepId,
+    itemId: planStepTargetItemId(step),
+    reasonCodes: semanticCandidates.length === 0
+      ? ['NEXT_TRANSACTION_NOT_IN_CANONICAL_CANDIDATE_SET']
+      : [...new Set(semanticCandidates.flatMap((candidate) => candidate.reasons))].sort(),
+  });
+}
+
 function checkCompatibilityProjection(
   input: EvaluateTransactionPlanInvariantsV1Input,
   targetByStep: ReadonlyMap<string, number>,
@@ -216,6 +251,24 @@ function checkCompatibilityProjection(
       reasonCodes: ['FLAT_NEXT_ROW_DOES_NOT_MATCH_TRANSACTION_PLAN_NEXT'],
     });
   }
+}
+
+function candidateMatchesStep(candidate: RecommendationCandidate, step: AdaptivePlanStepV1): boolean {
+  const planned = step.action;
+  if (!planned) return false;
+  const action = candidate.action;
+  if (planned.type === 'BUY') {
+    return action.type === 'BUY_ITEM' && action.itemId === planned.buyItemId;
+  }
+  if (planned.type === 'UPGRADE') {
+    return action.type === 'UPGRADE_ITEM' &&
+      action.itemId === planned.buyItemId &&
+      (planned.recipeId === undefined || action.recipeId === planned.recipeId) &&
+      sameNumberSet(action.consumedItemIds, planned.consumedItemIds);
+  }
+  return action.type === 'REPLACE_ITEM' &&
+    action.sellItemId === planned.sellItemId &&
+    action.buyItemId === planned.buyItemId;
 }
 
 function actionMatchesStep(action: AdaptiveActionV1, step: AdaptivePlanStepV1): boolean {
@@ -240,6 +293,12 @@ function planStepTargetItemId(step: AdaptivePlanStepV1): number | undefined {
 
 function isTransactionAction(action: AdaptiveActionV1): boolean {
   return action.type === 'BUY' || action.type === 'UPGRADE' || action.type === 'SELL' || action.type === 'REPLACE';
+}
+
+function sameNumberSet(a: readonly number[], b: readonly number[]): boolean {
+  const left = [...a].sort((x, y) => x - y);
+  const right = [...b].sort((x, y) => x - y);
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function dedupeViolations(
