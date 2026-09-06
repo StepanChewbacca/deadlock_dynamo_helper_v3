@@ -19,13 +19,13 @@ const items: RecommendationItemDefinition[] = [1, 2, 3].map((itemId) => ({
 const graph = createRecommendationItemGraph(items);
 const slotRules = { baseSlots: 12, baseSlotsByType: { weapon: 4, vitality: 4, spirit: 4 } as const, maxFlexSlots: 4, maxActiveItems: 4 };
 
-function decision(owned: readonly number[]): AdaptiveDecisionStateV1 {
+function decision(owned: readonly number[], souls = 5000): AdaptiveDecisionStateV1 {
   const held = buildInventoryInstancesForRecommendation(owned, graph);
   return {
     state: {
       decisionId: 'd', matchId: 'm', playerSlot: 0, gameTimeSec: 100, rulesetId: 'r1', heroId: 1,
       inventory: { initializedFromSnapshot: true, heldByItemId: held, lifecycleCountByItemId: new Map(), nextInstanceSequence: held.size + 1 },
-      economy: { spendableSouls: observedFact(5000, 'test'), shopOpportunity: observedFact('AVAILABLE', 'test') },
+      economy: { spendableSouls: observedFact(souls, 'test'), shopOpportunity: observedFact('AVAILABLE', 'test') },
     },
     itemGraph: graph, catalogVersionId: 'c', catalogSha256: 'a'.repeat(64), rulesetId: 'r1', localSteamId: 'p',
     allyHeroIds: [], enemyHeroIds: [], allyItemIds: [], enemyItemIds: [],
@@ -91,6 +91,19 @@ describe('transaction plan invariants v1', () => {
       recommendedBuild: [],
     });
     expect(check.violations.some((violation) => violation.code === 'NEXT_STEP_MISMATCH')).toBe(true);
+  });
+
+  it('rejects a structurally aligned NEXT transaction that is not executable now', () => {
+    const check = evaluateTransactionPlanInvariantsV1({
+      decision: decision([1], 0),
+      planSession: validSession(),
+      nextAction: { actionKey: 'REPLACE_ITEM:1->2', type: 'REPLACE', sellItemId: 1, buyItemId: 2, targetItemId: 2, reasonCodes: [] },
+      recommendedBuild: [
+        { itemId: 1, position: 1, status: 'OWNED', score: 0, confidence: 1, skeletonStrength: 0, contextualSupport: 1, reasonCodes: [] },
+        { itemId: 2, position: 2, status: 'NEXT', score: 0, confidence: 0, skeletonStrength: 0, contextualSupport: 0, reasonCodes: ['TRANSACTION_STEP:replace'] },
+      ],
+    });
+    expect(check.violations.some((violation) => violation.code === 'NEXT_NOT_EXECUTABLE')).toBe(true);
   });
 
   it('rejects an unknown flex path and an over-capacity projection', () => {
