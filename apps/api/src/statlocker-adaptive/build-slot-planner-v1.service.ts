@@ -182,12 +182,15 @@ function findReplacementSource(
     a.sourceItemId - b.sourceItemId,
   );
 
-  for (const { sourceItemId } of candidateScores) {
+  for (const { sourceItemId, cost: sourceCost } of candidateScores) {
     if (isReadyUpgradeComponentForPendingHardGoal(input, sourceItemId, targetItemId)) continue;
     const afterExit = input.ownedItemIds.filter((itemId) => itemId !== sourceItemId);
-    const preservesTerminalGoals = terminalHardGoals.every((goal) =>
-      goal.targetItemIds.filter((itemId) => input.itemGraph.isTargetSatisfied(itemId, afterExit)).length >= goal.minSelect,
-    );
+    const targetCost = targetItem?.directPurchaseCost ?? 0;
+    const preservesTerminalGoals = terminalHardGoals.every((goal) => {
+      const satisfied = goal.targetItemIds.filter((itemId) => input.itemGraph.isTargetSatisfied(itemId, afterExit)).length;
+      if (satisfied >= goal.minSelect) return true;
+      return targetCost > sourceCost;
+    });
     if (!preservesTerminalGoals) continue;
     if (canFit([...afterExit, targetItemId])) return sourceItemId;
   }
@@ -232,13 +235,12 @@ function requiredFlexAfterAdd(
 }
 
 function minimumRequiredFlex(
-  categoryOverflow: number,
+  categoryFlexUsed: number,
   itemCount: number,
   reservedSituationalSlots: number,
   baseSlots: number,
 ): number {
-  return Math.max(
-    categoryOverflow,
-    Math.max(0, itemCount + Math.max(0, reservedSituationalSlots) - baseSlots),
-  );
+  const totalReserved = Math.max(0, reservedSituationalSlots);
+  const generalOverflow = Math.max(0, itemCount + totalReserved - baseSlots);
+  return Math.max(categoryFlexUsed, generalOverflow);
 }

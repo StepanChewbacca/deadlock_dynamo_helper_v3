@@ -65,6 +65,7 @@ export class TransactionPlanCompilerV1Service {
   compile(input: CompileTransactionPlanV1Input): CompileTransactionPlanV1Result {
     const steps: AdaptivePlanStepV1[] = [];
     const reasonCodes: string[] = [];
+    const compiledGoalIds = new Set<string>();
     let state = input.decision.state;
     let slots = input.decision.slots;
     let contract = input.contract;
@@ -92,6 +93,7 @@ export class TransactionPlanCompilerV1Service {
       steps.push(compiledPrelude.step);
       state = compiledPrelude.state;
       slots = compiledPrelude.slots;
+      compiledGoalIds.add(goalId);
       reasonCodes.push('SELECTED_IMMEDIATE_TRANSACTION_COMPILED');
     }
 
@@ -111,19 +113,17 @@ export class TransactionPlanCompilerV1Service {
         reasonCodes.push('STRATEGY_OUT_OF_DISTRIBUTION');
       }
 
-      const goal = nextGoal(input.strategy, contract, input.decision.itemGraph, heldIds(state));
+      const goal = nextGoal(input.strategy, contract, input.decision.itemGraph, heldIds(state), compiledGoalIds);
       if (!goal) {
-        const unresolved = contract.remainingHardGoalIds.length > 0;
-        return {
-          steps,
-          reachable: !unresolved,
-          reasonCodes: unique([...reasonCodes, ...(unresolved ? ['NO_REACHABLE_TRANSACTION_GOAL'] : ['NO_HARD_ITEM_GOALS_REMAIN'])]),
-        };
+        break;
       }
       const targetItemId = goal.targetItemIds.find((itemId) =>
         !input.decision.itemGraph.isTargetSatisfied(itemId, state.inventory.heldByItemId.keys()),
       );
-      if (targetItemId === undefined) continue;
+      if (targetItemId === undefined) {
+        compiledGoalIds.add(goal.goalId);
+        continue;
+      }
 
       const freshSlotPlan = this.slotPlanner.plan({
         strategy: input.strategy,
@@ -154,6 +154,7 @@ export class TransactionPlanCompilerV1Service {
       if (!compiled.reachable) {
         return { steps, reachable: false, reasonCodes: unique(reasonCodes) };
       }
+      compiledGoalIds.add(goal.goalId);
       state = compiled.state;
       slots = compiled.slots;
     }
@@ -166,7 +167,18 @@ export class TransactionPlanCompilerV1Service {
       committedBranches: contract.committedBranches,
       commitment: contract.commitment,
     });
-    const unresolved = finalContract.remainingHardGoalIds.length > 0;
+    const terminalGoalIds = new Set(input.strategy.terminalPolicy.requiredGoalIds);
+    const uncompiledHardGoals = input.strategy.goals.filter((goal) =>
+      goal.hard &&
+      !compiledGoalIds.has(goal.goalId) &&
+      !goal.targetItemIds.some((itemId) => input.decision.itemGraph.isTargetSatisfied(itemId, heldIds(state))),
+    );
+    const unsatisfiedTerminalGoals = input.strategy.goals.filter((goal) =>
+      goal.hard &&
+      terminalGoalIds.has(goal.goalId) &&
+      !goal.targetItemIds.some((itemId) => input.decision.itemGraph.isTargetSatisfied(itemId, heldIds(state))),
+    );
+    const unresolved = uncompiledHardGoals.length > 0 || unsatisfiedTerminalGoals.length > 0;
     return {
       steps,
       reachable: !unresolved,
@@ -240,16 +252,8 @@ export class TransactionPlanCompilerV1Service {
           reasonCodes: unique([...reasons, 'FLEX_SLOT_UNAVAILABLE']),
         };
       }
-      if (slots.evidence === 'UNKNOWN' && slots.unlockedFlexSlots === undefined) {
-        return {
-          steps,
-          state,
-          slots,
-          reachable: false,
-          reasonCodes: unique([...reasons, 'UNKNOWN_FLEX_CAPACITY']),
-        };
-      }
-      if (slots.unlockedFlexSlots === undefined || slots.unlockedFlexSlots < required) {
+      const currentFlex = slots.unlockedFlexSlots ?? slots.provedFlexLowerBound ?? 0;
+      if (slots.unlockedFlexSlots === undefined || currentFlex < required) {
         const barrier = this.barrierStep(
           args.input.strategy.strategyId,
           args.goal.goalId,
@@ -559,7 +563,6 @@ export class TransactionPlanCompilerV1Service {
 
 const NON_DEFERABLE_REASONS = new Set<RecommendationFeasibilityReason>([
   'ITEM_UNAVAILABLE_IN_RULESET',
-  'FLEX_SLOT_CAPACITY_UNKNOWN',
   'MISSING_UPGRADE_COMPONENT',
   'SELL_TRANSITION_UNKNOWN',
   'SELL_RETURN_ITEM_UNKNOWN',
@@ -572,10 +575,12 @@ function nextGoal(
   contract: BuildContractV1,
   graph: AdaptiveDecisionStateV1['itemGraph'],
   ownedItemIds: readonly number[],
+  compiledGoalIds?: ReadonlySet<string>,
 ): BuildStrategyGoalV1 | undefined {
   const selectedBranchGoals = new Set(Object.values(contract.selectedBranches));
   const candidates = strategy.goals
     .filter((goal) => {
+      if (compiledGoalIds?.has(goal.goalId)) return false;
       const state = contract.goalStates[goal.goalId];
       if (state === 'SATISFIED' || state === 'SKIPPED' || state === 'WAIVED') return false;
       if (goal.type === 'BRANCH' && !selectedBranchGoals.has(goal.goalId)) return false;
@@ -621,13 +626,21 @@ function candidateAllowed(
   if (input.decision.itemGraph.isComponentAncestor(sellItemId, buyItemId)) return false;
   const afterSell = heldIds(state).filter((itemId) => itemId !== sellItemId);
   const terminalGoalIds = new Set(input.strategy.terminalPolicy.requiredGoalIds);
+  const sellItem = input.decision.itemGraph.getItem(sellItemId);
+  const buyItem = input.decision.itemGraph.getItem(buyItemId);
+  const sellCost = sellItem?.directPurchaseCost ?? 0;
+  const buyCost = buyItem?.directPurchaseCost ?? 0;
+
   for (const hardGoal of input.strategy.goals.filter((entry) =>
     entry.hard && terminalGoalIds.has(entry.goalId) && contract.goalStates[entry.goalId] === 'SATISFIED' && entry.goalId !== currentGoalId,
   )) {
     const satisfied = hardGoal.targetItemIds.filter((itemId) =>
       input.decision.itemGraph.isTargetSatisfied(itemId, afterSell),
     ).length;
-    if (satisfied < hardGoal.minSelect) return false;
+    if (satisfied < hardGoal.minSelect) {
+      if (buyCost > sellCost) continue;
+      return false;
+    }
   }
   for (const committedGoalId of Object.values(contract.committedBranches)) {
     if (committedGoalId === currentGoalId) continue;

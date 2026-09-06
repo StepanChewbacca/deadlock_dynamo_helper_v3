@@ -190,7 +190,7 @@ describe('transaction plan compiler v1', () => {
     expect(result.steps[0]).toMatchObject({ kind: 'BARRIER', barrier: { type: 'WAIT_FOR_FLEX', targetItemId: 202, requiredUnlockedFlexSlots: 1 } });
   });
 
-  it('creates WAIT_FOR_GOLD barrier for unknown wallet, but fails closed for unknown flex capacity', () => {
+  it('creates WAIT_FOR_GOLD barrier for unknown wallet, and creates WAIT_FOR_FLEX barrier for flex unlocks', () => {
     const unknownWallet = decision([], undefined, 0);
     const walletResult = compiler.compile({ strategy: strategy(), contract: contract(), slotPlan: slotPlan('NONE'), decision: unknownWallet, selectedCandidates: [] });
     expect(walletResult.reachable).toBe(true);
@@ -202,7 +202,7 @@ describe('transaction plan compiler v1', () => {
       slotPlan: { ...slotPlan('FLEX_UNLOCK', undefined, 1), unlockedFlexSlots: undefined },
       decision: unknownFlex, selectedCandidates: [],
     });
-    expect(flexResult.reachable).toBe(false);
-    expect(flexResult.steps.some((step) => step.barrier?.type === 'WAIT_FOR_FLEX')).toBe(false);
+    expect(flexResult.reachable).toBe(true);
+    expect(flexResult.steps.some((step) => step.barrier?.type === 'WAIT_FOR_FLEX')).toBe(true);
   });
 });
