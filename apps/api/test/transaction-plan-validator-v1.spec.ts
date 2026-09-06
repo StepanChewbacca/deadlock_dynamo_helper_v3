@@ -32,13 +32,13 @@ const items: RecommendationItemDefinition[] = [
 const graph = createRecommendationItemGraph(items);
 const slotRules = { baseSlots: 12, baseSlotsByType: { weapon: 4, vitality: 4, spirit: 4 } as const, maxFlexSlots: 4, maxActiveItems: 4 };
 
-function decision(ownedItemIds: readonly number[], unlockedFlexSlots = 0): AdaptiveDecisionStateV1 {
+function decision(ownedItemIds: readonly number[], unlockedFlexSlots = 0, souls = 5000): AdaptiveDecisionStateV1 {
   const held = buildInventoryInstancesForRecommendation(ownedItemIds, graph);
   return {
     state: {
       decisionId: 'd', matchId: 'm', playerSlot: 0, gameTimeSec: 1000, rulesetId: 'r1', heroId: 1,
       inventory: { initializedFromSnapshot: true, heldByItemId: held, lifecycleCountByItemId: new Map(), nextInstanceSequence: held.size + 1 },
-      economy: { spendableSouls: observedFact(5000, 'test'), shopOpportunity: observedFact('AVAILABLE', 'test') },
+      economy: { spendableSouls: observedFact(souls, 'test'), shopOpportunity: observedFact('AVAILABLE', 'test') },
     },
     itemGraph: graph, catalogVersionId: 'c', catalogSha256: 'd'.repeat(64), rulesetId: 'r1', localSteamId: 'p',
     allyHeroIds: [], enemyHeroIds: [], allyItemIds: [], enemyItemIds: [],
@@ -64,7 +64,7 @@ describe('transaction plan validator v1', () => {
   it('accepts an atomic full-slot SELL_AND_BUY path', () => {
     const d = decision([1, 2, 3, 4]);
     const before = projection(d);
-    const afterDecision = decision([2, 3, 4, 5]);
+    const afterDecision = decision([2, 3, 4, 5], 0, 4250);
     const plan = session([{
       stepId: 'replace', goalId: 'g', kind: 'TRANSACTION', state: 'NEXT',
       action: { type: 'SELL_AND_BUY', sellItemId: 1, buyItemId: 5 }, prerequisiteStepIds: [], blockingReasons: [],
@@ -76,8 +76,8 @@ describe('transaction plan validator v1', () => {
   it('accepts WAIT_FOR_FLEX followed by a future BUY', () => {
     const d = decision([1, 2, 3, 4], 0);
     const before = projection(d);
-    const future = decision([1, 2, 3, 4], 1);
-    const after = decision([1, 2, 3, 4, 5], 1);
+    const future = decision([1, 2, 3, 4], 1, 5000);
+    const after = decision([1, 2, 3, 4, 5], 1, 4000);
     const plan = session([
       {
         stepId: 'flex', goalId: 'g', kind: 'BARRIER', state: 'BLOCKED',
@@ -94,8 +94,8 @@ describe('transaction plan validator v1', () => {
 
   it('accepts upgrade compression before a later purchase', () => {
     const d = decision([1, 2, 3, 4]);
-    const afterUpgrade = decision([3, 4, 6]);
-    const afterBuy = decision([3, 4, 5, 6]);
+    const afterUpgrade = decision([3, 4, 6], 0, 4500);
+    const afterBuy = decision([3, 4, 5, 6], 0, 3500);
     const plan = session([
       {
         stepId: 'upgrade', goalId: 'upgrade-goal', kind: 'TRANSACTION', state: 'NEXT',
@@ -112,7 +112,7 @@ describe('transaction plan validator v1', () => {
 
   it('rejects a projectedAfter mismatch', () => {
     const d = decision([1, 2, 3, 4]);
-    const invalidAfter = { ...projection(decision([2, 3, 4, 5])), flexUsed: 99 };
+    const invalidAfter = { ...projection(decision([2, 3, 4, 5], 0, 4250)), flexUsed: 99 };
     const plan = session([{
       stepId: 'replace', goalId: 'g', kind: 'TRANSACTION', state: 'NEXT',
       action: { type: 'SELL_AND_BUY', sellItemId: 1, buyItemId: 5 }, prerequisiteStepIds: [], blockingReasons: [],
