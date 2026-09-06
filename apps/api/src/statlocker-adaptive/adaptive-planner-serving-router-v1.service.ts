@@ -187,23 +187,28 @@ function strategyDiagnostics(
   const strategy = result.strategy;
   const session = result.planSession;
   const slots = input.decision.slots;
+  const heldByItemId = input.decision.state.inventory?.heldByItemId;
   return {
     decisionId: input.decision.state.decisionId,
     stateRevision: input.decision.stateRevision,
     economyRulesEvidence: input.decision.economyRulesEvidence,
-    currentInventoryItemIds: [...input.decision.state.inventory.heldByItemId.keys()].sort((a, b) => a - b),
-    currentSlotState: {
-      baseSlots: slots.baseSlots,
-      baseSlotsByType: { ...slots.baseSlotsByType },
-      maxFlexSlots: slots.maxFlexSlots,
-      unlockedFlexSlots: slots.unlockedFlexSlots,
-      flexEvidence: slots.evidence,
-      usedSlots: slots.usedSlots,
-      usedSlotsByType: { ...slots.usedSlotsByType },
-      usedFlexSlots: slots.usedFlexSlots,
-      activeItemsUsed: slots.activeItemsUsed,
-      maxActiveItems: slots.maxActiveItems,
-    },
+    currentInventoryItemIds: heldByItemId
+      ? [...heldByItemId.keys()].sort((a, b) => a - b)
+      : [],
+    currentSlotState: slots
+      ? {
+          baseSlots: slots.baseSlots,
+          baseSlotsByType: { ...slots.baseSlotsByType },
+          maxFlexSlots: slots.maxFlexSlots,
+          unlockedFlexSlots: slots.unlockedFlexSlots,
+          flexEvidence: slots.evidence,
+          usedSlots: slots.usedSlots,
+          usedSlotsByType: { ...slots.usedSlotsByType },
+          usedFlexSlots: slots.usedFlexSlots,
+          activeItemsUsed: slots.activeItemsUsed,
+          maxActiveItems: slots.maxActiveItems,
+        }
+      : undefined,
     strategyId: strategy?.strategyId,
     strategyStability: strategy?.stability,
     commitment: strategy?.commitment,
