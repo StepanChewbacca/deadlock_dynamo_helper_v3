@@ -94,6 +94,7 @@ export class ConsensusStrategyFallbackV1Service {
       terminalPolicy: {
         requiredGoalIds: goals
           .filter((goal) => goal.hard && !branchGroups.some((branch) => branch.optionGoalIds.includes(goal.goalId)))
+          .filter((goal) => Object.values(goal.lifecycleByItemId).every((lifecycle) => lifecycle !== 'TEMPORARY_EARLY'))
           .map((goal) => goal.goalId),
         allowWaiveSoftGoals: true,
       },
@@ -108,5 +109,10 @@ function lifecycleFor(
 ): BuildStrategyGoalV1['lifecycleByItemId'][number] {
   const laterTargets = skeleton.groups.flatMap((group) => group.candidates.map((candidate) => candidate.itemId));
   if (laterTargets.some((target) => graph.isComponentAncestor(itemId, target))) return 'UPGRADE_COMPONENT';
+  const item = graph.getItem(itemId);
+  const isEarly = skeleton.groups.find((group) => group.candidates.some((c) => c.itemId === itemId))?.phase === 'EARLY';
+  if (isEarly || (item?.directPurchaseCost !== undefined && item.directPurchaseCost <= 800)) {
+    return 'TEMPORARY_EARLY';
+  }
   return 'PERMANENT_CORE';
 }

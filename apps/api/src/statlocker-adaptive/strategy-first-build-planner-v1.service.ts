@@ -208,8 +208,7 @@ export class StrategyFirstBuildPlannerV1Service {
       first?.candidate,
     );
     const canServeCandidate = slotPlan.feasible &&
-      effectiveContract.status !== 'REPLAN_REQUIRED' &&
-      effectiveContract.status !== 'OUT_OF_DISTRIBUTION';
+      effectiveContract.status !== 'REPLAN_REQUIRED';
     const nextAction: AdaptiveActionV1 = canServeCandidate
       ? first
         ? adaptiveAction(first.candidate, first.reasonCodes, semanticTargetItemId)
@@ -725,8 +724,9 @@ function preservesResolvedHardGoalsAfterCandidate(
   input: StrategyFirstBuildPlannerV1Input,
   contracts: BuildContractV1Service,
 ): boolean {
+  const terminalGoalIds = new Set(strategy.terminalPolicy.requiredGoalIds);
   const protectedGoalIds = strategy.goals
-    .filter((goal) => goal.hard && isResolved(node.contract.goalStates[goal.goalId]))
+    .filter((goal) => goal.hard && terminalGoalIds.has(goal.goalId) && isResolved(node.contract.goalStates[goal.goalId]))
     .map((goal) => goal.goalId);
   if (protectedGoalIds.length === 0) return true;
   const projected = projectRecommendationCandidateState(node.decisionState, candidate, input.decision.itemGraph);

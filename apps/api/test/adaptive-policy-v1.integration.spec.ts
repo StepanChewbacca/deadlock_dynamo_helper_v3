@@ -442,6 +442,7 @@ describe('Statlocker adaptive policy v1 integration', () => {
     const fullInventory = withImmediateEconomy(baseDecision, [1, 2, 3, 4, 5, 6, 7, 8], 5000);
     const lowSample = clone(evidence) as any;
     lowSample.byDataset.CONSENSUS_SKELETON.payload.items = [];
+    lowSample.byDataset.CONSENSUS_SKELETON.payload.groups = [];
     lowSample.byDataset.WPA_PATCH_DATA.payload.items = [{
       heroId: 10,
       itemId: 9,

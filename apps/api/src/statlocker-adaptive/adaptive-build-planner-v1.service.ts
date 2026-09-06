@@ -678,7 +678,7 @@ export class AdaptiveBuildPlannerV1Service {
           transactionPenalty: 0,
           churnPenalty: 0,
         });
-        score -= Math.max(0, sold.score) * 0.55 + 0.10;
+        score -= Math.max(0, sold.score) * 0.55 + ADAPTIVE_POLICY_V1_CONFIG.coreReplaceMinImprovement;
         confidence = Math.min(confidence, sold.confidence || confidence);
       }
     } else if (candidate.action.type === 'SELL_ITEM') {
@@ -691,7 +691,7 @@ export class AdaptiveBuildPlannerV1Service {
       });
       score = -(
         Math.max(0, sold.score) * 0.55 +
-        0.10 +
+        ADAPTIVE_POLICY_V1_CONFIG.sellMinImprovement +
         projected.investmentDelta.achievedBreakpointsLost * ADAPTIVE_POLICY_V1_CONFIG.investment.achievedBreakpointDropPenalty
       );
       confidence = sold.confidence;

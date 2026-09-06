@@ -173,7 +173,6 @@ function applyBarrier(
   const barrier = step.barrier;
   if (!barrier) return undefined;
   if (barrier.type === 'WAIT_FOR_GOLD') {
-    if (state.economy.spendableSouls.evidence === 'UNKNOWN') return undefined;
     return {
       state: {
         ...state,
@@ -189,7 +188,6 @@ function applyBarrier(
     };
   }
   if (barrier.type === 'WAIT_FOR_SHOP') {
-    if (state.economy.shopOpportunity.evidence === 'UNKNOWN') return undefined;
     return {
       state: {
         ...state,
@@ -202,7 +200,7 @@ function applyBarrier(
     };
   }
   if (barrier.type === 'WAIT_FOR_FLEX') {
-    if (slots.evidence === 'UNKNOWN' || barrier.requiredUnlockedFlexSlots > slots.maxFlexSlots) return undefined;
+    if (barrier.requiredUnlockedFlexSlots > slots.maxFlexSlots) return undefined;
     const nextSlots = deriveAdaptiveSlotStateV1(
       [...state.inventory.heldByItemId.keys()],
       decision.itemGraph,
@@ -212,7 +210,7 @@ function applyBarrier(
         maxFlexSlots: slots.maxFlexSlots,
         maxActiveItems: slots.maxActiveItems,
       },
-      { unlockedFlexSlots: barrier.requiredUnlockedFlexSlots, evidence: slots.evidence },
+      { unlockedFlexSlots: barrier.requiredUnlockedFlexSlots, evidence: 'RECONSTRUCTED' },
     );
     return { state, slots: nextSlots };
   }

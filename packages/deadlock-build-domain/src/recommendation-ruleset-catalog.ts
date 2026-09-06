@@ -195,7 +195,12 @@ export function compileStrictRecommendationCatalogV1(
           soulsRefund: item.sellTransition.soulsRefund.value as number,
           returnedItemIds: item.sellTransition.returnedItemIds.value as readonly number[],
         }
-      : undefined;
+      : directPurchaseCost !== undefined
+        ? {
+            soulsRefund: Math.floor(directPurchaseCost * 0.5),
+            returnedItemIds: [],
+          }
+        : undefined;
     definitions.push({
       itemId: item.itemId,
       name: item.name,

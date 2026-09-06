@@ -111,4 +111,17 @@ describe('adaptive planner serving router v1', () => {
     expect(promotion.recordShadowFailure).toHaveBeenCalledTimes(1);
     expect(promotion.recordShadowSuccess).not.toHaveBeenCalled();
   });
+
+  it('serves transaction plan directly without legacy fallback when ADAPTIVE_ZERO_FALLBACK=true', () => {
+    process.env.ADAPTIVE_ZERO_FALLBACK = 'true';
+    try {
+      const { router, strategy, legacy } = setup('STRATEGY', false);
+      const served = router.plan(input('UNKNOWN'));
+      expect(served.nextAction.actionKey).toBe('strategy');
+      expect(strategy.plan).toHaveBeenCalledTimes(1);
+      expect(legacy.plan).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.ADAPTIVE_ZERO_FALLBACK;
+    }
+  });
 });

@@ -162,16 +162,33 @@ function findReplacementSource(
   targetItemId: number,
   canFit: (itemIds: readonly number[]) => boolean,
 ): number | undefined {
-  const satisfiedHardGoals = input.strategy.goals.filter((goal) =>
-    goal.hard && input.contract.goalStates[goal.goalId] === 'SATISFIED' && goal.minSelect > 0,
+  const terminalGoalIds = new Set(input.strategy.terminalPolicy.requiredGoalIds);
+  const terminalHardGoals = input.strategy.goals.filter((goal) =>
+    goal.hard && terminalGoalIds.has(goal.goalId) && input.contract.goalStates[goal.goalId] === 'SATISFIED' && goal.minSelect > 0,
   );
-  for (const sourceItemId of [...new Set(input.ownedItemIds)].sort((a, b) => a - b)) {
+  const targetItem = input.itemGraph.getItem(targetItemId);
+
+  const ownedIds = [...new Set(input.ownedItemIds)];
+  const candidateScores = ownedIds.map((sourceItemId) => {
+    const item = input.itemGraph.getItem(sourceItemId);
+    const sameCategory = targetItem && item && item.slotType === targetItem.slotType ? 1 : 0;
+    const isTemp = input.contract.temporaryItemIds.includes(sourceItemId) ? 1 : 0;
+    const cost = item?.directPurchaseCost ?? 0;
+    return { sourceItemId, sameCategory, isTemp, cost };
+  }).sort((a, b) =>
+    b.isTemp - a.isTemp ||
+    b.sameCategory - a.sameCategory ||
+    a.cost - b.cost ||
+    a.sourceItemId - b.sourceItemId,
+  );
+
+  for (const { sourceItemId } of candidateScores) {
     if (isReadyUpgradeComponentForPendingHardGoal(input, sourceItemId, targetItemId)) continue;
     const afterExit = input.ownedItemIds.filter((itemId) => itemId !== sourceItemId);
-    const preservesHardGoals = satisfiedHardGoals.every((goal) =>
+    const preservesTerminalGoals = terminalHardGoals.every((goal) =>
       goal.targetItemIds.filter((itemId) => input.itemGraph.isTargetSatisfied(itemId, afterExit)).length >= goal.minSelect,
     );
-    if (!preservesHardGoals) continue;
+    if (!preservesTerminalGoals) continue;
     if (canFit([...afterExit, targetItemId])) return sourceItemId;
   }
   return undefined;

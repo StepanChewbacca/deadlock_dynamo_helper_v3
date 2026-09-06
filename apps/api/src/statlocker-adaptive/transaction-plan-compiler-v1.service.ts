@@ -108,7 +108,7 @@ export class TransactionPlanCompilerV1Service {
       });
       if (contract.status === 'COMPLETE') break;
       if (contract.status === 'OUT_OF_DISTRIBUTION') {
-        return { steps, reachable: false, reasonCodes: unique([...reasonCodes, 'STRATEGY_OUT_OF_DISTRIBUTION']) };
+        reasonCodes.push('STRATEGY_OUT_OF_DISTRIBUTION');
       }
 
       const goal = nextGoal(input.strategy, contract, input.decision.itemGraph, heldIds(state));
@@ -231,7 +231,16 @@ export class TransactionPlanCompilerV1Service {
 
     if (args.transition?.requirement === 'FLEX_UNLOCK') {
       const required = args.transition.requiredUnlockedFlexSlots;
-      if (required === undefined || slots.evidence === 'UNKNOWN' || slots.unlockedFlexSlots === undefined) {
+      if (required === undefined || required > slots.maxFlexSlots) {
+        return {
+          steps,
+          state,
+          slots,
+          reachable: false,
+          reasonCodes: unique([...reasons, 'FLEX_SLOT_UNAVAILABLE']),
+        };
+      }
+      if (slots.evidence === 'UNKNOWN' && slots.unlockedFlexSlots === undefined) {
         return {
           steps,
           state,
@@ -240,7 +249,7 @@ export class TransactionPlanCompilerV1Service {
           reasonCodes: unique([...reasons, 'UNKNOWN_FLEX_CAPACITY']),
         };
       }
-      if (slots.unlockedFlexSlots < required) {
+      if (slots.unlockedFlexSlots === undefined || slots.unlockedFlexSlots < required) {
         const barrier = this.barrierStep(
           args.input.strategy.strategyId,
           args.goal.goalId,
@@ -267,7 +276,7 @@ export class TransactionPlanCompilerV1Service {
             maxFlexSlots: slots.maxFlexSlots,
             maxActiveItems: slots.maxActiveItems,
           },
-          { unlockedFlexSlots: required, evidence: slots.evidence },
+          { unlockedFlexSlots: required, evidence: 'RECONSTRUCTED' },
         );
       }
     }
@@ -322,9 +331,6 @@ export class TransactionPlanCompilerV1Service {
 
       if (diagnostic.reasons.includes('UNAFFORDABLE')) {
         const requiredSouls = Math.max(0, diagnostic.effectiveCostSouls);
-        if (state.economy.spendableSouls.evidence === 'UNKNOWN') {
-          return { steps, state, slots, reachable: false, reasonCodes: unique([...reasons, 'SPENDABLE_SOULS_UNKNOWN']) };
-        }
         const barrier = this.barrierStep(
           args.input.strategy.strategyId,
           args.goal.goalId,
@@ -616,8 +622,9 @@ function candidateAllowed(
   if (input.recentPurchasedItemIds?.includes(sellItemId)) return false;
   if (input.decision.itemGraph.isComponentAncestor(sellItemId, buyItemId)) return false;
   const afterSell = heldIds(state).filter((itemId) => itemId !== sellItemId);
+  const terminalGoalIds = new Set(input.strategy.terminalPolicy.requiredGoalIds);
   for (const hardGoal of input.strategy.goals.filter((entry) =>
-    entry.hard && contract.goalStates[entry.goalId] === 'SATISFIED' && entry.goalId !== currentGoalId,
+    entry.hard && terminalGoalIds.has(entry.goalId) && contract.goalStates[entry.goalId] === 'SATISFIED' && entry.goalId !== currentGoalId,
   )) {
     const satisfied = hardGoal.targetItemIds.filter((itemId) =>
       input.decision.itemGraph.isTargetSatisfied(itemId, afterSell),

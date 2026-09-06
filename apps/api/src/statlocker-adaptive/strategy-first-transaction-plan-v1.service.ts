@@ -204,7 +204,7 @@ function failClosed(
       type: 'HOLD',
       reasonCodes: ['TRANSACTION_PLAN_FAIL_CLOSED', ...session.reasonCodes],
     },
-    recommendedBuild: ownedOnlyBuild(heldIds(decision)),
+    recommendedBuild: result.recommendedBuild.length > 0 ? result.recommendedBuild : ownedOnlyBuild(heldIds(decision)),
     rankedImmediateCandidates: [],
     totalScore: 0,
     confidence: 0,

@@ -45,10 +45,15 @@ export class AdaptivePlannerServingRouterV1Service {
       return legacyResult;
     }
 
+    const zeroFallback = process.env.ADAPTIVE_ZERO_FALLBACK === 'true';
+
     let transactionResult: AdaptivePlannerServingResultV1;
     try {
       transactionResult = this.strategy.plan(input);
     } catch (error) {
+      if (zeroFallback) {
+        throw error;
+      }
       this.promotion.recordShadowFailure();
       this.promotion.recordTransactionShadowFailure();
       const legacyResult = this.legacy.plan(input);
@@ -66,6 +71,11 @@ export class AdaptivePlannerServingRouterV1Service {
       this.promotion.recordShadowSuccess();
       this.logShadowComparison(input, transactionResult, legacyResult, 'SHADOW');
       return legacyResult;
+    }
+
+    if (zeroFallback) {
+      this.logger.debug(`transaction-plan-serving ${JSON.stringify(strategyDiagnostics(input, transactionResult))}`);
+      return transactionResult;
     }
 
     if (input.decision.economyRulesEvidence !== 'RECONSTRUCTED') {
@@ -91,6 +101,11 @@ export class AdaptivePlannerServingRouterV1Service {
     input: AdaptiveBuildPlannerInputV1,
     transactionResult: AdaptivePlannerServingResultV1,
   ): AdaptivePlannerServingResultV1 {
+    if (process.env.ADAPTIVE_ZERO_FALLBACK === 'true') {
+      this.logger.debug(`transaction-plan-serving ${JSON.stringify(strategyDiagnostics(input, transactionResult))}`);
+      return transactionResult;
+    }
+
     const transactionMode = this.promotion.transactionConfiguredMode();
     if (transactionMode === 'FLAT_COMPAT') {
       const flat = this.strategy.planFlatCompat(input);
