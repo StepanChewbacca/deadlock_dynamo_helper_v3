@@ -184,10 +184,10 @@ function findReplacementSource(
     const item = input.itemGraph.getItem(sourceItemId);
     const sameCategory = targetItem && item && item.slotType === targetItem.slotType ? 1 : 0;
     const isTemp = input.contract.temporaryItemIds.includes(sourceItemId) ? 1 : 0;
-    const isHardGoal = input.strategy.goals.some((g) =>
-      g.hard && g.targetItemIds.some((targetId) => input.itemGraph.isTargetSatisfied(targetId, [sourceItemId]))
+    const isTerminalHard = terminalHardGoals.some((g) =>
+      g.targetItemIds.some((targetId) => input.itemGraph.isTargetSatisfied(targetId, [sourceItemId]))
     );
-    const expendableTier = isTemp ? 2 : (!isHardGoal ? 1 : 0);
+    const expendableTier = isTemp ? 2 : (!isTerminalHard ? 1 : 0);
     const cost = item?.directPurchaseCost ?? 0;
     return { sourceItemId, sameCategory, expendableTier, cost };
   }).sort((a, b) =>
@@ -203,11 +203,10 @@ function findReplacementSource(
     if (isReadyUpgradeComponentForPendingHardGoal(input, sourceItemId, targetItemId)) continue;
 
     const afterExit = input.ownedItemIds.filter((itemId) => itemId !== sourceItemId);
-    const targetCost = targetItem?.directPurchaseCost ?? 0;
     const preservesTerminalGoals = terminalHardGoals.every((goal) => {
       const satisfied = goal.targetItemIds.filter((itemId) => input.itemGraph.isTargetSatisfied(itemId, afterExit)).length;
       if (satisfied >= goal.minSelect) return true;
-      return targetCost > sourceCost;
+      return goal.targetItemIds.some((itemId) => input.itemGraph.isTargetSatisfied(itemId, [targetItemId]));
     });
     if (!preservesTerminalGoals) continue;
     if (canFit([...afterExit, targetItemId])) return sourceItemId;

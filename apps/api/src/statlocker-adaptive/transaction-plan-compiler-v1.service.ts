@@ -697,7 +697,7 @@ function candidateAllowed(
       input.decision.itemGraph.isTargetSatisfied(itemId, afterSell),
     ).length;
     if (satisfied < hardGoal.minSelect) {
-      if (buyCost > sellCost) continue;
+      if (hardGoal.targetItemIds.some((itemId) => input.decision.itemGraph.isTargetSatisfied(itemId, [buyItemId]))) continue;
       return false;
     }
   }
