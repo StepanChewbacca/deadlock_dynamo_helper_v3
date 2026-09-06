@@ -96,6 +96,7 @@ export type AdaptiveSituationalEvidenceKindV1 =
 
 export interface AdaptiveSituationalEnemyTargetV1 {
   enemyHeroId: number;
+  enemyHeroName?: string;
   role: 'PRIMARY' | 'SECONDARY';
   score: number;
   confidence: number;
