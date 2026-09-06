@@ -56,16 +56,20 @@ function validSession(): AdaptivePlanSessionV1 {
   };
 }
 
+function validBuild() {
+  return [
+    { itemId: 1, position: 1, status: 'OWNED' as const, score: 0, confidence: 1, skeletonStrength: 0, contextualSupport: 1, reasonCodes: [] },
+    { itemId: 2, position: 2, status: 'NEXT' as const, score: 0, confidence: 0, skeletonStrength: 0, contextualSupport: 0, reasonCodes: ['TRANSACTION_STEP:replace'] },
+  ];
+}
+
 describe('transaction plan invariants v1', () => {
   it('accepts a coherent replacement source of truth and compatibility projection', () => {
     const check = evaluateTransactionPlanInvariantsV1({
       decision: decision([1]),
       planSession: validSession(),
       nextAction: { actionKey: 'REPLACE_ITEM:1->2', type: 'REPLACE', sellItemId: 1, buyItemId: 2, targetItemId: 2, reasonCodes: [] },
-      recommendedBuild: [
-        { itemId: 1, position: 1, status: 'OWNED', score: 0, confidence: 1, skeletonStrength: 0, contextualSupport: 1, reasonCodes: [] },
-        { itemId: 2, position: 2, status: 'NEXT', score: 0, confidence: 0, skeletonStrength: 0, contextualSupport: 0, reasonCodes: ['TRANSACTION_STEP:replace'] },
-      ],
+      recommendedBuild: validBuild(),
     });
     expect(check.valid).toBe(true);
   });
@@ -98,10 +102,7 @@ describe('transaction plan invariants v1', () => {
       decision: decision([1], 0),
       planSession: validSession(),
       nextAction: { actionKey: 'REPLACE_ITEM:1->2', type: 'REPLACE', sellItemId: 1, buyItemId: 2, targetItemId: 2, reasonCodes: [] },
-      recommendedBuild: [
-        { itemId: 1, position: 1, status: 'OWNED', score: 0, confidence: 1, skeletonStrength: 0, contextualSupport: 1, reasonCodes: [] },
-        { itemId: 2, position: 2, status: 'NEXT', score: 0, confidence: 0, skeletonStrength: 0, contextualSupport: 0, reasonCodes: ['TRANSACTION_STEP:replace'] },
-      ],
+      recommendedBuild: validBuild(),
     });
     expect(check.violations.some((violation) => violation.code === 'NEXT_NOT_EXECUTABLE')).toBe(true);
   });
@@ -131,7 +132,7 @@ describe('transaction plan invariants v1', () => {
     const valid = evaluateTransactionPlanInvariantsV1({
       decision: decision([1]), planSession: validSession(),
       nextAction: { actionKey: 'REPLACE_ITEM:1->2', type: 'REPLACE', sellItemId: 1, buyItemId: 2, targetItemId: 2, reasonCodes: [] },
-      recommendedBuild: [],
+      recommendedBuild: validBuild(),
     });
     const invalid = evaluateTransactionPlanInvariantsV1({
       decision: decision([1]), planSession: validSession(),
@@ -141,5 +142,25 @@ describe('transaction plan invariants v1', () => {
     const summary = summarizeTransactionPlanInvariantChecksV1([valid, invalid]);
     expect(summary.evaluatedDecisions).toBe(2);
     expect(summary.nextStepMismatchRate).toBe(0.5);
+  });
+
+  it('keeps every hard transaction release rate at zero for a valid served path', () => {
+    const valid = evaluateTransactionPlanInvariantsV1({
+      decision: decision([1]),
+      planSession: validSession(),
+      nextAction: { actionKey: 'REPLACE_ITEM:1->2', type: 'REPLACE', sellItemId: 1, buyItemId: 2, targetItemId: 2, reasonCodes: [] },
+      recommendedBuild: validBuild(),
+    });
+    const summary = summarizeTransactionPlanInvariantChecksV1([valid]);
+    expect(summary).toEqual({
+      evaluatedDecisions: 1,
+      futureTargetWithoutStepRate: 0,
+      projectedSlotViolationRate: 0,
+      replaceWithoutValidatedBuyRate: 0,
+      nextStepMismatchRate: 0,
+      nextNotExecutableRate: 0,
+      unknownSlotPathRate: 0,
+      compatibilityProjectionDivergenceRate: 0,
+    });
   });
 });
