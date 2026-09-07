@@ -1,4 +1,12 @@
-import { RecommendationItemGraph } from '@deadlock-live-probe/build-domain';
+import {
+  RecommendationCandidateGeneratorRules,
+  RecommendationDecisionState,
+  RecommendationItemGraph,
+  applyRecommendationCandidateTransitionV1,
+  buildInventoryInstancesForRecommendation,
+  generateRecommendationCandidates,
+  observedFact,
+} from '@deadlock-live-probe/build-domain';
 import { AdaptiveSituationalPurposeV1 } from '@deadlock-live-probe/shared';
 import { AdaptiveSlotRulesV1 } from './adaptive-economy-v1';
 import { BuildStrategyGoalV1, BuildStrategySpecV1 } from './build-strategy-v1';
@@ -13,10 +21,20 @@ export interface CompiledBuildStrategySituationalWindowV1 {
   reservedSlots: number;
 }
 
+export interface BuildStrategyFeasibilityV1 {
+  releaseEligible: boolean;
+  actionCoverage: number;
+  mandatoryGoalCoverage: number;
+  terminalSatisfied: boolean;
+  validatedActionIds: readonly string[];
+  terminalOwnedItemIds: readonly number[];
+}
+
 export interface CompiledBuildStrategySpecV1 extends BuildStrategySpecV1 {
   catalogSha256: string;
   terminalItemIds: readonly number[];
   situationalWindows: readonly CompiledBuildStrategySituationalWindowV1[];
+  feasibility: BuildStrategyFeasibilityV1;
 }
 
 export interface CompileBuildStrategySpecInputV1 {
@@ -30,6 +48,10 @@ export function compileBuildStrategySpecV1(
   input: CompileBuildStrategySpecInputV1,
 ): CompiledBuildStrategySpecV1 {
   validateIdentity(input.archetype);
+  const slotRules = input.slotRules ?? input.archetype.representativeSlotRules;
+  if (slotRules.evidence === 'UNKNOWN') throw new Error('STRATEGY_MECHANICS_UNKNOWN');
+  validateSlotRuleScope(slotRules, input.archetype.representativeSlotRules);
+
   const availableItemIds = new Set(
     input.itemGraph.getAllItems()
       .filter((item) => item.availableRulesetIds.includes(input.archetype.rulesetId))
@@ -65,9 +87,15 @@ export function compileBuildStrategySpecV1(
     dependsOnGoalIds: goals.filter((goal) => goal.mandatory).map((goal) => goal.goalId),
   });
 
-  if (input.slotRules?.evidence !== 'UNKNOWN') {
-    validateTerminalCapacity(terminalItemIds, input.itemGraph, input.slotRules);
-  }
+  validateTerminalCapacity(terminalItemIds, input.itemGraph, slotRules);
+  const feasibility = validateCanonicalFeasibility(
+    input.archetype,
+    goals,
+    terminalItemIds,
+    input.itemGraph,
+    slotRules,
+  );
+  if (!feasibility.releaseEligible) throw new Error('STRATEGY_FEASIBILITY_NOT_100_PERCENT');
 
   const spec: CompiledBuildStrategySpecV1 = {
     strategyId: input.archetype.archetypeId,
@@ -78,6 +106,7 @@ export function compileBuildStrategySpecV1(
     goals,
     terminalItemIds,
     situationalWindows,
+    feasibility,
   };
   return deepFreeze(spec);
 }
@@ -107,6 +136,93 @@ function compileGoals(
     targetItemIds: [...(goalTargets.get(goalId) ?? [])].sort((left, right) => left - right),
     dependsOnGoalIds: index === 0 ? [] : [goalOrder[index - 1]],
   }));
+}
+
+function validateCanonicalFeasibility(
+  archetype: MinedBuildArchetypeV1,
+  goals: readonly BuildStrategyGoalV1[],
+  terminalItemIds: readonly number[],
+  graph: RecommendationItemGraph,
+  slotRules: AdaptiveSlotRulesV1,
+): BuildStrategyFeasibilityV1 {
+  let state = syntheticFeasibilityState(archetype, graph);
+  const rules: RecommendationCandidateGeneratorRules = {
+    baseSlotsByType: { ...slotRules.baseSlotsByType },
+    maxFlexSlots: slotRules.maxFlexSlots,
+    unlockedFlexSlots: slotRules.maxFlexSlots,
+    flexCapacityEvidence: slotRules.evidence,
+    maxActiveItems: slotRules.maxActiveItems,
+    activeCapacityEvidence: slotRules.evidence,
+    allowSellOnlyActions: true,
+    generateTargetedWaitActions: true,
+  };
+  const validatedActionIds: string[] = [];
+
+  for (const actionId of archetype.representativeActionIds) {
+    const candidate = generateRecommendationCandidates({ state, itemGraph: graph, rules })
+      .find((entry) => entry.actionId === actionId && entry.feasible && entry.recommendationEligible);
+    if (!candidate) throw new Error(`STRATEGY_FEASIBILITY_ACTION_NOT_EXECUTABLE:${actionId}`);
+    state = applyRecommendationCandidateTransitionV1(state, candidate, graph).state;
+    validatedActionIds.push(actionId);
+  }
+
+  const terminalOwnedItemIds = [...state.inventory.heldByItemId.keys()].sort((left, right) => left - right);
+  const hardGoals = goals.filter((goal) => goal.mandatory && goal.type !== 'TERMINAL');
+  const satisfiedHardGoals = hardGoals.filter((goal) =>
+    goal.targetItemIds.length > 0 && goal.targetItemIds.every((itemId) =>
+      graph.isTargetSatisfied(itemId, terminalOwnedItemIds),
+    ),
+  ).length;
+  const mandatoryGoalCoverage = hardGoals.length === 0 ? 1 : satisfiedHardGoals / hardGoals.length;
+  const actionCoverage = archetype.representativeActionIds.length === 0
+    ? 1
+    : validatedActionIds.length / archetype.representativeActionIds.length;
+  const terminalSatisfied = terminalItemIds.every((itemId) =>
+    graph.isTargetSatisfied(itemId, terminalOwnedItemIds),
+  );
+  const releaseEligible = actionCoverage === 1 && mandatoryGoalCoverage === 1 && terminalSatisfied;
+
+  return {
+    releaseEligible,
+    actionCoverage,
+    mandatoryGoalCoverage,
+    terminalSatisfied,
+    validatedActionIds,
+    terminalOwnedItemIds,
+  };
+}
+
+function syntheticFeasibilityState(
+  archetype: MinedBuildArchetypeV1,
+  graph: RecommendationItemGraph,
+): RecommendationDecisionState {
+  const initialOwnedItemIds = [...new Set(archetype.representativeInitialOwnedItemIds)]
+    .sort((left, right) => left - right);
+  for (const itemId of initialOwnedItemIds) {
+    const item = graph.getItem(itemId);
+    if (!item || !item.availableRulesetIds.includes(archetype.rulesetId)) {
+      throw new Error(`STRATEGY_INITIAL_ITEM_INVALID:${itemId}`);
+    }
+  }
+  const heldByItemId = buildInventoryInstancesForRecommendation(initialOwnedItemIds, graph);
+  return {
+    decisionId: `strategy-feasibility:${archetype.archetypeId}`,
+    matchId: `strategy-feasibility:${archetype.representativeDecisionId}`,
+    playerSlot: 0,
+    gameTimeSec: 0,
+    rulesetId: archetype.rulesetId,
+    heroId: archetype.heroId,
+    inventory: {
+      initializedFromSnapshot: true,
+      heldByItemId,
+      lifecycleCountByItemId: new Map(initialOwnedItemIds.map((itemId) => [itemId, 1])),
+      nextInstanceSequence: heldByItemId.size + 1,
+    },
+    economy: {
+      spendableSouls: observedFact(1_000_000_000_000, 'strategy-feasibility'),
+      shopOpportunity: observedFact('AVAILABLE' as const, 'strategy-feasibility'),
+    },
+  };
 }
 
 function inferGoalType(goalId: string): BuildStrategyGoalV1['type'] {
@@ -165,6 +281,19 @@ function validateTerminalCapacity(
   if (active > rules.maxActiveItems) throw new Error('TERMINAL_ACTIVE_ITEM_LIMIT_EXCEEDED');
 }
 
+function validateSlotRuleScope(
+  selected: AdaptiveSlotRulesV1,
+  representative: AdaptiveSlotRulesV1,
+): void {
+  if (representative.evidence === 'UNKNOWN') return;
+  const same = selected.maxFlexSlots === representative.maxFlexSlots &&
+    selected.maxActiveItems === representative.maxActiveItems &&
+    selected.baseSlotsByType.weapon === representative.baseSlotsByType.weapon &&
+    selected.baseSlotsByType.vitality === representative.baseSlotsByType.vitality &&
+    selected.baseSlotsByType.spirit === representative.baseSlotsByType.spirit;
+  if (!same) throw new Error('STRATEGY_SLOT_RULES_SCOPE_MISMATCH');
+}
+
 function normalizeTargets(
   itemIds: readonly number[],
   availableItemIds: ReadonlySet<number>,
@@ -185,6 +314,9 @@ function validateIdentity(archetype: MinedBuildArchetypeV1): void {
   if (!archetype.rulesetId.trim()) throw new Error('STRATEGY_RULESET_INVALID');
   if (!/^[a-f0-9]{64}$/i.test(archetype.catalogSha256)) throw new Error('STRATEGY_CATALOG_INVALID');
   if (!Number.isSafeInteger(archetype.supportCount) || archetype.supportCount <= 0) throw new Error('STRATEGY_SUPPORT_INVALID');
+  if (!Number.isFinite(archetype.stability) || archetype.stability < 0 || archetype.stability > 1) {
+    throw new Error('STRATEGY_STABILITY_INVALID');
+  }
 }
 
 function deepFreeze<T>(value: T): T {
