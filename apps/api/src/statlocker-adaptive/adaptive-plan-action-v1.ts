@@ -21,6 +21,8 @@ export interface BuildAdaptivePlanActionsInputV1 {
   decision: AdaptiveDecisionStateV1;
   nextAction: AdaptiveActionV1;
   recommendedBuild: readonly AdaptivePlannedItemV1[];
+  situationalByTargetItemId?: ReadonlyMap<number, AdaptiveSituationalContextV1>;
+  /** @deprecated Prefer situationalByTargetItemId so multi-step acquisition stays attached to the final semantic target. */
   situationalByActionKey?: ReadonlyMap<string, AdaptiveSituationalContextV1>;
 }
 
@@ -57,16 +59,17 @@ export function buildAdaptivePlanActionsV1(
   }
 
   if (actions.length === 0 && input.nextAction.type !== 'ABSTAIN') {
+    const targetItemId = targetItemIdForAdaptiveAction(input.nextAction);
     actions.push({
       planActionId: stablePlanActionId(input.stateRevision, 1, input.nextAction.actionKey),
       sequence: 1,
       status: input.nextAction.type === 'HOLD' || input.nextAction.type === 'WAIT' ? 'BLOCKED' : 'READY',
       action: input.nextAction,
-      targetItemId: targetItemIdForAdaptiveAction(input.nextAction),
+      targetItemId,
       sourceItemIds: sourceItemIdsForAdaptiveAction(input.nextAction),
       requirements: [],
       reasonCodes: [...input.nextAction.reasonCodes],
-      situational: input.situationalByActionKey?.get(input.nextAction.actionKey),
+      situational: situationalForTarget(input, targetItemId, input.nextAction.actionKey),
     });
   }
 
@@ -116,9 +119,21 @@ function compileTargetAction(
       sourceItemIds,
       requirements,
       reasonCodes,
-      situational: input.situationalByActionKey?.get(adaptiveAction.actionKey),
+      situational: situationalForTarget(input, finalTargetItemId, adaptiveAction.actionKey),
     },
   };
+}
+
+function situationalForTarget(
+  input: BuildAdaptivePlanActionsInputV1,
+  finalTargetItemId: number | undefined,
+  actionKey: string,
+): AdaptiveSituationalContextV1 | undefined {
+  if (finalTargetItemId !== undefined) {
+    const exactTarget = input.situationalByTargetItemId?.get(finalTargetItemId);
+    if (exactTarget) return exactTarget;
+  }
+  return input.situationalByActionKey?.get(actionKey);
 }
 
 function candidateForResolution(
