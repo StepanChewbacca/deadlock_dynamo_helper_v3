@@ -56,6 +56,11 @@ export interface AdaptiveReplayStateV1 {
   shopOpportunity: AdaptiveReplayObservedFactV1<ShopOpportunity>;
 }
 
+export interface AdaptiveReplayEnemyHeroV1 {
+  heroId: number;
+  heroName?: string;
+}
+
 export interface AdaptiveReplayDecisionV1 {
   state: AdaptiveReplayStateV1;
   itemDefinitions: readonly RecommendationItemDefinition[];
@@ -66,6 +71,8 @@ export interface AdaptiveReplayDecisionV1 {
   rulesetId: string;
   localSteamId: string;
   enemyHeroIds: readonly number[];
+  /** Optional so replay inputs persisted before live enemy hero names remain readable. */
+  enemyHeroes?: readonly AdaptiveReplayEnemyHeroV1[];
   ourTeamSouls?: number;
   enemyTeamSouls?: number;
   slots?: AdaptiveSlotStateV1;
@@ -259,6 +266,7 @@ function serializeDecision(decision: AdaptiveDecisionStateV1): AdaptiveReplayDec
     rulesetId: decision.rulesetId,
     localSteamId: decision.localSteamId,
     enemyHeroIds: [...decision.enemyHeroIds].sort((a, b) => a - b),
+    enemyHeroes: normalizeEnemyHeroes(decision.enemyHeroes, decision.enemyHeroIds),
     ourTeamSouls: decision.ourTeamSouls,
     enemyTeamSouls: decision.enemyTeamSouls,
     slots: cloneJson(decision.slots),
@@ -307,6 +315,7 @@ function reconstructDecision(input: AdaptiveReplayDecisionV1): AdaptiveDecisionS
     itemGraph,
     economyRules,
   );
+  const enemyHeroIds = [...new Set(input.enemyHeroIds)].sort((a, b) => a - b);
   return {
     state,
     itemGraph,
@@ -314,7 +323,8 @@ function reconstructDecision(input: AdaptiveReplayDecisionV1): AdaptiveDecisionS
     catalogSha256: input.catalogSha256,
     rulesetId: input.rulesetId,
     localSteamId: input.localSteamId,
-    enemyHeroIds: [...input.enemyHeroIds].sort((a, b) => a - b),
+    enemyHeroIds,
+    enemyHeroes: normalizeEnemyHeroes(input.enemyHeroes, enemyHeroIds),
     ourTeamSouls: input.ourTeamSouls,
     enemyTeamSouls: input.enemyTeamSouls,
     slots,
@@ -323,6 +333,25 @@ function reconstructDecision(input: AdaptiveReplayDecisionV1): AdaptiveDecisionS
     economyRulesEvidence: economyRules ? 'RECONSTRUCTED' : 'UNKNOWN',
     stateRevision: input.stateRevision,
   };
+}
+
+function normalizeEnemyHeroes(
+  supplied: readonly AdaptiveReplayEnemyHeroV1[] | undefined,
+  enemyHeroIds: readonly number[],
+): readonly AdaptiveReplayEnemyHeroV1[] {
+  const allowed = new Set(enemyHeroIds.filter((heroId) => Number.isInteger(heroId)));
+  const byHeroId = new Map<number, AdaptiveReplayEnemyHeroV1>();
+  for (const entry of supplied ?? []) {
+    if (!Number.isInteger(entry?.heroId) || !allowed.has(entry.heroId)) continue;
+    const heroName = typeof entry.heroName === 'string' && entry.heroName.trim()
+      ? entry.heroName.trim()
+      : undefined;
+    byHeroId.set(entry.heroId, heroName ? { heroId: entry.heroId, heroName } : { heroId: entry.heroId });
+  }
+  for (const heroId of [...allowed].sort((a, b) => a - b)) {
+    if (!byHeroId.has(heroId)) byHeroId.set(heroId, { heroId });
+  }
+  return [...byHeroId.values()].sort((a, b) => a.heroId - b.heroId);
 }
 
 function normalizeReplayInvestmentStateV1(
