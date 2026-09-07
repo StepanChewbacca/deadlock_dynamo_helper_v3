@@ -25,28 +25,52 @@ function candidate(
 }
 
 describe('resolveAdaptiveStrategySessionV1', () => {
-  it('uses draft, purchase-prefix and timing likelihoods to form the strategy posterior', () => {
-    const session = resolveAdaptiveStrategySessionV1({
+  it('uses only scope, prior quality and draft evidence for the initial posterior, then purchase prefix and timing live', () => {
+    const initial = resolveAdaptiveStrategySessionV1({
       decisionId: 'decision-1',
       heroId: 10,
       rulesetId: 'ruleset-a',
       catalogSha256: 'a'.repeat(64),
       candidates: [
-        candidate('strategy-a', 0.7, 12, {
+        candidate('strategy-a', 0.7, 2, {
           draftLikelihood: 0.9,
-          purchasePrefixLikelihood: 0.95,
-          timingLikelihood: 0.8,
+          purchasePrefixLikelihood: 0.01,
+          timingLikelihood: 0.1,
         }),
-        candidate('strategy-b', 0.8, 12, {
+        candidate('strategy-b', 0.7, 2, {
           draftLikelihood: 0.8,
-          purchasePrefixLikelihood: 0.15,
-          timingLikelihood: 0.9,
+          purchasePrefixLikelihood: 0.99,
+          timingLikelihood: 0.99,
         }),
       ],
     });
 
-    expect(session.strategyId).toBe('strategy-a');
-    expect(session.strategyPosterior).toBeGreaterThan(0.8);
+    expect(initial.state).toBe('PROVISIONAL');
+    expect(initial.strategyId).toBe('strategy-a');
+    expect(initial.lastTransitionReasonCodes).toContain('INITIAL_DRAFT_POSTERIOR');
+
+    const live = resolveAdaptiveStrategySessionV1({
+      decisionId: 'decision-2',
+      heroId: 10,
+      rulesetId: 'ruleset-a',
+      catalogSha256: 'a'.repeat(64),
+      previous: initial,
+      candidates: [
+        candidate('strategy-a', 0.7, 2, {
+          draftLikelihood: 0.9,
+          purchasePrefixLikelihood: 0.01,
+          timingLikelihood: 0.1,
+        }),
+        candidate('strategy-b', 0.7, 2, {
+          draftLikelihood: 0.8,
+          purchasePrefixLikelihood: 0.99,
+          timingLikelihood: 0.99,
+        }),
+      ],
+    });
+
+    expect(live.strategyId).toBe('strategy-b');
+    expect(live.lastTransitionReasonCodes).toContain('LIVE_PREFIX_POSTERIOR');
   });
 
   it('keeps a committed strategy across small posterior movement', () => {
@@ -126,6 +150,32 @@ describe('resolveAdaptiveStrategySessionV1', () => {
     expect(diverged.state).toBe('DIVERGED');
     expect(diverged.strategyId).toBe('strategy-a');
     expect(diverged.divergenceCount).toBe(1);
+  });
+
+  it('selects one whole nearest feasible strategy when the previous strategy no longer fits', () => {
+    const previous = {
+      state: 'COMMITTED' as const,
+      strategyId: 'strategy-a',
+      strategyPosterior: 0.9,
+      heroId: 10,
+      rulesetId: 'ruleset-a',
+      catalogSha256: 'a'.repeat(64),
+      committedAtDecisionId: 'decision-1',
+      divergenceCount: 1,
+      lastTransitionReasonCodes: [],
+    };
+    const next = resolveAdaptiveStrategySessionV1({
+      decisionId: 'decision-2',
+      heroId: 10,
+      rulesetId: 'ruleset-a',
+      catalogSha256: 'a'.repeat(64),
+      previous,
+      candidates: [candidate('strategy-b', 0.8, 20), candidate('strategy-c', 0.7, 10)],
+    });
+
+    expect(next.strategyId).toBe('strategy-b');
+    expect(next.lastTransitionReasonCodes).toContain('PREVIOUS_STRATEGY_NO_LONGER_FEASIBLE');
+    expect(next.lastTransitionReasonCodes).toContain('WHOLE_STRATEGY_RESELECTED');
   });
 
   it('goes out of distribution when no strategy is feasible for the exact scope', () => {
