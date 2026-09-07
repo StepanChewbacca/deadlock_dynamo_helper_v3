@@ -52,6 +52,7 @@ export interface BuildContractInputV1 {
   executionState: BuildContractExecutionStateV1;
   committedChoiceItemIdsByGroup: ReadonlyMap<string, readonly number[]>;
   strategyId?: string;
+  futureGoalTargetItemIdsByGoal?: ReadonlyMap<string, readonly number[]>;
   slotReservations?: readonly BuildSlotReservationV1[];
   situationalWindowStates?: readonly BuildSituationalWindowStateV1[];
   outOfDistribution?: boolean;
@@ -74,7 +75,13 @@ export function compileBuildContractV1(input: BuildContractInputV1): BuildContra
   const temporaryItemIds = resolveTemporaryItemIds(input, input.skeleton.groups, owned);
   if (temporaryItemIds.size > 0) replanReasonCodes.add('USER_DIVERGENCE_REBASED');
 
-  const status = resolveBuildStatus(input, remainingGoalIds);
+  const slotReservations = resolveSlotReservations(input, remainingGoalIds, owned);
+  for (const reservation of slotReservations) {
+    if (reservation.state !== 'BLOCKED') continue;
+    for (const reasonCode of reservation.reasonCodes) replanReasonCodes.add(reasonCode);
+  }
+
+  const status = resolveBuildStatus(input, remainingGoalIds, slotReservations);
 
   return {
     ...(input.strategyId === undefined ? {} : { strategyId: input.strategyId }),
@@ -84,7 +91,7 @@ export function compileBuildContractV1(input: BuildContractInputV1): BuildContra
     remainingGoalIds,
     committedChoiceItemIdsByGroup: cloneChoiceCommitments(input.committedChoiceItemIdsByGroup),
     temporaryItemIds,
-    slotReservations: [...(input.slotReservations ?? [])],
+    slotReservations,
     situationalWindowStates: [...(input.situationalWindowStates ?? [])],
     replanReasonCodes: [...replanReasonCodes].sort(),
   };
@@ -149,12 +156,57 @@ function resolveTemporaryItemIds(
   );
 }
 
+function resolveSlotReservations(
+  input: BuildContractInputV1,
+  remainingGoalIds: readonly string[],
+  owned: ReadonlySet<number>,
+): readonly BuildSlotReservationV1[] {
+  const remainingGoals = new Set(remainingGoalIds);
+  const byKey = new Map<string, BuildSlotReservationV1>();
+
+  for (const reservation of input.slotReservations ?? []) {
+    if (!remainingGoals.has(reservation.goalId)) continue;
+    if (input.itemGraph.isTargetSatisfied(reservation.targetItemId, owned)) continue;
+    byKey.set(slotReservationKey(reservation.goalId, reservation.targetItemId), {
+      goalId: reservation.goalId,
+      targetItemId: reservation.targetItemId,
+      state: reservation.state,
+      reasonCodes: [...new Set(reservation.reasonCodes)].sort(),
+    });
+  }
+
+  for (const [goalId, targetItemIds] of input.futureGoalTargetItemIdsByGoal ?? []) {
+    if (!remainingGoals.has(goalId)) continue;
+    for (const targetItemId of [...new Set(targetItemIds)].sort((left, right) => left - right)) {
+      if (input.itemGraph.isTargetSatisfied(targetItemId, owned)) continue;
+      const key = slotReservationKey(goalId, targetItemId);
+      if (byKey.has(key)) continue;
+      byKey.set(key, {
+        goalId,
+        targetItemId,
+        state: 'BLOCKED',
+        reasonCodes: ['MANDATORY_CAPACITY_PATH_UNRESOLVED'],
+      });
+    }
+  }
+
+  return [...byKey.values()].sort((left, right) =>
+    left.goalId.localeCompare(right.goalId) || left.targetItemId - right.targetItemId,
+  );
+}
+
+function slotReservationKey(goalId: string, targetItemId: number): string {
+  return `${goalId}:${targetItemId}`;
+}
+
 function resolveBuildStatus(
   input: BuildContractInputV1,
   remainingGoalIds: readonly string[],
+  slotReservations: readonly BuildSlotReservationV1[],
 ): BuildStatusV1 {
   if (input.outOfDistribution) return 'OUT_OF_DISTRIBUTION';
   if ((input.replanRequiredReasonCodes?.length ?? 0) > 0) return 'REPLAN_REQUIRED';
+  if (slotReservations.some((reservation) => reservation.state === 'BLOCKED')) return 'REPLAN_REQUIRED';
   if (remainingGoalIds.length === 0) return 'COMPLETE';
   if (input.executionState === 'WAITING') return 'WAITING';
   return 'IN_PROGRESS';
