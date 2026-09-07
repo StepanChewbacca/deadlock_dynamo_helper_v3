@@ -12,7 +12,7 @@ function item(itemId: number, upgradeFrom?: number) {
     slotType: 'weapon' as const,
     active: false,
     availableRulesetIds: ['ruleset-a'],
-    directPurchaseCost: upgradeFrom === undefined ? 800 : undefined,
+    ...(upgradeFrom === undefined ? { directPurchaseCost: 800 } : {}),
     upgradeRecipes: upgradeFrom === undefined
       ? []
       : [{ recipeId: `upgrade:${itemId}`, consumedItemIds: [upgradeFrom], soulsCost: 800 }],
@@ -104,6 +104,16 @@ describe('compileBuildContractV1', () => {
     expect(incomplete.remainingGoalIds).toEqual(['mid-branch']);
     expect(complete.status).toBe('COMPLETE');
     expect(complete.remainingGoalIds).toEqual([]);
+  });
+
+  it('does not complete a committed CHOICE from a different owned branch', () => {
+    const contract = compileBuildContractV1(input([3], {
+      committedChoiceItemIdsByGroup: new Map([['mid-branch', [2]]]),
+    }));
+
+    expect(contract.completedGoalIds).toEqual(new Set(['early-core']));
+    expect(contract.remainingGoalIds).toEqual(['mid-branch']);
+    expect(contract.status).toBe('IN_PROGRESS');
   });
 
   it('rebases an unplanned user purchase as temporary inventory instead of demanding an immediate sell', () => {
