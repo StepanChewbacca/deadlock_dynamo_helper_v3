@@ -1,4 +1,8 @@
 import type { AdaptivePlanSessionV1 } from './adaptive-transaction-plan-v1';
+import type {
+  AdaptiveBuildContractViewV1,
+  AdaptiveStrategySessionViewV1,
+} from './adaptive-strategy-state-v1';
 
 export const ADAPTIVE_ACTION_TYPES_V1 = [
   'BUY',
@@ -288,6 +292,8 @@ export interface AdaptiveRecommendationResultV1 {
   rankedImmediateCandidates: readonly AdaptiveScoredActionV1[];
   totalScore: number;
   confidence: number;
+  buildContract?: AdaptiveBuildContractViewV1;
+  strategySession?: AdaptiveStrategySessionViewV1;
   scorerVersion: string;
   plannerVersion: string;
   configVersion: string;
