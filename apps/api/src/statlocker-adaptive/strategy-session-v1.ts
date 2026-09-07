@@ -68,10 +68,12 @@ export function resolveAdaptiveStrategySessionV1(
     .filter((candidate) => candidate.catalogSha256.toLowerCase() === input.catalogSha256.toLowerCase());
   for (const candidate of scopedCandidates) validateCandidate(candidate);
 
-  const candidates = posteriorCandidates(scopedCandidates);
   const previous = sameScope(input.previous, input)
     ? input.previous
     : undefined;
+  const livePosterior = previous !== undefined;
+  const candidates = posteriorCandidates(scopedCandidates, livePosterior);
+  const stageReason = livePosterior ? 'LIVE_PREFIX_POSTERIOR' : 'INITIAL_DRAFT_POSTERIOR';
 
   if (candidates.length === 0) {
     return {
@@ -80,7 +82,7 @@ export function resolveAdaptiveStrategySessionV1(
       rulesetId: input.rulesetId,
       catalogSha256: input.catalogSha256.toLowerCase(),
       divergenceCount: previous?.divergenceCount ?? 0,
-      lastTransitionReasonCodes: ['NO_FEASIBLE_STRATEGY'],
+      lastTransitionReasonCodes: ['NO_FEASIBLE_STRATEGY', stageReason],
     };
   }
 
@@ -95,7 +97,11 @@ export function resolveAdaptiveStrategySessionV1(
       state: 'DIVERGED',
       ...(previousCandidate === undefined ? {} : { strategyPosterior: previousCandidate.posterior }),
       divergenceCount: previous.divergenceCount + 1,
-      lastTransitionReasonCodes: ['USER_DIVERGENCE', 'STRATEGY_PRESERVED_PENDING_REBASE'],
+      lastTransitionReasonCodes: [
+        'USER_DIVERGENCE',
+        'STRATEGY_PRESERVED_PENDING_REBASE',
+        stageReason,
+      ],
     };
   }
 
@@ -109,15 +115,15 @@ export function resolveAdaptiveStrategySessionV1(
         ...previous,
         strategyPosterior: previousCandidate.posterior,
         lastTransitionReasonCodes: best.candidate.strategyId === previous.strategyId
-          ? ['STRATEGY_STILL_BEST', 'POSTERIOR_STABLE']
-          : ['STRATEGY_HYSTERESIS', 'POSTERIOR_SWITCH_THRESHOLD_NOT_MET'],
+          ? ['STRATEGY_STILL_BEST', 'POSTERIOR_STABLE', stageReason]
+          : ['STRATEGY_HYSTERESIS', 'POSTERIOR_SWITCH_THRESHOLD_NOT_MET', stageReason],
       };
     }
     return commitOrProvisional(
       input,
       best,
       previous.divergenceCount,
-      ['STRATEGY_SWITCH_THRESHOLD_MET', 'POSTERIOR_SWITCH_THRESHOLD_MET'],
+      ['STRATEGY_SWITCH_THRESHOLD_MET', 'POSTERIOR_SWITCH_THRESHOLD_MET', stageReason],
     );
   }
 
@@ -130,14 +136,18 @@ export function resolveAdaptiveStrategySessionV1(
       return {
         ...previous,
         strategyPosterior: previousCandidate.posterior,
-        lastTransitionReasonCodes: ['DIVERGED_STRATEGY_REBASE_PENDING', 'POSTERIOR_SWITCH_THRESHOLD_NOT_MET'],
+        lastTransitionReasonCodes: [
+          'DIVERGED_STRATEGY_REBASE_PENDING',
+          'POSTERIOR_SWITCH_THRESHOLD_NOT_MET',
+          stageReason,
+        ],
       };
     }
     return commitOrProvisional(
       input,
       best,
       previous.divergenceCount,
-      ['DIVERGED_STRATEGY_RESELECTED', 'POSTERIOR_SWITCH_THRESHOLD_MET'],
+      ['DIVERGED_STRATEGY_RESELECTED', 'POSTERIOR_SWITCH_THRESHOLD_MET', stageReason],
     );
   }
 
@@ -151,6 +161,7 @@ export function resolveAdaptiveStrategySessionV1(
       selected.candidate.strategyId === previous.strategyId
         ? 'PROVISIONAL_STRATEGY_STABLE'
         : 'PROVISIONAL_STRATEGY_SWITCHED',
+      stageReason,
     ]);
   }
 
@@ -159,15 +170,25 @@ export function resolveAdaptiveStrategySessionV1(
       input,
       best,
       previous.divergenceCount,
-      ['PREVIOUS_STRATEGY_NO_LONGER_FEASIBLE', 'STRATEGY_RESELECTED'],
+      [
+        'PREVIOUS_STRATEGY_NO_LONGER_FEASIBLE',
+        'WHOLE_STRATEGY_RESELECTED',
+        stageReason,
+      ],
     );
   }
 
-  return commitOrProvisional(input, best, previous?.divergenceCount ?? 0, ['STRATEGY_SELECTED']);
+  return commitOrProvisional(
+    input,
+    best,
+    previous?.divergenceCount ?? 0,
+    ['STRATEGY_SELECTED', stageReason],
+  );
 }
 
 function posteriorCandidates(
   candidates: readonly AdaptiveStrategyCandidateV1[],
+  includeLiveSignals: boolean,
 ): readonly PosteriorCandidateV1[] {
   if (candidates.length === 0) return [];
   const totalSupport = candidates.reduce((sum, candidate) => sum + Math.max(0, candidate.support), 0);
@@ -177,8 +198,8 @@ function posteriorCandidates(
       : 1 / candidates.length;
     const prior = candidate.priorWeight ?? supportPrior;
     const draft = candidate.draftLikelihood ?? 1;
-    const purchase = candidate.purchasePrefixLikelihood ?? 1;
-    const timing = candidate.timingLikelihood ?? 1;
+    const purchase = includeLiveSignals ? candidate.purchasePrefixLikelihood ?? 1 : 1;
+    const timing = includeLiveSignals ? candidate.timingLikelihood ?? 1 : 1;
     const quality = Math.max(0.000001, clamp01(candidate.confidence) * sigmoid(candidate.score));
     const weight = positiveProbability(prior) *
       quality *
