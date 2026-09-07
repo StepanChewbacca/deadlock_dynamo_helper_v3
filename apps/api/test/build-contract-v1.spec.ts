@@ -22,6 +22,21 @@ function item(itemId: number, upgradeFrom?: number) {
   };
 }
 
+function candidate(itemId: number, overrides: Record<string, unknown> = {}) {
+  return {
+    itemId,
+    strength: 0.8,
+    coverage: 0.8,
+    purchaseRate: 0.8,
+    medianBuyTimeS: 900,
+    timingSpreadS: 90,
+    sourceProfileCount: 10,
+    frequencyTier: 'CORE' as const,
+    rushEvidence: false,
+    ...overrides,
+  };
+}
+
 function skeleton(): ConsensusSkeletonV1 {
   return {
     heroId: 10,
@@ -33,17 +48,13 @@ function skeleton(): ConsensusSkeletonV1 {
         type: 'REQUIRED',
         minSelect: 1,
         maxSelect: 1,
-        candidates: [{
-          itemId: 1,
+        candidates: [candidate(1, {
           strength: 0.9,
           coverage: 0.9,
           purchaseRate: 0.9,
           medianBuyTimeS: 240,
           timingSpreadS: 60,
-          sourceProfileCount: 10,
-          frequencyTier: 'CORE',
-          rushEvidence: false,
-        }],
+        })],
         confidence: 0.9,
         inferred: false,
       },
@@ -53,18 +64,18 @@ function skeleton(): ConsensusSkeletonV1 {
         type: 'CHOICE',
         minSelect: 1,
         maxSelect: 1,
-        candidates: [2, 3].map((itemId) => ({
-          itemId,
-          strength: 0.8,
-          coverage: 0.8,
-          purchaseRate: 0.8,
-          medianBuyTimeS: 900,
-          timingSpreadS: 90,
-          sourceProfileCount: 10,
-          frequencyTier: 'CORE' as const,
-          rushEvidence: false,
-        })),
+        candidates: [2, 3].map((itemId) => candidate(itemId)),
         confidence: 0.9,
+        inferred: false,
+      },
+      {
+        groupId: 'situational-option',
+        phase: 'MID',
+        type: 'OPTIONAL',
+        minSelect: 0,
+        maxSelect: 1,
+        candidates: [candidate(50, { frequencyTier: 'SOMETIMES' as const })],
+        confidence: 0.8,
         inferred: false,
       },
     ],
@@ -77,7 +88,7 @@ function input(
 ): BuildContractInputV1 {
   return {
     skeleton: skeleton(),
-    itemGraph: createRecommendationItemGraph([item(1), item(2, 1), item(3, 1), item(99)]),
+    itemGraph: createRecommendationItemGraph([item(1), item(2, 1), item(3, 1), item(50), item(99)]),
     ownedItemIds,
     executionState: options.executionState ?? 'ACTIONABLE',
     committedChoiceItemIdsByGroup: options.committedChoiceItemIdsByGroup ?? new Map(),
@@ -124,6 +135,13 @@ describe('compileBuildContractV1', () => {
     expect(contract.temporaryItemIds).toEqual(new Set([99]));
     expect(contract.replanReasonCodes).toContain('USER_DIVERGENCE_REBASED');
     expect(contract.replanReasonCodes).not.toContain('SELL_UNPLANNED_ITEM');
+  });
+
+  it('does not classify a known OPTIONAL strategy item as user divergence', () => {
+    const contract = compileBuildContractV1(input([50]));
+
+    expect(contract.temporaryItemIds).toEqual(new Set());
+    expect(contract.replanReasonCodes).not.toContain('USER_DIVERGENCE_REBASED');
   });
 
   it('treats an owned descendant as satisfying the lower mandatory goal through lineage', () => {
