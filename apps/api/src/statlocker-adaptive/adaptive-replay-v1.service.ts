@@ -20,7 +20,7 @@ import {
 } from '@deadlock-live-probe/shared';
 import { AdaptiveRecommendationDecisionV1Entity } from '../deadlock-live/entities/adaptive-recommendation-decision-v1.entity';
 import {
-  ADAPTIVE_UNIVERSAL_SLOT_RULES_V1,
+  UNKNOWN_ADAPTIVE_SLOT_RULES_V1,
   AdaptiveInvestmentStateV1,
   AdaptiveSlotStateV1,
   RecommendationEconomyRulesV1,
@@ -294,7 +294,12 @@ function reconstructDecision(input: AdaptiveReplayDecisionV1): AdaptiveDecisionS
   };
   const slots = input.slots
     ? cloneJson(input.slots)
-    : deriveAdaptiveSlotStateV1(ownedItemIds, itemGraph, ADAPTIVE_UNIVERSAL_SLOT_RULES_V1, { evidence: 'UNKNOWN' });
+    : deriveAdaptiveSlotStateV1(
+        ownedItemIds,
+        itemGraph,
+        UNKNOWN_ADAPTIVE_SLOT_RULES_V1,
+        { evidence: 'UNKNOWN' },
+      );
   const economyRules = exactReplayEconomyRulesV1(input);
   const investment = normalizeReplayInvestmentStateV1(
     input.investment,
@@ -334,7 +339,9 @@ function normalizeReplayInvestmentStateV1(
 function exactReplayEconomyRulesV1(input: AdaptiveReplayDecisionV1): RecommendationEconomyRulesV1 | undefined {
   const rules = input.economyRules;
   if (!isRecord(rules) || rules.rulesetId !== input.rulesetId || rules.catalogSha256 !== input.catalogSha256 ||
-    !isNonNegativeInteger(rules.baseSlots) || !isNonNegativeInteger(rules.maxFlexSlots) ||
+    !isSlotCountRecord(rules.baseSlotsByType) ||
+    !isNonNegativeInteger(rules.maxFlexSlots) ||
+    !isNonNegativeInteger(rules.maxActiveItems) ||
     !isRecord(rules.investmentBreakpoints)) return undefined;
   const validBreakpoints = ADAPTIVE_INVESTMENT_TYPES_V1.every((type) => {
     const values = rules.investmentBreakpoints[type];
@@ -343,6 +350,11 @@ function exactReplayEconomyRulesV1(input: AdaptiveReplayDecisionV1): Recommendat
     );
   });
   return validBreakpoints ? rules as RecommendationEconomyRulesV1 : undefined;
+}
+
+function isSlotCountRecord(value: unknown): value is Record<'weapon' | 'vitality' | 'spirit', number> {
+  if (!isRecord(value)) return false;
+  return ['weapon', 'vitality', 'spirit'].every((type) => isNonNegativeInteger(value[type]));
 }
 
 function isNonNegativeInteger(value: unknown): value is number {
