@@ -1,4 +1,5 @@
 import { RecommendationItemGraph } from '@deadlock-live-probe/build-domain';
+import { AdaptiveSlotRulesV1 } from './adaptive-economy-v1';
 import { PlannerTrajectoryV2 } from './planner-trajectory-v2';
 
 export interface BuildArchetypeObservationV1 {
@@ -9,6 +10,20 @@ export interface BuildArchetypeObservationV1 {
   trajectory: PlannerTrajectoryV2;
 }
 
+export interface BuildArchetypeMiningPolicyV1 {
+  maxClusterDistance: number;
+  minSupportCount: number;
+  minScopeShare: number;
+  minStability: number;
+}
+
+export const DEFAULT_BUILD_ARCHETYPE_MINING_POLICY_V1: BuildArchetypeMiningPolicyV1 = Object.freeze({
+  maxClusterDistance: 0.35,
+  minSupportCount: 2,
+  minScopeShare: 0.1,
+  minStability: 0.65,
+});
+
 export interface MinedBuildArchetypeV1 {
   archetypeId: string;
   heroId: number;
@@ -17,6 +32,12 @@ export interface MinedBuildArchetypeV1 {
   supportCount: number;
   scopeProfileCount: number;
   confidence: number;
+  stability: number;
+  meanDistance: number;
+  representativeDecisionId: string;
+  representativeActionIds: readonly string[];
+  representativeInitialOwnedItemIds: readonly number[];
+  representativeSlotRules: AdaptiveSlotRulesV1;
   orderedGoalIds: readonly string[];
   orderedTargetItemIds: readonly number[];
   terminalItemIds: readonly number[];
@@ -26,58 +47,81 @@ export interface MinedBuildArchetypeV1 {
 
 interface NormalizedObservationV1 {
   scopeKey: string;
-  signature: string;
+  featureSignature: string;
   heroId: number;
   rulesetId: string;
   catalogSha256: string;
+  decisionId: string;
+  actionIds: readonly string[];
+  initialOwnedItemIds: readonly number[];
+  slotRules: AdaptiveSlotRulesV1;
   orderedGoalIds: readonly string[];
   orderedTargetItemIds: readonly number[];
   terminalItemIds: readonly number[];
   committedChoices: readonly { groupId: string; itemIds: readonly number[] }[];
   situationalWindowIds: readonly string[];
+  normalizedTiming: readonly number[];
 }
 
 export function mineBuildArchetypesV1(
   observations: readonly BuildArchetypeObservationV1[],
+  policy: BuildArchetypeMiningPolicyV1 = DEFAULT_BUILD_ARCHETYPE_MINING_POLICY_V1,
 ): readonly MinedBuildArchetypeV1[] {
+  validatePolicy(policy);
   const normalized = observations.map(normalizeObservation);
-  const scopeCounts = new Map<string, number>();
-  const grouped = new Map<string, NormalizedObservationV1[]>();
-
+  const byScope = new Map<string, NormalizedObservationV1[]>();
   for (const observation of normalized) {
-    scopeCounts.set(observation.scopeKey, (scopeCounts.get(observation.scopeKey) ?? 0) + 1);
-    const key = `${observation.scopeKey}|${observation.signature}`;
-    const bucket = grouped.get(key) ?? [];
+    const bucket = byScope.get(observation.scopeKey) ?? [];
     bucket.push(observation);
-    grouped.set(key, bucket);
+    byScope.set(observation.scopeKey, bucket);
   }
 
-  return [...grouped.entries()]
-    .map(([key, bucket]) => {
-      const exemplar = bucket[0];
-      const scopeProfileCount = scopeCounts.get(exemplar.scopeKey) ?? bucket.length;
-      return {
-        archetypeId: `archetype:${stableHash(key)}`,
-        heroId: exemplar.heroId,
-        rulesetId: exemplar.rulesetId,
-        catalogSha256: exemplar.catalogSha256,
-        supportCount: bucket.length,
+  const archetypes: MinedBuildArchetypeV1[] = [];
+  for (const scope of [...byScope.values()]) {
+    const orderedScope = [...scope].sort(compareNormalizedObservations);
+    const clusters = completeLinkageClusters(orderedScope, policy.maxClusterDistance);
+    for (const cluster of clusters) {
+      const supportCount = cluster.length;
+      const scopeProfileCount = scope.length;
+      const scopeShare = scopeProfileCount === 0 ? 0 : supportCount / scopeProfileCount;
+      if (supportCount < policy.minSupportCount || scopeShare < policy.minScopeShare) continue;
+
+      const medoid = chooseMedoid(cluster);
+      const meanDistance = meanDistanceTo(medoid, cluster);
+      const stability = clamp01(1 - meanDistance);
+      if (stability < policy.minStability) continue;
+
+      archetypes.push({
+        archetypeId: `archetype:${stableHash(`${medoid.scopeKey}|${medoid.featureSignature}`)}`,
+        heroId: medoid.heroId,
+        rulesetId: medoid.rulesetId,
+        catalogSha256: medoid.catalogSha256,
+        supportCount,
         scopeProfileCount,
-        confidence: scopeProfileCount === 0 ? 0 : bucket.length / scopeProfileCount,
-        orderedGoalIds: exemplar.orderedGoalIds,
-        orderedTargetItemIds: exemplar.orderedTargetItemIds,
-        terminalItemIds: exemplar.terminalItemIds,
-        committedChoices: exemplar.committedChoices,
-        situationalWindowIds: exemplar.situationalWindowIds,
-      };
-    })
-    .sort((left, right) =>
-      left.heroId - right.heroId ||
-      left.rulesetId.localeCompare(right.rulesetId) ||
-      left.catalogSha256.localeCompare(right.catalogSha256) ||
-      right.supportCount - left.supportCount ||
-      left.archetypeId.localeCompare(right.archetypeId),
-    );
+        confidence: clamp01(scopeShare * stability),
+        stability,
+        meanDistance,
+        representativeDecisionId: medoid.decisionId,
+        representativeActionIds: medoid.actionIds,
+        representativeInitialOwnedItemIds: medoid.initialOwnedItemIds,
+        representativeSlotRules: cloneSlotRules(medoid.slotRules),
+        orderedGoalIds: medoid.orderedGoalIds,
+        orderedTargetItemIds: medoid.orderedTargetItemIds,
+        terminalItemIds: medoid.terminalItemIds,
+        committedChoices: medoid.committedChoices,
+        situationalWindowIds: medoid.situationalWindowIds,
+      });
+    }
+  }
+
+  return archetypes.sort((left, right) =>
+    left.heroId - right.heroId ||
+    left.rulesetId.localeCompare(right.rulesetId) ||
+    left.catalogSha256.localeCompare(right.catalogSha256) ||
+    right.supportCount - left.supportCount ||
+    right.stability - left.stability ||
+    left.archetypeId.localeCompare(right.archetypeId),
+  );
 }
 
 function normalizeObservation(input: BuildArchetypeObservationV1): NormalizedObservationV1 {
@@ -87,6 +131,11 @@ function normalizeObservation(input: BuildArchetypeObservationV1): NormalizedObs
   if (!input.rulesetId.trim()) throw new Error('Build archetype observation rulesetId is required');
   if (!/^[a-f0-9]{64}$/i.test(input.catalogSha256)) {
     throw new Error('Build archetype observation catalogSha256 is invalid');
+  }
+  if (input.trajectory.heroId !== input.heroId) throw new Error('ARCHETYPE_TRAJECTORY_HERO_MISMATCH');
+  if (input.trajectory.rulesetId !== input.rulesetId) throw new Error('ARCHETYPE_TRAJECTORY_RULESET_MISMATCH');
+  if (input.trajectory.catalogSha256.toLowerCase() !== input.catalogSha256.toLowerCase()) {
+    throw new Error('ARCHETYPE_TRAJECTORY_CATALOG_MISMATCH');
   }
 
   const orderedGoalIds = dedupePreservingOrder(
@@ -114,8 +163,9 @@ function normalizeObservation(input: BuildArchetypeObservationV1): NormalizedObs
     .map((window) => window.windowId)
     .filter((windowId, index, values) => values.indexOf(windowId) === index)
     .sort();
+  const normalizedTiming = normalizeStepTiming(input.trajectory.steps.map((step) => step.gameTimeSec));
   const scopeKey = `${input.heroId}|${input.rulesetId}|${input.catalogSha256.toLowerCase()}`;
-  const signature = JSON.stringify({
+  const featureSignature = JSON.stringify({
     orderedGoalIds,
     orderedTargetItemIds,
     terminalItemIds,
@@ -125,16 +175,139 @@ function normalizeObservation(input: BuildArchetypeObservationV1): NormalizedObs
 
   return {
     scopeKey,
-    signature,
+    featureSignature,
     heroId: input.heroId,
     rulesetId: input.rulesetId,
     catalogSha256: input.catalogSha256.toLowerCase(),
+    decisionId: input.trajectory.decisionId,
+    actionIds: input.trajectory.steps.map((step) => step.actionId),
+    initialOwnedItemIds: [...new Set(input.trajectory.initialOwnedItemIds)].sort((left, right) => left - right),
+    slotRules: cloneSlotRules(input.trajectory.slotRules),
     orderedGoalIds,
     orderedTargetItemIds,
     terminalItemIds,
     committedChoices,
     situationalWindowIds,
+    normalizedTiming,
   };
+}
+
+function completeLinkageClusters(
+  observations: readonly NormalizedObservationV1[],
+  maxDistance: number,
+): readonly NormalizedObservationV1[][] {
+  const clusters: NormalizedObservationV1[][] = [];
+  for (const observation of observations) {
+    const eligible = clusters
+      .map((cluster, index) => ({
+        index,
+        maxDistance: Math.max(...cluster.map((member) => observationDistance(observation, member))),
+        meanDistance: mean(cluster.map((member) => observationDistance(observation, member))),
+      }))
+      .filter((entry) => entry.maxDistance <= maxDistance)
+      .sort((left, right) => left.meanDistance - right.meanDistance || left.index - right.index);
+    const selected = eligible[0];
+    if (!selected) {
+      clusters.push([observation]);
+      continue;
+    }
+    clusters[selected.index].push(observation);
+  }
+  return clusters;
+}
+
+function chooseMedoid(cluster: readonly NormalizedObservationV1[]): NormalizedObservationV1 {
+  return [...cluster]
+    .map((candidate) => ({ candidate, distance: meanDistanceTo(candidate, cluster) }))
+    .sort((left, right) =>
+      left.distance - right.distance ||
+      left.candidate.featureSignature.localeCompare(right.candidate.featureSignature) ||
+      left.candidate.decisionId.localeCompare(right.candidate.decisionId),
+    )[0].candidate;
+}
+
+function meanDistanceTo(
+  candidate: NormalizedObservationV1,
+  cluster: readonly NormalizedObservationV1[],
+): number {
+  if (cluster.length <= 1) return 0;
+  return mean(cluster
+    .filter((entry) => entry !== candidate)
+    .map((entry) => observationDistance(candidate, entry)));
+}
+
+function observationDistance(left: NormalizedObservationV1, right: NormalizedObservationV1): number {
+  const targetDistance = normalizedLevenshtein(left.orderedTargetItemIds, right.orderedTargetItemIds);
+  const goalDistance = normalizedLevenshtein(left.orderedGoalIds, right.orderedGoalIds);
+  const terminalDistance = jaccardDistance(left.terminalItemIds, right.terminalItemIds);
+  const choiceDistance = jaccardDistance(choiceTokens(left.committedChoices), choiceTokens(right.committedChoices));
+  const windowDistance = jaccardDistance(left.situationalWindowIds, right.situationalWindowIds);
+  const timingDistance = vectorDistance(left.normalizedTiming, right.normalizedTiming);
+
+  return clamp01(
+    targetDistance * 0.35 +
+    goalDistance * 0.15 +
+    terminalDistance * 0.25 +
+    choiceDistance * 0.10 +
+    windowDistance * 0.05 +
+    timingDistance * 0.10,
+  );
+}
+
+function normalizeStepTiming(values: readonly number[]): readonly number[] {
+  if (values.length === 0) return [];
+  const valid = values.map((value) => Number.isFinite(value) && value >= 0 ? value : 0);
+  const denominator = Math.max(1, valid[valid.length - 1]);
+  return valid.map((value) => clamp01(value / denominator));
+}
+
+function vectorDistance(left: readonly number[], right: readonly number[]): number {
+  if (left.length === 0 && right.length === 0) return 0;
+  const length = Math.max(left.length, right.length);
+  let total = 0;
+  for (let index = 0; index < length; index += 1) {
+    const a = left[index] ?? 1;
+    const b = right[index] ?? 1;
+    total += Math.abs(a - b);
+  }
+  return clamp01(total / length);
+}
+
+function normalizedLevenshtein<T>(left: readonly T[], right: readonly T[]): number {
+  const denominator = Math.max(left.length, right.length);
+  if (denominator === 0) return 0;
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= left.length; i += 1) {
+    let diagonal = previous[0];
+    previous[0] = i;
+    for (let j = 1; j <= right.length; j += 1) {
+      const above = previous[j];
+      const substitutionCost = Object.is(left[i - 1], right[j - 1]) ? 0 : 1;
+      previous[j] = Math.min(
+        previous[j] + 1,
+        previous[j - 1] + 1,
+        diagonal + substitutionCost,
+      );
+      diagonal = above;
+    }
+  }
+  return previous[right.length] / denominator;
+}
+
+function jaccardDistance<T>(left: readonly T[], right: readonly T[]): number {
+  const a = new Set(left);
+  const b = new Set(right);
+  if (a.size === 0 && b.size === 0) return 0;
+  let intersection = 0;
+  for (const value of a) if (b.has(value)) intersection += 1;
+  const union = a.size + b.size - intersection;
+  return union === 0 ? 0 : 1 - intersection / union;
+}
+
+function choiceTokens(
+  choices: readonly { groupId: string; itemIds: readonly number[] }[],
+): readonly string[] {
+  return choices.flatMap((choice) => choice.itemIds.map((itemId) => `${choice.groupId}:${itemId}`));
 }
 
 function collapseTerminalLineage(
@@ -147,6 +320,22 @@ function collapseTerminalLineage(
       otherItemId !== itemId && graph.isComponentAncestor(itemId, otherItemId),
     ))
     .sort((left, right) => left - right);
+}
+
+function compareNormalizedObservations(
+  left: NormalizedObservationV1,
+  right: NormalizedObservationV1,
+): number {
+  return left.featureSignature.localeCompare(right.featureSignature) || left.decisionId.localeCompare(right.decisionId);
+}
+
+function cloneSlotRules(rules: AdaptiveSlotRulesV1): AdaptiveSlotRulesV1 {
+  return {
+    baseSlotsByType: { ...rules.baseSlotsByType },
+    maxFlexSlots: rules.maxFlexSlots,
+    maxActiveItems: rules.maxActiveItems,
+    evidence: rules.evidence,
+  };
 }
 
 function dedupePreservingOrder(values: readonly string[]): readonly string[] {
@@ -167,6 +356,26 @@ function dedupeNumbersPreservingOrder(values: readonly number[]): readonly numbe
   });
 }
 
+function mean(values: readonly number[]): number {
+  if (values.length === 0) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function validatePolicy(policy: BuildArchetypeMiningPolicyV1): void {
+  if (!Number.isFinite(policy.maxClusterDistance) || policy.maxClusterDistance < 0 || policy.maxClusterDistance > 1) {
+    throw new Error('ARCHETYPE_MAX_CLUSTER_DISTANCE_INVALID');
+  }
+  if (!Number.isSafeInteger(policy.minSupportCount) || policy.minSupportCount <= 0) {
+    throw new Error('ARCHETYPE_MIN_SUPPORT_INVALID');
+  }
+  if (!Number.isFinite(policy.minScopeShare) || policy.minScopeShare < 0 || policy.minScopeShare > 1) {
+    throw new Error('ARCHETYPE_MIN_SCOPE_SHARE_INVALID');
+  }
+  if (!Number.isFinite(policy.minStability) || policy.minStability < 0 || policy.minStability > 1) {
+    throw new Error('ARCHETYPE_MIN_STABILITY_INVALID');
+  }
+}
+
 function stableHash(value: string): string {
   let hash = 2166136261;
   for (let index = 0; index < value.length; index += 1) {
@@ -174,4 +383,9 @@ function stableHash(value: string): string {
     hash = Math.imul(hash, 16777619);
   }
   return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
 }
