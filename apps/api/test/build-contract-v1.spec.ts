@@ -2,6 +2,7 @@ import { createRecommendationItemGraph } from '@deadlock-live-probe/build-domain
 import {
   BuildContractInputV1,
   compileBuildContractV1,
+  createOutOfDistributionBuildContractV1,
 } from '../src/statlocker-adaptive/build-contract-v1';
 import { ConsensusSkeletonV1 } from '../src/statlocker-adaptive/statlocker-adaptive.types';
 
@@ -132,5 +133,13 @@ describe('compileBuildContractV1', () => {
 
     expect(contract.completedGoalIds).toEqual(new Set(['early-core', 'mid-branch']));
     expect(contract.status).toBe('COMPLETE');
+  });
+
+  it('represents missing structured strategy input explicitly as out of distribution', () => {
+    const contract = createOutOfDistributionBuildContractV1(['STRUCTURED_SKELETON_UNAVAILABLE']);
+
+    expect(contract.status).toBe('OUT_OF_DISTRIBUTION');
+    expect(contract.remainingGoalIds).toEqual([]);
+    expect(contract.replanReasonCodes).toEqual(['STRUCTURED_SKELETON_UNAVAILABLE']);
   });
 });
