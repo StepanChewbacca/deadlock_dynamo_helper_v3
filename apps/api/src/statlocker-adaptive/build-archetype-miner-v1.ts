@@ -24,6 +24,11 @@ export const DEFAULT_BUILD_ARCHETYPE_MINING_POLICY_V1: BuildArchetypeMiningPolic
   minStability: 0.65,
 });
 
+export interface BuildArchetypeGoalTargetV1 {
+  goalId: string;
+  targetItemId: number;
+}
+
 export interface MinedBuildArchetypeV1 {
   archetypeId: string;
   heroId: number;
@@ -38,6 +43,7 @@ export interface MinedBuildArchetypeV1 {
   representativeActionIds: readonly string[];
   representativeInitialOwnedItemIds: readonly number[];
   representativeSlotRules: AdaptiveSlotRulesV1;
+  orderedGoalTargets?: readonly BuildArchetypeGoalTargetV1[];
   orderedGoalIds: readonly string[];
   orderedTargetItemIds: readonly number[];
   terminalItemIds: readonly number[];
@@ -55,6 +61,7 @@ interface NormalizedObservationV1 {
   actionIds: readonly string[];
   initialOwnedItemIds: readonly number[];
   slotRules: AdaptiveSlotRulesV1;
+  orderedGoalTargets: readonly BuildArchetypeGoalTargetV1[];
   orderedGoalIds: readonly string[];
   orderedTargetItemIds: readonly number[];
   terminalItemIds: readonly number[];
@@ -105,6 +112,7 @@ export function mineBuildArchetypesV1(
         representativeActionIds: medoid.actionIds,
         representativeInitialOwnedItemIds: medoid.initialOwnedItemIds,
         representativeSlotRules: cloneSlotRules(medoid.slotRules),
+        orderedGoalTargets: medoid.orderedGoalTargets,
         orderedGoalIds: medoid.orderedGoalIds,
         orderedTargetItemIds: medoid.orderedTargetItemIds,
         terminalItemIds: medoid.terminalItemIds,
@@ -138,6 +146,11 @@ function normalizeObservation(input: BuildArchetypeObservationV1): NormalizedObs
     throw new Error('ARCHETYPE_TRAJECTORY_CATALOG_MISMATCH');
   }
 
+  const orderedGoalTargets = dedupeGoalTargetsPreservingOrder(
+    input.trajectory.steps
+      .filter((step) => Boolean(step.goalId) && Number.isSafeInteger(step.targetItemId) && Number(step.targetItemId) > 0)
+      .map((step) => ({ goalId: step.goalId!, targetItemId: Number(step.targetItemId) })),
+  );
   const orderedGoalIds = dedupePreservingOrder(
     input.trajectory.steps
       .map((step) => step.goalId)
@@ -166,7 +179,7 @@ function normalizeObservation(input: BuildArchetypeObservationV1): NormalizedObs
   const normalizedTiming = normalizeStepTiming(input.trajectory.steps.map((step) => step.gameTimeSec));
   const scopeKey = `${input.heroId}|${input.rulesetId}|${input.catalogSha256.toLowerCase()}`;
   const featureSignature = JSON.stringify({
-    orderedGoalIds,
+    orderedGoalTargets,
     orderedTargetItemIds,
     terminalItemIds,
     committedChoices,
@@ -180,9 +193,12 @@ function normalizeObservation(input: BuildArchetypeObservationV1): NormalizedObs
     rulesetId: input.rulesetId,
     catalogSha256: input.catalogSha256.toLowerCase(),
     decisionId: input.trajectory.decisionId,
-    actionIds: input.trajectory.steps.map((step) => step.actionId),
+    actionIds: input.trajectory.steps
+      .filter((step) => step.actionType !== 'WAIT_SAVE')
+      .map((step) => step.actionId),
     initialOwnedItemIds: [...new Set(input.trajectory.initialOwnedItemIds)].sort((left, right) => left - right),
     slotRules: cloneSlotRules(input.trajectory.slotRules),
+    orderedGoalTargets,
     orderedGoalIds,
     orderedTargetItemIds,
     terminalItemIds,
@@ -238,15 +254,18 @@ function meanDistanceTo(
 
 function observationDistance(left: NormalizedObservationV1, right: NormalizedObservationV1): number {
   const targetDistance = normalizedLevenshtein(left.orderedTargetItemIds, right.orderedTargetItemIds);
-  const goalDistance = normalizedLevenshtein(left.orderedGoalIds, right.orderedGoalIds);
+  const goalTargetDistance = normalizedLevenshtein(
+    goalTargetTokens(left.orderedGoalTargets),
+    goalTargetTokens(right.orderedGoalTargets),
+  );
   const terminalDistance = jaccardDistance(left.terminalItemIds, right.terminalItemIds);
   const choiceDistance = jaccardDistance(choiceTokens(left.committedChoices), choiceTokens(right.committedChoices));
   const windowDistance = jaccardDistance(left.situationalWindowIds, right.situationalWindowIds);
   const timingDistance = vectorDistance(left.normalizedTiming, right.normalizedTiming);
 
   return clamp01(
-    targetDistance * 0.35 +
-    goalDistance * 0.15 +
+    targetDistance * 0.30 +
+    goalTargetDistance * 0.20 +
     terminalDistance * 0.25 +
     choiceDistance * 0.10 +
     windowDistance * 0.05 +
@@ -304,6 +323,10 @@ function jaccardDistance<T>(left: readonly T[], right: readonly T[]): number {
   return union === 0 ? 0 : 1 - intersection / union;
 }
 
+function goalTargetTokens(values: readonly BuildArchetypeGoalTargetV1[]): readonly string[] {
+  return values.map((entry) => `${entry.goalId}:${entry.targetItemId}`);
+}
+
 function choiceTokens(
   choices: readonly { groupId: string; itemIds: readonly number[] }[],
 ): readonly string[] {
@@ -336,6 +359,18 @@ function cloneSlotRules(rules: AdaptiveSlotRulesV1): AdaptiveSlotRulesV1 {
     maxActiveItems: rules.maxActiveItems,
     evidence: rules.evidence,
   };
+}
+
+function dedupeGoalTargetsPreservingOrder(
+  values: readonly BuildArchetypeGoalTargetV1[],
+): readonly BuildArchetypeGoalTargetV1[] {
+  const seen = new Set<string>();
+  return values.filter((value) => {
+    const key = `${value.goalId}:${value.targetItemId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function dedupePreservingOrder(values: readonly string[]): readonly string[] {
