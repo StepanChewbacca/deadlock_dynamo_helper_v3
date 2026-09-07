@@ -158,7 +158,8 @@ export class AdaptiveRecommendationV1Service {
 
     const criticalEvidenceUnavailable = !localEvidence.usable ||
       fresh.economyRulesEvidence === 'UNKNOWN' ||
-      fresh.slots?.mechanicsEvidence === 'UNKNOWN';
+      fresh.slots?.mechanicsEvidence === 'UNKNOWN' ||
+      plannerUnavailable;
     const freshCandidates = criticalEvidenceUnavailable ? [] : generateRecommendationCandidates({
       state: fresh.state,
       itemGraph: fresh.itemGraph,
