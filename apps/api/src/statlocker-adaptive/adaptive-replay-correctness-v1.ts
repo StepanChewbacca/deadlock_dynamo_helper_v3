@@ -94,7 +94,7 @@ export function evaluateAdaptiveReplayCorrectnessV1(
     !upgradeSourceItemIds(executableUpgrade).includes(input.result.nextAction.sellItemId ?? -1),
   );
   const duplicateCard = hasDuplicatePlanActionId(input.result.planActions ?? []);
-  const planBuildMismatch = hasPlanActionBuildMismatch(input.result);
+  const planBuildMismatch = hasPlanActionBuildMismatch(input.result, graph);
   const unsupportedSituationalTarget = hasUnsupportedSituationalTarget(
     input.result.planActions ?? [],
     input.decision.enemyHeroIds,
@@ -183,6 +183,7 @@ function replayCandidateRules(input: AdaptiveReplayDecisionV1): RecommendationCa
       maxFlexSlots: 0,
       flexCapacityEvidence: 'UNKNOWN',
       maxActiveItems: 0,
+      activeCapacityEvidence: 'UNKNOWN',
       allowSellOnlyActions: true,
       generateTargetedWaitActions: true,
     };
@@ -194,6 +195,7 @@ function replayCandidateRules(input: AdaptiveReplayDecisionV1): RecommendationCa
     unlockedFlexSlots: slots.unlockedFlexSlots,
     flexCapacityEvidence: slots.flexEvidence,
     maxActiveItems: slots.maxActiveItems,
+    activeCapacityEvidence: slots.mechanicsEvidence,
     allowSellOnlyActions: true,
     generateTargetedWaitActions: true,
   };
@@ -213,7 +215,10 @@ function semanticProjectionDrift(
     const candidates = generateRecommendationCandidates({ state, itemGraph: graph, rules });
     const candidate = candidates.find((entry) => entry.actionId === planAction.action.actionKey);
     if (!candidate?.feasible || !candidate.recommendationEligible) return true;
-    if (canonicalTargetItemId(candidate) !== planAction.targetItemId) return true;
+    if (
+      candidate.action.type !== 'SELL_ITEM' &&
+      canonicalTargetItemId(candidate) !== planAction.targetItemId
+    ) return true;
     if (!sameNumbers(canonicalSourceItemIds(candidate), planAction.sourceItemIds)) return true;
 
     state = applyRecommendationCandidateTransitionV1(state, candidate, graph).state;
@@ -285,7 +290,10 @@ function hasDuplicatePlanActionId(planActions: readonly AdaptivePlanActionV1[]):
   return false;
 }
 
-function hasPlanActionBuildMismatch(result: AdaptiveRecommendationResultV1): boolean {
+function hasPlanActionBuildMismatch(
+  result: AdaptiveRecommendationResultV1,
+  graph: RecommendationItemGraph,
+): boolean {
   const first = [...(result.planActions ?? [])]
     .filter((action) => action.status !== 'OWNED' && action.status !== 'COMPLETED')
     .sort((left, right) => left.sequence - right.sequence)[0];
@@ -294,7 +302,8 @@ function hasPlanActionBuildMismatch(result: AdaptiveRecommendationResultV1): boo
     .find((item) => item.status === 'NEXT');
   if (!first && !next) return false;
   if (!first || !next) return true;
-  return first.targetItemId !== next.itemId;
+  if (first.targetItemId === next.itemId) return false;
+  return first.targetItemId === undefined || !graph.isComponentAncestor(first.targetItemId, next.itemId);
 }
 
 function hasUnsupportedSituationalTarget(
