@@ -74,16 +74,12 @@ export function compileBuildContractV1(input: BuildContractInputV1): BuildContra
   const temporaryItemIds = resolveTemporaryItemIds(input, mandatoryGroups, owned);
   if (temporaryItemIds.size > 0) replanReasonCodes.add('USER_DIVERGENCE_REBASED');
 
-  const status = resolveBuildStatus(
-    input,
-    remainingGoalIds,
-    replanReasonCodes,
-  );
+  const status = resolveBuildStatus(input, remainingGoalIds);
 
   return {
-    strategyId: input.strategyId,
+    ...(input.strategyId === undefined ? {} : { strategyId: input.strategyId }),
     status,
-    currentGoalId: remainingGoalIds[0],
+    ...(remainingGoalIds[0] === undefined ? {} : { currentGoalId: remainingGoalIds[0] }),
     completedGoalIds,
     remainingGoalIds,
     committedChoiceItemIdsByGroup: cloneChoiceCommitments(input.committedChoiceItemIdsByGroup),
@@ -141,7 +137,6 @@ function resolveTemporaryItemIds(
 function resolveBuildStatus(
   input: BuildContractInputV1,
   remainingGoalIds: readonly string[],
-  replanReasonCodes: ReadonlySet<string>,
 ): BuildStatusV1 {
   if (input.outOfDistribution) return 'OUT_OF_DISTRIBUTION';
   if ((input.replanRequiredReasonCodes?.length ?? 0) > 0) return 'REPLAN_REQUIRED';
