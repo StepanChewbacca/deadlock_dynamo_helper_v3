@@ -84,7 +84,13 @@ function skeleton(): ConsensusSkeletonV1 {
 
 function input(
   ownedItemIds: readonly number[],
-  options: Partial<Pick<BuildContractInputV1, 'executionState' | 'committedChoiceItemIdsByGroup'>> = {},
+  options: Partial<Pick<
+    BuildContractInputV1,
+    | 'executionState'
+    | 'committedChoiceItemIdsByGroup'
+    | 'futureGoalTargetItemIdsByGoal'
+    | 'slotReservations'
+  >> = {},
 ): BuildContractInputV1 {
   return {
     skeleton: skeleton(),
@@ -92,6 +98,8 @@ function input(
     ownedItemIds,
     executionState: options.executionState ?? 'ACTIONABLE',
     committedChoiceItemIdsByGroup: options.committedChoiceItemIdsByGroup ?? new Map(),
+    futureGoalTargetItemIdsByGoal: options.futureGoalTargetItemIdsByGoal,
+    slotReservations: options.slotReservations,
   };
 }
 
@@ -151,6 +159,47 @@ describe('compileBuildContractV1', () => {
 
     expect(contract.completedGoalIds).toEqual(new Set(['early-core', 'mid-branch']));
     expect(contract.status).toBe('COMPLETE');
+  });
+
+  it.each([
+    ['LOCKED_BY_UPGRADE_COMPRESSION', 'UPGRADE_CONSUMES_COMPONENT'],
+    ['LOCKED_BY_SELL', 'EXPLICIT_REPLACE_CAPACITY_PATH'],
+    ['LOCKED_BY_SELL', 'TEMPORARY_ITEM_SELL_CAPACITY_PATH'],
+    ['LOCKED_BY_FLEX', 'VERIFIED_FUTURE_FLEX_PREREQUISITE'],
+  ] as const)('retains a full-inventory future goal with an explicit %s capacity path', (state, reason) => {
+    const contract = compileBuildContractV1(input([1], {
+      futureGoalTargetItemIdsByGoal: new Map([['mid-branch', [2]]]),
+      slotReservations: [{
+        goalId: 'mid-branch',
+        targetItemId: 2,
+        state,
+        reasonCodes: [reason],
+      }],
+    }));
+
+    expect(contract.status).toBe('IN_PROGRESS');
+    expect(contract.slotReservations).toEqual([{
+      goalId: 'mid-branch',
+      targetItemId: 2,
+      state,
+      reasonCodes: [reason],
+    }]);
+    expect(contract.replanReasonCodes).not.toContain('MANDATORY_CAPACITY_PATH_UNRESOLVED');
+  });
+
+  it('fails closed when a mandatory future target has no explicit capacity path', () => {
+    const contract = compileBuildContractV1(input([1], {
+      futureGoalTargetItemIdsByGoal: new Map([['mid-branch', [2]]]),
+    }));
+
+    expect(contract.status).toBe('REPLAN_REQUIRED');
+    expect(contract.slotReservations).toEqual([{
+      goalId: 'mid-branch',
+      targetItemId: 2,
+      state: 'BLOCKED',
+      reasonCodes: ['MANDATORY_CAPACITY_PATH_UNRESOLVED'],
+    }]);
+    expect(contract.replanReasonCodes).toContain('MANDATORY_CAPACITY_PATH_UNRESOLVED');
   });
 
   it('represents missing structured strategy input explicitly as out of distribution', () => {
