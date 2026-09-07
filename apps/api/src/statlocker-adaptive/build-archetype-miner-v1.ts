@@ -29,9 +29,17 @@ export interface BuildArchetypeGoalTargetV1 {
   targetItemId: number;
 }
 
+export interface BuildArchetypeBranchAlternativeProofV1 {
+  itemIds: readonly number[];
+  representativeDecisionId: string;
+  beforeOwnedItemIds: readonly number[];
+  actionIds: readonly string[];
+}
+
 export interface BuildArchetypeBranchAlternativesV1 {
   groupId: string;
   alternatives: readonly (readonly number[])[];
+  proofs?: readonly BuildArchetypeBranchAlternativeProofV1[];
 }
 
 export interface MinedBuildArchetypeV1 {
@@ -48,6 +56,7 @@ export interface MinedBuildArchetypeV1 {
   representativeActionIds: readonly string[];
   representativeInitialOwnedItemIds: readonly number[];
   representativeSlotRules: AdaptiveSlotRulesV1;
+  representativeTrajectory?: PlannerTrajectoryV2;
   orderedGoalTargets?: readonly BuildArchetypeGoalTargetV1[];
   orderedGoalIds: readonly string[];
   orderedTargetItemIds: readonly number[];
@@ -58,6 +67,10 @@ export interface MinedBuildArchetypeV1 {
   observedExitItemIds?: readonly number[];
 }
 
+interface NormalizedBranchProofV1 extends BuildArchetypeBranchAlternativeProofV1 {
+  groupId: string;
+}
+
 interface NormalizedObservationV1 {
   scopeKey: string;
   featureSignature: string;
@@ -65,6 +78,7 @@ interface NormalizedObservationV1 {
   rulesetId: string;
   catalogSha256: string;
   decisionId: string;
+  trajectory: PlannerTrajectoryV2;
   actionIds: readonly string[];
   initialOwnedItemIds: readonly number[];
   slotRules: AdaptiveSlotRulesV1;
@@ -73,6 +87,7 @@ interface NormalizedObservationV1 {
   orderedTargetItemIds: readonly number[];
   terminalItemIds: readonly number[];
   committedChoices: readonly { groupId: string; itemIds: readonly number[] }[];
+  branchProofs: readonly NormalizedBranchProofV1[];
   situationalWindowIds: readonly string[];
   observedExitItemIds: readonly number[];
   normalizedTiming: readonly number[];
@@ -120,6 +135,7 @@ export function mineBuildArchetypesV1(
         representativeActionIds: medoid.actionIds,
         representativeInitialOwnedItemIds: medoid.initialOwnedItemIds,
         representativeSlotRules: cloneSlotRules(medoid.slotRules),
+        representativeTrajectory: medoid.trajectory,
         orderedGoalTargets: medoid.orderedGoalTargets,
         orderedGoalIds: medoid.orderedGoalIds,
         orderedTargetItemIds: medoid.orderedTargetItemIds,
@@ -181,6 +197,7 @@ function normalizeObservation(input: BuildArchetypeObservationV1): NormalizedObs
       itemIds: [...new Set(itemIds)].sort((left, right) => left - right),
     }))
     .sort((left, right) => left.groupId.localeCompare(right.groupId));
+  const branchProofs = buildBranchProofs(input.trajectory, committedChoices);
   const situationalWindowIds = input.trajectory.terminalContract.situationalWindowStates
     .filter((window) => window.state === 'OPEN' || window.state === 'RESOLVED')
     .map((window) => window.windowId)
@@ -209,6 +226,7 @@ function normalizeObservation(input: BuildArchetypeObservationV1): NormalizedObs
     rulesetId: input.rulesetId,
     catalogSha256: input.catalogSha256.toLowerCase(),
     decisionId: input.trajectory.decisionId,
+    trajectory: input.trajectory,
     actionIds: input.trajectory.steps
       .filter((step) => step.actionType !== 'WAIT_SAVE')
       .map((step) => step.actionId),
@@ -219,10 +237,30 @@ function normalizeObservation(input: BuildArchetypeObservationV1): NormalizedObs
     orderedTargetItemIds,
     terminalItemIds,
     committedChoices,
+    branchProofs,
     situationalWindowIds,
     observedExitItemIds,
     normalizedTiming,
   };
+}
+
+function buildBranchProofs(
+  trajectory: PlannerTrajectoryV2,
+  committedChoices: readonly { groupId: string; itemIds: readonly number[] }[],
+): readonly NormalizedBranchProofV1[] {
+  const orderedSteps = [...trajectory.steps].sort((left, right) => left.index - right.index);
+  return committedChoices.map((choice) => {
+    const groupSteps = orderedSteps.filter((step) =>
+      step.goalId === choice.groupId && step.actionType !== 'WAIT_SAVE',
+    );
+    return {
+      groupId: choice.groupId,
+      itemIds: [...choice.itemIds],
+      representativeDecisionId: trajectory.decisionId,
+      beforeOwnedItemIds: [...(groupSteps[0]?.beforeOwnedItemIds ?? trajectory.initialOwnedItemIds)],
+      actionIds: groupSteps.map((step) => step.actionId),
+    };
+  });
 }
 
 function completeLinkageClusters(
@@ -295,23 +333,40 @@ function observationDistance(left: NormalizedObservationV1, right: NormalizedObs
 function aggregateBranchAlternatives(
   cluster: readonly NormalizedObservationV1[],
 ): readonly BuildArchetypeBranchAlternativesV1[] {
-  const byGroup = new Map<string, Map<string, readonly number[]>>();
+  const byGroup = new Map<
+    string,
+    Map<string, { itemIds: readonly number[]; proof: BuildArchetypeBranchAlternativeProofV1 }>
+  >();
   for (const observation of cluster) {
-    for (const choice of observation.committedChoices) {
-      const itemIds = [...new Set(choice.itemIds)].sort((left, right) => left - right);
+    for (const proof of observation.branchProofs) {
+      const itemIds = [...new Set(proof.itemIds)].sort((left, right) => left - right);
       if (itemIds.length === 0) continue;
-      const alternatives = byGroup.get(choice.groupId) ?? new Map<string, readonly number[]>();
-      alternatives.set(itemIds.join(','), itemIds);
-      byGroup.set(choice.groupId, alternatives);
+      const alternatives = byGroup.get(proof.groupId) ?? new Map();
+      const signature = itemIds.join(',');
+      const existing = alternatives.get(signature);
+      const normalizedProof: BuildArchetypeBranchAlternativeProofV1 = {
+        itemIds,
+        representativeDecisionId: proof.representativeDecisionId,
+        beforeOwnedItemIds: [...new Set(proof.beforeOwnedItemIds)].sort((left, right) => left - right),
+        actionIds: [...proof.actionIds],
+      };
+      if (!existing || normalizedProof.representativeDecisionId < existing.proof.representativeDecisionId) {
+        alternatives.set(signature, { itemIds, proof: normalizedProof });
+      }
+      byGroup.set(proof.groupId, alternatives);
     }
   }
 
   return [...byGroup.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([groupId, alternatives]) => ({
-      groupId,
-      alternatives: [...alternatives.values()].sort(compareNumberArrays),
-    }));
+    .map(([groupId, alternatives]) => {
+      const ordered = [...alternatives.values()].sort((left, right) => compareNumberArrays(left.itemIds, right.itemIds));
+      return {
+        groupId,
+        alternatives: ordered.map((entry) => entry.itemIds),
+        proofs: ordered.map((entry) => entry.proof),
+      };
+    });
 }
 
 function compareNumberArrays(left: readonly number[], right: readonly number[]): number {
