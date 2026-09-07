@@ -58,6 +58,11 @@ export interface AdaptiveReplayStateV1 {
   shopOpportunity: AdaptiveReplayObservedFactV1<ShopOpportunity>;
 }
 
+export interface AdaptiveReplayEnemyHeroV1 {
+  heroId: number;
+  heroName?: string;
+}
+
 export interface AdaptiveReplayDecisionV1 {
   state: AdaptiveReplayStateV1;
   itemDefinitions: readonly RecommendationItemDefinition[];
@@ -70,6 +75,8 @@ export interface AdaptiveReplayDecisionV1 {
   /** Optional so replay inputs persisted before strategy context remain readable. */
   allyHeroIds?: readonly number[];
   enemyHeroIds: readonly number[];
+  /** Optional so replay inputs persisted before live enemy hero names remain readable. */
+  enemyHeroes?: readonly AdaptiveReplayEnemyHeroV1[];
   /** Optional so replay inputs persisted before item-context scoring remain readable. */
   allyItemIds?: readonly number[];
   enemyItemIds?: readonly number[];
@@ -290,6 +297,7 @@ function serializeDecision(decision: AdaptiveDecisionStateV1): AdaptiveReplayDec
     localSteamId: decision.localSteamId,
     allyHeroIds: [...decision.allyHeroIds].sort((a, b) => a - b),
     enemyHeroIds: [...decision.enemyHeroIds].sort((a, b) => a - b),
+    enemyHeroes: normalizeEnemyHeroes(decision.enemyHeroes, decision.enemyHeroIds),
     allyItemIds: [...decision.allyItemIds].sort((a, b) => a - b),
     enemyItemIds: [...decision.enemyItemIds].sort((a, b) => a - b),
     ourTeamSouls: decision.ourTeamSouls,
@@ -333,6 +341,7 @@ function reconstructDecision(input: AdaptiveReplayDecisionV1): AdaptiveDecisionS
     itemGraph,
     economyRules,
   );
+  const enemyHeroIds = [...new Set(input.enemyHeroIds)].sort((a, b) => a - b);
   return {
     state,
     itemGraph,
@@ -341,7 +350,8 @@ function reconstructDecision(input: AdaptiveReplayDecisionV1): AdaptiveDecisionS
     rulesetId: input.rulesetId,
     localSteamId: input.localSteamId,
     allyHeroIds: sortedNumbers(input.allyHeroIds ?? []),
-    enemyHeroIds: sortedNumbers(input.enemyHeroIds),
+    enemyHeroIds,
+    enemyHeroes: normalizeEnemyHeroes(input.enemyHeroes, enemyHeroIds),
     allyItemIds: sortedNumbers(input.allyItemIds ?? []),
     enemyItemIds: sortedNumbers(input.enemyItemIds ?? []),
     ourTeamSouls: input.ourTeamSouls,
@@ -377,6 +387,25 @@ function isCanonicalReplaySlotStateV1(value: unknown): value is AdaptiveSlotStat
   return allSlotTypesValid(value.baseSlotsByType) && allSlotTypesValid(value.usedSlotsByType) &&
     allSlotTypesValid(value.overflowByType) && allSlotTypesValid(value.freeBaseSlotsByType) &&
     (value.evidence === 'OBSERVED' || value.evidence === 'RECONSTRUCTED' || value.evidence === 'UNKNOWN');
+}
+
+function normalizeEnemyHeroes(
+  supplied: readonly AdaptiveReplayEnemyHeroV1[] | undefined,
+  enemyHeroIds: readonly number[],
+): readonly AdaptiveReplayEnemyHeroV1[] {
+  const allowed = new Set(enemyHeroIds.filter((heroId) => Number.isInteger(heroId)));
+  const byHeroId = new Map<number, AdaptiveReplayEnemyHeroV1>();
+  for (const entry of supplied ?? []) {
+    if (!Number.isInteger(entry?.heroId) || !allowed.has(entry.heroId)) continue;
+    const heroName = typeof entry.heroName === 'string' && entry.heroName.trim()
+      ? entry.heroName.trim()
+      : undefined;
+    byHeroId.set(entry.heroId, heroName ? { heroId: entry.heroId, heroName } : { heroId: entry.heroId });
+  }
+  for (const heroId of [...allowed].sort((a, b) => a - b)) {
+    if (!byHeroId.has(heroId)) byHeroId.set(heroId, { heroId });
+  }
+  return [...byHeroId.values()].sort((a, b) => a.heroId - b.heroId);
 }
 
 function normalizeReplayInvestmentStateV1(
