@@ -117,16 +117,22 @@ function compileGoals(
 ): BuildStrategyGoalV1[] {
   const goalTargets = new Map<string, number[]>();
   const goalOrder: string[] = [];
-  const count = Math.max(archetype.orderedGoalIds.length, archetype.orderedTargetItemIds.length);
-  for (let index = 0; index < count; index += 1) {
-    const goalId = archetype.orderedGoalIds[index];
-    const targetItemId = archetype.orderedTargetItemIds[index];
-    if (!goalId || targetItemId === undefined) continue;
-    if (!availableItemIds.has(targetItemId)) throw new Error(`STRATEGY_TARGET_INVALID:${targetItemId}`);
-    if (!goalTargets.has(goalId)) goalOrder.push(goalId);
-    const targets = goalTargets.get(goalId) ?? [];
-    if (!targets.includes(targetItemId)) targets.push(targetItemId);
-    goalTargets.set(goalId, targets);
+  const pairs = archetype.orderedGoalTargets?.length
+    ? archetype.orderedGoalTargets
+    : archetype.orderedGoalIds.map((goalId, index) => ({
+        goalId,
+        targetItemId: archetype.orderedTargetItemIds[index],
+      })).filter((entry): entry is { goalId: string; targetItemId: number } =>
+        Number.isSafeInteger(entry.targetItemId) && entry.targetItemId > 0,
+      );
+
+  for (const pair of pairs) {
+    if (!pair.goalId.trim()) continue;
+    if (!availableItemIds.has(pair.targetItemId)) throw new Error(`STRATEGY_TARGET_INVALID:${pair.targetItemId}`);
+    if (!goalTargets.has(pair.goalId)) goalOrder.push(pair.goalId);
+    const targets = goalTargets.get(pair.goalId) ?? [];
+    if (!targets.includes(pair.targetItemId)) targets.push(pair.targetItemId);
+    goalTargets.set(pair.goalId, targets);
   }
 
   return goalOrder.map((goalId, index) => ({
@@ -156,9 +162,10 @@ function validateCanonicalFeasibility(
     allowSellOnlyActions: true,
     generateTargetedWaitActions: true,
   };
+  const transactionActionIds = archetype.representativeActionIds.filter(isTransactionActionId);
   const validatedActionIds: string[] = [];
 
-  for (const actionId of archetype.representativeActionIds) {
+  for (const actionId of transactionActionIds) {
     const candidate = generateRecommendationCandidates({ state, itemGraph: graph, rules })
       .find((entry) => entry.actionId === actionId && entry.feasible && entry.recommendationEligible);
     if (!candidate) throw new Error(`STRATEGY_FEASIBILITY_ACTION_NOT_EXECUTABLE:${actionId}`);
@@ -174,9 +181,9 @@ function validateCanonicalFeasibility(
     ),
   ).length;
   const mandatoryGoalCoverage = hardGoals.length === 0 ? 1 : satisfiedHardGoals / hardGoals.length;
-  const actionCoverage = archetype.representativeActionIds.length === 0
+  const actionCoverage = transactionActionIds.length === 0
     ? 1
-    : validatedActionIds.length / archetype.representativeActionIds.length;
+    : validatedActionIds.length / transactionActionIds.length;
   const terminalSatisfied = terminalItemIds.every((itemId) =>
     graph.isTargetSatisfied(itemId, terminalOwnedItemIds),
   );
@@ -215,7 +222,9 @@ function syntheticFeasibilityState(
     inventory: {
       initializedFromSnapshot: true,
       heldByItemId,
-      lifecycleCountByItemId: new Map(initialOwnedItemIds.map((itemId) => [itemId, 1])),
+      lifecycleCountByItemId: new Map<number, number>(
+        initialOwnedItemIds.map((itemId): [number, number] => [itemId, 1]),
+      ),
       nextInstanceSequence: heldByItemId.size + 1,
     },
     economy: {
@@ -223,6 +232,13 @@ function syntheticFeasibilityState(
       shopOpportunity: observedFact('AVAILABLE' as const, 'strategy-feasibility'),
     },
   };
+}
+
+function isTransactionActionId(actionId: string): boolean {
+  return actionId.startsWith('BUY_ITEM:') ||
+    actionId.startsWith('UPGRADE_ITEM:') ||
+    actionId.startsWith('SELL_ITEM:') ||
+    actionId.startsWith('REPLACE_ITEM:');
 }
 
 function inferGoalType(goalId: string): BuildStrategyGoalV1['type'] {
