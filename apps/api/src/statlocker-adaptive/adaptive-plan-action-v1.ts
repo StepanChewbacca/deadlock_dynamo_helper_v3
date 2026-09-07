@@ -36,7 +36,20 @@ export function buildAdaptivePlanActionsV1(
   let projectedState: RecommendationDecisionState = input.decision.state;
   let projectionBlocked = false;
 
+  const preparatory = compilePreparatoryTransaction(input, projectedState, actions.length + 1);
+  if (preparatory) {
+    actions.push(preparatory.action);
+    projectedState = applyRecommendationCandidateTransitionV1(
+      projectedState,
+      preparatory.candidate,
+      input.decision.itemGraph,
+    ).state;
+  }
+
   for (const row of rows) {
+    if (input.decision.itemGraph.isTargetSatisfied(row.itemId, projectedState.inventory.heldByItemId.keys())) {
+      continue;
+    }
     const sequence = actions.length + 1;
     const compiled = compileTargetAction(
       input,
@@ -74,6 +87,50 @@ export function buildAdaptivePlanActionsV1(
   }
 
   return dedupePlanActionIds(actions);
+}
+
+function compilePreparatoryTransaction(
+  input: BuildAdaptivePlanActionsInputV1,
+  state: RecommendationDecisionState,
+  sequence: number,
+): { action: AdaptivePlanActionV1; candidate: RecommendationCandidate } | undefined {
+  if (input.nextAction.type !== 'SELL' && input.nextAction.type !== 'REPLACE') return undefined;
+
+  const rules = candidateRules(input.decision);
+  const candidate = generateRecommendationCandidates({
+    state,
+    itemGraph: input.decision.itemGraph,
+    rules,
+  }).find((entry) =>
+    entry.actionId === input.nextAction.actionKey && entry.feasible && entry.recommendationEligible,
+  );
+  if (!candidate) return undefined;
+
+  const semanticTargetItemId = targetItemIdForAdaptiveAction(input.nextAction);
+  const mapped = mapCandidateAction(candidate, semanticTargetItemId ?? candidateTargetItemId(candidate) ?? 0);
+  const adaptiveAction: AdaptiveActionV1 = {
+    ...mapped,
+    ...(semanticTargetItemId === undefined ? {} : { targetItemId: semanticTargetItemId }),
+    reasonCodes: uniqueStrings([...mapped.reasonCodes, ...input.nextAction.reasonCodes]),
+  };
+  return {
+    candidate,
+    action: {
+      planActionId: stablePlanActionId(input.stateRevision, sequence, adaptiveAction.actionKey),
+      sequence,
+      status: 'READY',
+      action: adaptiveAction,
+      targetItemId: semanticTargetItemId ?? candidateTargetItemId(candidate),
+      sourceItemIds: sourceItemIdsForCandidate(candidate),
+      requirements: derivePlanRequirements(state, candidate, input.decision, rules),
+      reasonCodes: uniqueStrings([
+        ...adaptiveAction.reasonCodes,
+        ...candidate.reasons,
+        ...candidate.recommendationSuppressionReasons,
+      ]),
+      situational: situationalForTarget(input, semanticTargetItemId, adaptiveAction.actionKey),
+    },
+  };
 }
 
 function compileTargetAction(
@@ -288,6 +345,20 @@ function mapCandidateAction(candidate: RecommendationCandidate, finalTargetItemI
         targetItemId: candidate.action.targetItemId,
         reasonCodes: ['WAIT_FOR_REQUIREMENTS'],
       };
+  }
+}
+
+function candidateTargetItemId(candidate: RecommendationCandidate): number | undefined {
+  switch (candidate.action.type) {
+    case 'BUY_ITEM':
+    case 'UPGRADE_ITEM':
+      return candidate.action.itemId;
+    case 'REPLACE_ITEM':
+      return candidate.action.buyItemId;
+    case 'WAIT_SAVE':
+      return candidate.action.targetItemId;
+    case 'SELL_ITEM':
+      return undefined;
   }
 }
 
