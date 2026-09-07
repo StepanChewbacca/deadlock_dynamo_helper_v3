@@ -109,18 +109,28 @@ export class AdaptiveRecommendationV1Service {
       : this.evidence.getLocalEvidence(evidenceRequest);
     this.observability.recordEvidence(localEvidence);
 
-    let plannedBundle = localEvidence.usable &&
+    let plannerUnavailable = false;
+    let plannedBundle: PlannedRecommendationV1 | undefined;
+    if (localEvidence.usable &&
       initial.economyRulesEvidence !== 'UNKNOWN' &&
-      initial.slots?.mechanicsEvidence !== 'UNKNOWN'
-      ? this.planWithSituational(
+      initial.slots?.mechanicsEvidence !== 'UNKNOWN') {
+      try {
+        plannedBundle = this.planWithSituational(
           initial,
           localEvidence,
           previous,
           initialDelta.purchasedItemIds,
           initialDelta.soldItemIds,
           false,
-        )
-      : undefined;
+        );
+      } catch (error) {
+        plannerUnavailable = true;
+        this.observability.recordEvidence({
+          ...localEvidence,
+          degradedReasons: [...localEvidence.degradedReasons, `PLANNER_UNAVAILABLE:${error instanceof Error ? error.message : 'UNKNOWN'}`],
+        });
+      }
+    }
 
     const fresh = await this.decisionState.build(request.matchId, request.localSteamId);
     const freshDelta = deriveInventoryDeltaV1(
@@ -129,14 +139,19 @@ export class AdaptiveRecommendationV1Service {
       fresh.itemGraph,
     );
     if (localEvidence.usable && plannedBundle && fresh.stateRevision !== initial.stateRevision) {
-      plannedBundle = this.planWithSituational(
-        fresh,
-        localEvidence,
-        previous,
-        freshDelta.purchasedItemIds,
-        freshDelta.soldItemIds,
-        true,
-      );
+      try {
+        plannedBundle = this.planWithSituational(
+          fresh,
+          localEvidence,
+          previous,
+          freshDelta.purchasedItemIds,
+          freshDelta.soldItemIds,
+          true,
+        );
+      } catch (error) {
+        plannerUnavailable = true;
+        plannedBundle = undefined;
+      }
     }
     const planned = plannedBundle?.planned;
     const situationalByTargetItemId = plannedBundle?.situationalByTargetItemId ?? new Map();
@@ -156,6 +171,7 @@ export class AdaptiveRecommendationV1Service {
     );
 
     const blockers = new Set<string>(localEvidence.degradedReasons);
+    if (plannerUnavailable) blockers.add('STRATEGY_OUT_OF_DISTRIBUTION');
     if (fresh.economyRulesEvidence === 'UNKNOWN') blockers.add('RULESET_ECONOMY_MECHANICS_UNKNOWN');
     if (fresh.slots?.mechanicsEvidence === 'UNKNOWN') blockers.add('SLOT_MECHANICS_UNKNOWN');
     if (fresh.slots?.flexEvidence === 'UNKNOWN') blockers.add('FLEX_CAPACITY_UNKNOWN');
