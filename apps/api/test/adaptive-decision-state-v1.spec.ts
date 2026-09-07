@@ -11,6 +11,7 @@ const matchState: MinimalMatchState = {
       playerName: 'Local',
       isLocal: true,
       heroId: 10,
+      heroName: 'Local Hero',
       teamId: 1,
       souls: 2000,
       items: [{ id: 1, name: 'Owned', className: 'owned', enhanced: false }],
@@ -19,6 +20,7 @@ const matchState: MinimalMatchState = {
       steamId: 'ally',
       playerName: 'Ally',
       heroId: 11,
+      heroName: 'Ally Hero',
       teamId: 1,
       souls: 3000,
       items: [],
@@ -27,6 +29,7 @@ const matchState: MinimalMatchState = {
       steamId: 'enemy-b',
       playerName: 'Enemy B',
       heroId: 30,
+      heroName: 'Enemy Thirty',
       teamId: 2,
       souls: 5000,
       items: [],
@@ -35,6 +38,7 @@ const matchState: MinimalMatchState = {
       steamId: 'enemy-a',
       playerName: 'Enemy A',
       heroId: 20,
+      heroName: 'Enemy Twenty',
       teamId: 2,
       souls: 4000,
       items: [],
@@ -113,6 +117,10 @@ describe('AdaptiveDecisionStateV1Service', () => {
     expect(first.catalogSha256).toBe('a'.repeat(64));
     expect(first.state.gameTimeSec).toBe(600);
     expect(first.enemyHeroIds).toEqual([20, 30]);
+    expect(first.enemyHeroes).toEqual([
+      { heroId: 20, heroName: 'Enemy Twenty' },
+      { heroId: 30, heroName: 'Enemy Thirty' },
+    ]);
     expect(first.ourTeamSouls).toBe(5000);
     expect(first.enemyTeamSouls).toBe(9000);
     expect(first.slots.usedFlexSlots).toBe(0);
