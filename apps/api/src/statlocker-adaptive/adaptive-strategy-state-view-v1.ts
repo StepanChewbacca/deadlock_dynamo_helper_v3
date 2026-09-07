@@ -43,6 +43,7 @@ export function toAdaptiveStrategySessionViewV1(
   return {
     state: session.state,
     ...(session.strategyId === undefined ? {} : { strategyId: session.strategyId }),
+    ...(session.strategyPosterior === undefined ? {} : { strategyPosterior: session.strategyPosterior }),
     heroId: session.heroId,
     rulesetId: session.rulesetId,
     catalogSha256: session.catalogSha256,
