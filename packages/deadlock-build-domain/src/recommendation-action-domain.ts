@@ -69,6 +69,7 @@ export type RecommendationFeasibilityReason =
   | 'UNAFFORDABLE'
   | 'SLOT_LIMIT_EXCEEDED'
   | 'FLEX_SLOT_CAPACITY_UNKNOWN'
+  | 'ACTIVE_ITEM_CAPACITY_UNKNOWN'
   | 'ACTIVE_ITEM_LIMIT_EXCEEDED'
   | 'MISSING_UPGRADE_COMPONENT'
   | 'ITEM_NOT_OWNED'
@@ -77,7 +78,10 @@ export type RecommendationFeasibilityReason =
 
 export type RecommendationSuppressionReason =
   | 'TARGET_SATISFIED_BY_OWNED_UPGRADE'
-  | 'LINEAGE_DOWNGRADE';
+  | 'LINEAGE_DOWNGRADE'
+  | 'OWNED_COMPONENT_REQUIRES_UPGRADE_PATH'
+  | 'UPGRADE_TRANSACTION_MECHANICS_UNKNOWN'
+  | 'DIRECT_PURCHASE_MODE_UNKNOWN';
 
 export interface RecommendationCandidateEvidence {
   spendableSouls: FactEvidence;

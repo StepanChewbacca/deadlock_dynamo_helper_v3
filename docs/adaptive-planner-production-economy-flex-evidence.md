@@ -1,31 +1,17 @@
 # Adaptive planner production economy and flex evidence
 
-The adaptive planner uses item costs, item slot types, and upgrade recipe topology only from the
-strict catalog compiled by `AdaptiveDecisionStateV1Service`. Catalog identity is the exact pair of
-`rulesetId` and `catalogSha256` (`RecommendationItemCatalogVersionV1.payloadSha256`). An economy
-rule entry is usable only when both values match exactly; there is no wildcard, ruleset-only, or
-catalog-only fallback.
+The adaptive planner treats economy and inventory mechanics as ruleset-scoped executable data, not universal constants. The authoritative runtime scope is the exact pair `rulesetId + catalogSha256` (`RecommendationItemCatalogVersionV1.payloadSha256`). An economy rule entry is usable only when both values match exactly. There is no wildcard, ruleset-only, or catalog-only fallback.
 
-The checked live-state contract is `MinimalMatchState` and `MinimalPlayerState` in
-`packages/shared/src/live-events.ts`, populated through
-`apps/api/src/deadlock-live/live-match-state.service.ts` from Overwolf events. The separately
-checked GEP reducer contract is `packages/shared/src/gep-canonical-v2.ts`. Neither contract
-exposes an authoritative objective-progress or flex-unlock count. The current catalog entities
-provide item identity, costs, types, and recipe edges; they do not provide an authoritative
-investment breakpoint or contribution table.
+`AdaptiveDecisionStateV1Service` compiles the strict item catalog first, then resolves an exact `RecommendationEconomyRulesV1` entry. Production registry data is loaded from `ADAPTIVE_RECOMMENDATION_ECONOMY_RULES_JSON`. Each accepted entry contains category base slots, maximum flex slots, maximum active-item capacity, investment breakpoints, and optionally an explicit upgrade-pricing policy. Invalid or partial entries are discarded instead of being repaired with guessed defaults.
 
-Accordingly, production deliberately registers no economy rules in
-`VERIFIED_RECOMMENDATION_ECONOMY_RULES_V1`. The decision state reports
-`economyRulesEvidence: 'UNKNOWN'`, investment evidence is `UNKNOWN` with zero investment utility,
-and flex evidence is `UNKNOWN`. This is not a claim that three flex slots are unlocked.
+If no exact economy rule exists, slot mechanics fail closed through `UNKNOWN_ADAPTIVE_SLOT_RULES_V1`: category base slots, flex maximum, and active-item maximum are not treated as known production capacity. `economyRulesEvidence` is `UNKNOWN`, investment evidence is `UNKNOWN`, and transactions that require unproved additional capacity are blocked. Existing inventory is still accepted as observed state; unknown capacity must not invalidate an unchanged or capacity-reducing transaction.
 
-Slot accounting is universal: nine base slots and at most three flex slots. Item category remains
-an item semantic used for investment only; it is not a 4/4/4 capacity model. With unknown flex
-telemetry, held inventory proves only its present overflow above nine (0 at nine held, 1 at ten,
-2 at eleven, and 3 at twelve). It never proves free flex capacity, so new transactions requiring
-additional flex are rejected until a future authoritative source supplies OBSERVED or
-RECONSTRUCTED capacity.
+Base-slot accounting is category-aware. The runtime uses `baseSlotsByType.weapon`, `baseSlotsByType.vitality`, and `baseSlotsByType.spirit` from the exact ruleset entry. The deprecated aggregate `baseSlots` exists only for compatibility and is not an authoritative production mechanic. Candidate legality computes flex usage as the sum of overflow above the exact base capacity of each item category.
 
-Fixture-injected exact rules remain supported for deterministic tests and a future verified data
-source. They reconstruct investment from direct costs and recursive recipes, including consumed
-components, but they do not relax candidate legality or override higher-priority counter evidence.
+Flex capacity is distinct from the ruleset maximum. `MinimalMatchState` may carry `unlockedFlexSlots` only when `LiveMatchStateService` observes one of the explicit live flex fields (`flex_slots`, `unlocked_flex_slots`, or `flex_slot_count`). The service does not infer unlocks from objectives, item count, game time, or the configured maximum. When flex evidence is unknown, current overflow is only a lower bound; a transaction that increases overflow is rejected with `FLEX_SLOT_CAPACITY_UNKNOWN`.
+
+Active-item capacity follows the same evidence rule. An unknown numeric fallback must never block an unrelated action that leaves active-item usage unchanged or reduces it. A transaction that increases active-item usage requires authoritative reconstructed mechanics; otherwise it is rejected with `ACTIVE_ITEM_CAPACITY_UNKNOWN`. With exact mechanics, `ACTIVE_ITEM_LIMIT_EXCEEDED` is used only when the resulting active count exceeds the ruleset maximum.
+
+Upgrade topology and upgrade transaction pricing are separate concerns. Recipe edges can preserve lineage even when executable pricing is unavailable. An upgrade becomes executable only when its transaction mechanics are known either directly from enrichment or through an explicitly pinned `upgradePricingPolicy`. Derived prices are never silently clamped or guessed. When an owned component proves lineage but the executable upgrade transaction is unknown, direct purchase/replacement shortcuts are suppressed rather than selling an unrelated item to imitate an upgrade.
+
+Investment reconstruction is enabled only for an exact economy-rule scope. Direct costs and executable recursive recipes contribute according to that pinned ruleset data. Investment state never relaxes candidate legality, never manufactures flex capacity, and never overrides canonical inventory transitions.

@@ -1,7 +1,6 @@
 import { createRecommendationItemGraph, buildInventoryInstancesForRecommendation, observedFact } from '@deadlock-live-probe/build-domain';
 import { StrategyFirstAdaptivePlannerFacadeV1Service } from '../src/statlocker-adaptive/strategy-first-adaptive-planner-facade-v1.service';
 import { BuildStrategyRegistryV1Service } from '../src/statlocker-adaptive/build-strategy-registry-v1.service';
-import { ConsensusStrategyFallbackV1Service } from '../src/statlocker-adaptive/consensus-strategy-fallback-v1.service';
 import { StrategyFirstBuildPlannerV1Service } from '../src/statlocker-adaptive/strategy-first-build-planner-v1.service';
 import { deriveAdaptiveSlotStateV1, unknownAdaptiveInvestmentStateV1 } from '../src/statlocker-adaptive/adaptive-economy-v1';
 
@@ -28,29 +27,15 @@ function facade(): StrategyFirstAdaptivePlannerFacadeV1Service {
   return new StrategyFirstAdaptivePlannerFacadeV1Service(
     new StrategyFirstBuildPlannerV1Service(fakeScorer),
     new BuildStrategyRegistryV1Service(),
-    new ConsensusStrategyFallbackV1Service(),
   );
 }
 
 describe('strategy-first adaptive planner facade v1', () => {
-  it('uses a structured consensus fallback when no mined strategy snapshot exists yet', () => {
-    const result = facade().plan({ decision: decision([]), evidence });
-    expect(result.strategy.strategyId).toContain('consensus-fallback');
-    expect(result.nextAction.type).toBe('BUY');
+  it('fails closed when no exact strategy snapshot exists', () => {
+    expect(() => facade().plan({ decision: decision([]), evidence })).toThrow('STRATEGY_OUT_OF_DISTRIBUTION');
   });
 
-  it('returns HOLD with no actionable rows after the strategy contract is complete', () => {
-    const result = facade().plan({ decision: decision([1]), evidence });
-
-    expect(result.contract.status).toBe('COMPLETE');
-    expect(result.nextAction).toEqual({
-      actionKey: 'HOLD',
-      type: 'HOLD',
-      reasonCodes: ['PLAN_SESSION_CREATED', 'TRANSACTION_PLAN_COMPLETE'],
-    });
-    expect(result.recommendedBuild).toEqual([
-      expect.objectContaining({ itemId: 1, status: 'OWNED' }),
-    ]);
-    expect(result.recommendedBuild.some((item) => item.status === 'NEXT' || item.status === 'PLANNED')).toBe(false);
+  it('fails closed for a complete-state fixture without an exact strategy snapshot', () => {
+    expect(() => facade().plan({ decision: decision([1]), evidence })).toThrow('STRATEGY_OUT_OF_DISTRIBUTION');
   });
 });

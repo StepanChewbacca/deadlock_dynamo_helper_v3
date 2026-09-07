@@ -4,7 +4,6 @@ import { AdaptiveDecisionStateV1 } from './adaptive-decision-state-v1.service';
 import { AdaptiveRecommendationObservabilityV1Service } from './adaptive-recommendation-observability-v1.service';
 import { diffAdaptiveBuildPlansV1 } from './build-plan-diff-v1';
 import { BuildStrategyRegistryV1Service } from './build-strategy-registry-v1.service';
-import { ConsensusStrategyFallbackV1Service } from './consensus-strategy-fallback-v1.service';
 import {
   StrategyFirstBuildPlannerV1Result,
   StrategyFirstBuildPlannerV1Service,
@@ -12,7 +11,6 @@ import {
 import { BuildContractV1 } from './build-strategy-v1';
 import { BuildStrategySessionV1 } from './build-strategy-session-v1.service';
 import { StatlockerEvidenceBundleV1 } from './statlocker-evidence.service';
-import { ConsensusSkeletonV1 } from './statlocker-adaptive.types';
 import { StrategyFirstSituationalOverlayV1Service } from './strategy-first-situational-overlay-v1.service';
 import {
   StrategyFirstInvariantCheckV1,
@@ -46,7 +44,6 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
   constructor(
     private readonly planner: StrategyFirstBuildPlannerV1Service,
     private readonly registry: BuildStrategyRegistryV1Service,
-    private readonly fallback: ConsensusStrategyFallbackV1Service,
     @Optional() private readonly situational?: StrategyFirstSituationalOverlayV1Service,
     @Optional() private readonly observability?: AdaptiveRecommendationObservabilityV1Service,
     @Optional() private readonly transactionPlan?: StrategyFirstTransactionPlanV1Service,
@@ -131,14 +128,7 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
       input.evidence.statlockerPatchId,
     );
     if (strategies.length === 0) {
-      const skeleton = asSkeleton(input.evidence.byDataset.CONSENSUS_SKELETON.payload, input.decision.state.heroId);
-      if (!skeleton) throw new Error('No strategy snapshot or structured consensus fallback is available');
-      strategies = [this.fallback.compile(
-        skeleton,
-        input.decision.itemGraph,
-        input.decision.rulesetId,
-        input.evidence.statlockerPatchId,
-      )];
+      throw new Error('STRATEGY_OUT_OF_DISTRIBUTION: no exact strategy snapshot for decision scope');
     }
 
     const previousSession = previousStrategySession(input.previousResult);
@@ -406,13 +396,6 @@ function previousBuildContract(
     remainingHardGoalIds: [...(strategy.remainingGoalIds ?? [])],
     completionReasonCodes: [],
   };
-}
-
-function asSkeleton(value: unknown, heroId: number): ConsensusSkeletonV1 | undefined {
-  if (!value || typeof value !== 'object') return undefined;
-  const skeleton = value as Partial<ConsensusSkeletonV1>;
-  if (skeleton.heroId !== heroId || !Array.isArray(skeleton.groups)) return undefined;
-  return skeleton as ConsensusSkeletonV1;
 }
 
 function unique(values: readonly string[]): string[] {

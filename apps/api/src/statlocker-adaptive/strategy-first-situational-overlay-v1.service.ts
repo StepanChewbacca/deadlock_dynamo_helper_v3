@@ -80,7 +80,7 @@ export class StrategyFirstSituationalOverlayV1Service {
             investmentImpact: 0,
             coreInterruptionSouls: Math.max(0, candidate.effectiveCostSouls),
             enemyHeroIds: [...input.decision.enemyHeroIds],
-            enemyItemIds: [...input.decision.enemyItemIds],
+            enemyItemIds: [...(input.decision.enemyItemIds ?? [])],
             reasonCodes: [`SITUATIONAL_PURPOSE:${purpose}`],
           });
         }

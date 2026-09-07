@@ -226,9 +226,8 @@ describe('AdaptiveBuildPlannerV1Service committed choice replacement', () => {
       evidence: evidence(group, { 1: 0, 2: 0.9 }),
     });
 
-    expect(result.nextAction.type).toBe('REPLACE');
+    expect(result.nextAction.type).toBe('SELL');
     expect(result.nextAction.sellItemId).toBe(1);
-    expect(result.nextAction.buyItemId).toBe(2);
     expect(result.recommendedBuild.find((item) => item.itemId === 2)?.status).toBe('NEXT');
   });
 

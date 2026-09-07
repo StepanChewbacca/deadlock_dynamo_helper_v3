@@ -2,7 +2,7 @@ import {
   RecommendationCandidate,
   RecommendationDecisionState,
   RecommendationItemGraph,
-  projectRecommendationCandidateState,
+  applyRecommendationCandidateTransitionV1,
 } from '@deadlock-live-probe/build-domain';
 import {
   AdaptiveInvestmentStateV1,
@@ -82,19 +82,20 @@ export function createAdaptivePlannerNodeV1(input: {
 export function projectPlannerCandidateV1(
   input: ProjectPlannerCandidateInputV1,
 ): ProjectPlannerCandidateResultV1 {
-  const projectedDecision = projectRecommendationCandidateState(
+  const transition = applyRecommendationCandidateTransitionV1(
     input.node.decisionState,
     input.candidate,
     input.graph,
   );
+  const projectedDecision = transition.state;
   const projectedItemIds = [...projectedDecision.inventory.heldByItemId.keys()].sort((a, b) => a - b);
   const slotRules = input.economyRules
-    ? slotRulesFromEconomyRulesV1(input.economyRules)
-    : {
-        baseSlots: input.node.slots.baseSlots,
+      ? slotRulesFromEconomyRulesV1(input.economyRules)
+      : {
         baseSlotsByType: input.node.slots.baseSlotsByType,
         maxFlexSlots: input.node.slots.maxFlexSlots,
         maxActiveItems: input.node.slots.maxActiveItems,
+        evidence: input.node.slots.mechanicsEvidence,
       };
   const slots = deriveAdaptiveSlotStateV1(
     projectedItemIds,
@@ -102,7 +103,7 @@ export function projectPlannerCandidateV1(
     slotRules,
     {
       unlockedFlexSlots: input.node.slots.unlockedFlexSlots,
-      evidence: input.node.slots.evidence,
+      evidence: input.node.slots.flexEvidence,
     },
   );
   const investment = deriveAdaptiveInvestmentStateV1(projectedItemIds, input.graph, input.economyRules);

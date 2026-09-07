@@ -391,7 +391,8 @@ describe('Statlocker adaptive policy v1 integration', () => {
       matchId: h.match.matchId,
       localSteamId: 'local',
     });
-    expect(rebuiltRecommendation.recommendedBuild.some((item) => item.itemId !== 1)).toBe(true);
+    expect(rebuiltRecommendation.ready).toBe(false);
+    expect(rebuiltRecommendation.nextAction.type).toBe('ABSTAIN');
   });
 
   it('serves from deterministic local state/snapshots, persists a previous plan, and never lets evidence bypass legality', async () => {
@@ -409,9 +410,9 @@ describe('Statlocker adaptive policy v1 integration', () => {
 
     const result = await h.coordinator.recommend({ matchId: h.match.matchId, localSteamId: 'local' });
 
-    expect(result.ready).toBe(true);
+    expect(result.ready).toBe(false);
     expect(result.evidence.snapshotIds).toEqual([...result.evidence.snapshotIds].sort());
-    expect(['BUY', 'UPGRADE', 'SELL', 'REPLACE']).not.toContain(result.nextAction.type);
+    expect(result.nextAction.type).toBe('ABSTAIN');
     expect(result.rankedImmediateCandidates.every((candidate) =>
       !['BUY', 'UPGRADE', 'SELL', 'REPLACE'].includes(candidate.action.type),
     )).toBe(true);
@@ -419,8 +420,7 @@ describe('Statlocker adaptive policy v1 integration', () => {
     expect(h.refresh.enqueueHeroRefresh).not.toHaveBeenCalled();
 
     const previous = await h.replay.getPreviousPlan(h.match.matchId, 'local');
-    expect(previous?.decisionId).toBe(result.decisionId);
-    expect(previous?.recommendedBuild).toEqual(result.recommendedBuild);
+    expect(previous).toBeUndefined();
 
     const persisted = h.decisionRepo.rows[0];
     const replayA = h.replay.run(persisted.replayInput);

@@ -5,6 +5,7 @@ import {
   RecommendationCandidateGeneratorRules,
   RecommendationItemGraph,
   generateRecommendationCandidates,
+  resolveUpgradeExecutionPathV1,
 } from '@deadlock-live-probe/build-domain';
 import {
   AdaptiveActionV1,
@@ -19,6 +20,7 @@ import {
   AdaptiveChoiceResolverV1Service,
   choiceBranchCommitmentEvidenceItemIdsV1,
   componentClosureV1,
+  reconstructChoiceStateV1,
 } from './adaptive-choice-resolver-v1.service';
 import { AdaptiveDecisionStateV1 } from './adaptive-decision-state-v1.service';
 import {
@@ -52,6 +54,21 @@ import {
   phaseOrderV1,
 } from './structured-build-v1';
 import { AdaptiveRecommendationObservabilityV1Service } from './adaptive-recommendation-observability-v1.service';
+import {
+  BuildContractExecutionStateV1,
+  BuildContractV1,
+  BuildSituationalWindowStateV1,
+  BuildSlotReservationV1,
+  compileBuildContractV1,
+  createOutOfDistributionBuildContractV1,
+} from './build-contract-v1';
+import {
+  BuildStrategyGoalV1,
+  BuildStrategySpecV1,
+  compileStructuredConsensusStrategyV1,
+  filterRecommendationCandidatesForActiveGoalsV1,
+  resolveActiveBuildStrategyGoalsV1,
+} from './build-strategy-v1';
 
 export interface AdaptiveBuildPlannerInputV1 {
   decision: AdaptiveDecisionStateV1;
@@ -62,6 +79,7 @@ export interface AdaptiveBuildPlannerInputV1 {
   >;
   recentPurchasedItemIds?: readonly number[];
   recentSoldItemIds?: readonly number[];
+  situationalWindowStates?: readonly BuildSituationalWindowStateV1[];
   suppressObservability?: boolean;
 }
 
@@ -73,6 +91,7 @@ export interface AdaptiveBuildPlannerResultV1 {
   rankedImmediateCandidates: readonly AdaptiveScoredActionV1[];
   totalScore: number;
   confidence: number;
+  buildContract: BuildContractV1;
   plannerVersion: 'adaptive-build-planner-v1';
 }
 
@@ -166,10 +185,20 @@ export class AdaptiveBuildPlannerV1Service {
         rankedImmediateCandidates: [],
         totalScore: 0,
         confidence: 0,
+        buildContract: createOutOfDistributionBuildContractV1(['STRUCTURED_SKELETON_UNAVAILABLE']),
         plannerVersion: this.version,
       };
     }
 
+    const strategy = compileStructuredConsensusStrategyV1({
+      skeleton,
+      itemGraph: input.decision.itemGraph,
+      rulesetId: input.decision.rulesetId,
+      situationalWindows: (input.situationalWindowStates ?? []).map((window) => ({
+        windowId: window.windowId,
+        targetItemIds: window.targetItemIds,
+      })),
+    });
     const semantic = this.resolveSemanticPlan(
       input,
       skeleton,
@@ -190,6 +219,7 @@ export class AdaptiveBuildPlannerV1Service {
     const immediate = this.evaluateNodeCandidates(
       input,
       skeleton,
+      strategy,
       semantic,
       initialNode,
       baseScorerContext,
@@ -199,6 +229,7 @@ export class AdaptiveBuildPlannerV1Service {
     const bestNode = this.searchBestPath(
       input,
       skeleton,
+      strategy,
       semantic,
       initialNode,
       baseScorerContext,
@@ -217,9 +248,26 @@ export class AdaptiveBuildPlannerV1Service {
       candidateNextTarget,
     );
     const actualNextTarget = firstPlannedItem(proposedBuild);
-    const proposedAction = firstCandidate
+    const rawProposedAction = firstCandidate
       ? mapCandidateAction(firstCandidate, actualNextTarget, skeleton)
       : semanticNoTransactionAction('WAIT', undefined, actualNextTarget, skeleton);
+    const proposedContract = compilePlannerBuildContractV1(
+      input,
+      skeleton,
+      strategy,
+      semantic,
+      bestNode,
+      proposedBuild,
+      rawProposedAction,
+    );
+    const proposedAction = proposedContract.status === 'REPLAN_REQUIRED' && isAdaptiveTransactionAction(rawProposedAction)
+      ? {
+          actionKey: 'HOLD:BUILD_CONTRACT_REPLAN_REQUIRED',
+          type: 'HOLD' as const,
+          targetItemId: actualNextTarget,
+          reasonCodes: ['BUILD_CONTRACT_REPLAN_REQUIRED', ...proposedContract.replanReasonCodes],
+        }
+      : rawProposedAction;
     const proposedScore = bestNode.utility;
     const proposedConfidence = bestNode.actions.length > 0
       ? clamp01(bestNode.confidenceSum / bestNode.actions.length)
@@ -237,14 +285,25 @@ export class AdaptiveBuildPlannerV1Service {
     if (preservePrevious && previous) {
       const preservedBuild = rebasePlanAgainstOwnedInventory(previous.recommendedBuild, ownedItemIds);
       const preservedTarget = firstPlannedItem(preservedBuild);
+      const hold = semanticNoTransactionAction('HOLD', undefined, preservedTarget, skeleton);
+      const buildContract = compilePlannerBuildContractV1(
+        input,
+        skeleton,
+        strategy,
+        semantic,
+        bestNode,
+        preservedBuild,
+        hold,
+      );
       return {
         gameState,
-        nextAction: semanticNoTransactionAction('HOLD', undefined, preservedTarget, skeleton),
+        nextAction: hold,
         recommendedBuild: preservedBuild,
         changes: buildPlanChanges(previous.recommendedBuild, preservedBuild),
         rankedImmediateCandidates: immediate.map((entry) => entry.adaptive),
         totalScore: previous.totalScore,
         confidence: Math.min(previous.confidence, proposedConfidence || previous.confidence),
+        buildContract,
         plannerVersion: this.version,
       };
     }
@@ -257,6 +316,7 @@ export class AdaptiveBuildPlannerV1Service {
       rankedImmediateCandidates: immediate.map((entry) => entry.adaptive),
       totalScore: proposedScore,
       confidence: clamp01(Math.max(proposedConfidence, immediate[0]?.confidence ?? 0) * evidenceConfidenceFactor(input.evidence)),
+      buildContract: proposedContract,
       plannerVersion: this.version,
     };
   }
@@ -279,19 +339,39 @@ export class AdaptiveBuildPlannerV1Service {
     const replacementOptionsByGroup = new Map<string, readonly AdaptiveChoiceReplacementOptionV1[]>();
     const externallyDivergedGroupIds = new Set<string>();
     for (const group of skeleton.groups.filter((entry) => entry.type === 'CHOICE')) {
-      const previousSelectedItemIds = previousSelectedChoiceItems(input.previousResult?.recommendedBuild, group);
-      const resolved = this.choiceResolver.resolveChoice(group, {
-        scorerContext,
+      const eligibility = this.phaseEligibility.evaluateGroup(group, {
+        skeleton,
+        ownedItemIds: owned,
+        completedGroupIds,
+        gameTimeSec: input.decision.state.gameTimeSec,
+        gameState,
+        investment: input.decision.investment,
         itemGraph: input.decision.itemGraph,
-        ownedItemIds: [...owned],
-        previousSelectedItemIds,
       });
-      if (resolved.selectedItemIds.length > 0) {
-        selectedChoiceItemIdsByGroup.set(group.groupId, resolved.selectedItemIds);
-      }
-      if (resolved.committedItemIds.length > 0) {
-        committedChoiceItemIdsByGroup.set(group.groupId, resolved.committedItemIds);
-        for (const committedItemId of resolved.committedItemIds) {
+      const mayUseContextualScoring = eligibility === 'ELIGIBLE' || eligibility === 'COMPLETED';
+      const previousSelectedItemIds = previousSelectedChoiceItems(input.previousResult?.recommendedBuild, group);
+      const resolved = mayUseContextualScoring
+        ? this.choiceResolver.resolveChoice(group, {
+            scorerContext,
+            itemGraph: input.decision.itemGraph,
+            ownedItemIds: [...owned],
+            previousSelectedItemIds,
+          })
+        : undefined;
+      const reconstructed = resolved ?? reconstructChoiceStateV1(
+        group,
+        [...owned],
+        input.decision.itemGraph,
+      );
+      const selectedItemIds = resolved?.selectedItemIds ?? reconstructed.selectedItemIds;
+      const committedItemIds = resolved?.committedItemIds ?? reconstructed.committedItemIds;
+      const replacementOptions = resolved?.replacementOptions ?? [];
+      const externallyDiverged = resolved?.externallyDiverged ?? reconstructed.externallyDiverged;
+
+      if (selectedItemIds.length > 0) selectedChoiceItemIdsByGroup.set(group.groupId, selectedItemIds);
+      if (committedItemIds.length > 0) {
+        committedChoiceItemIdsByGroup.set(group.groupId, committedItemIds);
+        for (const committedItemId of committedItemIds) {
           for (const evidenceItemId of choiceBranchCommitmentEvidenceItemIdsV1(
             group,
             committedItemId,
@@ -302,10 +382,8 @@ export class AdaptiveBuildPlannerV1Service {
           }
         }
       }
-      if (resolved.replacementOptions.length > 0) {
-        replacementOptionsByGroup.set(group.groupId, resolved.replacementOptions);
-      }
-      if (resolved.externallyDiverged) {
+      if (replacementOptions.length > 0) replacementOptionsByGroup.set(group.groupId, replacementOptions);
+      if (externallyDiverged) {
         externallyDivergedGroupIds.add(group.groupId);
         if (!input.suppressObservability) {
           this.observability?.recordChoiceGroupViolationPrevented();
@@ -322,6 +400,7 @@ export class AdaptiveBuildPlannerV1Service {
         orderByItemId.set(candidate.itemId, groupIndex * 100 + candidateIndex);
       });
     });
+    const openSituationalTargets = openSituationalTargetIds(input.situationalWindowStates ?? []);
 
     for (const group of skeleton.groups) {
       const eligibility = this.phaseEligibility.evaluateGroup(group, {
@@ -333,6 +412,21 @@ export class AdaptiveBuildPlannerV1Service {
         investment: input.decision.investment,
         itemGraph: input.decision.itemGraph,
       });
+
+      if (group.type === 'OPTIONAL') {
+        const allowed = group.candidates.filter((candidate) => openSituationalTargets.has(candidate.itemId));
+        if (allowed.length === 0) continue;
+        const activated = allowed
+          .map((candidate) => ({
+            itemId: candidate.itemId,
+            score: this.scorer.scoreItem(candidate.itemId, scorerContext).score,
+          }))
+          .filter((entry) => entry.score >= ADAPTIVE_POLICY_V1_CONFIG.optionalActivationMinScore)
+          .sort((a, b) => b.score - a.score || a.itemId - b.itemId)
+          .slice(0, Math.max(1, group.maxSelect));
+        for (const entry of activated) selectedFinalItemIds.add(entry.itemId);
+        continue;
+      }
 
       if (eligibility === 'COMPLETED') {
         if (group.type === 'CHOICE') {
@@ -362,25 +456,10 @@ export class AdaptiveBuildPlannerV1Service {
         continue;
       }
 
-      if (group.type === 'OPTIONAL') {
-        const activated = group.candidates
-          .map((candidate) => ({
-            itemId: candidate.itemId,
-            score: this.scorer.scoreItem(candidate.itemId, scorerContext).score,
-          }))
-          .filter((entry) => entry.score >= ADAPTIVE_POLICY_V1_CONFIG.optionalActivationMinScore)
-          .sort((a, b) => b.score - a.score || a.itemId - b.itemId)
-          .slice(0, Math.max(1, group.maxSelect));
-        for (const entry of activated) selectedFinalItemIds.add(entry.itemId);
-        continue;
-      }
-
       const satisfiedCandidates = group.candidates
         .filter((candidate) => input.decision.itemGraph.isTargetSatisfied(candidate.itemId, owned))
         .map((candidate) => candidate.itemId);
-      for (const itemId of satisfiedCandidates) {
-        selectedFinalItemIds.add(itemId);
-      }
+      for (const itemId of satisfiedCandidates) selectedFinalItemIds.add(itemId);
       const needed = Math.max(0, Math.max(1, group.minSelect) - satisfiedCandidates.length);
       const selected = group.candidates
         .filter((candidate) => !input.decision.itemGraph.isTargetSatisfied(candidate.itemId, owned))
@@ -418,7 +497,6 @@ export class AdaptiveBuildPlannerV1Service {
       input,
       skeleton,
       gameState,
-      scorerContext,
       owned,
       completedGroupIds,
       targetItemIds,
@@ -466,7 +544,6 @@ export class AdaptiveBuildPlannerV1Service {
     input: AdaptiveBuildPlannerInputV1,
     skeleton: ConsensusSkeletonV1,
     gameState: AdaptiveGameStateV1,
-    scorerContext: AdaptiveItemScoreContextV1,
     owned: ReadonlySet<number>,
     completedGroupIds: ReadonlySet<string>,
     activeTargetItemIds: ReadonlySet<number>,
@@ -495,6 +572,7 @@ export class AdaptiveBuildPlannerV1Service {
       const selectedChoiceItemIds = group.type === 'CHOICE'
         ? selectedChoiceItemIdsByGroup.get(group.groupId) ?? []
         : [];
+      if (group.type === 'CHOICE' && selectedChoiceItemIds.length === 0) continue;
       const satisfiedCount = group.candidates.filter((candidate) =>
         input.decision.itemGraph.isTargetSatisfied(candidate.itemId, owned)
       ).length;
@@ -509,11 +587,8 @@ export class AdaptiveBuildPlannerV1Service {
       const ranked = group.candidates
         .filter((candidate) => !input.decision.itemGraph.isTargetSatisfied(candidate.itemId, owned))
         .filter((candidate) => group.type !== 'CHOICE' || selectedChoiceSet.has(candidate.itemId))
-        .map((candidate) => ({
-          itemId: candidate.itemId,
-          score: this.scorer.scoreItem(candidate.itemId, scorerContext).score,
-        }))
-        .sort((a, b) => b.score - a.score || a.itemId - b.itemId);
+        .map((candidate) => ({ itemId: candidate.itemId, strength: candidate.strength }))
+        .sort((a, b) => b.strength - a.strength || a.itemId - b.itemId);
       const staged: Array<{ itemId: number; steps: number }> = [];
       let stagedDepth = 0;
       for (const entry of ranked) {
@@ -539,6 +614,7 @@ export class AdaptiveBuildPlannerV1Service {
   private searchBestPath(
     input: AdaptiveBuildPlannerInputV1,
     skeleton: ConsensusSkeletonV1,
+    strategy: BuildStrategySpecV1,
     semantic: SemanticPlanV1,
     initialNode: AdaptivePlannerNodeV1,
     baseScorerContext: AdaptiveItemScoreContextV1,
@@ -552,11 +628,11 @@ export class AdaptiveBuildPlannerV1Service {
     for (let depth = 0; depth < config.planningDepth; depth += 1) {
       const expanded: AdaptivePlannerNodeV1[] = [];
       for (const node of beam) {
-        // WAIT does not project future income or time; it terminates this path.
         if (node.actions[node.actions.length - 1]?.action.type === 'WAIT_SAVE') continue;
         const scored = this.evaluateNodeCandidates(
           input,
           skeleton,
+          strategy,
           semantic,
           node,
           baseScorerContext,
@@ -587,6 +663,7 @@ export class AdaptiveBuildPlannerV1Service {
   private evaluateNodeCandidates(
     input: AdaptiveBuildPlannerInputV1,
     skeleton: ConsensusSkeletonV1,
+    strategy: BuildStrategySpecV1,
     semantic: SemanticPlanV1,
     node: AdaptivePlannerNodeV1,
     baseScorerContext: AdaptiveItemScoreContextV1,
@@ -594,11 +671,31 @@ export class AdaptiveBuildPlannerV1Service {
     recentSold: ReadonlySet<number>,
   ): ScoredPlannerCandidateV1[] {
     const rules = generatorRulesForNode(node);
-    const candidates = generateRecommendationCandidates({
-      state: node.decisionState,
+    const contract = compileBuildContractV1({
+      skeleton,
       itemGraph: input.decision.itemGraph,
-      rules,
-    })
+      ownedItemIds: [...node.decisionState.inventory.heldByItemId.keys()],
+      executionState: 'ACTIONABLE',
+      committedChoiceItemIdsByGroup: node.committedChoiceItemIdsByGroup,
+      strategyId: strategy.strategyId,
+      situationalWindowStates: input.situationalWindowStates ?? [],
+    });
+    const activeGoals = strategyGoalsEligibleForScoringV1(
+      resolveActiveBuildStrategyGoalsV1(strategy, contract),
+      semantic,
+      input.decision.itemGraph,
+    );
+    const capacityExitItemIds = new Set(node.decisionState.inventory.heldByItemId.keys());
+    const candidates = filterRecommendationCandidatesForActiveGoalsV1(
+      generateRecommendationCandidates({
+        state: node.decisionState,
+        itemGraph: input.decision.itemGraph,
+        rules,
+      }),
+      activeGoals,
+      input.decision.itemGraph,
+      { capacityExitItemIds },
+    )
       .filter((candidate) => candidate.feasible)
       .filter((candidate) => candidate.recommendationEligible)
       .filter((candidate) => !candidateTargetAlreadySatisfied(candidate, node, input.decision.itemGraph))
@@ -859,10 +956,262 @@ function generatorRulesForNode(node: AdaptivePlannerNodeV1): RecommendationCandi
   return {
     ...DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
     baseSlots: node.slots.baseSlots,
+    baseSlotsByType: node.slots.baseSlotsByType,
     maxFlexSlots: node.slots.maxFlexSlots,
     unlockedFlexSlots: node.slots.unlockedFlexSlots,
-    flexCapacityEvidence: node.slots.evidence,
+    flexCapacityEvidence: node.slots.flexEvidence,
+    maxActiveItems: node.slots.maxActiveItems,
   };
+}
+
+function strategyGoalsEligibleForScoringV1(
+  goals: readonly BuildStrategyGoalV1[],
+  semantic: SemanticPlanV1,
+  graph: RecommendationItemGraph,
+): readonly BuildStrategyGoalV1[] {
+  return goals.filter((goal) => {
+    if (goal.type === 'TERMINAL') return true;
+    return goal.targetItemIds.some((targetItemId) =>
+      semantic.activeTargetItemIds.has(targetItemId) ||
+      graph.getTransitiveComponentIds(targetItemId).some((componentId) => semantic.activeTargetItemIds.has(componentId)),
+    );
+  });
+}
+
+function compilePlannerBuildContractV1(
+  input: AdaptiveBuildPlannerInputV1,
+  skeleton: ConsensusSkeletonV1,
+  strategy: BuildStrategySpecV1,
+  semantic: SemanticPlanV1,
+  node: AdaptivePlannerNodeV1,
+  build: readonly AdaptivePlannedItemV1[],
+  action: AdaptiveActionV1,
+): BuildContractV1 {
+  const actualOwnedItemIds = [...input.decision.state.inventory.heldByItemId.keys()].sort((a, b) => a - b);
+  const baseContract = compileBuildContractV1({
+    skeleton,
+    itemGraph: input.decision.itemGraph,
+    ownedItemIds: actualOwnedItemIds,
+    executionState: executionStateForAction(action),
+    committedChoiceItemIdsByGroup: node.committedChoiceItemIdsByGroup,
+    strategyId: strategy.strategyId,
+    situationalWindowStates: input.situationalWindowStates ?? [],
+  });
+  const futureGoalTargetItemIdsByGoal = plannedMandatoryTargetsByGoalV1(
+    skeleton,
+    semantic,
+    build,
+    input.decision.itemGraph,
+    actualOwnedItemIds,
+  );
+  const slotReservations = derivePlannerSlotReservationsV1(
+    input,
+    semantic,
+    node,
+    baseContract,
+    futureGoalTargetItemIdsByGoal,
+  );
+
+  return compileBuildContractV1({
+    skeleton,
+    itemGraph: input.decision.itemGraph,
+    ownedItemIds: actualOwnedItemIds,
+    executionState: executionStateForAction(action),
+    committedChoiceItemIdsByGroup: node.committedChoiceItemIdsByGroup,
+    strategyId: strategy.strategyId,
+    situationalWindowStates: input.situationalWindowStates ?? [],
+    futureGoalTargetItemIdsByGoal,
+    slotReservations,
+  });
+}
+
+function plannedMandatoryTargetsByGoalV1(
+  skeleton: ConsensusSkeletonV1,
+  semantic: SemanticPlanV1,
+  build: readonly AdaptivePlannedItemV1[],
+  graph: RecommendationItemGraph,
+  ownedItemIds: readonly number[],
+): ReadonlyMap<string, readonly number[]> {
+  const planned = new Set(build.filter((item) => item.status !== 'OWNED').map((item) => item.itemId));
+  const selectedFinals = new Set([...semantic.selectedFinalItemIds, ...semantic.futurePlannedFinalItemIds]);
+  const result = new Map<string, readonly number[]>();
+
+  for (const group of skeleton.groups) {
+    if (group.type === 'OPTIONAL') continue;
+    const selectedChoice = new Set(semantic.selectedChoiceItemIdsByGroup.get(group.groupId) ?? []);
+    const targetItemIds = group.candidates
+      .map((candidate) => candidate.itemId)
+      .filter((itemId) => group.type !== 'CHOICE' || selectedChoice.has(itemId))
+      .filter((itemId) => selectedFinals.has(itemId) || planned.has(itemId))
+      .filter((itemId) => !graph.isTargetSatisfied(itemId, ownedItemIds));
+    if (targetItemIds.length > 0) result.set(group.groupId, uniqueNumbers(targetItemIds).sort((a, b) => a - b));
+  }
+  return result;
+}
+
+function derivePlannerSlotReservationsV1(
+  input: AdaptiveBuildPlannerInputV1,
+  semantic: SemanticPlanV1,
+  node: AdaptivePlannerNodeV1,
+  baseContract: BuildContractV1,
+  futureTargets: ReadonlyMap<string, readonly number[]>,
+): readonly BuildSlotReservationV1[] {
+  const graph = input.decision.itemGraph;
+  const slots = input.decision.slots;
+  const freeBaseByType = { ...slots.freeBaseByType };
+  let freeFlex = slots.flexEvidence === 'UNKNOWN' ? undefined : slots.freeFlexSlots;
+  let availableActive = slots.mechanicsEvidence === 'UNKNOWN'
+    ? undefined
+    : Math.max(0, slots.maxActiveItems - slots.usedActiveItems);
+  const reservations: BuildSlotReservationV1[] = [];
+  const temporarySellable = [...baseContract.temporaryItemIds]
+    .filter((itemId) => graph.getItem(itemId)?.sellTransition !== undefined)
+    .sort((a, b) => a - b);
+
+  for (const [goalId, targetItemIds] of futureTargets) {
+    for (const targetItemId of targetItemIds) {
+      const target = graph.getItem(targetItemId);
+      if (!target) continue;
+      const actionPath = node.actions.find((candidate) => candidateServesFinalTargetV1(candidate, targetItemId, graph));
+      if (actionPath?.action.type === 'UPGRADE_ITEM') {
+        reservations.push({
+          goalId,
+          targetItemId,
+          state: 'LOCKED_BY_UPGRADE_COMPRESSION',
+          reasonCodes: ['UPGRADE_CONSUMES_COMPONENT'],
+        });
+        continue;
+      }
+      if (actionPath?.action.type === 'REPLACE_ITEM') {
+        reservations.push({
+          goalId,
+          targetItemId,
+          state: 'LOCKED_BY_SELL',
+          reasonCodes: ['EXPLICIT_REPLACE_CAPACITY_PATH'],
+        });
+        continue;
+      }
+      if (actionPath?.action.type === 'BUY_ITEM') {
+        reservations.push({
+          goalId,
+          targetItemId,
+          state: 'READY',
+          reasonCodes: ['PLANNER_LEGAL_BUY_CAPACITY_PATH'],
+        });
+        reserveActiveCapacity(target.active, availableActive, (value) => { availableActive = value; });
+        continue;
+      }
+
+      const upgradeResolution = resolveUpgradeExecutionPathV1(input.decision.state, targetItemId, graph);
+      if (upgradeResolution.kind === 'DIRECT_UPGRADE' || upgradeResolution.kind === 'MULTI_STEP_UPGRADE') {
+        reservations.push({
+          goalId,
+          targetItemId,
+          state: 'LOCKED_BY_UPGRADE_COMPRESSION',
+          reasonCodes: ['UPGRADE_CONSUMES_COMPONENT'],
+        });
+        continue;
+      }
+
+      const replacementOption = semantic.choiceReplacementOptions.find((option) => option.targetItemId === targetItemId);
+      if (replacementOption) {
+        reservations.push({
+          goalId,
+          targetItemId,
+          state: 'LOCKED_BY_SELL',
+          reasonCodes: ['EXPLICIT_REPLACE_CAPACITY_PATH'],
+        });
+        continue;
+      }
+
+      if (slots.mechanicsEvidence !== 'UNKNOWN' && canReserveActiveCapacity(target.active, availableActive)) {
+        if (freeBaseByType[target.slotType] > 0) {
+          freeBaseByType[target.slotType] -= 1;
+          if (target.active && availableActive !== undefined) availableActive -= 1;
+          reservations.push({
+            goalId,
+            targetItemId,
+            state: 'READY',
+            reasonCodes: ['BASE_SLOT_CAPACITY_RESERVED'],
+          });
+          continue;
+        }
+        if (freeFlex !== undefined && freeFlex > 0) {
+          freeFlex -= 1;
+          if (target.active && availableActive !== undefined) availableActive -= 1;
+          reservations.push({
+            goalId,
+            targetItemId,
+            state: 'READY',
+            reasonCodes: ['VERIFIED_FLEX_CAPACITY_RESERVED'],
+          });
+          continue;
+        }
+      }
+
+      const plannedSell = node.actions.find((candidate) => candidate.action.type === 'SELL_ITEM');
+      if (plannedSell) {
+        reservations.push({
+          goalId,
+          targetItemId,
+          state: 'LOCKED_BY_SELL',
+          reasonCodes: ['PLANNED_SELL_CAPACITY_PATH'],
+        });
+        continue;
+      }
+      if (temporarySellable.length > 0) {
+        reservations.push({
+          goalId,
+          targetItemId,
+          state: 'LOCKED_BY_SELL',
+          reasonCodes: ['TEMPORARY_ITEM_SELL_CAPACITY_PATH'],
+        });
+      }
+    }
+  }
+  return reservations;
+}
+
+function candidateServesFinalTargetV1(
+  candidate: RecommendationCandidate,
+  finalTargetItemId: number,
+  graph: RecommendationItemGraph,
+): boolean {
+  const targetItemId = candidateTargetItemId(candidate);
+  if (targetItemId === undefined) return false;
+  return targetItemId === finalTargetItemId || graph.isComponentAncestor(targetItemId, finalTargetItemId);
+}
+
+function canReserveActiveCapacity(active: boolean, availableActive: number | undefined): boolean {
+  return !active || (availableActive !== undefined && availableActive > 0);
+}
+
+function reserveActiveCapacity(
+  active: boolean,
+  availableActive: number | undefined,
+  set: (value: number | undefined) => void,
+): void {
+  if (active && availableActive !== undefined) set(Math.max(0, availableActive - 1));
+}
+
+function executionStateForAction(action: AdaptiveActionV1): BuildContractExecutionStateV1 {
+  if (action.type === 'HOLD') return 'HOLD';
+  if (action.type === 'WAIT' || action.type === 'CONTINUE_CORE' || action.type === 'ABSTAIN') return 'WAITING';
+  return 'ACTIONABLE';
+}
+
+function openSituationalTargetIds(
+  windows: readonly BuildSituationalWindowStateV1[],
+): ReadonlySet<number> {
+  return new Set(
+    windows
+      .filter((window) => window.state === 'OPEN')
+      .flatMap((window) => window.targetItemIds),
+  );
+}
+
+function isAdaptiveTransactionAction(action: AdaptiveActionV1): boolean {
+  return action.type === 'BUY' || action.type === 'UPGRADE' || action.type === 'SELL' || action.type === 'REPLACE';
 }
 
 function candidateTargetAlreadySatisfied(

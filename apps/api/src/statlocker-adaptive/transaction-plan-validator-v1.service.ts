@@ -108,7 +108,7 @@ export class TransactionPlanValidatorV1Service {
           maxFlexSlots: slots.maxFlexSlots,
           maxActiveItems: slots.maxActiveItems,
         },
-        { unlockedFlexSlots: slots.unlockedFlexSlots, evidence: slots.evidence },
+        { unlockedFlexSlots: slots.unlockedFlexSlots, evidence: slots.evidence ?? slots.flexEvidence },
       );
       const after = planProjectionFromDecisionStateV1(
         nextState,

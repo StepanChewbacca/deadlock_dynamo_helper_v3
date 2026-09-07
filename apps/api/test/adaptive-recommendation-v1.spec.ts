@@ -647,17 +647,19 @@ describe('AdaptiveRecommendationV1Service', () => {
     expect(result.nextTargetItemId).toBe(2);
   });
 
-  it('preserves a previous valid plan conservatively when local Statlocker evidence is unavailable', async () => {
+  it('fails closed without reusing a previous plan when local Statlocker evidence is unavailable', async () => {
     const previous = previousResult();
     const h = harness({ previous, localEvidence: evidence(false) });
     const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
-    expect(result.recommendedBuild).toEqual(previous.recommendedBuild);
-    expect(['HOLD', 'WAIT', 'CONTINUE_CORE']).toContain(result.nextAction.type);
-    expect(result.confidence).toBeLessThan(previous.confidence);
+    expect(result.ready).toBe(false);
+    expect(result.recommendedBuild).toEqual([]);
+    expect(result.planActions).toEqual([]);
+    expect(result.nextAction.type).toBe('ABSTAIN');
+    expect(result.confidence).toBe(0);
     expect(result.blockers).toContain('STATLOCKER_EVIDENCE_UNAVAILABLE');
   });
 
-  it('advances the preserved fallback plan when its previous NEXT item is now owned', async () => {
+  it('does not advance or expose a stale previous plan while evidence is unavailable', async () => {
     const previous = previousResult();
     previous.recommendedBuild = [
       { ...previous.recommendedBuild[0], itemId: 1, position: 1, status: 'NEXT' },
@@ -674,18 +676,17 @@ describe('AdaptiveRecommendationV1Service', () => {
 
     const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
 
-    expect(result.recommendedBuild).toEqual([
-      expect.objectContaining({ itemId: 1, position: 1, status: 'OWNED' }),
-      expect.objectContaining({ itemId: 2, position: 2, status: 'NEXT' }),
-    ]);
-    expect(result.nextAction.targetItemId).toBe(2);
-    expect(result.nextTargetItemId).toBe(2);
+    expect(result.ready).toBe(false);
+    expect(result.recommendedBuild).toEqual([]);
+    expect(result.nextAction).toEqual(expect.objectContaining({ type: 'ABSTAIN' }));
+    expect(result.nextTargetItemId).toBeUndefined();
   });
 
   it('returns a safe non-transaction action when no local evidence and no previous plan exist', async () => {
     const h = harness({ localEvidence: evidence(false), previous: undefined });
     const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
-    expect(['WAIT', 'HOLD', 'CONTINUE_CORE', 'ABSTAIN']).toContain(result.nextAction.type);
+    expect(result.ready).toBe(false);
+    expect(result.nextAction.type).toBe('ABSTAIN');
     expect(['BUY', 'UPGRADE', 'SELL', 'REPLACE']).not.toContain(result.nextAction.type);
     expect(result.blockers).toContain('STATLOCKER_EVIDENCE_UNAVAILABLE');
   });
@@ -849,7 +850,7 @@ describe('AdaptiveRecommendationV1Service', () => {
     expect(status.counters.externallyDivergedChoiceStateCount).toBe(1);
   });
 
-  it('records replace activity and post-commit replacement from the real planner path', async () => {
+  it('records the legacy planner sell when canonical replacement is unavailable', async () => {
     const observability = new AdaptiveRecommendationObservabilityV1Service();
     const planner = new AdaptiveBuildPlannerV1Service(
       new AdaptiveEvidenceScorerV1Service(),
@@ -871,8 +872,8 @@ describe('AdaptiveRecommendationV1Service', () => {
     const result = await h.service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
 
     const status = h.observability.getStatus();
-    expect(result.nextAction.type).toBe('REPLACE');
-    expect(status.counters.replaceCount).toBe(1);
-    expect(status.counters.postCommitReplacementCount).toBe(1);
+    expect(result.nextAction.type).toBe('SELL');
+    expect(status.counters.replaceCount).toBe(0);
+    expect(status.counters.postCommitReplacementCount).toBe(0);
   });
 });

@@ -303,7 +303,7 @@ describe('AdaptiveBuildPlannerV1Service structured planning', () => {
     });
 
     expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(1);
-    expect(result.recommendedBuild.find((item) => item.itemId === 3)?.status).toBe('PLANNED');
+    expect(result.recommendedBuild.find((item) => item.itemId === 3)).toBeUndefined();
     expect(result.recommendedBuild.some((item) => item.itemId === 2)).toBe(false);
     expect(result.nextAction.targetItemId).toBe(1);
   });
@@ -319,9 +319,9 @@ describe('AdaptiveBuildPlannerV1Service structured planning', () => {
       }),
     });
 
-    expect(result.nextAction).toMatchObject({ type: 'BUY', targetItemId: 1 });
-    expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(1);
-    expect(result.recommendedBuild.find((item) => item.itemId === 11)?.status).toBe('PLANNED');
+    expect(result.nextAction).toMatchObject({ type: 'CONTINUE_CORE', targetItemId: 11 });
+    expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(11);
+    expect(result.recommendedBuild.find((item) => item.itemId === 11)?.status).toBe('NEXT');
   });
 
   it('resolves a CHOICE with exact-enemy WPA and never emits both alternatives', () => {
@@ -431,7 +431,7 @@ describe('AdaptiveBuildPlannerV1Service structured planning', () => {
       }),
     });
 
-    expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(10);
+    expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(1);
   });
 
   it('uses a legal upgrade at full base inventory instead of an illegal extra buy', () => {
