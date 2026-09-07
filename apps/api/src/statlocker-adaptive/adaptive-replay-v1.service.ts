@@ -22,7 +22,7 @@ import {
 } from '@deadlock-live-probe/shared';
 import { AdaptiveRecommendationDecisionV1Entity } from '../deadlock-live/entities/adaptive-recommendation-decision-v1.entity';
 import {
-  ADAPTIVE_UNIVERSAL_SLOT_RULES_V1,
+  UNKNOWN_ADAPTIVE_SLOT_RULES_V1,
   AdaptiveInvestmentStateV1,
   AdaptiveSlotStateV1,
   RecommendationEconomyRulesV1,
@@ -363,7 +363,7 @@ function normalizeReplaySlotStateV1(
   return deriveAdaptiveSlotStateV1(
     ownedItemIds,
     itemGraph,
-    ADAPTIVE_UNIVERSAL_SLOT_RULES_V1,
+    UNKNOWN_ADAPTIVE_SLOT_RULES_V1,
     { evidence: 'UNKNOWN' },
   );
 }
@@ -393,9 +393,10 @@ function normalizeReplayInvestmentStateV1(
 function exactReplayEconomyRulesV1(input: AdaptiveReplayDecisionV1): RecommendationEconomyRulesV1 | undefined {
   const rules = input.economyRules;
   if (!isRecord(rules) || rules.rulesetId !== input.rulesetId || rules.catalogSha256 !== input.catalogSha256 ||
-    !isNonNegativeInteger(rules.baseSlots) || !isRecord(rules.baseSlotsByType) ||
-    !isNonNegativeInteger(rules.maxFlexSlots) || !isNonNegativeInteger(rules.maxActiveItems) ||
-    !isRecord(rules.investmentBreakpoints) || !allSlotTypesValid(rules.baseSlotsByType)) return undefined;
+    !isSlotCountRecord(rules.baseSlotsByType) ||
+    !isNonNegativeInteger(rules.maxFlexSlots) ||
+    !isNonNegativeInteger(rules.maxActiveItems) ||
+    !isRecord(rules.investmentBreakpoints)) return undefined;
   const validBreakpoints = ADAPTIVE_INVESTMENT_TYPES_V1.every((type) => {
     const values = rules.investmentBreakpoints[type];
     return Array.isArray(values) && values.every((value) =>
@@ -404,7 +405,9 @@ function exactReplayEconomyRulesV1(input: AdaptiveReplayDecisionV1): Recommendat
   });
   const baseTotal = (['weapon', 'vitality', 'spirit'] as const)
     .reduce((sum, type) => sum + Number(rules.baseSlotsByType[type]), 0);
-  return validBreakpoints && baseTotal === rules.baseSlots ? rules as unknown as RecommendationEconomyRulesV1 : undefined;
+  const baseAggregateValid = rules.baseSlots === undefined ||
+    (isNonNegativeInteger(rules.baseSlots) && baseTotal === rules.baseSlots);
+  return validBreakpoints && baseAggregateValid ? rules as unknown as RecommendationEconomyRulesV1 : undefined;
 }
 
 function allSlotTypesValid(value: Record<string, unknown>): boolean {
@@ -414,6 +417,11 @@ function allSlotTypesValid(value: Record<string, unknown>): boolean {
 
 function sortedNumbers(values: readonly number[]): number[] {
   return [...new Set(values.filter((value) => Number.isInteger(value)))].sort((a, b) => a - b);
+}
+
+function isSlotCountRecord(value: unknown): value is Record<'weapon' | 'vitality' | 'spirit', number> {
+  if (!isRecord(value)) return false;
+  return ['weapon', 'vitality', 'spirit'].every((type) => isNonNegativeInteger(value[type]));
 }
 
 function isNonNegativeInteger(value: unknown): value is number {
