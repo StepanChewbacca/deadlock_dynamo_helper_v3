@@ -859,9 +859,11 @@ function generatorRulesForNode(node: AdaptivePlannerNodeV1): RecommendationCandi
   return {
     ...DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
     baseSlots: node.slots.baseSlots,
+    baseSlotsByType: node.slots.baseSlotsByType,
     maxFlexSlots: node.slots.maxFlexSlots,
     unlockedFlexSlots: node.slots.unlockedFlexSlots,
-    flexCapacityEvidence: node.slots.evidence,
+    flexCapacityEvidence: node.slots.flexEvidence,
+    maxActiveItems: node.slots.maxActiveItems,
   };
 }
 
