@@ -90,6 +90,21 @@ export function compileBuildContractV1(input: BuildContractInputV1): BuildContra
   };
 }
 
+export function createOutOfDistributionBuildContractV1(
+  reasonCodes: readonly string[],
+): BuildContractV1 {
+  return {
+    status: 'OUT_OF_DISTRIBUTION',
+    completedGoalIds: new Set(),
+    remainingGoalIds: [],
+    committedChoiceItemIdsByGroup: new Map(),
+    temporaryItemIds: new Set(),
+    slotReservations: [],
+    situationalWindowStates: [],
+    replanReasonCodes: [...new Set(reasonCodes)].sort(),
+  };
+}
+
 function isMandatoryGroup(group: ConsensusBuildGroupV1): boolean {
   return group.type === 'REQUIRED' || group.type === 'CHOICE';
 }
