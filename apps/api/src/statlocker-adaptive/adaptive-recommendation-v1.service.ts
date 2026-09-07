@@ -13,15 +13,34 @@ import {
   AdaptiveRecommendationResultV1,
   AdaptiveRecommendationStrategyV1,
   AdaptiveScoredActionV1,
+  AdaptiveSituationalContextV1,
 } from '@deadlock-live-probe/shared';
-import { AdaptiveBuildPlannerV1Service } from './adaptive-build-planner-v1.service';
+import {
+  AdaptiveBuildPlannerResultV1,
+  AdaptiveBuildPlannerV1Service,
+} from './adaptive-build-planner-v1.service';
 import {
   AdaptiveDecisionStateV1,
   AdaptiveDecisionStateV1Service,
 } from './adaptive-decision-state-v1.service';
+import { AdaptiveEvidenceScorerV1Service } from './adaptive-evidence-scorer-v1.service';
 import { buildAdaptivePlanActionsV1 } from './adaptive-plan-action-v1';
 import { AdaptiveRecommendationObservabilityV1Service } from './adaptive-recommendation-observability-v1.service';
 import { AdaptiveReplayV1Service } from './adaptive-replay-v1.service';
+import { AdaptiveSituationalContextV1Service } from './adaptive-situational-context-v1.service';
+import { resolveSituationalPlanV1 } from './adaptive-situational-planner-v1';
+import {
+  loadAdaptiveSituationalWindowRegistryV1,
+  resolveAdaptiveSituationalWindowsV1,
+} from './adaptive-situational-window-registry-v1';
+import {
+  toAdaptiveBuildContractViewV1,
+  toAdaptiveStrategySessionViewV1,
+} from './adaptive-strategy-state-view-v1';
+import {
+  AdaptiveStrategySessionV1,
+  resolveAdaptiveStrategySessionV1,
+} from './strategy-session-v1';
 import {
   AdaptiveScoringDatasetV1,
   StatlockerEvidenceBundleV1,
@@ -37,8 +56,16 @@ type AdaptivePlannerRuntimeResultV1 = ReturnType<AdaptiveBuildPlannerV1Service['
   planSession?: AdaptivePlanSessionV1;
 };
 
+interface PlannedRecommendationV1 {
+  planned: AdaptivePlannerRuntimeResultV1;
+  situationalByTargetItemId: ReadonlyMap<number, AdaptiveSituationalContextV1>;
+}
+
 @Injectable()
 export class AdaptiveRecommendationV1Service {
+  private readonly situationalScorer = new AdaptiveEvidenceScorerV1Service();
+  private readonly situationalEvaluator = new AdaptiveSituationalContextV1Service();
+
   constructor(
     private readonly decisionState: AdaptiveDecisionStateV1Service,
     private readonly evidence: StatlockerEvidenceService,
@@ -79,19 +106,15 @@ export class AdaptiveRecommendationV1Service {
       : this.evidence.getLocalEvidence(evidenceRequest);
     this.observability.recordEvidence(localEvidence);
 
-    let planned: AdaptivePlannerRuntimeResultV1 | undefined = localEvidence.usable
-      ? (() => {
-          const plannerStartedAt = Date.now();
-          const result = this.planner.plan({
-            decision: initial,
-            evidence: localEvidence,
-            previousResult: previous,
-            recentPurchasedItemIds: initialDelta.purchasedItemIds,
-            recentSoldItemIds: initialDelta.soldItemIds,
-          }) as AdaptivePlannerRuntimeResultV1;
-          this.observability.recordPlannerLatency(Date.now() - plannerStartedAt);
-          return result;
-        })()
+    let plannedBundle = localEvidence.usable
+      ? this.planWithSituational(
+          initial,
+          localEvidence,
+          previous,
+          initialDelta.purchasedItemIds,
+          initialDelta.soldItemIds,
+          false,
+        )
       : undefined;
 
     const fresh = await this.decisionState.build(request.matchId, request.localSteamId);
@@ -100,18 +123,18 @@ export class AdaptiveRecommendationV1Service {
       [...fresh.state.inventory.heldByItemId.keys()],
       fresh.itemGraph,
     );
-    if (localEvidence.usable && planned && fresh.stateRevision !== initial.stateRevision) {
-      const plannerStartedAt = Date.now();
-      planned = this.planner.plan({
-        decision: fresh,
-        evidence: localEvidence,
-        previousResult: previous,
-        recentPurchasedItemIds: freshDelta.purchasedItemIds,
-        recentSoldItemIds: freshDelta.soldItemIds,
-        suppressObservability: true,
-      }) as AdaptivePlannerRuntimeResultV1;
-      this.observability.recordPlannerLatency(Date.now() - plannerStartedAt);
+    if (localEvidence.usable && plannedBundle && fresh.stateRevision !== initial.stateRevision) {
+      plannedBundle = this.planWithSituational(
+        fresh,
+        localEvidence,
+        previous,
+        freshDelta.purchasedItemIds,
+        freshDelta.soldItemIds,
+        true,
+      );
     }
+    const planned = plannedBundle?.planned;
+    const situationalByTargetItemId = plannedBundle?.situationalByTargetItemId ?? new Map();
 
     const freshCandidates = generateRecommendationCandidates({
       state: fresh.state,
@@ -178,6 +201,8 @@ export class AdaptiveRecommendationV1Service {
 
       legalityFallback = legality.changed;
       legalityFallbackReasonCodes = nextAction.reasonCodes ?? [];
+      const strategySession = resolveStrategySession(planned, fresh, previous);
+      if (strategySession.state === 'OUT_OF_DISTRIBUTION') blockers.add('STRATEGY_OUT_OF_DISTRIBUTION');
       result = {
         ready: true,
         blockers: [...blockers].sort(),
@@ -191,6 +216,8 @@ export class AdaptiveRecommendationV1Service {
         rankedImmediateCandidates: freshRanked,
         totalScore: planSession?.state === 'REPLAN_REQUIRED' ? 0 : planned.totalScore,
         confidence,
+        buildContract: toAdaptiveBuildContractViewV1(planned.buildContract),
+        strategySession: toAdaptiveStrategySessionViewV1(strategySession),
         scorerVersion: SCORER_VERSION,
         plannerVersion: planned.plannerVersion,
         configVersion: ADAPTIVE_POLICY_V1_CONFIG.version,
@@ -208,6 +235,7 @@ export class AdaptiveRecommendationV1Service {
       decision: fresh,
       nextAction: result.nextAction,
       recommendedBuild: result.recommendedBuild,
+      situationalByTargetItemId,
     });
     result = reconcileResultWithSemanticPlan(result, semanticPlanActions);
 
@@ -235,6 +263,110 @@ export class AdaptiveRecommendationV1Service {
     });
     return result;
   }
+
+  private planWithSituational(
+    decision: AdaptiveDecisionStateV1,
+    evidence: StatlockerEvidenceBundleV1,
+    previous: AdaptiveRecommendationResultV1 | undefined,
+    recentPurchasedItemIds: readonly number[],
+    recentSoldItemIds: readonly number[],
+    suppressObservability: boolean,
+  ): PlannedRecommendationV1 {
+    const plannerStartedAt = Date.now();
+    const corePlan = this.planner.plan({
+      decision,
+      evidence,
+      previousResult: previous,
+      recentPurchasedItemIds,
+      recentSoldItemIds,
+      suppressObservability,
+    });
+    const windows = resolveAdaptiveSituationalWindowsV1(
+      loadAdaptiveSituationalWindowRegistryV1(),
+      decision.state.heroId,
+      decision.rulesetId,
+      decision.catalogSha256,
+    );
+    const situational = resolveSituationalPlanV1({
+      decision,
+      evidence,
+      corePlan,
+      scorer: this.situationalScorer,
+      evaluator: this.situationalEvaluator,
+      windows,
+      optionalTargetItemIds: optionalTargetItemIds(evidence, decision.state.heroId),
+      previousResult: previous,
+    });
+    const planned = situational.windowStates.length === 0
+      ? corePlan
+      : this.planner.plan({
+          decision,
+          evidence,
+          previousResult: previous,
+          recentPurchasedItemIds,
+          recentSoldItemIds,
+          situationalWindowStates: situational.windowStates,
+          suppressObservability,
+        });
+    this.observability.recordPlannerLatency(Date.now() - plannerStartedAt);
+
+    const selectedTargets = new Set(planned.recommendedBuild.map((item) => item.itemId));
+    const contexts = new Map(
+      [...situational.contextByTargetItemId.entries()]
+        .filter(([targetItemId]) => selectedTargets.has(targetItemId)),
+    );
+    return { planned, situationalByTargetItemId: contexts };
+  }
+}
+
+function resolveStrategySession(
+  planned: AdaptiveBuildPlannerResultV1,
+  decision: AdaptiveDecisionStateV1,
+  previous: AdaptiveRecommendationResultV1 | undefined,
+): AdaptiveStrategySessionV1 {
+  const strategyId = planned.buildContract.strategyId;
+  const feasible = Boolean(
+    strategyId &&
+    planned.buildContract.status !== 'OUT_OF_DISTRIBUTION' &&
+    planned.buildContract.status !== 'REPLAN_REQUIRED',
+  );
+  const previousSession = previous?.strategySession as AdaptiveStrategySessionV1 | undefined;
+  return resolveAdaptiveStrategySessionV1({
+    decisionId: decision.state.decisionId,
+    heroId: decision.state.heroId,
+    rulesetId: decision.rulesetId,
+    catalogSha256: decision.catalogSha256,
+    previous: previousSession,
+    candidates: strategyId ? [{
+      strategyId,
+      heroId: decision.state.heroId,
+      rulesetId: decision.rulesetId,
+      catalogSha256: decision.catalogSha256,
+      score: planned.totalScore,
+      confidence: planned.confidence,
+      support: Math.max(1, planned.buildContract.completedGoalIds.size + planned.buildContract.remainingGoalIds.length),
+      feasible,
+    }] : [],
+    irreversibleBranchInvestment: planned.buildContract.committedChoiceItemIdsByGroup.size > 0,
+    meaningfulUserDivergence: planned.buildContract.temporaryItemIds.size > 0,
+  });
+}
+
+function optionalTargetItemIds(
+  evidence: StatlockerEvidenceBundleV1,
+  heroId: number,
+): ReadonlySet<number> {
+  const payload = evidence.byDataset.CONSENSUS_SKELETON.payload;
+  if (!isRecord(payload) || payload.heroId !== heroId || !Array.isArray(payload.groups)) return new Set();
+  const result = new Set<number>();
+  for (const group of payload.groups) {
+    if (!isRecord(group) || group.type !== 'OPTIONAL' || !Array.isArray(group.candidates)) continue;
+    for (const candidate of group.candidates) {
+      if (!isRecord(candidate) || !Number.isSafeInteger(candidate.itemId) || Number(candidate.itemId) <= 0) continue;
+      result.add(Number(candidate.itemId));
+    }
+  }
+  return result;
 }
 
 export function finalLegalityRules(decision: AdaptiveDecisionStateV1) {
@@ -269,8 +401,8 @@ function reconcileResultWithSemanticPlan(
     };
   } else if (
     first.status === 'READY' &&
+    isTransactionAction(first.action) &&
     isTransactionAction(nextAction) &&
-    transactionTarget(nextAction) === transactionTarget(first.action) &&
     nextAction.actionKey !== first.action.actionKey
   ) {
     nextAction = {
@@ -528,11 +660,6 @@ function transactionTargetsNextItem(action: AdaptiveActionV1): boolean {
   return action.type === 'BUY' || action.type === 'UPGRADE' || action.type === 'REPLACE';
 }
 
-function transactionTarget(action: AdaptiveActionV1): number | undefined {
-  if (action.type === 'SELL') return action.targetItemId;
-  return action.targetItemId ?? action.buyItemId ?? action.itemId;
-}
-
 function selectedActionServesFreshNext(action: AdaptiveActionV1, targetItemId: number | undefined): boolean {
   if (action.type === 'SELL') return targetItemId !== undefined;
   return !transactionTargetsNextItem(action) || action.targetItemId === targetItemId;
@@ -740,6 +867,10 @@ function validateRequest(request: AdaptiveRecommendationRequestV1): void {
 
 function unique(values: readonly string[]): string[] {
   return [...new Set(values)];
+}
+
+function isRecord(value: unknown): value is Record<string, any> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function clamp01(value: number): number {
