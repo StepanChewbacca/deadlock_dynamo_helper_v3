@@ -22,10 +22,20 @@ export interface RecommendationCandidateGeneratorRules {
   unlockedFlexSlots?: number;
   flexCapacityEvidence: FactEvidence;
   maxActiveItems: number;
+  /**
+   * Evidence that maxActiveItems is authoritative for this ruleset/catalog scope.
+   * Optional only for compatibility with older callers. Unknown mechanics fail closed
+   * only when an action would increase active-item usage.
+   */
+  activeCapacityEvidence?: FactEvidence;
   allowSellOnlyActions: boolean;
   generateTargetedWaitActions: boolean;
 }
 
+/**
+ * Compatibility default for legacy/tests. Adaptive production supplies ruleset-scoped
+ * mechanics explicitly and must not treat these numbers as production truth.
+ */
 export const DEFAULT_RECOMMENDATION_CANDIDATE_RULES: RecommendationCandidateGeneratorRules = {
   baseSlotsByType: { weapon: 4, vitality: 4, spirit: 4 },
   maxFlexSlots: 3,
@@ -93,7 +103,7 @@ export function generateRecommendationCandidates(
       applyAffordabilityReason(state, item.directPurchaseCost, reasons);
       const resulting = addItemToInventory(state, item);
       applySlotReason(state, resulting, graph, rules, reasons);
-      if (!checkActiveLimit(resulting, graph, rules)) reasons.push('ACTIVE_ITEM_LIMIT_EXCEEDED');
+      applyActiveCapacityReason(state, resulting, graph, rules, reasons);
       const feasible = reasons.length === 0;
       const suppression = uniqueSuppressionReasons([
         ...recommendationSuppressionForTarget(state, graph, item.itemId),
@@ -133,7 +143,7 @@ export function generateRecommendationCandidates(
       applyAffordabilityReason(state, recipe.soulsCost, reasons);
       const resulting = upgradeInventory(state, item, recipe.consumedItemIds);
       applySlotReason(state, resulting, graph, rules, reasons);
-      if (!checkActiveLimit(resulting, graph, rules)) reasons.push('ACTIVE_ITEM_LIMIT_EXCEEDED');
+      applyActiveCapacityReason(state, resulting, graph, rules, reasons);
       const feasible = reasons.length === 0;
       candidates.push(buildCandidate(
         state,
@@ -206,7 +216,7 @@ function evaluateSell(
   applyShopObservabilityReasons(state, reasons);
   const resulting = applySellTransition(state, item, graph);
   applySlotReason(state, resulting, graph, rules, reasons);
-  if (!checkActiveLimit(resulting, graph, rules)) reasons.push('ACTIVE_ITEM_LIMIT_EXCEEDED');
+  applyActiveCapacityReason(state, resulting, graph, rules, reasons);
   const feasible = reasons.length === 0;
   const refund = item.sellTransition?.soulsRefund ?? 0;
   const wallet = state.economy.spendableSouls.value;
@@ -239,7 +249,7 @@ function evaluateReplace(
   const afterSell = applySellTransition(state, sold, graph);
   const resulting = bought.directPurchaseCost === undefined ? afterSell : addItemIds(afterSell, [bought.itemId]);
   applySlotReason(state, resulting, graph, rules, reasons);
-  if (!checkActiveLimit(resulting, graph, rules)) reasons.push('ACTIVE_ITEM_LIMIT_EXCEEDED');
+  applyActiveCapacityReason(state, resulting, graph, rules, reasons);
 
   const refund = sold.sellTransition?.soulsRefund ?? 0;
   const cost = bought.directPurchaseCost ?? 0;
@@ -388,14 +398,38 @@ export function flexUsedFor(
   );
 }
 
-function checkActiveLimit(
-  itemIds: readonly number[],
+function applyActiveCapacityReason(
+  state: RecommendationDecisionState,
+  resultingItemIds: readonly number[],
   graph: RecommendationItemGraph,
   rules: RecommendationCandidateGeneratorRules,
-): boolean {
+  reasons: RecommendationFeasibilityReason[],
+): void {
+  const currentActive = activeItemCount(heldIds(state), graph);
+  const resultingActive = activeItemCount(resultingItemIds, graph);
+  if (resultingActive <= currentActive) return;
+
+  const evidence = rules.activeCapacityEvidence ?? inferredActiveCapacityEvidence(rules);
+  if (evidence === 'UNKNOWN') {
+    reasons.push('ACTIVE_ITEM_CAPACITY_UNKNOWN');
+    return;
+  }
+  if (resultingActive > Math.max(0, rules.maxActiveItems)) {
+    reasons.push('ACTIVE_ITEM_LIMIT_EXCEEDED');
+  }
+}
+
+function inferredActiveCapacityEvidence(rules: RecommendationCandidateGeneratorRules): FactEvidence {
+  const hasPinnedMechanics = rules.maxActiveItems > 0 ||
+    rules.maxFlexSlots > 0 ||
+    (Object.keys(rules.baseSlotsByType) as InventorySlotType[]).some((type) => rules.baseSlotsByType[type] > 0);
+  return hasPinnedMechanics ? 'RECONSTRUCTED' : 'UNKNOWN';
+}
+
+function activeItemCount(itemIds: readonly number[], graph: RecommendationItemGraph): number {
   let activeCount = 0;
-  for (const itemId of itemIds) if (graph.getItem(itemId)?.active) activeCount += 1;
-  return activeCount <= rules.maxActiveItems;
+  for (const itemId of [...new Set(itemIds)]) if (graph.getItem(itemId)?.active) activeCount += 1;
+  return activeCount;
 }
 
 function heldIds(state: RecommendationDecisionState): number[] {
