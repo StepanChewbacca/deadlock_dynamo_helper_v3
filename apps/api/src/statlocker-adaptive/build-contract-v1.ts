@@ -71,7 +71,7 @@ export function compileBuildContractV1(input: BuildContractInputV1): BuildContra
   const remainingGoalIds = mandatoryGroups
     .filter((group) => !completedGoalIds.has(group.groupId))
     .map((group) => group.groupId);
-  const temporaryItemIds = resolveTemporaryItemIds(input, mandatoryGroups, owned);
+  const temporaryItemIds = resolveTemporaryItemIds(input, input.skeleton.groups, owned);
   if (temporaryItemIds.size > 0) replanReasonCodes.add('USER_DIVERGENCE_REBASED');
 
   const status = resolveBuildStatus(input, remainingGoalIds);
@@ -129,11 +129,11 @@ function mandatoryGoalCompleted(
 
 function resolveTemporaryItemIds(
   input: BuildContractInputV1,
-  mandatoryGroups: readonly ConsensusBuildGroupV1[],
+  strategyGroups: readonly ConsensusBuildGroupV1[],
   owned: ReadonlySet<number>,
 ): ReadonlySet<number> {
   const structuralItemIds = new Set<number>();
-  for (const group of mandatoryGroups) {
+  for (const group of strategyGroups) {
     for (const candidate of group.candidates) {
       structuralItemIds.add(candidate.itemId);
       for (const componentId of input.itemGraph.getTransitiveComponentIds(candidate.itemId)) {
