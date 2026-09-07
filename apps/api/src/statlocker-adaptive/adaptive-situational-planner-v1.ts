@@ -186,7 +186,7 @@ function enrichEnemyHeroNames(
   decision: AdaptiveDecisionStateV1,
 ): AdaptiveSituationalContextV1 {
   const names = new Map(
-    decision.enemyHeroes
+    (decision.enemyHeroes ?? [])
       .filter((hero) => hero.heroName)
       .map((hero) => [hero.heroId, hero.heroName!] as const),
   );

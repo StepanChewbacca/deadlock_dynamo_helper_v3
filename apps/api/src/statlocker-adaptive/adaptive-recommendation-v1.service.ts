@@ -24,7 +24,10 @@ import {
   AdaptiveDecisionStateV1Service,
 } from './adaptive-decision-state-v1.service';
 import { AdaptiveEvidenceScorerV1Service } from './adaptive-evidence-scorer-v1.service';
-import { buildAdaptivePlanActionsV1 } from './adaptive-plan-action-v1';
+import {
+  buildAdaptivePlanActionsV1,
+  projectAdaptivePlanActionsFromSessionV1,
+} from './adaptive-plan-action-v1';
 import { AdaptiveRecommendationObservabilityV1Service } from './adaptive-recommendation-observability-v1.service';
 import { AdaptiveReplayV1Service } from './adaptive-replay-v1.service';
 import { AdaptiveSituationalContextV1Service } from './adaptive-situational-context-v1.service';
@@ -106,7 +109,9 @@ export class AdaptiveRecommendationV1Service {
       : this.evidence.getLocalEvidence(evidenceRequest);
     this.observability.recordEvidence(localEvidence);
 
-    let plannedBundle = localEvidence.usable
+    let plannedBundle = localEvidence.usable &&
+      initial.economyRulesEvidence !== 'UNKNOWN' &&
+      initial.slots?.mechanicsEvidence !== 'UNKNOWN'
       ? this.planWithSituational(
           initial,
           localEvidence,
@@ -136,7 +141,10 @@ export class AdaptiveRecommendationV1Service {
     const planned = plannedBundle?.planned;
     const situationalByTargetItemId = plannedBundle?.situationalByTargetItemId ?? new Map();
 
-    const freshCandidates = generateRecommendationCandidates({
+    const criticalEvidenceUnavailable = !localEvidence.usable ||
+      fresh.economyRulesEvidence === 'UNKNOWN' ||
+      fresh.slots?.mechanicsEvidence === 'UNKNOWN';
+    const freshCandidates = criticalEvidenceUnavailable ? [] : generateRecommendationCandidates({
       state: fresh.state,
       itemGraph: fresh.itemGraph,
       rules: finalLegalityRules(fresh),
@@ -149,17 +157,16 @@ export class AdaptiveRecommendationV1Service {
 
     const blockers = new Set<string>(localEvidence.degradedReasons);
     if (fresh.economyRulesEvidence === 'UNKNOWN') blockers.add('RULESET_ECONOMY_MECHANICS_UNKNOWN');
-    if (fresh.slots.flexEvidence === 'UNKNOWN') blockers.add('FLEX_CAPACITY_UNKNOWN');
+    if (fresh.slots?.mechanicsEvidence === 'UNKNOWN') blockers.add('SLOT_MECHANICS_UNKNOWN');
+    if (fresh.slots?.flexEvidence === 'UNKNOWN') blockers.add('FLEX_CAPACITY_UNKNOWN');
 
     let result: AdaptiveRecommendationResultV1;
     let legalityFallback = false;
     let legalityFallbackReasonCodes: readonly string[] = [];
 
-    if (!localEvidence.usable) {
-      blockers.add('STATLOCKER_EVIDENCE_UNAVAILABLE');
-      result = previous
-        ? previousEvidenceFallback(previous, fresh, localEvidence, blockers)
-        : emptyEvidenceFallback(fresh, localEvidence, blockers, feasibleByActionKey);
+    if (criticalEvidenceUnavailable) {
+      if (!localEvidence.usable) blockers.add('STATLOCKER_EVIDENCE_UNAVAILABLE');
+      result = unavailableRecommendation(fresh, localEvidence, blockers);
     } else if (planned) {
       let freshBuild = planned.planSession
         ? planned.recommendedBuild
@@ -201,8 +208,10 @@ export class AdaptiveRecommendationV1Service {
 
       legalityFallback = legality.changed;
       legalityFallbackReasonCodes = nextAction.reasonCodes ?? [];
-      const strategySession = resolveStrategySession(planned, fresh, previous);
-      if (strategySession.state === 'OUT_OF_DISTRIBUTION') blockers.add('STRATEGY_OUT_OF_DISTRIBUTION');
+      const strategySession = planned.buildContract
+        ? resolveStrategySession(planned, fresh, previous)
+        : undefined;
+      if (strategySession?.state === 'OUT_OF_DISTRIBUTION') blockers.add('STRATEGY_OUT_OF_DISTRIBUTION');
       result = {
         ready: true,
         blockers: [...blockers].sort(),
@@ -216,8 +225,8 @@ export class AdaptiveRecommendationV1Service {
         rankedImmediateCandidates: freshRanked,
         totalScore: planSession?.state === 'REPLAN_REQUIRED' ? 0 : planned.totalScore,
         confidence,
-        buildContract: toAdaptiveBuildContractViewV1(planned.buildContract),
-        strategySession: toAdaptiveStrategySessionViewV1(strategySession),
+        ...(planned.buildContract ? { buildContract: toAdaptiveBuildContractViewV1(planned.buildContract) } : {}),
+        ...(strategySession ? { strategySession: toAdaptiveStrategySessionViewV1(strategySession) } : {}),
         scorerVersion: SCORER_VERSION,
         plannerVersion: planned.plannerVersion,
         configVersion: ADAPTIVE_POLICY_V1_CONFIG.version,
@@ -230,13 +239,15 @@ export class AdaptiveRecommendationV1Service {
       throw new Error('Adaptive planner did not produce a result');
     }
 
-    const semanticPlanActions = buildAdaptivePlanActionsV1({
-      stateRevision: fresh.stateRevision,
-      decision: fresh,
-      nextAction: result.nextAction,
-      recommendedBuild: result.recommendedBuild,
-      situationalByTargetItemId,
-    });
+    const semanticPlanActions = result.planSession
+      ? projectAdaptivePlanActionsFromSessionV1(result.planSession, fresh.stateRevision, situationalByTargetItemId)
+      : buildAdaptivePlanActionsV1({
+          stateRevision: fresh.stateRevision,
+          decision: fresh,
+          nextAction: result.nextAction,
+          recommendedBuild: result.recommendedBuild,
+          situationalByTargetItemId,
+        });
     result = reconcileResultWithSemanticPlan(result, semanticPlanActions);
 
     this.observability.recordRecommendationOutcome({
@@ -356,7 +367,7 @@ function optionalTargetItemIds(
   evidence: StatlockerEvidenceBundleV1,
   heroId: number,
 ): ReadonlySet<number> {
-  const payload = evidence.byDataset.CONSENSUS_SKELETON.payload;
+  const payload: unknown = evidence.byDataset.CONSENSUS_SKELETON.payload;
   if (!isRecord(payload) || payload.heroId !== heroId || !Array.isArray(payload.groups)) return new Set();
   const result = new Set<number>();
   for (const group of payload.groups) {
@@ -371,7 +382,18 @@ function optionalTargetItemIds(
 
 export function finalLegalityRules(decision: AdaptiveDecisionStateV1) {
   const slots = decision.slots;
-  if (!slots) return DEFAULT_RECOMMENDATION_CANDIDATE_RULES;
+  if (!slots || slots.mechanicsEvidence === 'UNKNOWN') {
+    return {
+      ...DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
+      baseSlots: 0,
+      baseSlotsByType: { weapon: 0, vitality: 0, spirit: 0 },
+      maxFlexSlots: 0,
+      unlockedFlexSlots: 0,
+      flexCapacityEvidence: 'UNKNOWN' as const,
+      maxActiveItems: 0,
+      allowSellOnlyActions: false,
+    };
+  }
   return {
     ...DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
     baseSlots: slots.baseSlots,
@@ -521,67 +543,26 @@ function actionWasRewritten(before: AdaptiveActionV1, after: AdaptiveActionV1): 
     before.buyItemId !== after.buyItemId;
 }
 
-function previousEvidenceFallback(
-  previous: AdaptiveRecommendationResultV1,
+function unavailableRecommendation(
   fresh: AdaptiveDecisionStateV1,
   evidence: StatlockerEvidenceBundleV1,
   blockers: ReadonlySet<string>,
 ): AdaptiveRecommendationResultV1 {
-  const ownedItemIds = [...fresh.state.inventory.heldByItemId.keys()];
-  const preservedBuild = previous.planSession
-    ? previous.recommendedBuild
-    : rebasePlanAgainstDecisionV1(previous.recommendedBuild, fresh);
-  const previousTarget = previous.nextTargetItemId;
-  const targetItemId = firstNextTarget(preservedBuild)
-    ?? previous.nextAction.targetItemId
-    ?? (previousTarget !== undefined && !fresh.itemGraph.isTargetSatisfied(previousTarget, ownedItemIds)
-      ? previousTarget
-      : undefined);
   return {
-    ...previous,
-    decisionId: fresh.state.decisionId,
-    stateRevision: fresh.stateRevision,
-    blockers: [...blockers].sort(),
-    nextAction: {
-      actionKey: 'HOLD',
-      type: 'HOLD',
-      targetItemId,
-      reasonCodes: ['STATLOCKER_UNAVAILABLE_PRESERVE_PLAN'],
-    },
-    nextTargetItemId: targetItemId,
-    recommendedBuild: preservedBuild,
-    planActions: undefined,
-    changes: [],
-    rankedImmediateCandidates: [],
-    confidence: clamp01(previous.confidence * 0.5),
-    scorerVersion: SCORER_VERSION,
-    plannerVersion: 'adaptive-build-planner-v1',
-    configVersion: ADAPTIVE_POLICY_V1_CONFIG.version,
-    plannerMethod: previous.plannerMethod ?? (previous.strategy ? 'STRATEGY_FIRST' : 'LEGACY_GREEDY'),
-    evidence: toProvenance(evidence),
-  };
-}
-
-function emptyEvidenceFallback(
-  fresh: AdaptiveDecisionStateV1,
-  evidence: StatlockerEvidenceBundleV1,
-  blockers: ReadonlySet<string>,
-  feasibleByActionKey: ReadonlyMap<string, RecommendationCandidate>,
-): AdaptiveRecommendationResultV1 {
-  const wait = [...feasibleByActionKey.values()]
-    .filter((candidate) => candidate.action.type === 'WAIT_SAVE')
-    .sort((a, b) => a.actionId.localeCompare(b.actionId))[0];
-  return {
-    ready: true,
+    ready: false,
     blockers: [...blockers].sort(),
     decisionId: fresh.state.decisionId,
     stateRevision: fresh.stateRevision,
     gameState: 'UNKNOWN',
     nextAction: {
-      actionKey: wait?.actionId ?? 'ABSTAIN',
-      type: wait ? 'WAIT' : 'ABSTAIN',
-      reasonCodes: ['NO_USABLE_STATLOCKER_EVIDENCE'],
+      actionKey: 'ABSTAIN',
+      type: 'ABSTAIN',
+      reasonCodes: [
+        'CRITICAL_EVIDENCE_UNAVAILABLE',
+        ...(blockers.has('CONSENSUS_SKELETON:UNAVAILABLE') ? ['STRUCTURED_SKELETON_UNAVAILABLE'] : []),
+      ],
     },
+    nextTargetItemId: undefined,
     planActions: [],
     recommendedBuild: [],
     changes: [],
@@ -591,7 +572,7 @@ function emptyEvidenceFallback(
     scorerVersion: SCORER_VERSION,
     plannerVersion: 'adaptive-build-planner-v1',
     configVersion: ADAPTIVE_POLICY_V1_CONFIG.version,
-    plannerMethod: 'LEGACY_GREEDY',
+    plannerMethod: 'STRATEGY_FIRST',
     evidence: toProvenance(evidence),
   };
 }

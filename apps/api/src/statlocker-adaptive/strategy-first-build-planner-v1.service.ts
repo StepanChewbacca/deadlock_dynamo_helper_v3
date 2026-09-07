@@ -337,7 +337,7 @@ export class StrategyFirstBuildPlannerV1Service {
                   maxFlexSlots: node.slots.maxFlexSlots,
                   maxActiveItems: node.slots.maxActiveItems,
                 },
-            { unlockedFlexSlots: node.slots.unlockedFlexSlots, evidence: node.slots.evidence },
+            { unlockedFlexSlots: node.slots.unlockedFlexSlots, evidence: node.slots.evidence ?? node.slots.flexEvidence },
           );
           const projectedInvestment = deriveAdaptiveInvestmentStateV1(
             projectedItemIds,

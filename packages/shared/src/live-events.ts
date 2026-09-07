@@ -1,7 +1,12 @@
+export type OverwolfLiveEventSource = 'onInfoUpdates2' | 'onNewEvents';
+
 export interface OverwolfLiveEventDto {
-  source?: string;
+  receivedAt: number;
+  source: OverwolfLiveEventSource;
+  feature?: string;
+  category?: string;
   key?: string;
-  payload?: unknown;
+  payload: unknown;
   matchId?: string;
   sequence?: number;
   timestampMs?: number;
@@ -9,7 +14,7 @@ export interface OverwolfLiveEventDto {
 
 export interface OverwolfLiveBatchDto {
   clientId: string;
-  sentAt: string;
+  sentAt?: string;
   events: OverwolfLiveEventDto[];
 }
 

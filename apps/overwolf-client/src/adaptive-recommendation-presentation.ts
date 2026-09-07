@@ -187,18 +187,10 @@ function buildPresentedSemanticPlan(
       .filter((entry): entry is AdaptivePresentedPlanItem => entry !== undefined);
   }
 
-  return [...recommendation.recommendedBuild]
-    .sort((left, right) => left.position - right.position)
-    .map((planned) => ({
-      planActionId: `legacy:${planned.position}:${planned.itemId}`,
-      item: presentItem(planned.itemId),
-      position: planned.position,
-      status: planned.status === 'OWNED' ? 'OWNED' : planned.status === 'NEXT' ? 'READY' : 'PLANNED',
-      statusLabel: planned.status === 'OWNED' ? 'Owned' : planned.status === 'NEXT' ? 'Ready' : 'Planned',
-      actionLabel: planned.status === 'OWNED' ? 'Owned' : 'Build',
-      requirements: [],
-      sourceItems: [],
-    }));
+  // A display build is not executable semantics.  Until the API supplies the
+  // canonical planActions projection, present no plan rather than resurrecting
+  // a stale/legacy recommendation.
+  return [];
 }
 
 function presentPlanAction(action: AdaptivePlanActionV1): AdaptivePresentedPlanItem | undefined {

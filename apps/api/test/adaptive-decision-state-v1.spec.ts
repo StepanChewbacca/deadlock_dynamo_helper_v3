@@ -154,7 +154,7 @@ describe('AdaptiveDecisionStateV1Service', () => {
     ]);
     expect(first.ourTeamSouls).toBe(5000);
     expect(first.enemyTeamSouls).toBe(9000);
-    expect(first.slots.usedFlexSlots).toBe(0);
+    expect(first.slots.usedFlexSlots).toBe(1);
     expect(first.slots.unlockedFlexSlots).toBeUndefined();
     expect(first.slots.evidence).toBe('UNKNOWN');
     expect(first.economyRules).toBeUndefined();

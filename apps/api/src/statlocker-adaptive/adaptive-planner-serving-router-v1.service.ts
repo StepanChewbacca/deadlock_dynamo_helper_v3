@@ -38,63 +38,12 @@ export class AdaptivePlannerServingRouterV1Service {
   }
 
   plan(input: AdaptiveBuildPlannerInputV1): AdaptivePlannerServingResultV1 {
-    const configuredMode = this.promotion.configuredMode();
-    if (configuredMode === 'LEGACY') {
-      const legacyResult = this.legacy.plan(input);
-      this.logLegacyFlatFallback(input, legacyResult, 'STRATEGY_MODE_LEGACY');
-      return legacyResult;
-    }
-
-    const zeroFallback = process.env.ADAPTIVE_ZERO_FALLBACK === 'true';
-
-    let transactionResult: AdaptivePlannerServingResultV1;
-    try {
-      transactionResult = this.strategy.plan(input);
-    } catch (error) {
-      if (zeroFallback) {
-        throw error;
-      }
-      this.promotion.recordShadowFailure();
-      this.promotion.recordTransactionShadowFailure();
-      const legacyResult = this.legacy.plan(input);
-      this.logger.warn(`strategy-shadow-failure ${JSON.stringify({
-        decisionId: input.decision.state.decisionId,
-        error: describeError(error),
-        legacyNextAction: legacyResult.nextAction,
-        reasonCode: 'LEGACY_FLAT_PLAN_FALLBACK',
-      })}`);
-      return legacyResult;
-    }
-
-    if (configuredMode === 'SHADOW') {
-      const legacyResult = this.legacy.plan(input);
-      this.promotion.recordShadowSuccess();
-      this.logShadowComparison(input, transactionResult, legacyResult, 'SHADOW');
-      return legacyResult;
-    }
-
-    if (zeroFallback) {
-      this.logger.debug(`transaction-plan-serving ${JSON.stringify(strategyDiagnostics(input, transactionResult))}`);
-      return transactionResult;
-    }
-
-    if (input.decision.economyRulesEvidence !== 'RECONSTRUCTED') {
-      const legacyResult = this.legacy.plan(input);
-      this.promotion.recordShadowSuccess();
-      this.promotion.recordPromotionBlocked();
-      this.logShadowComparison(input, transactionResult, legacyResult, 'EXACT_ECONOMY_RULES_BLOCKED');
-      return legacyResult;
-    }
-
-    if (!this.promotion.canServeStrategy()) {
-      const legacyResult = this.legacy.plan(input);
-      this.promotion.recordShadowSuccess();
-      this.promotion.recordPromotionBlocked();
-      this.logShadowComparison(input, transactionResult, legacyResult, 'PROMOTION_BLOCKED');
-      return legacyResult;
-    }
-
-    return this.routeTransactionPlan(input, transactionResult);
+    // Production has one serving path.  Evidence gates live at the recommendation
+    // boundary; once this router is called, the strategy/transaction planner is
+    // authoritative and any failure is surfaced to the caller as unavailable.
+    const result = this.strategy.plan(input);
+    this.logger.debug(`strategy-serving ${JSON.stringify(strategyDiagnostics(input, result))}`);
+    return result;
   }
 
   private routeTransactionPlan(

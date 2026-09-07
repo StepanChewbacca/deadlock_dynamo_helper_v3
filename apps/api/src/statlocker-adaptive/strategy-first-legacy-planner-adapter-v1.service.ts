@@ -69,6 +69,27 @@ export class StrategyFirstLegacyPlannerAdapterV1Service {
       rankedImmediateCandidates: result.rankedImmediateCandidates,
       totalScore: result.totalScore,
       confidence: result.confidence,
+      buildContract: {
+        strategyId: result.contract.strategyId,
+        status: result.contract.status,
+        currentGoalId: result.contract.currentGoalId,
+        completedGoalIds: new Set(Object.entries(result.contract.goalStates)
+          .filter(([, state]) => state === 'SATISFIED' || state === 'SKIPPED' || state === 'WAIVED')
+          .map(([goalId]) => goalId)),
+        remainingGoalIds: [...result.contract.remainingHardGoalIds],
+        committedChoiceItemIdsByGroup: new Map(Object.entries(result.contract.committedBranches).map(
+          ([groupId, goalId]) => [groupId, result.strategy.goals.find((goal) => goal.goalId === goalId)?.targetItemIds ?? []],
+        )),
+        temporaryItemIds: new Set(result.contract.temporaryItemIds),
+        slotReservations: [],
+        situationalWindowStates: result.contract.reservedSituationalWindowIds.map((windowId) => ({
+          windowId,
+          state: 'OPEN' as const,
+          targetItemIds: [],
+          reasonCodes: ['STRATEGY_WINDOW_RESERVED'],
+        })),
+        replanReasonCodes: [...result.contract.completionReasonCodes],
+      },
       plannerVersion: this.version,
     };
   }

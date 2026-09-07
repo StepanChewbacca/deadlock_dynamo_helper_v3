@@ -169,7 +169,7 @@ describe('AdaptiveBuildPlannerV1Service capacity authority', () => {
     });
 
     expect(result.nextAction.type).not.toBe('BUY');
-    expect(result.rankedImmediateCandidates.some((candidate) => candidate.type === 'BUY')).toBe(false);
+    expect(result.rankedImmediateCandidates.some((candidate) => candidate.action.type === 'BUY')).toBe(false);
   });
 
   it('honors per-type base-slot capacity carried by the planner node instead of 4/4/4 defaults', () => {
@@ -184,6 +184,6 @@ describe('AdaptiveBuildPlannerV1Service capacity authority', () => {
     });
 
     expect(result.nextAction.type).not.toBe('BUY');
-    expect(result.rankedImmediateCandidates.some((candidate) => candidate.type === 'BUY')).toBe(false);
+    expect(result.rankedImmediateCandidates.some((candidate) => candidate.action.type === 'BUY')).toBe(false);
   });
 });

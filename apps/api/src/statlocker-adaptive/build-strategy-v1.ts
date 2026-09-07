@@ -1,4 +1,15 @@
-import { InventorySlotType } from '@deadlock-live-probe/build-domain';
+import {
+  InventorySlotType,
+  RecommendationCandidate,
+  RecommendationItemGraph,
+} from '@deadlock-live-probe/build-domain';
+import type {
+  BuildContractV1 as CompatibilityBuildContractV1,
+} from './build-contract-v1';
+import type {
+  ConsensusBuildGroupV1,
+  ConsensusSkeletonV1,
+} from './statlocker-adaptive.types';
 
 export type BuildStrategyPhaseV1 = 'EARLY' | 'MID' | 'LATE';
 
@@ -239,4 +250,103 @@ export function hardStrategyGoalIdsV1(strategy: BuildStrategySpecV1): readonly s
 
 export function targetItemIdsForGoalV1(goal: BuildStrategyGoalV1): readonly number[] {
   return [...new Set(goal.targetItemIds)].sort((a, b) => a - b);
+}
+
+/** Compatibility adapter for offline/legacy planner tests; production loads published specs. */
+export function compileStructuredConsensusStrategyV1(input: {
+  skeleton: ConsensusSkeletonV1;
+  itemGraph: RecommendationItemGraph;
+  rulesetId: string;
+  situationalWindows?: readonly { windowId: string; targetItemIds: readonly number[] }[];
+}): BuildStrategySpecV1 {
+  const groups = input.skeleton.groups.filter((group) => group.type !== 'OPTIONAL');
+  const goals = groups.map((group) => compatibilityGoal(group, input.itemGraph));
+  const situationalGoals = (input.situationalWindows ?? []).map((window) => ({
+    goalId: `situational:${window.windowId}`,
+    type: 'SITUATIONAL_RESERVATION' as const,
+    phase: 'MID' as const,
+    targetItemIds: stableKnownItems(window.targetItemIds, input.itemGraph),
+    minSelect: 0,
+    maxSelect: 1,
+    prerequisiteGoalIds: [],
+    hard: false,
+    lifecycleByItemId: Object.fromEntries(window.targetItemIds.map((itemId) => [itemId, 'SITUATIONAL' as const])),
+    rationaleCodes: ['EXPLICIT_SITUATIONAL_WINDOW'],
+  }));
+  return {
+    schemaVersion: 1,
+    strategyId: `structured:${input.skeleton.heroId}:${input.rulesetId}`,
+    heroId: input.skeleton.heroId,
+    rulesetId: input.rulesetId,
+    sourcePatchId: 'COMPATIBILITY_ONLY',
+    support: input.skeleton.profileCount,
+    stability: 0,
+    representativeTraceId: 'COMPATIBILITY_ONLY',
+    goals: [...goals, ...situationalGoals],
+    branchGroups: groups.filter((group) => group.type === 'CHOICE').map((group) => ({
+      branchGroupId: group.groupId,
+      optionGoalIds: [group.groupId],
+      minSelect: group.minSelect,
+      maxSelect: group.maxSelect,
+    })),
+    situationalWindows: [],
+    investmentPolicy: { objectives: [], preferredWeights: { weapon: 1, vitality: 1, spirit: 1 } },
+    slotPolicy: { reservedSituationalSlots: situationalGoals.length > 0 ? 1 : 0, maxTemporarySlots: 0 },
+    terminalPolicy: { requiredGoalIds: goals.filter((goal) => goal.hard).map((goal) => goal.goalId), allowWaiveSoftGoals: true },
+  };
+}
+
+export function resolveActiveBuildStrategyGoalsV1(
+  strategy: BuildStrategySpecV1,
+  contract: CompatibilityBuildContractV1,
+): readonly BuildStrategyGoalV1[] {
+  if (contract.status === 'OUT_OF_DISTRIBUTION' || contract.status === 'REPLAN_REQUIRED') return [];
+  const active = new Set<string>();
+  if (contract.currentGoalId) active.add(contract.currentGoalId);
+  for (const window of contract.situationalWindowStates) {
+    if (window.state === 'OPEN') active.add(`situational:${window.windowId}`);
+  }
+  return strategy.goals.filter((goal) => active.has(goal.goalId));
+}
+
+export function filterRecommendationCandidatesForActiveGoalsV1(
+  candidates: readonly RecommendationCandidate[],
+  activeGoals: readonly BuildStrategyGoalV1[],
+  itemGraph: RecommendationItemGraph,
+  options: { capacityExitItemIds?: ReadonlySet<number> } = {},
+): readonly RecommendationCandidate[] {
+  const targets = new Set<number>();
+  for (const goal of activeGoals) for (const itemId of goal.targetItemIds) {
+    targets.add(itemId);
+    for (const componentId of itemGraph.getTransitiveComponentIds(itemId)) targets.add(componentId);
+  }
+  return candidates.filter((candidate) => {
+    if (candidate.action.type === 'BUY_ITEM' || candidate.action.type === 'UPGRADE_ITEM') return targets.has(candidate.action.itemId);
+    if (candidate.action.type === 'REPLACE_ITEM') return targets.has(candidate.action.buyItemId);
+    if (candidate.action.type === 'WAIT_SAVE') return candidate.action.targetItemId === undefined || targets.has(candidate.action.targetItemId);
+    return options.capacityExitItemIds?.has(candidate.action.itemId) ?? false;
+  });
+}
+
+function compatibilityGoal(group: ConsensusBuildGroupV1, graph: RecommendationItemGraph): BuildStrategyGoalV1 {
+  const targetItemIds = stableKnownItems(group.candidates.map((candidate) => candidate.itemId), graph);
+  const type: BuildGoalTypeV1 = group.type === 'CHOICE'
+    ? 'BRANCH'
+    : targetItemIds.every((itemId) => graph.getDirectComponentIds(itemId).length > 0) ? 'UPGRADE' : 'CORE';
+  return {
+    goalId: group.groupId,
+    type,
+    phase: group.phase,
+    targetItemIds,
+    minSelect: group.minSelect,
+    maxSelect: group.maxSelect,
+    prerequisiteGoalIds: [],
+    hard: true,
+    lifecycleByItemId: Object.fromEntries(targetItemIds.map((itemId) => [itemId, 'PERMANENT_CORE' as const])),
+    rationaleCodes: ['STRUCTURED_CONSENSUS_COMPATIBILITY'],
+  };
+}
+
+function stableKnownItems(itemIds: readonly number[], graph: RecommendationItemGraph): number[] {
+  return [...new Set(itemIds)].filter((itemId) => graph.getItem(itemId) !== undefined).sort((a, b) => a - b);
 }

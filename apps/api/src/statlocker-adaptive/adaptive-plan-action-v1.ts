@@ -1,6 +1,7 @@
 import {
   RecommendationCandidate,
   RecommendationCandidateGeneratorRules,
+  DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
   RecommendationDecisionState,
   applyRecommendationCandidateTransitionV1,
   flexUsedFor,
@@ -13,6 +14,8 @@ import {
   AdaptivePlanRequirementV1,
   AdaptivePlannedItemV1,
   AdaptiveSituationalContextV1,
+  AdaptivePlanSessionV1,
+  AdaptivePlannedTransactionV1,
 } from '@deadlock-live-probe/shared';
 import { AdaptiveDecisionStateV1 } from './adaptive-decision-state-v1.service';
 
@@ -24,6 +27,61 @@ export interface BuildAdaptivePlanActionsInputV1 {
   situationalByTargetItemId?: ReadonlyMap<number, AdaptiveSituationalContextV1>;
   /** @deprecated Prefer situationalByTargetItemId so multi-step acquisition stays attached to the final semantic target. */
   situationalByActionKey?: ReadonlyMap<string, AdaptiveSituationalContextV1>;
+}
+
+/**
+ * Projects the canonical transaction session into the semantic API contract.
+ * This is deliberately independent of `recommendedBuild`; the latter is only
+ * a display projection and must never be used to invent executable actions.
+ */
+export function projectAdaptivePlanActionsFromSessionV1(
+  session: AdaptivePlanSessionV1,
+  stateRevision: string,
+  situationalByTargetItemId?: ReadonlyMap<number, AdaptiveSituationalContextV1>,
+): readonly AdaptivePlanActionV1[] {
+  return session.steps.map((step, index) => {
+    const transaction = step.action;
+    const action = step.action
+      ? adaptiveActionFromTransaction(step.action)
+      : {
+          actionKey: `WAIT:${step.barrier?.targetItemId ?? step.goalId}`,
+          type: 'WAIT' as const,
+          targetItemId: step.barrier?.targetItemId,
+          reasonCodes: [...step.blockingReasons, ...step.reasonCodes],
+        };
+    const targetItemId = action.targetItemId ?? action.buyItemId ?? action.itemId;
+    const status: AdaptivePlanActionV1['status'] =
+      step.state === 'COMPLETED' ? 'COMPLETED' :
+        step.state === 'READY' || step.state === 'NEXT' || step.state === 'IN_PROGRESS' ? 'READY' :
+          step.state === 'LOCKED' ? 'PLANNED' : 'BLOCKED';
+    const requirements: AdaptivePlanRequirementV1[] = [];
+    if (step.barrier?.type === 'WAIT_FOR_GOLD') requirements.push({ type: 'SOULS', requiredSouls: step.barrier.requiredSouls, evidence: 'OBSERVED' });
+    if (step.barrier?.type === 'WAIT_FOR_FLEX') requirements.push({ type: 'FLEX_SLOT', requiredFlexSlots: step.barrier.requiredUnlockedFlexSlots, evidence: 'OBSERVED' });
+    if (action.type === 'SELL' || action.type === 'REPLACE') {
+      if (action.sellItemId !== undefined) requirements.push({ type: 'SELL_ITEM', itemId: action.sellItemId });
+    }
+    if (transaction?.type === 'UPGRADE') requirements.push({ type: 'UPGRADE_COMPONENT', itemIds: transaction.consumedItemIds });
+    return {
+      planActionId: `session:${stateRevision}:${step.stepId}`,
+      sequence: index + 1,
+      status,
+      action,
+      targetItemId,
+      sourceItemIds: transaction?.type === 'UPGRADE' ? [...transaction.consumedItemIds] : action.sellItemId !== undefined ? [action.sellItemId] : [],
+      requirements,
+      goalId: step.goalId,
+      reasonCodes: [...new Set([...step.blockingReasons, ...step.reasonCodes, ...action.reasonCodes])],
+      situational: targetItemId === undefined ? undefined : situationalByTargetItemId?.get(targetItemId),
+    };
+  });
+}
+
+function adaptiveActionFromTransaction(transaction: AdaptivePlannedTransactionV1): AdaptiveActionV1 {
+  switch (transaction.type) {
+    case 'BUY': return { actionKey: `BUY_ITEM:${transaction.buyItemId}`, type: 'BUY', itemId: transaction.buyItemId, buyItemId: transaction.buyItemId, targetItemId: transaction.buyItemId, reasonCodes: ['CANONICAL_TRANSACTION'] };
+    case 'UPGRADE': return { actionKey: `UPGRADE_ITEM:${transaction.buyItemId}`, type: 'UPGRADE', itemId: transaction.buyItemId, buyItemId: transaction.buyItemId, targetItemId: transaction.buyItemId, reasonCodes: ['CANONICAL_TRANSACTION'] };
+    case 'SELL_AND_BUY': return { actionKey: `REPLACE_ITEM:${transaction.sellItemId}->${transaction.buyItemId}`, type: 'REPLACE', sellItemId: transaction.sellItemId, buyItemId: transaction.buyItemId, targetItemId: transaction.buyItemId, reasonCodes: ['CANONICAL_TRANSACTION'] };
+  }
 }
 
 export function buildAdaptivePlanActionsV1(
@@ -254,8 +312,8 @@ export function derivePlanRequirements(
     requirements.push({
       type: 'FLEX_SLOT',
       requiredFlexSlots: afterFlex,
-      unlockedFlexSlots: decision.slots.unlockedFlexSlots,
-      evidence: decision.slots.flexEvidence,
+      unlockedFlexSlots: decision.slots?.unlockedFlexSlots,
+      evidence: decision.slots?.flexEvidence ?? 'UNKNOWN',
     });
   }
 
@@ -290,12 +348,15 @@ export function stablePlanActionId(stateRevision: string, sequence: number, acti
 }
 
 function candidateRules(decision: AdaptiveDecisionStateV1): RecommendationCandidateGeneratorRules {
+  const slots = decision.slots;
+  if (!slots) return { ...DEFAULT_RECOMMENDATION_CANDIDATE_RULES, allowSellOnlyActions: true, generateTargetedWaitActions: true };
   return {
-    baseSlotsByType: decision.slots.baseSlotsByType,
-    maxFlexSlots: decision.slots.maxFlexSlots,
-    unlockedFlexSlots: decision.slots.unlockedFlexSlots,
-    flexCapacityEvidence: decision.slots.flexEvidence,
-    maxActiveItems: decision.slots.maxActiveItems,
+    ...DEFAULT_RECOMMENDATION_CANDIDATE_RULES,
+    baseSlotsByType: slots.baseSlotsByType ?? DEFAULT_RECOMMENDATION_CANDIDATE_RULES.baseSlotsByType,
+    maxFlexSlots: slots.maxFlexSlots ?? DEFAULT_RECOMMENDATION_CANDIDATE_RULES.maxFlexSlots,
+    unlockedFlexSlots: slots.unlockedFlexSlots ?? DEFAULT_RECOMMENDATION_CANDIDATE_RULES.unlockedFlexSlots,
+    flexCapacityEvidence: slots.flexEvidence ?? 'RECONSTRUCTED',
+    maxActiveItems: slots.maxActiveItems ?? DEFAULT_RECOMMENDATION_CANDIDATE_RULES.maxActiveItems,
     allowSellOnlyActions: true,
     generateTargetedWaitActions: true,
   };

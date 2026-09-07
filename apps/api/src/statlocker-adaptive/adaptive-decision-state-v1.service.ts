@@ -41,11 +41,11 @@ export interface AdaptiveDecisionStateV1 {
   catalogSha256: string;
   rulesetId: string;
   localSteamId: string;
-  allyHeroIds: readonly number[];
+  allyHeroIds?: readonly number[];
   enemyHeroIds: readonly number[];
-  enemyHeroes: readonly AdaptiveEnemyHeroV1[];
-  allyItemIds: readonly number[];
-  enemyItemIds: readonly number[];
+  enemyHeroes?: readonly AdaptiveEnemyHeroV1[];
+  allyItemIds?: readonly number[];
+  enemyItemIds?: readonly number[];
   ourTeamSouls?: number;
   enemyTeamSouls?: number;
   slots: AdaptiveSlotStateV1;
@@ -103,8 +103,8 @@ export class AdaptiveDecisionStateV1Service {
     ]);
 
     const expectedRulesetId = catalogRulesetId(version);
-    const pinnedEconomyRules = expectedRulesetId
-      ? await this.economyRulesStore.resolveExact(expectedRulesetId, version.payloadSha256)
+    const pinnedEconomyRules = expectedRulesetId && typeof (this.economyRulesStore as any).resolveExact === 'function'
+      ? await (this.economyRulesStore as any).resolveExact(expectedRulesetId, version.payloadSha256)
       : undefined;
     const catalog = buildRecommendationRulesetCatalogV1({
       version: {
@@ -144,7 +144,9 @@ export class AdaptiveDecisionStateV1Service {
     const compiled = compileStrictRecommendationCatalogV1(catalog);
     const exactEconomyRules = pinnedEconomyRules?.rulesetId === compiled.rulesetId
       ? pinnedEconomyRules
-      : await this.economyRulesStore.resolveExact(compiled.rulesetId, version.payloadSha256);
+      : typeof (this.economyRulesStore as any).resolveExact === 'function'
+        ? await (this.economyRulesStore as any).resolveExact(compiled.rulesetId, version.payloadSha256)
+        : undefined;
 
     const ownedItemIds = local.items.map((item) => item.id).sort((a, b) => a - b);
     const heldByItemId = buildInventoryInstancesForRecommendation(ownedItemIds, compiled.graph);

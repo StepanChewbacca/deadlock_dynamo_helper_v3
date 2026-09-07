@@ -1,6 +1,13 @@
 import { LiveMatchStateService } from '../src/deadlock-live/live-match-state.service';
 
 describe('LiveMatchStateService flex capacity evidence', () => {
+  const event = (key: string, payload: unknown) => ({
+    receivedAt: 0,
+    source: 'onInfoUpdates2' as const,
+    key,
+    payload,
+  });
+
   it('captures an explicit unlocked flex slot event', () => {
     const service = new LiveMatchStateService();
 
@@ -8,14 +15,15 @@ describe('LiveMatchStateService flex capacity evidence', () => {
       clientId: 'client-1',
       sentAt: new Date(0).toISOString(),
       events: [
-        { key: 'match_id', payload: 'match-1' },
-        { key: 'unlocked_flex_slots', payload: 2 },
+        event('match_id', 'match-1'),
+        event('unlocked_flex_slots', 2),
       ],
     });
 
     expect(state?.unlockedFlexSlots).toBe(2);
     expect(state?.flexSlotsSource).toBe('overwolf:unlocked_flex_slots');
-    expect(service.getSnapshots('match-1').at(-1)).toMatchObject({
+    const snapshots = service.getSnapshots('match-1');
+    expect(snapshots[snapshots.length - 1]).toMatchObject({
       unlockedFlexSlots: 2,
       flexSlotsSource: 'overwolf:unlocked_flex_slots',
     });
@@ -28,8 +36,8 @@ describe('LiveMatchStateService flex capacity evidence', () => {
       clientId: 'client-1',
       sentAt: new Date(0).toISOString(),
       events: [
-        { key: 'match_id', payload: 'match-1' },
-        { key: 'match_info', payload: { unlocked_flex_slots: '3' } },
+        event('match_id', 'match-1'),
+        event('match_info', { unlocked_flex_slots: '3' }),
       ],
     });
 
@@ -43,9 +51,9 @@ describe('LiveMatchStateService flex capacity evidence', () => {
       clientId: 'client-1',
       sentAt: new Date(0).toISOString(),
       events: [
-        { key: 'match_id', payload: 'match-1' },
-        { key: 'objective_state', payload: { objectives_completed: 4 } },
-        { key: 'items_local', payload: { steam_id: '1', items: [] } },
+        event('match_id', 'match-1'),
+        event('objective_state', { objectives_completed: 4 }),
+        event('items_local', { steam_id: '1', items: [] }),
       ],
     });
 
@@ -60,9 +68,9 @@ describe('LiveMatchStateService flex capacity evidence', () => {
       clientId: 'client-1',
       sentAt: new Date(0).toISOString(),
       events: [
-        { key: 'match_id', payload: 'match-1' },
-        { key: 'unlocked_flex_slots', payload: -1 },
-        { key: 'flex_slots', payload: 1.5 },
+        event('match_id', 'match-1'),
+        event('unlocked_flex_slots', -1),
+        event('flex_slots', 1.5),
       ],
     });
 

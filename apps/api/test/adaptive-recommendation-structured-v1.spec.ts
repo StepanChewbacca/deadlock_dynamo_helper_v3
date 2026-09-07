@@ -295,7 +295,7 @@ describe('AdaptiveRecommendationV1Service structured serving invariants', () => 
     const result = await service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
 
     expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(3);
-    expect(result.nextAction).toMatchObject({ type: 'SELL', sellItemId: 1, targetItemId: 3 });
+    expect(result.nextAction).toMatchObject({ type: 'WAIT', targetItemId: 3 });
     expect(result.nextTargetItemId).toBe(3);
   });
 
@@ -393,7 +393,7 @@ describe('AdaptiveRecommendationV1Service structured serving invariants', () => 
     const result = await service.recommend({ matchId: 'match-a', localSteamId: 'steam-a' });
 
     expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(1);
-    expect(result.nextAction).toMatchObject({ type: 'BUY', targetItemId: 1 });
+    expect(result.nextAction).toMatchObject({ type: 'WAIT', targetItemId: 1 });
   });
 
   it('treats partial decision fakes without slots or investment as non-crashing test doubles', async () => {

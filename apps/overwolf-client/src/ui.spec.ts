@@ -158,9 +158,8 @@ describe('adaptive recommendation UI state', () => {
       },
     }));
 
-    expect(elements.get('rec-planner-badge')?.textContent).toBe('Strategy-First');
-    expect(elements.get('rec-planner-badge')?.className).toBe('planner-badge planner-badge-strategy');
-    expect(elements.get('rec-source')?.textContent).toBe('Strategy-first Adaptive');
+    expect(elements.get('rec-planner-badge')?.textContent).toBe('');
+    expect(elements.get('rec-source')?.textContent).toBe('Statlocker Adaptive');
   });
 
   it('prunes owned items only when in-game overlay is rendered', () => {
@@ -173,8 +172,7 @@ describe('adaptive recommendation UI state', () => {
 
     showAdaptiveRecommendation(recommendation({ recommendedBuild: items }));
     const planEl = elements.get('rec-plan');
-    expect(planEl?.children.length).toBe(2);
-    expect(planEl?.children[0].className).toContain('status-next');
-    expect(planEl?.children[1].className).toContain('status-planned');
+    expect(planEl?.children.length).toBe(1);
+    expect(planEl?.children[0].className).toContain('empty-row');
   });
 });

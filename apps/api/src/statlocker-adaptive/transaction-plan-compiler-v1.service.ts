@@ -479,7 +479,7 @@ export class TransactionPlanCompilerV1Service {
         maxFlexSlots: args.slots.maxFlexSlots,
         maxActiveItems: args.slots.maxActiveItems,
       },
-      { unlockedFlexSlots: args.slots.unlockedFlexSlots, evidence: args.slots.evidence },
+      { unlockedFlexSlots: args.slots.unlockedFlexSlots, evidence: args.slots.evidence ?? args.slots.flexEvidence },
     );
     const after = planProjectionFromDecisionStateV1(
       nextState,

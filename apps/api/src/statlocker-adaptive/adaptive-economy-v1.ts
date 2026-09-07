@@ -43,7 +43,7 @@ export interface AdaptiveSlotStateV1 {
   mechanicsEvidence: FactEvidence;
   flexEvidence: FactEvidence;
   /** Compatibility alias for flexEvidence. */
-  evidence: FactEvidence;
+  evidence?: FactEvidence;
 }
 
 export interface AdaptiveInvestmentTrackStateV1 {
@@ -78,10 +78,12 @@ export interface AdaptiveFlexCapacityInputV1 {
 }
 
 export interface AdaptiveSlotRulesV1 {
+  /** Compatibility aggregate for callers that also retain the exact per-category record. */
+  baseSlots?: number;
   baseSlotsByType: Readonly<Record<InventorySlotType, number>>;
   maxFlexSlots: number;
   maxActiveItems: number;
-  evidence: FactEvidence;
+  evidence?: FactEvidence;
 }
 
 export const UNKNOWN_ADAPTIVE_SLOT_RULES_V1: AdaptiveSlotRulesV1 = {
@@ -197,7 +199,9 @@ export function candidateGeneratorRulesFromSlotStateV1(
     baseSlotsByType: slots.baseSlotsByType,
     maxFlexSlots: slots.maxFlexSlots,
     unlockedFlexSlots: effectiveUnlocked,
-    flexCapacityEvidence: effectiveUnlocked !== undefined && slots.evidence === 'UNKNOWN' ? 'OBSERVED' : slots.evidence,
+    flexCapacityEvidence: effectiveUnlocked !== undefined && (slots.evidence ?? slots.flexEvidence) === 'UNKNOWN'
+      ? 'OBSERVED'
+      : (slots.evidence ?? slots.flexEvidence),
     maxActiveItems: slots.maxActiveItems,
     allowSellOnlyActions: overrides.allowSellOnlyActions ?? true,
     generateTargetedWaitActions: overrides.generateTargetedWaitActions ?? true,
@@ -228,7 +232,8 @@ export function deriveAdaptiveSlotStateV1(
     allowSellOnlyActions: true,
     generateTargetedWaitActions: true,
   });
-  const provedLowerBound = slotRules.evidence === 'UNKNOWN'
+  const mechanicsEvidence = slotRules.evidence ?? 'RECONSTRUCTED';
+  const provedLowerBound = mechanicsEvidence === 'UNKNOWN'
     ? 0
     : Math.min(maxFlexSlots, usage.flexUsed);
   const unlocked = capacity.evidence === 'UNKNOWN' || capacity.unlockedFlexSlots === undefined
@@ -261,7 +266,7 @@ export function deriveAdaptiveSlotStateV1(
     activeItemsUsed: usage.activeItemsUsed,
     usedActiveItems: usage.activeItemsUsed,
     freeActiveItemSlots: Math.max(0, maxActiveItems - usage.activeItemsUsed),
-    mechanicsEvidence: slotRules.evidence,
+    mechanicsEvidence,
     flexEvidence: capacity.evidence,
     evidence,
   };

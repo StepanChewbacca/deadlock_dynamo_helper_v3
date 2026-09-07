@@ -57,7 +57,7 @@ describe('adaptive recommendation presentation', () => {
     expect(view.evidenceLabel).toBe('2 fresh Statlocker signals');
   });
 
-  it('keeps the legacy build path as a compatibility fallback when planActions are absent', () => {
+  it('does not render a legacy build when planActions are absent', () => {
     const itemIds = [
       3862866912,
       968099481,
@@ -81,10 +81,8 @@ describe('adaptive recommendation presentation', () => {
 
     const view = buildAdaptiveRecommendationPresentation(recommendation({ recommendedBuild }));
 
-    expect(view.plan.items).toHaveLength(8);
-    expect(view.plan.items.map((item) => item.position)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(view.plan.items).toHaveLength(0);
     expect(view.plan.remainingCount).toBe(0);
-    expect(view.plan.items.every((item) => ['Owned', 'Ready', 'Planned'].includes(item.statusLabel))).toBe(true);
   });
 
   it('renders one card per semantic plan action instead of one card per barrier', () => {

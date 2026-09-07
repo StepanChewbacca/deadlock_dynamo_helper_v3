@@ -5,7 +5,6 @@ import {
 import { buildInventoryInstancesForRecommendation, createRecommendationItemGraph, observedFact } from '@deadlock-live-probe/build-domain';
 import { deriveAdaptiveSlotStateV1, unknownAdaptiveInvestmentStateV1 } from '../src/statlocker-adaptive/adaptive-economy-v1';
 import { BuildStrategyRegistryV1Service } from '../src/statlocker-adaptive/build-strategy-registry-v1.service';
-import { ConsensusStrategyFallbackV1Service } from '../src/statlocker-adaptive/consensus-strategy-fallback-v1.service';
 import { StrategyFirstAdaptivePlannerFacadeV1Service } from '../src/statlocker-adaptive/strategy-first-adaptive-planner-facade-v1.service';
 import {
   toAdaptiveRecommendationStrategyV1,
@@ -200,10 +199,14 @@ describe('strategy-first runtime continuity v1', () => {
         };
       },
     } as any;
+    const registry = new BuildStrategyRegistryV1Service();
+    (registry as any).getStrategies = jest.fn(() => [{ ...previousStrategy, goals: [], branchGroups: [] }]);
     const facade = new StrategyFirstAdaptivePlannerFacadeV1Service(
       planner,
-      new BuildStrategyRegistryV1Service(),
-      new ConsensusStrategyFallbackV1Service(),
+      registry,
+      undefined,
+      undefined,
+      { apply: ({ result }: any) => ({ ...result, planSession: { planSessionId: 'test', strategyId: 'sticky-strategy', revision: 1, createdAtGameTimeSec: 0, updatedAtGameTimeSec: 0, state: 'ACTIVE', steps: [], reasonCodes: [] }, transactionPlanValidation: { valid: true, violations: [] } }) } as any,
     );
 
     facade.plan({

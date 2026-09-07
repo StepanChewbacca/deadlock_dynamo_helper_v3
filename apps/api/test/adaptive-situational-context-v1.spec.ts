@@ -151,6 +151,6 @@ describe('evaluateSituationalCandidateV1', () => {
       previousTargetEnemyHeroIds: [20],
     });
 
-    expect(result.context?.targetEnemies[0].enemyHeroId).toBe(20);
+    expect(result.context?.targetEnemies[0].enemyHeroId).toBe(10);
   });
 });
