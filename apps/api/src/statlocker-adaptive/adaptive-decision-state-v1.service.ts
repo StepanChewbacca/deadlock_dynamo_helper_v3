@@ -29,6 +29,11 @@ import {
   slotRulesFromEconomyRulesV1,
 } from './adaptive-economy-v1';
 
+export interface AdaptiveEnemyHeroV1 {
+  heroId: number;
+  heroName?: string;
+}
+
 export interface AdaptiveDecisionStateV1 {
   state: RecommendationDecisionState;
   itemGraph: RecommendationItemGraph;
@@ -37,6 +42,7 @@ export interface AdaptiveDecisionStateV1 {
   rulesetId: string;
   localSteamId: string;
   enemyHeroIds: readonly number[];
+  enemyHeroes: readonly AdaptiveEnemyHeroV1[];
   ourTeamSouls?: number;
   enemyTeamSouls?: number;
   slots: AdaptiveSlotStateV1;
@@ -169,11 +175,8 @@ export class AdaptiveDecisionStateV1Service {
       : unknownFact<number>('souls-affordability-scope-unverified');
 
     const teamTotals = calculateTeamSoulTotals(match, local.teamId);
-    const enemyHeroIds = [...new Set(Object.values(match.playersBySteamId)
-      .filter((player) => player.teamId !== undefined && player.teamId !== local.teamId)
-      .map((player) => player.heroId)
-      .filter((heroId): heroId is number => Number.isInteger(heroId)))]
-      .sort((a, b) => a - b);
+    const enemyHeroes = resolveEnemyHeroes(match, local.teamId);
+    const enemyHeroIds = enemyHeroes.map((hero) => hero.heroId);
     const gameTimeSec = Number.isFinite(match.gameTimeSec) ? (match.gameTimeSec as number) : 0;
     const stateRevision = computeStateRevision(match, localSteamId, version, ownedItemIds);
     const state: RecommendationDecisionState = {
@@ -198,6 +201,7 @@ export class AdaptiveDecisionStateV1Service {
       rulesetId: compiled.rulesetId,
       localSteamId,
       enemyHeroIds,
+      enemyHeroes,
       ourTeamSouls: teamTotals.our,
       enemyTeamSouls: teamTotals.enemy,
       slots,
@@ -212,6 +216,22 @@ export class AdaptiveDecisionStateV1Service {
 function catalogRulesetId(version: RecommendationItemCatalogVersionV1): string | undefined {
   const value = version.rulesetKey ?? version.clientVersion;
   return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function resolveEnemyHeroes(match: MinimalMatchState, localTeamId: number): readonly AdaptiveEnemyHeroV1[] {
+  const byHeroId = new Map<number, AdaptiveEnemyHeroV1>();
+  for (const player of Object.values(match.playersBySteamId)) {
+    if (player.teamId === undefined || player.teamId === localTeamId || !Number.isInteger(player.heroId)) continue;
+    const heroId = Number(player.heroId);
+    const heroName = typeof player.heroName === 'string' && player.heroName.trim()
+      ? player.heroName.trim()
+      : undefined;
+    const existing = byHeroId.get(heroId);
+    if (!existing || (!existing.heroName && heroName)) {
+      byHeroId.set(heroId, heroName ? { heroId, heroName } : { heroId });
+    }
+  }
+  return [...byHeroId.values()].sort((a, b) => a.heroId - b.heroId);
 }
 
 function resolveLocalSteamId(match: MinimalMatchState, requested?: string): string {
@@ -266,6 +286,7 @@ function computeStateRevision(
     .map((player) => ({
       steamId: player.steamId,
       heroId: player.heroId,
+      heroName: player.heroName,
       teamId: player.teamId,
       souls: player.souls,
       itemIds: player.items.map((item) => item.id).sort((a, b) => a - b),
