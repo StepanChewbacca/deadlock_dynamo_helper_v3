@@ -40,6 +40,7 @@ export interface AdaptiveBuildContractViewV1 {
 export interface AdaptiveStrategySessionViewV1 {
   state: AdaptiveStrategySessionStateV1;
   strategyId?: string;
+  strategyPosterior?: number;
   heroId: number;
   rulesetId: string;
   catalogSha256: string;
