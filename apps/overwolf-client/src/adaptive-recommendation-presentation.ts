@@ -12,6 +12,7 @@ import {
   AdaptiveItemCatalogEntry,
   AdaptiveItemSlot,
 } from './generated/adaptive-item-catalog';
+import { getAdaptiveHeroDisplayName } from './generated/adaptive-hero-catalog';
 
 export interface AdaptivePresentedItem {
   readonly id: number;
@@ -255,7 +256,7 @@ function presentSituationalPurpose(context: AdaptiveSituationalContextV1 | undef
 function presentAgainst(context: AdaptiveSituationalContextV1 | undefined): string | undefined {
   if (!context) return undefined;
   const names = context.targetEnemies
-    .map((target) => target.enemyHeroName?.trim())
+    .map((target) => target.enemyHeroName?.trim() || getAdaptiveHeroDisplayName(target.enemyHeroId))
     .filter((name): name is string => Boolean(name));
   const unique = [...new Set(names)];
   return unique.length > 0 ? `Against: ${unique.join(', ')}` : undefined;
