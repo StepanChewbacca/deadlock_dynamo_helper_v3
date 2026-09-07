@@ -29,6 +29,11 @@ export interface BuildArchetypeGoalTargetV1 {
   targetItemId: number;
 }
 
+export interface BuildArchetypeBranchAlternativesV1 {
+  groupId: string;
+  alternatives: readonly (readonly number[])[];
+}
+
 export interface MinedBuildArchetypeV1 {
   archetypeId: string;
   heroId: number;
@@ -48,7 +53,9 @@ export interface MinedBuildArchetypeV1 {
   orderedTargetItemIds: readonly number[];
   terminalItemIds: readonly number[];
   committedChoices: readonly { groupId: string; itemIds: readonly number[] }[];
+  branchAlternatives?: readonly BuildArchetypeBranchAlternativesV1[];
   situationalWindowIds: readonly string[];
+  observedExitItemIds?: readonly number[];
 }
 
 interface NormalizedObservationV1 {
@@ -67,6 +74,7 @@ interface NormalizedObservationV1 {
   terminalItemIds: readonly number[];
   committedChoices: readonly { groupId: string; itemIds: readonly number[] }[];
   situationalWindowIds: readonly string[];
+  observedExitItemIds: readonly number[];
   normalizedTiming: readonly number[];
 }
 
@@ -117,7 +125,9 @@ export function mineBuildArchetypesV1(
         orderedTargetItemIds: medoid.orderedTargetItemIds,
         terminalItemIds: medoid.terminalItemIds,
         committedChoices: medoid.committedChoices,
+        branchAlternatives: aggregateBranchAlternatives(cluster),
         situationalWindowIds: medoid.situationalWindowIds,
+        observedExitItemIds: medoid.observedExitItemIds,
       });
     }
   }
@@ -176,6 +186,11 @@ function normalizeObservation(input: BuildArchetypeObservationV1): NormalizedObs
     .map((window) => window.windowId)
     .filter((windowId, index, values) => values.indexOf(windowId) === index)
     .sort();
+  const observedExitItemIds = [...new Set(
+    input.trajectory.steps
+      .filter((step) => step.actionType === 'SELL_ITEM' || step.actionType === 'REPLACE_ITEM')
+      .flatMap((step) => step.sourceItemIds),
+  )].sort((left, right) => left - right);
   const normalizedTiming = normalizeStepTiming(input.trajectory.steps.map((step) => step.gameTimeSec));
   const scopeKey = `${input.heroId}|${input.rulesetId}|${input.catalogSha256.toLowerCase()}`;
   const featureSignature = JSON.stringify({
@@ -184,6 +199,7 @@ function normalizeObservation(input: BuildArchetypeObservationV1): NormalizedObs
     terminalItemIds,
     committedChoices,
     situationalWindowIds,
+    observedExitItemIds,
   });
 
   return {
@@ -204,6 +220,7 @@ function normalizeObservation(input: BuildArchetypeObservationV1): NormalizedObs
     terminalItemIds,
     committedChoices,
     situationalWindowIds,
+    observedExitItemIds,
     normalizedTiming,
   };
 }
@@ -261,16 +278,52 @@ function observationDistance(left: NormalizedObservationV1, right: NormalizedObs
   const terminalDistance = jaccardDistance(left.terminalItemIds, right.terminalItemIds);
   const choiceDistance = jaccardDistance(choiceTokens(left.committedChoices), choiceTokens(right.committedChoices));
   const windowDistance = jaccardDistance(left.situationalWindowIds, right.situationalWindowIds);
+  const exitDistance = jaccardDistance(left.observedExitItemIds, right.observedExitItemIds);
   const timingDistance = vectorDistance(left.normalizedTiming, right.normalizedTiming);
 
   return clamp01(
-    targetDistance * 0.30 +
-    goalTargetDistance * 0.20 +
-    terminalDistance * 0.25 +
+    targetDistance * 0.28 +
+    goalTargetDistance * 0.18 +
+    terminalDistance * 0.24 +
     choiceDistance * 0.10 +
     windowDistance * 0.05 +
+    exitDistance * 0.05 +
     timingDistance * 0.10,
   );
+}
+
+function aggregateBranchAlternatives(
+  cluster: readonly NormalizedObservationV1[],
+): readonly BuildArchetypeBranchAlternativesV1[] {
+  const byGroup = new Map<string, Map<string, readonly number[]>>();
+  for (const observation of cluster) {
+    for (const choice of observation.committedChoices) {
+      const itemIds = [...new Set(choice.itemIds)].sort((left, right) => left - right);
+      if (itemIds.length === 0) continue;
+      const alternatives = byGroup.get(choice.groupId) ?? new Map<string, readonly number[]>();
+      alternatives.set(itemIds.join(','), itemIds);
+      byGroup.set(choice.groupId, alternatives);
+    }
+  }
+
+  return [...byGroup.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([groupId, alternatives]) => ({
+      groupId,
+      alternatives: [...alternatives.values()].sort(compareNumberArrays),
+    }));
+}
+
+function compareNumberArrays(left: readonly number[], right: readonly number[]): number {
+  const length = Math.max(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    const a = left[index];
+    const b = right[index];
+    if (a === undefined) return -1;
+    if (b === undefined) return 1;
+    if (a !== b) return a - b;
+  }
+  return 0;
 }
 
 function normalizeStepTiming(values: readonly number[]): readonly number[] {
