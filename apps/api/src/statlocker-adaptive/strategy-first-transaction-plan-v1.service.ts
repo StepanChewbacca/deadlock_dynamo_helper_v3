@@ -228,7 +228,9 @@ function overlayTransactionStateOnSemanticBuild(
     session,
     ownedItemIds,
   });
-  const nextTransactionRow = transactionProjection.find((row) => row.status === 'NEXT');
+  const nextTransactionRow = session.state === 'ACTIVE'
+    ? transactionProjection.find((row) => row.status === 'NEXT')
+    : undefined;
   const rows: AdaptivePlannedItemV1[] = semanticBuild.map((row) => ({
     ...row,
     status: owned.has(row.itemId)
