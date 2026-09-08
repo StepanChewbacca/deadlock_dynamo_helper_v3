@@ -149,7 +149,29 @@ function checkNextAlignment(
   violations: TransactionPlanInvariantViolationV1[],
 ): void {
   const session = input.planSession;
-  if (session.state === 'WAITING' || session.state === 'REPLAN_REQUIRED' || session.state === 'COMPLETE') {
+  if (session.state === 'WAITING') {
+    if (session.nextStepId !== undefined || isTransactionAction(input.nextAction)) {
+      violations.push({
+        code: 'NEXT_STEP_MISMATCH',
+        stepId: session.nextStepId,
+        itemId: input.nextAction.targetItemId,
+        reasonCodes: ['NON_ACTIVE_SESSION_EXPOSES_EXECUTABLE_NEXT'],
+      });
+      return;
+    }
+    const barrierTarget = firstBlockedBarrierTarget(session.steps);
+    if (input.nextAction.type !== 'HOLD' ||
+      (barrierTarget !== undefined && input.nextAction.targetItemId !== barrierTarget)) {
+      violations.push({
+        code: 'NEXT_STEP_MISMATCH',
+        itemId: input.nextAction.targetItemId ?? barrierTarget,
+        reasonCodes: ['WAITING_ACTION_DOES_NOT_MATCH_BLOCKED_BARRIER'],
+      });
+    }
+    return;
+  }
+
+  if (session.state === 'REPLAN_REQUIRED' || session.state === 'COMPLETE') {
     if (session.nextStepId !== undefined || isTransactionAction(input.nextAction)) {
       violations.push({
         code: 'NEXT_STEP_MISMATCH',
@@ -223,20 +245,27 @@ function checkCompatibilityProjection(
   targetByStep: ReadonlyMap<string, number>,
   violations: TransactionPlanInvariantViolationV1[],
 ): void {
-  const nextStepTarget = input.planSession.nextStepId
+  const expectedTarget = input.planSession.state === 'ACTIVE' && input.planSession.nextStepId
     ? targetByStep.get(input.planSession.nextStepId)
-    : undefined;
+    : input.planSession.state === 'WAITING'
+      ? firstBlockedBarrierTarget(input.planSession.steps)
+      : undefined;
   const flatNext = [...input.recommendedBuild]
     .sort((a, b) => a.position - b.position || a.itemId - b.itemId)
     .find((row) => row.status === 'NEXT')?.itemId;
-  if (nextStepTarget !== flatNext) {
-    if (nextStepTarget === undefined && flatNext === undefined) return;
+  if (expectedTarget !== flatNext) {
+    if (expectedTarget === undefined && flatNext === undefined) return;
     violations.push({
       code: 'COMPATIBILITY_PROJECTION_DIVERGENCE',
-      itemId: flatNext ?? nextStepTarget,
-      reasonCodes: ['FLAT_NEXT_ROW_DOES_NOT_MATCH_TRANSACTION_PLAN_NEXT'],
+      itemId: flatNext ?? expectedTarget,
+      reasonCodes: ['FLAT_NEXT_ROW_DOES_NOT_MATCH_TRANSACTION_PLAN_CURRENT_TARGET'],
     });
   }
+}
+
+function firstBlockedBarrierTarget(steps: readonly AdaptivePlanStepV1[]): number | undefined {
+  const barrier = steps.find((step) => step.kind === 'BARRIER' && step.state === 'BLOCKED');
+  return barrier ? planStepTargetItemId(barrier) : undefined;
 }
 
 function candidateMatchesStep(candidate: RecommendationCandidate, step: AdaptivePlanStepV1): boolean {
