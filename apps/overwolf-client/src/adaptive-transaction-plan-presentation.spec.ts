@@ -13,14 +13,29 @@ function base(overrides: Record<string, unknown> = {}): any {
 }
 
 describe('adaptive transaction plan presentation', () => {
-  it('renders canonical semantic plan actions', () => {
+  it('renders canonical transaction plan actions as a compatibility fallback', () => {
     const view = buildAdaptiveRecommendationPresentation(base());
     expect(view.plan.items).toHaveLength(1);
     expect(view.plan.items[0].statusLabel).toBe('Ready');
   });
 
-  it('does not infer a plan from recommendedBuild when semantic actions are absent', () => {
-    const view = buildAdaptiveRecommendationPresentation(base({ planActions: undefined, recommendedBuild: [{ itemId: 3862866912, position: 1, status: 'NEXT', score: 0, confidence: 0, skeletonStrength: 0, contextualSupport: 0, reasonCodes: [] }] }));
-    expect(view.plan.items).toEqual([]);
+  it('renders recommendedBuild as the semantic build when transaction actions are absent', () => {
+    const view = buildAdaptiveRecommendationPresentation(base({
+      planActions: undefined,
+      recommendedBuild: [{
+        itemId: 3862866912,
+        position: 1,
+        status: 'NEXT',
+        score: 0,
+        confidence: 0,
+        skeletonStrength: 0,
+        contextualSupport: 0,
+        reasonCodes: [],
+      }],
+    }));
+
+    expect(view.plan.items).toHaveLength(1);
+    expect(view.plan.items[0].item.id).toBe(3862866912);
+    expect(view.plan.items[0].statusLabel).toBe('Next');
   });
 });
