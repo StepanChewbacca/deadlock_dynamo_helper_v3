@@ -57,7 +57,7 @@ describe('adaptive recommendation presentation', () => {
     expect(view.evidenceLabel).toBe('2 fresh Statlocker signals');
   });
 
-  it('does not render a legacy build when planActions are absent', () => {
+  it('renders the full recommended build when planActions are absent', () => {
     const itemIds = [
       3862866912,
       968099481,
@@ -81,7 +81,17 @@ describe('adaptive recommendation presentation', () => {
 
     const view = buildAdaptiveRecommendationPresentation(recommendation({ recommendedBuild }));
 
-    expect(view.plan.items).toHaveLength(0);
+    expect(view.plan.items).toHaveLength(8);
+    expect(view.plan.items.map((item) => item.item.id)).toEqual([
+      98582110,
+      84321454,
+      26002154,
+      7409189,
+      1437614329,
+      1342610602,
+      968099481,
+      3862866912,
+    ]);
     expect(view.plan.remainingCount).toBe(0);
   });
 
