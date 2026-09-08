@@ -3,6 +3,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { RecommendationCatalogContentV1Service } from './recommendation-catalog-content-v1.service';
+import { ItemCatalogImportService } from './item-catalog-import.service';
 import { Hero } from './entities/hero.entity';
 import { ItemComponent } from './entities/item-component.entity';
 import { Item } from './entities/item.entity';
@@ -21,6 +22,7 @@ export class ReferenceDataImportService implements OnModuleInit {
     @InjectRepository(ItemComponent)
     private readonly itemComponentRepo: Repository<ItemComponent>,
     private readonly recommendationCatalogContentService: RecommendationCatalogContentV1Service,
+    private readonly itemCatalogImportService: ItemCatalogImportService,
   ) {}
 
   async onModuleInit() {
@@ -71,7 +73,16 @@ export class ReferenceDataImportService implements OnModuleInit {
 
   private async syncItemsFromAssets() {
     try {
-      const res = await axios.get('https://api.deadlock-api.com/v1/assets/items', getDeadlockApiRequestConfig());
+      const availableClientVersions = await this.itemCatalogImportService.getAvailableClientVersions();
+      const latestClientVersion = availableClientVersions[availableClientVersions.length - 1];
+      if (!latestClientVersion) {
+        throw new Error('Deadlock API returned no available client versions');
+      }
+      await this.itemCatalogImportService.importCatalogs({ clientVersions: [latestClientVersion] });
+      const res = await axios.get('https://api.deadlock-api.com/v1/assets/items', {
+        ...getDeadlockApiRequestConfig(),
+        params: { client_version: latestClientVersion },
+      });
       const assets = Array.isArray(res.data) ? res.data : [];
       if (assets.length === 0) {
         return;
@@ -79,9 +90,9 @@ export class ReferenceDataImportService implements OnModuleInit {
 
       const catalog = await this.recommendationCatalogContentService.importAssetsSnapshot({
         assets,
-        clientVersion: process.env.DEADLOCK_CLIENT_VERSION,
+        clientVersion: String(latestClientVersion),
         contentCatalogVersionId: process.env.DEADLOCK_CONTENT_CATALOG_VERSION,
-        rulesetKey: process.env.DEADLOCK_RULESET_KEY,
+        rulesetKey: `client-${latestClientVersion}`,
       });
       this.logger.log(
         `${catalog.created ? 'Created' : 'Reused'} immutable item catalog ${catalog.catalogVersionId} `

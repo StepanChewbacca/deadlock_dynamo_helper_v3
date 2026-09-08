@@ -42,13 +42,18 @@ describe('ReferenceDataImportService', () => {
     const catalogContentService = {
       importAssetsSnapshot: jest.fn(),
     };
+    const itemCatalogImportService = {
+      getAvailableClientVersions: jest.fn().mockResolvedValue([6680, 6686]),
+      importCatalogs: jest.fn().mockResolvedValue(undefined),
+    };
     const service = new ReferenceDataImportService(
       heroRepo as any,
       itemRepo as any,
       itemComponentRepo as any,
       catalogContentService as any,
+      itemCatalogImportService as any,
     );
-    return { service, heroRepo, itemRepo };
+    return { service, heroRepo, itemRepo, catalogContentService, itemCatalogImportService };
   }
 
   it('imports heroes and items from the embedded seed when tables are empty', async () => {
@@ -78,7 +83,20 @@ describe('ReferenceDataImportService', () => {
 
     expect(axios.get).toHaveBeenCalledWith(
       'https://api.deadlock-api.com/v1/assets/items',
-      {},
+      { params: { client_version: 6686 } },
     );
+  });
+
+  it('binds the immutable recommendation catalog to the exact latest client version', async () => {
+    (axios.get as jest.Mock).mockResolvedValue({ data: [{ id: 1, name: 'Item' }] });
+    const { service, catalogContentService, itemCatalogImportService } = createService();
+
+    await service.importIfNeeded();
+
+    expect(itemCatalogImportService.importCatalogs).toHaveBeenCalledWith({ clientVersions: [6686] });
+    expect(catalogContentService.importAssetsSnapshot).toHaveBeenCalledWith(expect.objectContaining({
+      clientVersion: '6686',
+      rulesetKey: 'client-6686',
+    }));
   });
 });

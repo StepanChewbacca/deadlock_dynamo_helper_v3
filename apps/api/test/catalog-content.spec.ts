@@ -28,6 +28,32 @@ describe('catalog content hashing', () => {
 });
 
 describe('catalog content import', () => {
+  it('fills missing exact identity when an existing content snapshot is reimported by client version', async () => {
+    const payloadSha256 = computeRecommendationCatalogPayloadSha256([{ id: 1, name: 'Item' }]);
+    const existing = {
+      catalogVersionId: `deadlock-assets:${payloadSha256}`,
+      rulesetKey: `catalog-sha256:${payloadSha256}`,
+      payloadSha256,
+    };
+    const save = jest.fn(async () => undefined);
+    const versionRepo = { findOne: jest.fn(async () => existing), save };
+    const dataSource = {
+      getRepository: () => ({ count: async () => 1 }),
+    };
+    const service = new RecommendationCatalogContentV1Service(dataSource as any, versionRepo as any);
+
+    await service.importAssetsSnapshot({
+      assets: [{ id: 1, name: 'Item' }],
+      clientVersion: '6686',
+      rulesetKey: 'client-6686',
+    });
+
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({
+      clientVersion: '6686',
+      rulesetKey: 'client-6686',
+    }));
+  });
+
   it('resolves current asset semantics before saving a new catalog row', async () => {
     const saved: Record<string, unknown>[] = [];
     const itemRepo = {

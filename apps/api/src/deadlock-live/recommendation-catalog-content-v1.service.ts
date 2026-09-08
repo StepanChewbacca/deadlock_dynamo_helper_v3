@@ -56,6 +56,15 @@ export class RecommendationCatalogContentV1Service {
     const payloadSha256 = computeRecommendationCatalogPayloadSha256(input.assets);
     const existing = await this.versionRepo.findOne({ where: { payloadSha256 } });
     if (existing) {
+      const clientVersion = cleanString(input.clientVersion);
+      const rulesetKey = cleanString(input.rulesetKey);
+      if (!existing.clientVersion && clientVersion) {
+        existing.clientVersion = clientVersion;
+        if (rulesetKey && existing.rulesetKey === `catalog-sha256:${payloadSha256}`) {
+          existing.rulesetKey = rulesetKey;
+        }
+        await this.versionRepo.save(existing);
+      }
       const [itemCount, recipeCount] = await Promise.all([
         this.dataSource.getRepository(RecommendationItemCatalogItemV1).count({ where: { catalogVersionId: existing.catalogVersionId } }),
         this.dataSource.getRepository(RecommendationItemCatalogRecipeV1).count({ where: { catalogVersionId: existing.catalogVersionId } }),
