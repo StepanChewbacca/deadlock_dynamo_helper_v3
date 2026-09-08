@@ -204,6 +204,7 @@ describe('strategy-first runtime continuity v1', () => {
     const facade = new StrategyFirstAdaptivePlannerFacadeV1Service(
       planner,
       registry,
+      new (require('../src/statlocker-adaptive/consensus-strategy-fallback-v1.service').ConsensusStrategyFallbackV1Service)(),
       undefined,
       undefined,
       { apply: ({ result }: any) => ({ ...result, planSession: { planSessionId: 'test', strategyId: 'sticky-strategy', revision: 1, createdAtGameTimeSec: 0, updatedAtGameTimeSec: 0, state: 'ACTIVE', steps: [], reasonCodes: [] }, transactionPlanValidation: { valid: true, violations: [] } }) } as any,

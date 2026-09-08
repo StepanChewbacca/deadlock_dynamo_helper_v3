@@ -1,6 +1,7 @@
 import { createRecommendationItemGraph, buildInventoryInstancesForRecommendation, observedFact } from '@deadlock-live-probe/build-domain';
 import { StrategyFirstAdaptivePlannerFacadeV1Service } from '../src/statlocker-adaptive/strategy-first-adaptive-planner-facade-v1.service';
 import { BuildStrategyRegistryV1Service } from '../src/statlocker-adaptive/build-strategy-registry-v1.service';
+import { ConsensusStrategyFallbackV1Service } from '../src/statlocker-adaptive/consensus-strategy-fallback-v1.service';
 import { StrategyFirstBuildPlannerV1Service } from '../src/statlocker-adaptive/strategy-first-build-planner-v1.service';
 import { deriveAdaptiveSlotStateV1, unknownAdaptiveInvestmentStateV1 } from '../src/statlocker-adaptive/adaptive-economy-v1';
 
@@ -21,21 +22,40 @@ function decision(ownedItemIds: readonly number[]): any {
 }
 
 const skeleton: any = { heroId: 1, profileCount: 10, groups: [{ groupId: 'g', phase: 'EARLY', type: 'REQUIRED', minSelect: 1, maxSelect: 1, confidence: 0.8, inferred: false, candidates: [{ itemId: 1, strength: 0.8, coverage: 0.8, purchaseRate: 0.8, medianBuyTimeS: 100, timingSpreadS: 10, sourceProfileCount: 8, frequencyTier: 'CORE', rushEvidence: false }] }] };
-const evidence: any = { heroId: 1, rulesetVersion: 'r1', catalogSha256: 'a'.repeat(64), statlockerPatchId: 'p1', usable: true, snapshotIds: [], degradedReasons: [], families: [], byDataset: { CONSENSUS_SKELETON: { dataset: 'CONSENSUS_SKELETON', scopeKey: 'hero:1', freshness: 'FRESH', confidence: 0.8, payload: skeleton }, WPA_PATCH_DATA: { dataset: 'WPA_PATCH_DATA', scopeKey: 'g', freshness: 'UNAVAILABLE', confidence: 0 }, VS_HERO_WPA: { dataset: 'VS_HERO_WPA', scopeKey: 'g', freshness: 'UNAVAILABLE', confidence: 0 }, T4_CHAINS: { dataset: 'T4_CHAINS', scopeKey: 'g', freshness: 'UNAVAILABLE', confidence: 0 }, WPA_FILTERED_ITEMS: { dataset: 'WPA_FILTERED_ITEMS', scopeKey: 'h', freshness: 'UNAVAILABLE', confidence: 0 } } };
+
+function evidenceWith(freshness: string): any {
+  return { heroId: 1, rulesetVersion: 'r1', catalogSha256: 'a'.repeat(64), statlockerPatchId: 'p1', usable: true, snapshotIds: [], degradedReasons: [], families: [], byDataset: { CONSENSUS_SKELETON: { dataset: 'CONSENSUS_SKELETON', scopeKey: 'hero:1', freshness, confidence: 0.8, payload: skeleton }, WPA_PATCH_DATA: { dataset: 'WPA_PATCH_DATA', scopeKey: 'g', freshness: 'UNAVAILABLE', confidence: 0 }, VS_HERO_WPA: { dataset: 'VS_HERO_WPA', scopeKey: 'g', freshness: 'UNAVAILABLE', confidence: 0 }, T4_CHAINS: { dataset: 'T4_CHAINS', scopeKey: 'g', freshness: 'UNAVAILABLE', confidence: 0 }, WPA_FILTERED_ITEMS: { dataset: 'WPA_FILTERED_ITEMS', scopeKey: 'h', freshness: 'UNAVAILABLE', confidence: 0 } } };
+}
 
 function facade(): StrategyFirstAdaptivePlannerFacadeV1Service {
   return new StrategyFirstAdaptivePlannerFacadeV1Service(
     new StrategyFirstBuildPlannerV1Service(fakeScorer),
     new BuildStrategyRegistryV1Service(),
+    new ConsensusStrategyFallbackV1Service(),
   );
 }
 
 describe('strategy-first adaptive planner facade v1', () => {
-  it('fails closed when no exact strategy snapshot exists', () => {
-    expect(() => facade().plan({ decision: decision([]), evidence })).toThrow('STRATEGY_OUT_OF_DISTRIBUTION');
+  it('serves the fresh statlocker consensus skeleton when no exact strategy is published', () => {
+    const result = facade().plan({ decision: decision([]), evidence: evidenceWith('FRESH') });
+    expect(result.nextAction).toMatchObject({ type: 'BUY', targetItemId: 1 });
+    expect(result.recommendedBuild.some((item) => item.itemId === 1)).toBe(true);
+    expect(result.strategy?.strategyId).toContain('consensus-fallback:hero:1');
+  });
+
+  it('keeps stale-but-usable consensus evidence servable', () => {
+    const result = facade().plan({ decision: decision([]), evidence: evidenceWith('STALE_USABLE') });
+    expect(result.recommendedBuild.some((item) => item.itemId === 1)).toBe(true);
+  });
+
+  it('fails closed when no exact strategy exists and the consensus evidence is not usable', () => {
+    expect(() => facade().plan({ decision: decision([]), evidence: evidenceWith('UNAVAILABLE') }))
+      .toThrow('STRATEGY_OUT_OF_DISTRIBUTION');
   });
 
   it('fails closed for a complete-state fixture without an exact strategy snapshot', () => {
-    expect(() => facade().plan({ decision: decision([1]), evidence })).toThrow('STRATEGY_OUT_OF_DISTRIBUTION');
+    // Owning the consensus item satisfies the compiled fallback strategy: COMPLETE is honest.
+    const result = facade().plan({ decision: decision([1]), evidence: evidenceWith('FRESH') });
+    expect(result.contract.status).toBe('COMPLETE');
   });
 });
