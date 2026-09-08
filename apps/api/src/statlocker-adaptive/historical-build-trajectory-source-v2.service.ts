@@ -138,7 +138,15 @@ export class HistoricalBuildTrajectorySourceV2Service {
       throw error;
     }
 
-    if (resolved.method !== 'OBSERVED' && resolved.method !== 'DEMO_METADATA') {
+    // TIME_WINDOW is an authoritative patch-identity mapping: the ruleset window is pinned
+    // to the catalog client version (backed by observed demo metadata), so every match inside
+    // the window ran the exact same game mechanics as the current catalog scope.
+    const provenanceExactMethods: ReadonlySet<string> = new Set([
+      'OBSERVED',
+      'DEMO_METADATA',
+      'TIME_WINDOW',
+    ]);
+    if (!provenanceExactMethods.has(resolved.method)) {
       return 'HISTORICAL_PROVENANCE_NOT_EXACT';
     }
     if (resolved.rulesetKey !== input.rulesetId) {
