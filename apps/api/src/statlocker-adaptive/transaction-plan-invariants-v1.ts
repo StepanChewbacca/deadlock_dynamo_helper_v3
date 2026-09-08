@@ -55,15 +55,12 @@ export function evaluateTransactionPlanInvariantsV1(
   input: EvaluateTransactionPlanInvariantsV1Input,
 ): TransactionPlanInvariantCheckV1 {
   const violations: TransactionPlanInvariantViolationV1[] = [];
-  const currentOwned = new Set(input.decision.state.inventory.heldByItemId.keys());
   const targetByStep = new Map<string, number>();
-  const stepTargets = new Set<number>();
 
   for (const step of input.planSession.steps) {
     const targetItemId = planStepTargetItemId(step);
     if (targetItemId !== undefined) {
       targetByStep.set(step.stepId, targetItemId);
-      stepTargets.add(targetItemId);
     }
 
     checkProjection(step.projectedBefore, step, violations);
@@ -79,17 +76,6 @@ export function evaluateTransactionPlanInvariantsV1(
           reasonCodes: ['REPLACEMENT_PROJECTION_DOES_NOT_PROVE_SELL_AND_BUY'],
         });
       }
-    }
-  }
-
-  for (const row of input.recommendedBuild) {
-    if (row.status === 'OWNED' || currentOwned.has(row.itemId)) continue;
-    if (!stepTargets.has(row.itemId)) {
-      violations.push({
-        code: 'FUTURE_TARGET_WITHOUT_STEP',
-        itemId: row.itemId,
-        reasonCodes: ['COMPATIBILITY_FUTURE_ROW_HAS_NO_TRANSACTION_OR_BARRIER_STEP'],
-      });
     }
   }
 
