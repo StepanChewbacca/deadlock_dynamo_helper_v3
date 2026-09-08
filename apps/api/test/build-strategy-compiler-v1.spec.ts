@@ -10,6 +10,15 @@ const graph = createRecommendationItemGraph([
   { itemId: 4, name: 'D', slotType: 'vitality', active: false, availableRulesetIds: ['r1'], directPurchaseCost: 1600, upgradeRecipes: [] },
   { itemId: 5, name: 'E', slotType: 'spirit', active: false, availableRulesetIds: ['r1'], directPurchaseCost: 3200, upgradeRecipes: [] },
   { itemId: 6, name: 'A upgrade', slotType: 'weapon', active: false, availableRulesetIds: ['r1'], upgradeRecipes: [{ recipeId: 'u6', consumedItemIds: [1], soulsCost: 800 }] },
+  ...[7, 8, 9, 10].map((itemId) => ({
+    itemId,
+    name: `Item ${itemId}`,
+    slotType: 'spirit' as const,
+    active: false,
+    availableRulesetIds: ['r1'],
+    directPurchaseCost: 800,
+    upgradeRecipes: [],
+  })),
 ]);
 
 function trace(id: string, items: readonly number[]) {
@@ -70,5 +79,38 @@ describe('build strategy compiler v1', () => {
 
     expect(upgrade?.type).toBe('UPGRADE');
     expect(component?.lifecycleByItemId[1]).toBe('UPGRADE_COMPONENT');
+  });
+
+  it('does not promote single-observation position noise into branch semantics', () => {
+    const traces = [
+      trace('n1', [1]),
+      trace('n2', [2]),
+      trace('n3', [3]),
+      trace('n4', [4]),
+    ];
+    const archetype = new BuildArchetypeMinerV1Service().mine(
+      traces,
+      graph,
+      { distanceThreshold: 1, minClusterSize: 2 },
+    ).archetypes[0];
+    const spec = new BuildStrategyCompilerV1Service().compile({ archetype, trajectories: traces, itemGraph: graph });
+
+    expect(spec.branchGroups).toEqual([]);
+  });
+
+  it('keeps the compiled Cartesian branch proof space within the feasibility budget', () => {
+    const left = [1, 2, 3, 4, 5, 7, 8, 9];
+    const right = [2, 1, 4, 3, 7, 5, 9, 8];
+    const traces = [trace('b1', left), trace('b2', left), trace('b3', right), trace('b4', right)];
+    const archetype = new BuildArchetypeMinerV1Service().mine(
+      traces,
+      graph,
+      { distanceThreshold: 1, minClusterSize: 2 },
+    ).archetypes[0];
+    const spec = new BuildStrategyCompilerV1Service().compile({ archetype, trajectories: traces, itemGraph: graph });
+    const branchPathCount = spec.branchGroups.reduce((count, branch) => count * branch.optionGoalIds.length, 1);
+
+    expect(branchPathCount).toBeLessThanOrEqual(64);
+    expect(spec.branchGroups).toHaveLength(6);
   });
 });

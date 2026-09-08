@@ -26,6 +26,9 @@ interface PositionCandidate {
   upgradeRate: number;
 }
 
+const MIN_BRANCH_SAMPLE_COUNT = 2;
+const MAX_COMPILED_BRANCH_PATHS = 64;
+
 @Injectable()
 export class BuildStrategyCompilerV1Service {
   compile(input: BuildStrategyCompilerV1Input): BuildStrategySpecV1 {
@@ -38,13 +41,18 @@ export class BuildStrategyCompilerV1Service {
     const goals: BuildStrategyGoalV1[] = [];
     const branchGroups: BuildStrategyBranchGroupV1[] = [];
     let priorMilestoneGoalIds: string[] = [];
+    let compiledBranchPathCount = 1;
 
     for (let position = 0; position < maxPosition; position += 1) {
       const candidates = positionCandidates(members, position);
       if (candidates.length === 0) continue;
-      const substantial = candidates.filter((entry) => entry.support >= 0.20);
+      const substantial = candidates.filter((entry) =>
+        entry.count >= MIN_BRANCH_SAMPLE_COUNT && entry.support >= 0.20,
+      );
       const branchCoverage = substantial.reduce((sum, entry) => sum + entry.support, 0);
-      const isBranch = substantial.length >= 2 && branchCoverage >= 0.75 && substantial[0].support < 0.70;
+      const branchSupported = substantial.length >= 2 && branchCoverage >= 0.75 && substantial[0].support < 0.70;
+      const isBranch = branchSupported &&
+        compiledBranchPathCount * substantial.length <= MAX_COMPILED_BRANCH_PATHS;
 
       if (isBranch) {
         const optionGoalIds: string[] = [];
@@ -66,6 +74,7 @@ export class BuildStrategyCompilerV1Service {
           minSelect: 1,
           maxSelect: 1,
         });
+        compiledBranchPathCount *= substantial.length;
         priorMilestoneGoalIds = optionGoalIds;
         continue;
       }
