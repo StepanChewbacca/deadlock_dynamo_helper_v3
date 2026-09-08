@@ -554,7 +554,9 @@ export class TransactionPlanCompilerV1Service {
     );
     if (selected && candidateAllowed(selected, input, goal.goalId, contract, state)) {
       const regenerated = candidates.find((candidate) => candidate.actionId === selected.actionId);
-      if (regenerated) return regenerated;
+      // The immediate selection is authoritative only in the state it was chosen from; once a
+      // projected step invalidates it, the goal must continue from the remaining legal pool.
+      if (regenerated?.feasible) return regenerated;
     }
 
     return candidates
