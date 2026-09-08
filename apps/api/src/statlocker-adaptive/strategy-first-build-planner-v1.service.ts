@@ -602,7 +602,9 @@ export class StrategyFirstBuildPlannerV1Service {
     for (const goal of orderedGoals) {
       const state = contract.goalStates[goal.goalId];
       if (state === 'SKIPPED' || state === 'WAIVED' || state === 'SATISFIED') continue;
-      if (!goal.hard && contract.currentGoalId !== goal.goalId) continue;
+      // Soft goals stay non-mandatory: they never gate completion and never become the
+      // executable target, but the semantic build path still shows the progression.
+      const optionalProgression = !goal.hard && contract.currentGoalId !== goal.goalId;
       const slotTransition = slotPlan.futureTransitions.find((entry) => entry.targetGoalId === goal.goalId);
       if (slotTransition?.requirement === 'BLOCKED') continue;
       for (const itemId of goal.targetItemIds) {
@@ -617,7 +619,11 @@ export class StrategyFirstBuildPlannerV1Service {
           confidence: score?.confidence ?? 0,
           skeletonStrength: 0,
           contextualSupport: score?.confidence ?? 0,
-          reasonCodes: [`STRATEGY_GOAL:${goal.goalId}`, ...goal.rationaleCodes],
+          reasonCodes: [
+            `STRATEGY_GOAL:${goal.goalId}`,
+            ...(optionalProgression ? ['OPTIONAL_PROGRESSION'] : []),
+            ...goal.rationaleCodes,
+          ],
         });
         seen.add(itemId);
         if (goal.maxSelect === 1) break;

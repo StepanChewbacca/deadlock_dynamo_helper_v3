@@ -272,6 +272,7 @@ describe('historical build trajectory source v2', () => {
   it.each([
     ['OBSERVED', resolution({ method: 'OBSERVED' })],
     ['DEMO_METADATA', resolution({ method: 'DEMO_METADATA' })],
+    ['TIME_WINDOW', resolution({ method: 'TIME_WINDOW' })],
   ])('accepts %s provenance when its exact ruleset and client version match', async (_method, resolved) => {
     const result = await sourceForResolution(resolved).load(sourceInput);
 
@@ -280,7 +281,6 @@ describe('historical build trajectory source v2', () => {
   });
 
   it.each([
-    ['TIME_WINDOW', resolution({ method: 'TIME_WINDOW' }), 'HISTORICAL_PROVENANCE_NOT_EXACT'],
     ['UNKNOWN', resolution({ method: 'UNKNOWN' }), 'HISTORICAL_PROVENANCE_NOT_EXACT'],
     ['wrong ruleset', resolution({ rulesetKey: 'r2' }), 'HISTORICAL_RULESET_MISMATCH'],
     ['wrong client version', resolution({ clientVersion: 124 }), 'HISTORICAL_CLIENT_VERSION_MISMATCH'],
