@@ -97,8 +97,12 @@ export class TransactionPlanCompilerV1Service {
       reasonCodes.push('SELECTED_IMMEDIATE_TRANSACTION_COMPILED');
     }
 
+    const maxIterations = Math.max(
+      1,
+      input.strategy.goals.length * Math.max(1, input.decision.itemGraph.getAllItems().length),
+    );
     let guard = 0;
-    while (guard < Math.max(1, input.strategy.goals.length * 3)) {
+    while (guard < maxIterations) {
       guard += 1;
       contract = this.contracts.resolve({
         strategy: input.strategy,
@@ -153,9 +157,11 @@ export class TransactionPlanCompilerV1Service {
       if (!compiled.reachable) {
         return { steps, reachable: false, reasonCodes: unique(reasonCodes) };
       }
-      compiledGoalIds.add(goal.goalId);
       state = compiled.state;
       slots = compiled.slots;
+      if (goalSatisfied(goal, input.decision.itemGraph, heldIds(state))) {
+        compiledGoalIds.add(goal.goalId);
+      }
     }
 
     const finalContract = this.contracts.resolve({
@@ -175,13 +181,13 @@ export class TransactionPlanCompilerV1Service {
       goal.hard &&
       (!branchGoalIds.has(goal.goalId) || selectedBranchGoals.has(goal.goalId)) &&
       !compiledGoalIds.has(goal.goalId) &&
-      !goal.targetItemIds.some((itemId) => input.decision.itemGraph.isTargetSatisfied(itemId, heldIds(state))),
+      !goalSatisfied(goal, input.decision.itemGraph, heldIds(state)),
     );
     const unsatisfiedTerminalGoals = input.strategy.goals.filter((goal) =>
       goal.hard &&
       terminalGoalIds.has(goal.goalId) &&
       (!branchGoalIds.has(goal.goalId) || selectedBranchGoals.has(goal.goalId)) &&
-      !goal.targetItemIds.some((itemId) => input.decision.itemGraph.isTargetSatisfied(itemId, heldIds(state))),
+      !goalSatisfied(goal, input.decision.itemGraph, heldIds(state)),
     );
     const unresolved = finalContract.status !== 'COMPLETE' && (uncompiledHardGoals.length > 0 || unsatisfiedTerminalGoals.length > 0);
     return {
@@ -284,6 +290,7 @@ export class TransactionPlanCompilerV1Service {
             baseSlotsByType: slots.baseSlotsByType,
             maxFlexSlots: slots.maxFlexSlots,
             maxActiveItems: slots.maxActiveItems,
+            evidence: slots.mechanicsEvidence,
           },
           { unlockedFlexSlots: required, evidence: 'RECONSTRUCTED' },
         );
@@ -328,6 +335,7 @@ export class TransactionPlanCompilerV1Service {
       if (diagnostic.reasons.some((reason) => NON_DEFERABLE_REASONS.has(reason))) {
         return { steps, state, slots, reachable: false, reasonCodes: unique([...reasons, ...diagnostic.reasons]) };
       }
+      const waitTargetItemId = candidateTargetItemId(diagnostic) ?? args.targetItemId;
 
       if (
         (diagnostic.reasons.includes('FLEX_SLOT_CAPACITY_UNKNOWN') || diagnostic.reasons.includes('SLOT_LIMIT_EXCEEDED')) &&
@@ -342,7 +350,7 @@ export class TransactionPlanCompilerV1Service {
           args.goal.goalId,
           {
             type: 'WAIT_FOR_FLEX',
-            targetItemId: args.targetItemId,
+            targetItemId: waitTargetItemId,
             requiredUnlockedFlexSlots: requiredFlex,
           },
           'INSUFFICIENT_FLEX',
@@ -362,6 +370,7 @@ export class TransactionPlanCompilerV1Service {
             baseSlotsByType: slots.baseSlotsByType,
             maxFlexSlots: slots.maxFlexSlots,
             maxActiveItems: slots.maxActiveItems,
+            evidence: slots.mechanicsEvidence,
           },
           { unlockedFlexSlots: requiredFlex, evidence: 'RECONSTRUCTED' },
         );
@@ -371,7 +380,7 @@ export class TransactionPlanCompilerV1Service {
         const barrier = this.barrierStep(
           args.input.strategy.strategyId,
           args.goal.goalId,
-          { type: 'WAIT_FOR_SHOP', targetItemId: args.targetItemId },
+          { type: 'WAIT_FOR_SHOP', targetItemId: waitTargetItemId },
           'SHOP_UNAVAILABLE',
           state,
           slots,
@@ -389,7 +398,7 @@ export class TransactionPlanCompilerV1Service {
         const barrier = this.barrierStep(
           args.input.strategy.strategyId,
           args.goal.goalId,
-          { type: 'WAIT_FOR_GOLD', targetItemId: args.targetItemId, requiredSouls },
+          { type: 'WAIT_FOR_GOLD', targetItemId: waitTargetItemId, requiredSouls },
           diagnostic.reasons.includes('UNAFFORDABLE') ? 'INSUFFICIENT_GOLD' : 'UNKNOWN_AFFORDABILITY',
           state,
           slots,
@@ -478,6 +487,7 @@ export class TransactionPlanCompilerV1Service {
         baseSlotsByType: args.slots.baseSlotsByType,
         maxFlexSlots: args.slots.maxFlexSlots,
         maxActiveItems: args.slots.maxActiveItems,
+        evidence: args.slots.mechanicsEvidence,
       },
       { unlockedFlexSlots: args.slots.unlockedFlexSlots, evidence: args.slots.evidence ?? args.slots.flexEvidence },
     );
@@ -539,7 +549,7 @@ export class TransactionPlanCompilerV1Service {
     state: RecommendationDecisionState,
   ): RecommendationCandidate | undefined {
     const selected = input.selectedCandidates.find((candidate) =>
-      candidateTargetItemId(candidate) === targetItemId &&
+      candidateAdvancesTarget(candidate, targetItemId, input.decision.itemGraph) &&
       candidateMatchesTransition(candidate, transition),
     );
     if (selected && candidateAllowed(selected, input, goal.goalId, contract, state)) {
@@ -548,12 +558,13 @@ export class TransactionPlanCompilerV1Service {
     }
 
     return candidates
-      .filter((candidate) => candidateTargetItemId(candidate) === targetItemId)
+      .filter((candidate) => candidateAdvancesTarget(candidate, targetItemId, input.decision.itemGraph))
       .filter((candidate) => candidateMatchesTransition(candidate, transition))
       .filter((candidate) => candidateAllowed(candidate, input, goal.goalId, contract, state))
       .sort((a, b) =>
         candidateSourceMatchPreference(a, b, transition) ||
         candidateFeasibilityPreference(a) - candidateFeasibilityPreference(b) ||
+        candidateExactTargetPreference(a, targetItemId) - candidateExactTargetPreference(b, targetItemId) ||
         candidatePreference(a) - candidatePreference(b) ||
         a.actionId.localeCompare(b.actionId),
       )[0];
@@ -571,11 +582,12 @@ export class TransactionPlanCompilerV1Service {
     const allowed = candidates.filter((candidate) => candidateAllowed(candidate, input, goalId, contract, state));
     const pool = allowed.length > 0 ? allowed : candidates;
     return pool
-      .filter((candidate) => candidateTargetItemId(candidate) === targetItemId)
+      .filter((candidate) => candidateAdvancesTarget(candidate, targetItemId, input.decision.itemGraph))
       .filter((candidate) => candidateMatchesTransition(candidate, transition))
       .sort((a, b) =>
         candidateSourceMatchPreference(a, b, transition) ||
         candidateFeasibilityPreference(a) - candidateFeasibilityPreference(b) ||
+        candidateExactTargetPreference(a, targetItemId) - candidateExactTargetPreference(b, targetItemId) ||
         a.reasons.filter((reason) => reason !== 'FEASIBLE').length - b.reasons.filter((reason) => reason !== 'FEASIBLE').length ||
         candidatePreference(a) - candidatePreference(b) ||
         a.actionId.localeCompare(b.actionId),
@@ -644,7 +656,7 @@ function nextGoal(
       if (state === 'SATISFIED' || state === 'SKIPPED' || state === 'WAIVED') return false;
       if (goal.type === 'BRANCH' && !selectedBranchGoals.has(goal.goalId)) return false;
       if (!goal.hard && contract.currentGoalId !== goal.goalId) return false;
-      return goal.targetItemIds.some((itemId) => !graph.isTargetSatisfied(itemId, ownedItemIds));
+      return !goalSatisfied(goal, graph, ownedItemIds);
     })
     .sort((a, b) => {
       if (a.goalId === contract.currentGoalId) return -1;
@@ -685,10 +697,6 @@ function candidateAllowed(
   if (input.decision.itemGraph.isComponentAncestor(sellItemId, buyItemId)) return false;
   const afterSell = heldIds(state).filter((itemId) => itemId !== sellItemId);
   const terminalGoalIds = new Set(input.strategy.terminalPolicy.requiredGoalIds);
-  const sellItem = input.decision.itemGraph.getItem(sellItemId);
-  const buyItem = input.decision.itemGraph.getItem(buyItemId);
-  const sellCost = sellItem?.directPurchaseCost ?? 0;
-  const buyCost = buyItem?.directPurchaseCost ?? 0;
 
   for (const hardGoal of input.strategy.goals.filter((entry) =>
     entry.hard && terminalGoalIds.has(entry.goalId) && contract.goalStates[entry.goalId] === 'SATISFIED' && entry.goalId !== currentGoalId,
@@ -711,6 +719,29 @@ function candidateAllowed(
     if (satisfied < Math.max(1, committedGoal.minSelect)) return false;
   }
   return true;
+}
+
+function candidateAdvancesTarget(
+  candidate: RecommendationCandidate,
+  targetItemId: number,
+  graph: AdaptiveDecisionStateV1['itemGraph'],
+): boolean {
+  const candidateTarget = candidateTargetItemId(candidate);
+  return candidateTarget !== undefined &&
+    (candidateTarget === targetItemId || graph.isComponentAncestor(candidateTarget, targetItemId));
+}
+
+function candidateExactTargetPreference(candidate: RecommendationCandidate, targetItemId: number): number {
+  return candidateTargetItemId(candidate) === targetItemId ? 0 : 1;
+}
+
+function goalSatisfied(
+  goal: BuildStrategyGoalV1,
+  graph: AdaptiveDecisionStateV1['itemGraph'],
+  ownedItemIds: readonly number[],
+): boolean {
+  const satisfied = goal.targetItemIds.filter((itemId) => graph.isTargetSatisfied(itemId, ownedItemIds)).length;
+  return satisfied >= Math.max(0, goal.minSelect);
 }
 
 function candidateMatchesTransition(
