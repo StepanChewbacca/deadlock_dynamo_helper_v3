@@ -231,13 +231,16 @@ function overlayTransactionStateOnSemanticBuild(
   const nextTransactionRow = session.state === 'ACTIVE'
     ? transactionProjection.find((row) => row.status === 'NEXT')
     : undefined;
+  const preserveSemanticNext = session.state === 'WAITING';
   const rows: AdaptivePlannedItemV1[] = semanticBuild.map((row) => ({
     ...row,
     status: owned.has(row.itemId)
       ? 'OWNED'
       : nextTransactionRow?.itemId === row.itemId
         ? 'NEXT'
-        : 'PLANNED',
+        : preserveSemanticNext && row.status === 'NEXT'
+          ? 'NEXT'
+          : 'PLANNED',
   }));
 
   if (nextTransactionRow && !rows.some((row) => row.itemId === nextTransactionRow.itemId)) {
