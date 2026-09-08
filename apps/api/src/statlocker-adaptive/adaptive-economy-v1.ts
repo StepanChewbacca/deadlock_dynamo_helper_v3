@@ -203,6 +203,7 @@ export function candidateGeneratorRulesFromSlotStateV1(
       ? 'OBSERVED'
       : (slots.evidence ?? slots.flexEvidence),
     maxActiveItems: slots.maxActiveItems,
+    activeCapacityEvidence: slots.mechanicsEvidence,
     allowSellOnlyActions: overrides.allowSellOnlyActions ?? true,
     generateTargetedWaitActions: overrides.generateTargetedWaitActions ?? true,
   };
