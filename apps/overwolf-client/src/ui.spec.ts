@@ -172,7 +172,7 @@ describe('adaptive recommendation UI state', () => {
 
     showAdaptiveRecommendation(recommendation({ recommendedBuild: items }));
     const planEl = elements.get('rec-plan');
-    expect(planEl?.children.length).toBe(1);
-    expect(planEl?.children[0].className).toContain('empty-row');
+    expect(planEl?.children).toHaveLength(2);
+    expect(planEl?.children.every((child) => !child.className.includes('empty-row'))).toBe(true);
   });
 });

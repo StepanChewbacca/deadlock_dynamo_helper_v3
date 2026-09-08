@@ -4,6 +4,7 @@ import type {
   AdaptivePlanActionStatusV1,
   AdaptivePlanActionV1,
   AdaptivePlanRequirementV1,
+  AdaptivePlannedItemV1,
   AdaptiveRecommendationResultV1,
   AdaptiveSituationalContextV1,
 } from '@deadlock-live-probe/shared';
@@ -96,6 +97,12 @@ const PLAN_ACTION_STATUS_LABELS: Readonly<Record<AdaptivePlanActionStatusV1, str
   COMPLETED: 'Completed',
 };
 
+const BUILD_STATUS_LABELS = {
+  OWNED: 'Owned',
+  NEXT: 'Next',
+  PLANNED: 'Planned',
+} as const;
+
 const SITUATIONAL_PURPOSE_LABELS: Readonly<Record<string, string>> = {
   CATCH: 'Catch',
   ANTI_CC: 'Anti-CC',
@@ -131,9 +138,9 @@ export function buildAdaptiveRecommendationPresentation(
   const hasDegradedEvidence = recommendation.evidence.families.some(
     (family) => family.freshness !== 'FRESH',
   ) || recommendation.evidence.degradedReasons.length > 0;
-  const semanticPlan = buildPresentedSemanticPlan(recommendation);
-  const primaryPlanAction = recommendation.planActions?.[0];
+  const primaryPlanAction = resolveCurrentPlanAction(recommendation);
   const primarySituational = primaryPlanAction?.situational;
+  const semanticPlan = buildPresentedSemanticPlan(recommendation, primaryPlanAction);
 
   return {
     sourceLabel: 'Statlocker Adaptive',
@@ -172,47 +179,145 @@ export function buildAdaptiveRecommendationPresentation(
 
 function buildPresentedSemanticPlan(
   recommendation: AdaptiveRecommendationResultV1,
+  primaryPlanAction: AdaptivePlanActionV1 | undefined,
 ): readonly AdaptivePresentedPlanItem[] {
-  const semantic = recommendation.planActions;
-  if (semantic && semantic.length > 0) {
-    const seen = new Set<string>();
-    return [...semantic]
-      .sort((left, right) => left.sequence - right.sequence || left.planActionId.localeCompare(right.planActionId))
-      .filter((action) => {
-        if (seen.has(action.planActionId)) return false;
-        seen.add(action.planActionId);
+  if (recommendation.recommendedBuild.length > 0) {
+    const seenItemIds = new Set<number>();
+    return [...recommendation.recommendedBuild]
+      .sort((left, right) => left.position - right.position || left.itemId - right.itemId)
+      .filter((plannedItem) => {
+        if (seenItemIds.has(plannedItem.itemId)) return false;
+        seenItemIds.add(plannedItem.itemId);
         return true;
       })
-      .map(presentPlanAction)
-      .filter((entry): entry is AdaptivePresentedPlanItem => entry !== undefined);
+      .map((plannedItem) => presentRecommendedBuildItem(
+        plannedItem,
+        recommendation,
+        primaryPlanAction,
+      ));
   }
 
-  // A display build is not executable semantics.  Until the API supplies the
-  // canonical planActions projection, present no plan rather than resurrecting
-  // a stale/legacy recommendation.
-  return [];
+  // Keep the old transaction projection only as a compatibility fallback for
+  // incomplete payloads. Normal API responses must render recommendedBuild so
+  // barriers such as WAIT -> WAIT_FOR_SOULS -> BUY never become build items.
+  const semantic = recommendation.planActions;
+  if (!semantic || semantic.length === 0) return [];
+
+  const seen = new Set<string>();
+  return [...semantic]
+    .sort((left, right) => left.sequence - right.sequence || left.planActionId.localeCompare(right.planActionId))
+    .filter((action) => {
+      if (seen.has(action.planActionId)) return false;
+      seen.add(action.planActionId);
+      return true;
+    })
+    .map((action) => presentPlanAction(
+      action,
+      primaryPlanAction?.planActionId === action.planActionId,
+    ))
+    .filter((entry): entry is AdaptivePresentedPlanItem => entry !== undefined);
 }
 
-function presentPlanAction(action: AdaptivePlanActionV1): AdaptivePresentedPlanItem | undefined {
-  const itemId = action.targetItemId ?? resolveActionItemId(action.action) ?? action.sourceItemIds[0];
-  if (!Number.isSafeInteger(itemId) || Number(itemId) <= 0) return undefined;
+function presentRecommendedBuildItem(
+  plannedItem: AdaptivePlannedItemV1,
+  recommendation: AdaptiveRecommendationResultV1,
+  primaryPlanAction: AdaptivePlanActionV1 | undefined,
+): AdaptivePresentedPlanItem {
+  const currentAction = plannedItem.status === 'NEXT'
+    && primaryPlanAction
+    && resolvePlanActionItemId(primaryPlanAction) === plannedItem.itemId
+    ? primaryPlanAction
+    : undefined;
+  const status: AdaptivePlanActionStatusV1 = plannedItem.status === 'OWNED'
+    ? 'OWNED'
+    : plannedItem.status === 'PLANNED'
+      ? 'PLANNED'
+      : currentAction?.status ?? 'READY';
+  const replacedItem = currentAction?.action.type === 'REPLACE'
+    ? presentActionSellItem(currentAction.action)
+    : undefined;
+
+  return {
+    planActionId: currentAction?.planActionId
+      ?? `build:${plannedItem.position}:${plannedItem.itemId}`,
+    item: presentItem(plannedItem.itemId),
+    position: plannedItem.position,
+    status,
+    statusLabel: BUILD_STATUS_LABELS[plannedItem.status],
+    actionLabel: plannedItem.status === 'OWNED'
+      ? 'Owned'
+      : plannedItem.status === 'PLANNED'
+        ? 'Planned'
+        : humanizeActionType(recommendation.nextAction.type),
+    requirements: currentAction?.requirements.map(presentRequirement) ?? [],
+    sourceItems: currentAction?.sourceItemIds.map(presentItem) ?? [],
+    replacedItem,
+    situationalPurposeLabel: presentSituationalPurpose(currentAction?.situational),
+    againstLabel: presentAgainst(currentAction?.situational),
+  };
+}
+
+function presentPlanAction(
+  action: AdaptivePlanActionV1,
+  isCurrentAction: boolean,
+): AdaptivePresentedPlanItem | undefined {
+  const itemId = resolvePlanActionItemId(action);
+  if (itemId === undefined) return undefined;
   const replacedItem = action.action.type === 'REPLACE'
     ? presentActionSellItem(action.action)
     : undefined;
 
   return {
     planActionId: action.planActionId,
-    item: presentItem(Number(itemId)),
+    item: presentItem(itemId),
     position: action.sequence,
     status: action.status,
     statusLabel: PLAN_ACTION_STATUS_LABELS[action.status],
-    actionLabel: humanizeActionType(action.action.type),
+    actionLabel: action.status === 'OWNED'
+      ? 'Owned'
+      : isCurrentAction
+        ? humanizeActionType(action.action.type)
+        : 'Planned',
     requirements: action.requirements.map(presentRequirement),
     sourceItems: action.sourceItemIds.map(presentItem),
     replacedItem,
     situationalPurposeLabel: presentSituationalPurpose(action.situational),
     againstLabel: presentAgainst(action.situational),
   };
+}
+
+function resolveCurrentPlanAction(
+  recommendation: AdaptiveRecommendationResultV1,
+): AdaptivePlanActionV1 | undefined {
+  const planActions = [...(recommendation.planActions ?? [])]
+    .sort((left, right) => left.sequence - right.sequence || left.planActionId.localeCompare(right.planActionId));
+  if (planActions.length === 0) return undefined;
+
+  const exact = planActions.find(
+    (planAction) => planAction.action.actionKey === recommendation.nextAction.actionKey,
+  );
+  if (exact) return exact;
+
+  const primaryItemId = resolveActionItemId(
+    recommendation.nextAction,
+    recommendation.nextTargetItemId,
+  );
+  if (primaryItemId === undefined) return undefined;
+
+  return planActions.find(
+    (planAction) => (
+      planAction.status === 'READY' || planAction.status === 'BLOCKED'
+    ) && resolvePlanActionItemId(planAction) === primaryItemId,
+  ) ?? planActions.find(
+    (planAction) => resolvePlanActionItemId(planAction) === primaryItemId,
+  );
+}
+
+function resolvePlanActionItemId(action: AdaptivePlanActionV1): number | undefined {
+  const value = action.targetItemId
+    ?? resolveActionItemId(action.action)
+    ?? action.sourceItemIds[0];
+  return Number.isSafeInteger(value) && Number(value) > 0 ? Number(value) : undefined;
 }
 
 function presentRequirement(requirement: AdaptivePlanRequirementV1): string {
