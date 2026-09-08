@@ -74,17 +74,18 @@ describe('transaction plan invariants v1', () => {
     expect(check.valid).toBe(true);
   });
 
-  it('rejects a future flat item with no structured plan step', () => {
+  it('allows PLANNED semantic targets beyond the transaction plan horizon', () => {
     const check = evaluateTransactionPlanInvariantsV1({
       decision: decision([1]),
       planSession: validSession(),
       nextAction: { actionKey: 'REPLACE_ITEM:1->2', type: 'REPLACE', sellItemId: 1, buyItemId: 2, targetItemId: 2, reasonCodes: [] },
       recommendedBuild: [
-        { itemId: 1, position: 1, status: 'OWNED', score: 0, confidence: 1, skeletonStrength: 0, contextualSupport: 1, reasonCodes: [] },
-        { itemId: 3, position: 2, status: 'PLANNED', score: 0, confidence: 0, skeletonStrength: 0, contextualSupport: 0, reasonCodes: [] },
+        ...validBuild(),
+        { itemId: 3, position: 3, status: 'PLANNED', score: 0, confidence: 0, skeletonStrength: 0, contextualSupport: 0, reasonCodes: ['STRATEGIC_FUTURE_TARGET'] },
       ],
     });
-    expect(check.violations.some((violation) => violation.code === 'FUTURE_TARGET_WITHOUT_STEP')).toBe(true);
+    expect(check.violations.some((violation) => violation.code === 'FUTURE_TARGET_WITHOUT_STEP')).toBe(false);
+    expect(check.valid).toBe(true);
   });
 
   it('rejects a NEXT action that does not match planSession.nextStepId', () => {
