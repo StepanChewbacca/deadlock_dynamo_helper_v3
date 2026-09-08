@@ -140,9 +140,12 @@ describe('strategy-first transaction plan integration', () => {
   it('waits on an explicit flex barrier when future capacity is known but not yet unlocked', () => {
     const d = decision([1, 2, 3, 4], 0, 4);
     const planned = planner.plan({ decision: d, evidence, strategies: [strategy(false)] });
+    expect(planned.recommendedBuild.find((row) => row.itemId === 5)?.status).toBe('NEXT');
+
     const result = transaction.apply({ result: planned, decision: d });
     expect(result.planSession.state).toBe('WAITING');
     expect(result.nextAction).toMatchObject({ type: 'HOLD', targetItemId: 5 });
+    expect(result.recommendedBuild.find((row) => row.itemId === 5)?.status).toBe('NEXT');
     expect(result.planSession.steps[0].barrier).toMatchObject({ type: 'WAIT_FOR_FLEX', requiredUnlockedFlexSlots: 1 });
   });
 
