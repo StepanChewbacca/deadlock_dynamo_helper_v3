@@ -164,4 +164,20 @@ describe('strategy-first build planner v1', () => {
     expect(result.nextAction.itemId).not.toBe(3);
     expect(result.strategyPlan.remainingHardInvestmentObjectiveIds).toContain('weapon-2400');
   });
+
+  it('shows optional strategy goals as planned progression rows without making them executable', () => {
+    const spec = strategy([goal('core', 1), optionalGoal('optional-1', 2), optionalGoal('optional-2', 3)]);
+    const result = planner.plan({ decision: decision([], 5000), evidence: emptyEvidence, strategies: [spec] });
+
+    expect(result.nextAction).toMatchObject({ type: 'BUY', targetItemId: 1 });
+    const optionalRows = result.recommendedBuild.filter((item) =>
+      item.reasonCodes.includes('OPTIONAL_PROGRESSION'),
+    );
+    expect(optionalRows.map((item) => item.itemId).sort()).toEqual([2, 3]);
+    for (const row of optionalRows) {
+      expect(row.status).toBe('PLANNED');
+    }
+    expect(result.recommendedBuild.find((item) => item.status === 'NEXT')?.itemId).toBe(1);
+    expect(result.strategyPlan.buildStatus).toBe('IN_PROGRESS');
+  });
 });
