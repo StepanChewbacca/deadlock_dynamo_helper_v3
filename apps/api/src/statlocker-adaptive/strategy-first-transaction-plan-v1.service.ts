@@ -55,10 +55,11 @@ export class StrategyFirstTransactionPlanV1Service {
         planSession: session,
         transactionPlanValidation,
         nextAction: nextActionFromPlanSessionV1(session),
-        recommendedBuild: recommendedBuildFromPlanSessionV1({
+        recommendedBuild: overlayTransactionStateOnSemanticBuild(
+          input.result.recommendedBuild,
           session,
-          ownedItemIds: heldIds(input.decision),
-        }),
+          input.decision,
+        ),
       };
     }
 
@@ -134,10 +135,11 @@ export class StrategyFirstTransactionPlanV1Service {
       planSession: session,
       transactionPlanValidation,
       nextAction: nextActionFromPlanSessionV1(session),
-      recommendedBuild: recommendedBuildFromPlanSessionV1({
+      recommendedBuild: overlayTransactionStateOnSemanticBuild(
+        input.result.recommendedBuild,
         session,
-        ownedItemIds: heldIds(input.decision),
-      }),
+        input.decision,
+      ),
     };
   }
 }
@@ -204,24 +206,51 @@ function failClosed(
       type: 'HOLD',
       reasonCodes: ['TRANSACTION_PLAN_FAIL_CLOSED', ...session.reasonCodes],
     },
-    recommendedBuild: ownedOnlyBuild(heldIds(decision)),
+    recommendedBuild: overlayTransactionStateOnSemanticBuild(
+      result.recommendedBuild,
+      session,
+      decision,
+    ),
     rankedImmediateCandidates: [],
     totalScore: 0,
     confidence: 0,
   };
 }
 
-function ownedOnlyBuild(itemIds: readonly number[]): readonly AdaptivePlannedItemV1[] {
-  return [...new Set(itemIds)].sort((a, b) => a - b).map((itemId, index) => ({
-    itemId,
-    position: index + 1,
-    status: 'OWNED',
-    score: 0,
-    confidence: 1,
-    skeletonStrength: 0,
-    contextualSupport: 1,
-    reasonCodes: ['OWNED_ITEM', 'TRANSACTION_PLAN_FAIL_CLOSED'],
+function overlayTransactionStateOnSemanticBuild(
+  semanticBuild: readonly AdaptivePlannedItemV1[],
+  session: AdaptivePlanSessionV1,
+  decision: AdaptiveDecisionStateV1,
+): readonly AdaptivePlannedItemV1[] {
+  const ownedItemIds = heldIds(decision);
+  const owned = new Set(ownedItemIds);
+  const transactionProjection = recommendedBuildFromPlanSessionV1({
+    session,
+    ownedItemIds,
+  });
+  const nextTransactionRow = session.state === 'ACTIVE'
+    ? transactionProjection.find((row) => row.status === 'NEXT')
+    : undefined;
+  const preserveSemanticNext = session.state === 'WAITING';
+  const rows: AdaptivePlannedItemV1[] = semanticBuild.map((row) => ({
+    ...row,
+    status: owned.has(row.itemId)
+      ? 'OWNED'
+      : nextTransactionRow?.itemId === row.itemId
+        ? 'NEXT'
+        : preserveSemanticNext && row.status === 'NEXT'
+          ? 'NEXT'
+          : 'PLANNED',
   }));
+
+  if (nextTransactionRow && !rows.some((row) => row.itemId === nextTransactionRow.itemId)) {
+    rows.push({
+      ...nextTransactionRow,
+      position: rows.length + 1,
+    });
+  }
+
+  return rows;
 }
 
 function heldIds(decision: AdaptiveDecisionStateV1): number[] {

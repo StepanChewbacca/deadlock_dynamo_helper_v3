@@ -99,6 +99,36 @@ describe('strategy-first transaction plan integration', () => {
     expect(result.recommendedBuild.find((row) => row.itemId === 5)?.status).toBe('NEXT');
   });
 
+  it('keeps the semantic build path and metadata while transaction state owns the current NEXT marker', () => {
+    const d = decision([]);
+    const planned = planner.plan({ decision: d, evidence, strategies: [strategy(true)] });
+    expect(planned.recommendedBuild.filter((row) => row.status === 'PLANNED').length).toBeGreaterThan(0);
+
+    const result = transaction.apply({ result: planned, decision: d });
+    expect(result.recommendedBuild.map((row) => row.itemId)).toEqual(planned.recommendedBuild.map((row) => row.itemId));
+
+    for (const semanticRow of planned.recommendedBuild) {
+      const servedRow = result.recommendedBuild.find((row) => row.itemId === semanticRow.itemId);
+      expect(servedRow).toBeDefined();
+      expect(servedRow).toMatchObject({
+        itemId: semanticRow.itemId,
+        position: semanticRow.position,
+        score: semanticRow.score,
+        confidence: semanticRow.confidence,
+        skeletonStrength: semanticRow.skeletonStrength,
+        contextualSupport: semanticRow.contextualSupport,
+      });
+      expect(servedRow?.reasonCodes).toEqual(semanticRow.reasonCodes);
+    }
+
+    const transactionTarget = result.nextAction.type === 'BUY' || result.nextAction.type === 'UPGRADE' || result.nextAction.type === 'REPLACE'
+      ? result.nextAction.targetItemId
+      : undefined;
+    expect(result.recommendedBuild.filter((row) => row.status === 'NEXT').map((row) => row.itemId)).toEqual(
+      transactionTarget === undefined ? [] : [transactionTarget],
+    );
+  });
+
   it('never serves a naked slot-release SELL as NEXT', () => {
     const d = decision([1, 2, 3, 4], 0, 4);
     const planned = planner.plan({ decision: d, evidence, strategies: [strategy(true)] });
@@ -110,9 +140,12 @@ describe('strategy-first transaction plan integration', () => {
   it('waits on an explicit flex barrier when future capacity is known but not yet unlocked', () => {
     const d = decision([1, 2, 3, 4], 0, 4);
     const planned = planner.plan({ decision: d, evidence, strategies: [strategy(false)] });
+    expect(planned.recommendedBuild.find((row) => row.itemId === 5)?.status).toBe('NEXT');
+
     const result = transaction.apply({ result: planned, decision: d });
     expect(result.planSession.state).toBe('WAITING');
     expect(result.nextAction).toMatchObject({ type: 'HOLD', targetItemId: 5 });
+    expect(result.recommendedBuild.find((row) => row.itemId === 5)?.status).toBe('NEXT');
     expect(result.planSession.steps[0].barrier).toMatchObject({ type: 'WAIT_FOR_FLEX', requiredUnlockedFlexSlots: 1 });
   });
 
@@ -124,6 +157,39 @@ describe('strategy-first transaction plan integration', () => {
     expect(result.contract.status).toBe('REPLAN_REQUIRED');
     expect(result.nextAction.type).toBe('HOLD');
     expect(result.recommendedBuild.every((row) => row.status === 'OWNED')).toBe(true);
+  });
+
+  it('keeps semantic future targets when transaction compilation fails closed', () => {
+    const d = decision([1, 2, 3, 4], 0, 0);
+    const planned = planner.plan({ decision: d, evidence, strategies: [strategy(false)] });
+    const semanticResult = {
+      ...planned,
+      recommendedBuild: [
+        ...planned.recommendedBuild.filter((row) => row.itemId !== 5),
+        {
+          itemId: 5,
+          position: planned.recommendedBuild.length + 1,
+          status: 'PLANNED' as const,
+          score: 1,
+          confidence: 0.9,
+          skeletonStrength: 0.7,
+          contextualSupport: 0.8,
+          reasonCodes: ['STRATEGIC_FUTURE_TARGET'],
+        },
+      ],
+    };
+
+    const result = transaction.apply({ result: semanticResult, decision: d });
+    expect(result.planSession.state).toBe('REPLAN_REQUIRED');
+    expect(result.nextAction.type).toBe('HOLD');
+    expect(result.recommendedBuild.find((row) => row.itemId === 5)).toMatchObject({
+      status: 'PLANNED',
+      score: 1,
+      confidence: 0.9,
+      skeletonStrength: 0.7,
+      contextualSupport: 0.8,
+      reasonCodes: ['STRATEGIC_FUTURE_TARGET'],
+    });
   });
 
   it('preserves the plan session and completes the replacement step after the player executes it', () => {

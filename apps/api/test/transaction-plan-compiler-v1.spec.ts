@@ -164,16 +164,52 @@ describe('transaction plan compiler v1', () => {
   });
 
   it('creates WAIT_FOR_GOLD and a locked transaction when exact funds are insufficient', () => {
-    const d = decision([], 500);
+    // Souls stay below the component price too, so no ancestor transaction is executable yet
+    // and the only reachable path is the barrier followed by the direct purchase.
+    const d = decision([], 300);
     const result = compiler.compile({ strategy: strategy(), contract: contract(), slotPlan: slotPlan('NONE'), decision: d, selectedCandidates: [] });
     expect(result.reachable).toBe(true);
     expect(result.steps[0]).toMatchObject({ kind: 'BARRIER', barrier: { type: 'WAIT_FOR_GOLD', targetItemId: 202, requiredSouls: 1200 } });
     expect(result.steps[1]).toMatchObject({ kind: 'TRANSACTION', action: { type: 'BUY', buyItemId: 202 } });
   });
 
+  it('buys the affordable upgrade component now and defers the rest behind WAIT_FOR_GOLD', () => {
+    const d = decision([], 500);
+    const result = compiler.compile({ strategy: strategy(), contract: contract(), slotPlan: slotPlan('NONE'), decision: d, selectedCandidates: [] });
+    expect(result.reachable).toBe(true);
+    expect(result.steps[0]).toMatchObject({ kind: 'TRANSACTION', action: { type: 'BUY', buyItemId: 101 } });
+    expect(result.steps[1]).toMatchObject({ kind: 'BARRIER', barrier: { type: 'WAIT_FOR_GOLD', targetItemId: 202, requiredSouls: 700 } });
+    expect(result.steps[2]).toMatchObject({ kind: 'TRANSACTION', action: { type: 'UPGRADE', buyItemId: 202, consumedItemIds: [101], recipeId: 'upgrade-202' } });
+  });
+
   it('uses post-refund required souls for an unaffordable replacement', () => {
-    const d = decision([102, 103, 104, 105], 500);
-    const result = compiler.compile({ strategy: strategy('REPLACEMENT_TARGET'), contract: contract([102]), slotPlan: slotPlan('SELL_TEMPORARY', 102), decision: d, selectedCandidates: [] });
+    // The component is priced so high that replacing the temporary item with it stays
+    // unaffordable after the refund, forcing the direct replacement barrier math.
+    const expensiveComponent: RecommendationItemDefinition = {
+      ...items[0],
+      directPurchaseCost: 1000,
+    };
+    const expensiveGraph = createRecommendationItemGraph([expensiveComponent, ...items.slice(1)]);
+    const ownedItemIds = [102, 103, 104, 105];
+    const held = buildInventoryInstancesForRecommendation(ownedItemIds, expensiveGraph);
+    const expensiveDecision: AdaptiveDecisionStateV1 = {
+      ...decision(ownedItemIds, 500),
+      itemGraph: expensiveGraph,
+      state: {
+        ...decision(ownedItemIds, 500).state,
+        inventory: {
+          ...decision(ownedItemIds, 500).state.inventory,
+          heldByItemId: held,
+          nextInstanceSequence: held.size + 1,
+        },
+      },
+      slots: deriveAdaptiveSlotStateV1(ownedItemIds, expensiveGraph, slotRules, {
+        unlockedFlexSlots: 0,
+        evidence: 'OBSERVED',
+      }),
+    };
+    const result = compiler.compile({ strategy: strategy('REPLACEMENT_TARGET'), contract: contract([102]), slotPlan: slotPlan('SELL_TEMPORARY', 102), decision: expensiveDecision, selectedCandidates: [] });
+    expect(result.reachable).toBe(true);
     expect(result.steps[0]).toMatchObject({ kind: 'BARRIER', barrier: { type: 'WAIT_FOR_GOLD', targetItemId: 202, requiredSouls: 950 } });
     expect(result.steps[1]).toMatchObject({ kind: 'TRANSACTION', action: { type: 'SELL_AND_BUY', sellItemId: 102, buyItemId: 202 } });
   });

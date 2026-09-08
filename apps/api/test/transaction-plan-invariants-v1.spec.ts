@@ -56,6 +56,20 @@ function validSession(): AdaptivePlanSessionV1 {
   };
 }
 
+function waitingSession(): AdaptivePlanSessionV1 {
+  return {
+    planSessionId: 'p-wait', strategyId: 's', revision: 1, createdAtGameTimeSec: 1, updatedAtGameTimeSec: 1,
+    state: 'WAITING', nextStepId: undefined, reasonCodes: ['WAITING_ON_PLAN_BARRIER'],
+    steps: [{
+      stepId: 'wait-flex', goalId: 'g', kind: 'BARRIER', state: 'BLOCKED',
+      barrier: { type: 'WAIT_FOR_FLEX', targetItemId: 2, requiredUnlockedFlexSlots: 1 },
+      prerequisiteStepIds: [], blockingReasons: ['INSUFFICIENT_FLEX'],
+      projectedBefore: projection,
+      reasonCodes: [],
+    }],
+  };
+}
+
 function validBuild() {
   return [
     { itemId: 1, position: 1, status: 'OWNED' as const, score: 0, confidence: 1, skeletonStrength: 0, contextualSupport: 1, reasonCodes: [] },
@@ -74,17 +88,38 @@ describe('transaction plan invariants v1', () => {
     expect(check.valid).toBe(true);
   });
 
-  it('rejects a future flat item with no structured plan step', () => {
+  it('accepts a waiting HOLD and semantic NEXT that match the blocked barrier target', () => {
+    const check = evaluateTransactionPlanInvariantsV1({
+      decision: decision([1]),
+      planSession: waitingSession(),
+      nextAction: { actionKey: 'HOLD', type: 'HOLD', targetItemId: 2, reasonCodes: ['WAIT_FOR_FLEX'] },
+      recommendedBuild: validBuild(),
+    });
+    expect(check.valid).toBe(true);
+  });
+
+  it('rejects a waiting HOLD that points at a different target than the blocked barrier', () => {
+    const check = evaluateTransactionPlanInvariantsV1({
+      decision: decision([1]),
+      planSession: waitingSession(),
+      nextAction: { actionKey: 'HOLD', type: 'HOLD', targetItemId: 3, reasonCodes: ['WAIT_FOR_FLEX'] },
+      recommendedBuild: validBuild(),
+    });
+    expect(check.violations.some((violation) => violation.code === 'NEXT_STEP_MISMATCH')).toBe(true);
+  });
+
+  it('allows PLANNED semantic targets beyond the transaction plan horizon', () => {
     const check = evaluateTransactionPlanInvariantsV1({
       decision: decision([1]),
       planSession: validSession(),
       nextAction: { actionKey: 'REPLACE_ITEM:1->2', type: 'REPLACE', sellItemId: 1, buyItemId: 2, targetItemId: 2, reasonCodes: [] },
       recommendedBuild: [
-        { itemId: 1, position: 1, status: 'OWNED', score: 0, confidence: 1, skeletonStrength: 0, contextualSupport: 1, reasonCodes: [] },
-        { itemId: 3, position: 2, status: 'PLANNED', score: 0, confidence: 0, skeletonStrength: 0, contextualSupport: 0, reasonCodes: [] },
+        ...validBuild(),
+        { itemId: 3, position: 3, status: 'PLANNED', score: 0, confidence: 0, skeletonStrength: 0, contextualSupport: 0, reasonCodes: ['STRATEGIC_FUTURE_TARGET'] },
       ],
     });
-    expect(check.violations.some((violation) => violation.code === 'FUTURE_TARGET_WITHOUT_STEP')).toBe(true);
+    expect(check.violations.some((violation) => violation.code === 'FUTURE_TARGET_WITHOUT_STEP')).toBe(false);
+    expect(check.valid).toBe(true);
   });
 
   it('rejects a NEXT action that does not match planSession.nextStepId', () => {

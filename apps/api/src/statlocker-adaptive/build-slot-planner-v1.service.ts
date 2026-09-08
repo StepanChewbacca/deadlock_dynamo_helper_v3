@@ -164,6 +164,10 @@ export class BuildSlotPlannerV1Service {
     } else if (requiredFlex > currentUnlocked) {
       return false;
     }
+    const currentActiveItems = recommendationSlotUsageFor(input.ownedItemIds, input.itemGraph, rules).activeItemsUsed;
+    if (usage.activeItemsUsed <= currentActiveItems) return true;
+    // An unverified numeric maxActiveItems is not production truth: it cannot certify an active-count increase.
+    if (input.slots.mechanicsEvidence === 'UNKNOWN') return false;
     return usage.activeItemsUsed <= input.slots.maxActiveItems;
   }
 }
