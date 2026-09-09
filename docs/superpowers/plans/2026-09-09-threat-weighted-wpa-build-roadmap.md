@@ -4,31 +4,83 @@
 
 **Goal:** evolve the current strategy-first adaptive planner so it returns one coherent build whose structure comes from consensus/skeleton evidence while branch, optional, situational, and exceptional wildcard choices adapt to the exact enemy draft using Statlocker `VS_HERO_WPA` weighted by live enemy threat.
 
-**Architecture:** preserve the existing strategy-first facade, strategy contract, item graph, transaction planner, and fail-closed invariants. Add four explicit layers: richer matchup evidence, live enemy threat, threat-weighted matchup aggregation/candidate discovery, and whole-build utility. Reuse existing situational target types and Overwolf `againstLabel` plumbing instead of creating parallel concepts.
+**Architecture:** preserve the existing strategy-first facade, strategy contract, item graph, transaction planner, and fail-closed invariants. Add explicit layers for durable WPA ingest/querying, live enemy threat, threat-weighted full-draft matchup aggregation/candidate discovery, exact 12-slot inventory optimization, whole-build utility, stable plan switching, and auditable presentation/debug traces.
 
-**Tech stack:** NestJS/TypeScript API, Jest, shared TypeScript contracts, Overwolf TypeScript/webpack client, existing Statlocker browser collector/normalizer/evidence store, existing build-domain recommendation graph.
+**Tech stack:** NestJS/TypeScript API, TypeORM/Postgres, Jest, shared TypeScript contracts, Overwolf TypeScript/webpack client, existing Statlocker browser collector, existing build-domain recommendation graph.
+
+## Approved product requirements
+
+1. Skeleton/consensus defines the build archetype and structural core. It is a strong prior, not an absolute final item list.
+2. Hard core is structurally protected. Soft core may move only when a materially better contextual plan exists.
+3. OR/CHOICE selects one branch for the current game, primarily using current-draft matchup evidence plus compatibility/economy/timing.
+4. Situational/optional discovery may consider legal items outside the skeleton when `VS_HERO_WPA` provides a strong, statistically credible advantage.
+5. A wildcard outside the skeleton is allowed only when the whole resulting build is materially better after all costs and constraints.
+6. Matchup evaluation uses all observed enemy heroes, not only the current top-3 exact matchups.
+7. Historical `VS_HERO_WPA` is weighted by live enemy threat. Live stats answer "who matters most right now"; WPA answers "what historically works against that hero".
+8. Enemy threat uses multiple signals, not KDA alone: souls, hero damage, kills/assists, deaths, level, and data completeness.
+9. Low sample counts are shrink-adjusted before they can influence branch, wildcard, or replacement decisions.
+10. The planner evaluates the utility of the complete resulting build, not only standalone item scores.
+11. Inventory has exactly **12 total item slots**. All 12 slots are fully flexible/category-agnostic for capacity purposes. Weapon/Vitality/Spirit remain item/build attributes, not separate capacity buckets.
+12. The planner must never project more than 12 held items.
+13. At 12/12, adding a non-compressing item requires evaluating a concrete sell+buy replacement path.
+14. Sell decisions are whole-build decisions. Do not simply sell the cheapest item. Hard core and protected upgrade components are not ordinary sell candidates.
+15. Overwolf must present replacement as an explicit user transaction, for example `Sell Extra - Buy Opening Rounds`, with matchup context such as `vs Billy, Dynamo` when causal.
+16. Debug UI must show what the skeleton had, what was considered, what was rejected, what won, and the numerical policy/math behind the decision.
+17. Final serving output is always one current coherent build plus one executable next action.
+18. Plan changes use hysteresis so small/noisy context changes do not churn recommendations.
+19. `VS_HERO_WPA` is fetched on a daily cadence, with a full immutable **RAW Statlocker response** stored before normalization.
+20. The RAW snapshot is then normalized into relational rows for production querying. Scoring/debug paths read relational rows, not the large JSON snapshot.
+21. The large `VS_HERO_WPA` dataset is not kept as an application-wide in-memory payload. Postgres is the source of truth; add a small hot cache only later if profiling proves it necessary.
+22. Historical RAW snapshots are retained for audit/replay/re-normalization. Relational WPA storage is the active query representation.
+
+## Initial V1 policy numbers
+
+These are intentional starting values for shadow evaluation, not sacred constants. They must be named/configurable and visible in debug output.
+
+| Policy | Initial value |
+| --- | ---: |
+| Total inventory capacity | `12` |
+| Enemy threat - souls weight | `0.35` |
+| Enemy threat - hero damage weight | `0.30` |
+| Enemy threat - kills + assists weight | `0.20` |
+| Enemy threat - level weight | `0.10` |
+| Enemy threat - deaths penalty weight | `0.05` |
+| Enemy threat multiplier clamp | `0.75 .. 1.50` |
+| Exact matchup shrink K | `500` |
+| Normal plan switch minimum gain | `0.08` |
+| Sell + buy minimum net gain | `0.20` |
+| Soft-core replacement minimum net gain | `0.25` |
+| Outside-skeleton wildcard + replacement minimum net gain | `0.30` |
+| Minimum matchup confidence for sell-driven adaptation | `0.40` |
+| Recent purchase sell protection | `120 sec` |
+| Sold-item rebuy penalty window | `180 sec` |
+
+The existing values for plan switching, sell thresholds, core replacement, recent purchase protection, recent sell/rebuy penalty, and exact-enemy shrink should be reused where they already match these values. New threat weights/clamps are V1 defaults and must be tuned from traces/shadow data.
 
 ## Implementation principles
 
 1. TDD for every behavior change: write failing focused test, run it, implement minimum behavior, run focused test, then run affected suite.
-2. Do not revive the legacy planner. All final integration goes through `strategy-first-adaptive-planner-facade-v1.service.ts`.
-3. Hard constraints are never compensated by high WPA. Catalog legality, hard-core contract, transaction feasibility, and inventory correctness stay fail closed.
-4. Keep all policy thresholds named/configurable.
-5. Keep decision math auditable. Every selected/rejected matchup candidate must be explainable from structured components and reason codes.
-6. Preserve a neutral fallback path: when new matchup/threat evidence is unavailable, behavior collapses toward the existing skeleton-driven plan.
-7. Roll out behind a policy/version flag and shadow evaluation before replacing the current production decision path.
+2. Do not revive the legacy planner. Final integration goes through `strategy-first-adaptive-planner-facade-v1.service.ts`.
+3. Hard constraints are never compensated by high WPA. Catalog legality, hard-core contract, transaction feasibility, and exact 12-slot inventory correctness stay fail closed.
+4. Keep every threshold/weight named/configurable and emit the effective policy version/values into the debug trace.
+5. Keep decision math auditable. Every serious selected/rejected candidate must be explainable from structured components and reason codes.
+6. Preserve a neutral fallback path: when matchup/threat evidence is unavailable, behavior collapses toward the existing skeleton-driven plan.
+7. Raw Statlocker storage and derived/query storage are separate responsibilities.
+8. Publishing a new daily WPA dataset is atomic from the scorer's point of view. A failed parse/import must leave the previous active relational dataset usable.
+9. Do not use an in-memory copy of the full `VS_HERO_WPA` response as source of truth.
+10. Roll out behind a policy/version flag and shadow evaluation before replacing the current production decision path.
 
 ---
 
-# Milestone 0 - Lock down evidence semantics and regression fixtures
+# Milestone 0 - Lock down evidence, mechanics, and regression fixtures
 
-## Task 0.1 - Add a real `VS_HERO_WPA` fixture from the verified live shape
+## Task 0.1 - Add a real `VS_HERO_WPA` raw fixture
 
 **Create:**
 - `apps/api/test/fixtures/statlocker-vs-hero-wpa-v1.json`
 
 **Modify:**
-- `apps/api/test/statlocker-normalizer.spec.ts` or the current normalizer-specific test file if named differently after branch start.
+- current Statlocker normalizer/ingest tests.
 
 **Fixture requirements:**
 - at least two rank buckets;
@@ -40,114 +92,176 @@
 - one moderate delta with strong sample;
 - one negative matchup.
 
-**RED:** add tests proving the current normalizer intentionally aggregates `count`/`deltaWpa` across rank buckets and currently loses rank/`mean_wpa`.
+**RED:** document current behavior, including rank aggregation and the fact that `mean_wpa` is currently ignored by scoring.
 
-**Run:**
-```bash
-yarn workspace @deadlock-live-probe/api test --runTestsByPath test/statlocker-normalizer.spec.ts
-```
+## Task 0.2 - Verify Statlocker field semantics
 
-**GREEN:** no production behavior change yet. The test documents the current baseline and gives later schema changes a stable raw fixture.
+Investigate and document the exact relationship between `mean_wpa`, `delta_wpa`, and `_baseline`.
 
-**Commit:**
-```bash
-git commit -m "test: capture vs hero WPA raw fixture"
-```
-
-## Task 0.2 - Verify Statlocker field semantics before using `mean_wpa`
-
-This is an evidence task, not speculative coding.
-
-**Investigate:**
-- official Statlocker WPA documentation/changelog if available;
-- raw `_baseline` object from the endpoint;
-- exact relationship between `mean_wpa`, `delta_wpa`, and `_baseline`.
-
-**Document:**
+**Create:**
 - `docs/statlocker-vs-hero-wpa-semantics.md`
 
-The document must explicitly classify each field as VERIFIED, INFERRED, or UNKNOWN.
+Every field must be marked VERIFIED, INFERRED, or UNKNOWN.
 
-**Gate:** until semantics are VERIFIED, `mean_wpa` is retained in normalized evidence for observability only and is not added to matchup utility. Existing base WPA continues to provide general item quality.
+**Gate:** until semantics are VERIFIED, `mean_wpa` can be persisted and displayed in debug but cannot become an independent utility bonus that may double count `delta_wpa`/base WPA.
 
-## Task 0.3 - Remove threshold ambiguity before adding new policy
+## Task 0.3 - Remove threshold ambiguity
 
-Current code has overlapping situational improvement concepts, including the resolver default and adaptive config. Make one source authoritative before the new pipeline depends on it.
+Make one config source authoritative for situational/replace/switch thresholds before adding new policy layers.
 
 **Modify:**
 - `apps/api/src/statlocker-adaptive/statlocker-adaptive.config.ts`
 - `apps/api/src/statlocker-adaptive/build-situational-resolver-v1.service.ts`
 - `apps/api/src/statlocker-adaptive/strategy-first-situational-overlay-v1.service.ts`
 
-**Test:**
-- `apps/api/test/adaptive-config-v1.spec.ts`
-- add/update `apps/api/test/build-situational-resolver-v1.spec.ts`
+**RED:** resolver/planner must receive the configured value rather than silently falling back to unrelated hardcoded defaults.
 
-**RED:** prove resolver receives the configured threshold instead of silently using an unrelated hardcoded default.
+## Task 0.4 - Lock inventory truth: 12 fully flexible slots
 
-**GREEN:** pass one canonical config value through the caller.
+The current canonical economy model uses category base-slot buckets plus additional flex capacity. That does not match the approved capacity model and must be treated as an early blocker.
+
+**Modify:**
+- `apps/api/src/statlocker-adaptive/adaptive-economy-v1.ts`
+- build-domain capacity/recommendation slot rules where required
+- `apps/api/src/statlocker-adaptive/build-slot-planner-v1.service.ts`
+- transaction projection/validator helpers that reason about capacity.
+
+**Required semantics:**
+- exact maximum held item count: `12`;
+- all 12 positions are capacity-flexible;
+- no `4 weapon + 4 vitality + 4 spirit + N flex` capacity model;
+- item category still exists for build balance/investment/strategy;
+- active-item mechanics remain a separate rule if Deadlock imposes an independent active-item limit;
+- upgrade recipes that consume components may free/compress slots naturally;
+- every projected state enforces `heldItemCount <= 12`.
+
+**RED cases:**
+1. 11 held items + legal buy -> 12 and feasible;
+2. 12 held items + plain buy -> infeasible without exit/compression;
+3. 12 held items + valid component-consuming upgrade -> feasible if final held count <= 12;
+4. projected 13-item inventory is rejected in every planner/transaction path;
+5. item category does not block a purchase solely because four items of the same category already exist.
 
 ---
 
-# Milestone 1 - Preserve richer matchup evidence
+# Milestone 1 - Daily RAW WPA ingest and relational query storage
 
-## Task 1.1 - Define a richer normalized matchup type without breaking existing readers
+## Task 1.1 - Persist the immutable RAW Statlocker response
 
-**Modify:**
-- `apps/api/src/statlocker-adaptive/statlocker-adaptive.types.ts`
+Current evidence snapshots store normalized payloads. Add a dedicated RAW snapshot representation for `VS_HERO_WPA` rather than changing the meaning of every existing evidence snapshot.
 
-**Add conceptually:**
-```ts
-interface StatlockerVsHeroItemEvidenceV2 {
-  itemId: number;
-  deltaWpa: number;
-  count: number;
-  meanWpa?: number;
-  rankBreakdown?: readonly StatlockerVsHeroRankEvidenceV2[];
-}
+**Create:**
+- `apps/api/src/deadlock-live/entities/statlocker-vs-hero-wpa-raw-snapshot-v1.entity.ts`
+- migration for `statlocker_vs_hero_wpa_raw_snapshots_v1`.
+
+**Fields:**
+- snapshotId/content hash;
+- fetchedAt;
+- source path/status;
+- Statlocker patch ID;
+- rulesetVersion;
+- catalogSha256;
+- collector version;
+- raw JSONB payload exactly as received from Statlocker;
+- ingest status/metadata sufficient to identify whether relational publication succeeded.
+
+**Required behavior:**
+- save RAW before normalization/import;
+- immutable by content identity;
+- never mutate RAW to match a newer normalizer schema;
+- retain old RAW snapshots so a future normalizer can rebuild derived rows without re-fetching Statlocker.
+
+## Task 1.2 - Create relational `VS_HERO_WPA` rows
+
+**Create:**
+- `apps/api/src/deadlock-live/entities/statlocker-vs-hero-wpa-row-v1.entity.ts`
+- migration for `statlocker_vs_hero_wpa_rows_v1`;
+- `apps/api/src/statlocker-adaptive/statlocker-vs-hero-wpa-repository-v1.service.ts`.
+
+**Row shape:**
+```text
+snapshotId
+statlockerPatchId
+rulesetVersion
+catalogSha256
+rankBucket
+heroId
+enemyHeroId
+itemId
+count
+deltaWpa
+meanWpa?   // retained, not necessarily scored
 ```
 
-Do not force every caller onto rank-aware scoring yet.
+`_baseline` must not be represented as a fake enemy hero row. Keep it in RAW until its semantics justify a separate derived structure.
 
-**Required semantics:**
-- aggregate `deltaWpa/count` remains available for current scorer compatibility;
-- rank-specific rows remain available for future policy;
-- raw `meanWpa` may be retained only when safely parseable;
-- `_baseline` is preserved separately only if its semantics are understood enough to name correctly; otherwise keep it out of scoring.
+**Indexes:**
+- active identity + `heroId` + `enemyHeroId`;
+- active identity + `heroId` + `itemId`;
+- active identity + `heroId` + enemy set access path as supported by Postgres index design;
+- uniqueness for one source rank/hero/enemy/item per published dataset.
 
-## Task 1.2 - Update normalizer to preserve rank while keeping aggregate compatibility
+**Primary runtime query:**
+```text
+ourHeroId
++ current patch/ruleset/catalog
++ enemyHeroIds[]
+=> rows grouped by item and enemy
+```
 
-**Modify:**
-- `apps/api/src/statlocker-adaptive/statlocker-normalizer.service.ts`
+## Task 1.3 - Preserve rank rows and derive aggregate at query/scoring boundary
 
-**Test:**
-- `apps/api/test/statlocker-normalizer.spec.ts`
+Do not irreversibly collapse rank buckets during ingest.
 
 **RED cases:**
-1. two ranks for same hero/enemy/item stay distinguishable;
-2. aggregate count is still sum of rank counts;
-3. aggregate delta is still count-weighted, preserving current behavior;
-4. `mean_wpa` is retained but not synthesized if missing;
-5. invalid/non-numeric rows are ignored deterministically;
-6. `_baseline` is not treated as an enemy hero.
+1. `rank_8` and `rank_9` for the same hero/enemy/item persist independently;
+2. all-rank aggregate can still reproduce the current count-weighted `deltaWpa` behavior;
+3. missing/non-numeric leaves are rejected/ignored deterministically;
+4. `mean_wpa` is retained when valid;
+5. future rank-specific policy does not require re-fetching old RAW snapshots.
 
-**GREEN:** implement the richer representation.
+For V1 recommendation policy, use the agreed all-rank aggregate unless a later verified rank policy is explicitly enabled.
 
-**Run:**
-```bash
-yarn workspace @deadlock-live-probe/api test --runTestsByPath test/statlocker-normalizer.spec.ts
-yarn workspace @deadlock-live-probe/api build
+## Task 1.4 - Publish relational rows atomically
+
+A new daily fetch must not make production scoring unavailable if normalization/import fails.
+
+**Desired flow:**
+```text
+fetch RAW
+ -> save immutable RAW snapshot
+ -> parse/validate rows into staging/in-transaction representation
+ -> validate minimum dataset integrity
+ -> atomically publish new active relational dataset
+ -> previous active dataset becomes superseded
 ```
 
-## Task 1.3 - Evidence store compatibility
+**Fail-closed rule:** if parsing/import/validation fails, keep the previous successfully published relational dataset active and mark the new RAW snapshot import as failed.
 
-**Modify only if required by serialization/type boundaries:**
+Do not delete the old active rowset before the replacement dataset has been validated.
+
+## Task 1.5 - Change `VS_HERO_WPA` refresh cadence to daily
+
+**Modify:**
+- `apps/api/src/statlocker-adaptive/statlocker-refresh.service.ts`
+- config/tests.
+
+**Policy:** `VS_HERO_WPA` fetch interval starts at 24 hours. Do not force unrelated global datasets such as patch metadata/T4 chains onto the same cadence if they need a different refresh policy.
+
+**RED:** repeated scheduler ticks within 24 hours do not re-fetch `VS_HERO_WPA`; forced/admin refresh can still bypass TTL where existing operational semantics allow it.
+
+## Task 1.6 - Remove large in-memory `VS_HERO_WPA` serving path
+
+The scorer/discovery/debug path must query the relational repository. The existing snapshot store may continue caching other small evidence families, but the full `VS_HERO_WPA` payload is not loaded/served through an application-wide active map.
+
+**Modify:**
 - `apps/api/src/statlocker-adaptive/statlocker-evidence.service.ts`
-- snapshot/entity serializers that persist normalized payloads.
+- `apps/api/src/statlocker-adaptive/statlocker-snapshot-store.service.ts` only as required to stop `VS_HERO_WPA` from depending on the active-map payload;
+- scorer/discovery call sites.
 
-**Test:** verify an older aggregate-only payload still scores and a richer payload is accepted.
+**Acceptance:** restarting the API does not require hydrating the full WPA dataset into memory before recommendations can query it.
 
-**Acceptance:** no current recommendation path changes solely because richer evidence exists.
+**Performance gate:** start with indexed Postgres queries. Add an LRU/hot cache only if profiling demonstrates a real bottleneck, and never make cache state authoritative.
 
 ---
 
@@ -158,722 +272,553 @@ yarn workspace @deadlock-live-probe/api build
 **Modify:**
 - `apps/api/src/statlocker-adaptive/adaptive-decision-state-v1.service.ts`
 
-**Add:**
-```ts
-interface AdaptiveEnemyLiveStateV1 {
-  steamId: string;
-  heroId: number;
-  heroName?: string;
-  level?: number;
-  souls?: number;
-  kills?: number;
-  deaths?: number;
-  assists?: number;
-  heroDamage?: number;
-}
-```
+**Fields:**
+- player/hero identity;
+- level;
+- souls;
+- kills;
+- deaths;
+- assists;
+- heroDamage.
 
-Keep optional fields optional because GEP/live observations can be incomplete.
-
-**Do not copy:** healing/object damage into threat v1 unless a concrete threat component needs them. Avoid YAGNI.
+Missing observations remain unknown/undefined, not fake zeros.
 
 ## Task 2.2 - Populate enemy live state from canonical roster
 
-**Modify:**
-- `apps/api/src/statlocker-adaptive/adaptive-decision-state-v1.service.ts`
-
-**Test:**
-- `apps/api/test/adaptive-decision-state-v1.spec.ts`
-
 **RED cases:**
-1. enemy hero identity + observed K/D/A/souls/level/heroDamage are copied;
-2. allies are excluded;
-3. local player is excluded;
-4. missing metrics remain undefined, not zero;
-5. ordering is stable/deterministic.
-
-**GREEN:** add `enemyLiveStates` to `AdaptiveDecisionStateV1`.
-
-**Run:**
-```bash
-yarn workspace @deadlock-live-probe/api test --runTestsByPath test/adaptive-decision-state-v1.spec.ts
-```
+1. observed enemy K/D/A/souls/level/heroDamage are copied;
+2. allies/local player are excluded;
+3. missing metrics remain missing;
+4. deterministic enemy ordering.
 
 ---
 
-# Milestone 3 - Build deterministic Enemy Threat V1
+# Milestone 3 - Deterministic Enemy Threat V1
 
-## Task 3.1 - Create threat scorer
+## Task 3.1 - Create pure threat scorer
 
 **Create:**
 - `apps/api/src/statlocker-adaptive/enemy-threat-v1.service.ts`
-- `apps/api/test/enemy-threat-v1.spec.ts`
+- `apps/api/test/enemy-threat-v1.spec.ts`.
 
-**Modify:**
-- `apps/api/src/statlocker-adaptive/statlocker-adaptive.config.ts`
+**Initial formula components:**
+- souls/economic share: weight `0.35`;
+- hero-damage share: `0.30`;
+- kill pressure from kills + assists/team activity: `0.20`;
+- level position: `0.10`;
+- deaths negative pressure: `0.05`.
 
-**Inputs:**
-- enemy live states;
-- enemy-team totals/medians that can be computed from those states;
-- game time if a component requires time normalization.
+Normalize component inputs relative to the enemy team where possible rather than relying on absolute raw numbers.
 
-**Components for V1:**
-- economic share from souls;
-- combat-output share from hero damage;
-- kill pressure from kills + assists relative to team activity;
-- death pressure as a bounded negative component;
-- level position relative to enemy team / match where reliable;
-- evidence completeness.
-
-**Output:**
-- per-enemy raw score;
-- normalized score;
-- bounded weight;
-- confidence/completeness;
-- component breakdown and reason codes.
+Output:
+- raw component values;
+- normalized threat score;
+- bounded multiplier clamped to `0.75 .. 1.50`;
+- completeness/confidence;
+- reason codes.
 
 **RED cases:**
-1. a clearly fed/high-output enemy gets a higher weight than a far-behind enemy;
-2. KDA alone does not dominate when souls/damage contradict it;
-3. missing all individual stats returns neutral weight `1`, not `0`;
-4. one absurd metric cannot exceed configured clamp;
-5. identical snapshots produce byte-stable ordering/results;
-6. no NaN/Infinity can leave the service.
+1. fed/high-output enemy outranks far-behind enemy;
+2. KDA alone cannot dominate contradictory souls/damage;
+3. all individual stats missing -> neutral weight `1.0`;
+4. absurd single metric cannot break clamp;
+5. no NaN/Infinity;
+6. deterministic results.
 
-**Policy:** exact numeric weights/clamps start conservative and named in config. Do not hide constants in the service.
+## Task 3.2 - Add bounded smoothing
 
-**Run:**
-```bash
-yarn workspace @deadlock-live-probe/api test --runTestsByPath test/enemy-threat-v1.spec.ts
-```
-
-## Task 3.2 - Add threat smoothing state only after the snapshot scorer is correct
-
-Do not mix smoothing into the pure scorer.
+Keep smoothing separate from the pure scorer.
 
 **Create:**
-- `apps/api/src/statlocker-adaptive/enemy-threat-history-v1.service.ts`
-- `apps/api/test/enemy-threat-history-v1.spec.ts`
+- `apps/api/src/statlocker-adaptive/enemy-threat-history-v1.service.ts`.
 
-**Behavior:**
-- keyed by match + enemy hero/player identity;
-- bounded EMA or another explicitly configured deterministic smoother;
-- TTL cleanup when match becomes inactive;
-- neutral on first observation;
-- no persistent DB requirement for V1 unless restart continuity is explicitly required later.
-
-**RED:** threat does not jump from neutral to max after one noisy snapshot if smoothing is enabled.
+Use a configured bounded EMA or equivalent after snapshot math is correct. This is small per-match state and is allowed in memory because it is ephemeral live-game state, unlike the global WPA dataset.
 
 ---
 
-# Milestone 4 - Threat-weighted matchup aggregation across the full enemy draft
+# Milestone 4 - Threat-weighted matchup aggregation across all enemies
 
-## Task 4.1 - Add a pure matchup aggregation service
+## Task 4.1 - Query relational WPA evidence
+
+The aggregation service requests only the current hero/current enemy set from `StatlockerVsHeroWpaRepositoryV1Service`.
+
+No whole-dataset JSON traversal in scorer code.
+
+## Task 4.2 - Add pure full-draft matchup aggregation
 
 **Create:**
 - `apps/api/src/statlocker-adaptive/threat-weighted-matchup-v1.service.ts`
-- `apps/api/test/threat-weighted-matchup-v1.spec.ts`
+- `apps/api/test/threat-weighted-matchup-v1.spec.ts`.
 
-**Inputs:**
-- our hero ID;
-- item ID;
-- all observed enemy hero IDs;
-- normalized `VS_HERO_WPA` slices;
-- `EnemyThreatScoreV1` by enemy;
-- matchup config.
-
-**For every enemy with evidence calculate:**
-- raw `deltaWpa`;
-- sample size;
-- shrink confidence;
-- normalized matchup signal;
-- threat weight;
-- final contribution;
-- contribution priority for explanation only.
-
-**Important:** do not truncate to top 3 for the draft aggregate. All observed enemies with evidence contribute.
-
-**Output concept:**
-```ts
-interface ThreatWeightedMatchupScoreV1 {
-  itemId: number;
-  aggregate: number;
-  confidence: number;
-  coverage: number;
-  positiveTargetHeroIds: readonly number[];
-  negativeTargetHeroIds: readonly number[];
-  contributions: readonly ThreatWeightedEnemyContributionV1[];
-}
+For each enemy with evidence:
+```text
+effectiveDelta = deltaWpa * sampleConfidence
+sampleConfidence = n / (n + 500)
+contribution = normalized(effectiveDelta) * enemyThreatWeight
 ```
+
+The exact normalization remains compatible with the scorer's existing bounded score domain.
+
+Aggregate across all observed enemies. Do not select only the three biggest absolute contributions for the final draft score.
+
+Trace each enemy contribution with:
+- enemy hero;
+- raw delta WPA;
+- count;
+- shrink confidence;
+- threat multiplier;
+- weighted contribution.
 
 **RED cases:**
-1. moderate positive value against several meaningful threats can beat a narrow item;
-2. a single fed enemy can make a strong matchup against that enemy more important;
-3. bounded threat prevents one enemy from completely dwarfing the draft;
-4. huge positive raw delta with `n=12` loses confidence versus smaller well-supported evidence;
-5. negative matchup against the primary threat materially hurts the aggregate;
-6. no live threat data is equivalent to neutral enemy weighting;
-7. partial enemy evidence reports lower coverage rather than inventing missing rows;
-8. all six enemy rows are present in trace when available.
+1. broad moderate value can beat a one-matchup spike;
+2. strong matchup into the highest live threat can legitimately beat broad weak coverage;
+3. negative matchup into the main threat materially hurts a candidate;
+4. low-sample spike is shrunk;
+5. no live threat -> neutral weights;
+6. all six rows appear when available.
 
-**Run:**
-```bash
-yarn workspace @deadlock-live-probe/api test --runTestsByPath test/threat-weighted-matchup-v1.spec.ts
-```
+## Task 4.3 - Add auditable draft matchup score component
 
-## Task 4.2 - Expose matchup aggregate as an auditable scorer component
-
-**Modify:**
-- `apps/api/src/statlocker-adaptive/adaptive-evidence-scorer-v1.service.ts`
-- `apps/api/src/statlocker-adaptive/statlocker-adaptive.config.ts`
-- `apps/api/test/adaptive-evidence-scorer-v1.spec.ts`
-
-**Plan:**
-- add `draftMatchupFit` as a new component or version the scorer cleanly;
-- keep `exactEnemyFit` during compatibility/shadow period if other paths depend on it;
-- do not double count both in production final utility without an explicit policy;
-- scorer context gets threat scores or the precomputed matchup score, not raw mutable state.
-
-**RED:** prove fed enemy weighting changes `draftMatchupFit` while baseline/skeleton components remain unchanged.
+Version/add `draftMatchupFit`; do not double count legacy `exactEnemyFit` and the new aggregate in final active utility.
 
 ---
 
-# Milestone 5 - Make core rigidity an explicit planner concept
+# Milestone 5 - Explicit hard core / soft core / flex semantics
 
-## Task 5.1 - Canonicalize hard core / soft core / flex mapping
+## Task 5.1 - Canonicalize goal rigidity
 
-**Modify:**
-- `apps/api/src/statlocker-adaptive/build-strategy-v1.ts`
-- `apps/api/src/statlocker-adaptive/build-strategy-compiler-v1.service.ts`
-- strategy miner if needed: `apps/api/src/statlocker-adaptive/build-strategy-miner-v1.service.ts`
-
-**Preferred model:** add an explicit rigidity enum/property rather than relying on several partially overlapping fields.
-
+Add an explicit rigidity concept such as:
 ```ts
 type BuildGoalRigidityV1 = 'HARD_CORE' | 'SOFT_CORE' | 'FLEX';
 ```
 
-Existing lifecycle/goal type still describes lifecycle/role. Rigidity describes how difficult the goal is to displace.
-
-**Test:**
-- create `apps/api/test/build-strategy-rigidity-v1.spec.ts`
-- update strategy compiler tests.
-
-**RED cases:**
-1. strongest structural core maps to `HARD_CORE` deterministically;
-2. common but non-structural core maps to `SOFT_CORE`;
-3. situational/optional candidates map to `FLEX`;
-4. current mandatory branch semantics are preserved;
-5. old strategy records without the new field resolve through a deterministic compatibility rule.
+Hard core defines strategy identity. Soft core is a strong default. Flex contains optional/situational freedom.
 
 ## Task 5.2 - Enforce hard core as a constraint
 
-**Modify:**
-- `apps/api/src/statlocker-adaptive/strategy-first-build-planner-v1.service.ts`
-- invariant helpers/tests.
-
-**Test:**
-- `apps/api/test/adaptive-build-planner-strategy-contract-v1.spec.ts`
-
-**RED:** a candidate plan with fantastic matchup score still cannot silently drop an unsatisfied hard-core commitment.
+A high WPA/wildcard score cannot silently remove a required hard-core commitment.
 
 ---
 
-# Milestone 6 - Resolve OR / CHOICE using current draft evidence
+# Milestone 6 - Resolve OR / CHOICE using current-draft evidence
 
-## Task 6.1 - Add branch-option contextual evaluation
+Normal branch resolution considers only declared branch alternatives and selects exactly the required K choices.
 
-**Modify:**
-- `apps/api/src/statlocker-adaptive/strategy-first-build-planner-v1.service.ts`
-- `apps/api/src/statlocker-adaptive/adaptive-choice-resolver-v1.service.ts` if this remains the canonical branch helper.
+Score each branch from:
+- threat-weighted draft matchup;
+- skeleton prior;
+- chain/synergy;
+- timing;
+- economy;
+- current investment.
 
-**Test:**
-- `apps/api/test/adaptive-choice-resolver-v1.spec.ts`
-- `apps/api/test/adaptive-choice-k-of-n-v1.spec.ts`
-- `apps/api/test/adaptive-committed-choice-replacement-v1.spec.ts`
+Committed/owned branch replacement needs a larger improvement than an uncommitted choice.
 
-**Behavior:**
-- only declared branch alternatives compete in the normal branch resolver;
-- use threat-weighted draft matchup score + existing base/skeleton/chain/timing/economy evidence;
-- select exactly K options required by the branch;
-- final current build contains only the selected branch, not every alternative.
-
-**RED cases:**
-1. same skeleton, different enemy draft -> different branch winner where evidence justifies it;
-2. same draft, fed target change -> winner can change if material;
-3. low-sample matchup spike cannot force branch switch;
-4. committed choice requires a larger improvement before replacement;
-5. ties remain deterministic.
-
-## Task 6.2 - Keep wildcard logic out of normal branch semantics
-
-No code should mutate `optionGoalIds` dynamically just to fit a WPA winner. Outside-skeleton items enter through the controlled discovery/escape path in Milestone 7.
+Wildcard items do not mutate branch definitions; they enter through the separate discovery path.
 
 ---
 
-# Milestone 7 - WPA-driven situational discovery and controlled wildcard escape
+# Milestone 7 - WPA-driven situational discovery and wildcard escape
 
-## Task 7.1 - Create full-universe matchup candidate discovery
+## Task 7.1 - Discover from the full legal recommendation universe
 
 **Create:**
-- `apps/api/src/statlocker-adaptive/matchup-candidate-discovery-v1.service.ts`
-- `apps/api/test/matchup-candidate-discovery-v1.spec.ts`
+- `matchup-candidate-discovery-v1.service.ts` + tests.
 
-**Reuse:**
-- existing `generateRecommendationCandidates` / item graph legality;
-- slot/economy rules;
-- existing situational purpose/contract structures;
-- threat-weighted matchup scorer.
+Candidate source must come from legal recommendation candidates/item graph rules, not an unfiltered catalog scan.
 
-**Do not:** iterate every catalog row and assume it is purchasable. Candidate source must be legal recommendation candidates from the item graph/rules.
+Gates:
+- legal/recommendation-eligible;
+- supported matchup aggregate;
+- minimum confidence/coverage;
+- phase/timing plausible;
+- compatible with hard-core contract;
+- transaction path known;
+- final 12-slot feasibility;
+- no already-satisfied target.
 
-**Candidate gates:**
-- feasible/recommendation-eligible;
-- positive enough matchup aggregate;
-- minimum matchup confidence/coverage;
-- no hard-core contract violation;
-- timing/phase plausible;
-- slot impact acceptable;
-- transaction cost known/acceptable;
-- no already-satisfied target;
-- no obvious duplicate purpose if existing strategy rules already encode that conflict.
+Skeleton-listed situational items get a prior but are not the only candidates.
 
-**Explicit skeleton situational candidates:** receive a prior/boost, but are not the only candidates.
+## Task 7.2 - Wildcard threshold
 
-**RED cases:**
-1. strong legal item outside explicit window candidates is discovered;
-2. illegal/unshopable item is never discovered;
-3. low-sample high-delta item is rejected;
-4. item with positive aggregate but catastrophic slot/core impact is rejected later with explicit reason;
-5. skeleton-listed candidate wins a near tie due to prior, preventing gratuitous deviation.
+Initial whole-build improvement threshold:
+- normal outside-skeleton wildcard: materially above normal branch changes;
+- wildcard that requires sell+buy at 12/12: `>= 0.30` net improvement;
+- hard core is not an ordinary replacement candidate.
 
-## Task 7.2 - Define the wildcard escape gate
-
-**Create or keep in discovery service depending size:**
-- `apps/api/src/statlocker-adaptive/wildcard-build-deviation-v1.service.ts`
-- `apps/api/test/wildcard-build-deviation-v1.spec.ts`
-
-**Modify config:**
-- `apps/api/src/statlocker-adaptive/statlocker-adaptive.config.ts`
-
-**Required named thresholds:**
-- minimum matchup confidence;
-- minimum matchup uplift;
-- minimum whole-build utility improvement;
-- larger threshold when replacing soft core;
-- no ordinary replacement of hard core.
-
-**RED:** a +tiny improvement outside the skeleton is rejected; a large, well-supported improvement that keeps the build coherent is allowed.
-
-## Task 7.3 - Integrate discovery into strategy-first situational overlay
-
-**Modify:**
-- `apps/api/src/statlocker-adaptive/strategy-first-situational-overlay-v1.service.ts`
-- `apps/api/src/statlocker-adaptive/strategy-first-adaptive-planner-facade-v1.service.ts`
-- Nest module provider list if new services require injection.
-
-**Desired flow:**
-```text
-strategy plan
- -> explicit situational candidates
- -> discovered matchup candidates
- -> merge/dedupe with source metadata
- -> contextual scoring
- -> whole-build utility check
- -> resolver selects or retains core
-```
-
-**Test:**
-- add `apps/api/test/strategy-first-matchup-discovery-v1.spec.ts`
-
-**Acceptance:** the current `candidateItemIdsByPurpose` restriction no longer prevents a demonstrably better legal matchup item from being considered.
+Use minimum matchup confidence `0.40` for sell-driven matchup adaptations.
 
 ---
 
-# Milestone 8 - Score the complete coherent build
+# Milestone 8 - Whole-build utility and 12/12 replacement optimization
 
 ## Task 8.1 - Create whole-build utility service
 
 **Create:**
 - `apps/api/src/statlocker-adaptive/build-utility-v1.service.ts`
-- `apps/api/test/build-utility-v1.spec.ts`
+- tests.
 
-**Input:** one candidate build/plan with explicit roles and transaction implications.
-
-**Utility components:**
+Components:
 - skeleton adherence;
-- hard-core completion status;
-- soft-core deviation;
+- hard/soft-core state;
 - branch coherence;
-- aggregate draft matchup value;
-- chain/synergy evidence;
-- timing fit;
-- slot efficiency/pressure;
-- economic cost/opportunity cost;
+- threat-weighted matchup value;
+- chain/synergy;
+- timing;
+- slot state;
+- economic opportunity cost;
 - owned investment continuity;
-- transaction penalty;
+- transaction friction;
 - churn penalty.
 
-**Constraints checked before score:**
-- no impossible inventory/recipe state;
-- no missing hard-core requirement that candidate illegally displaced;
-- no illegal branch cardinality;
-- transaction plan feasible.
+Hard constraints are checked before utility. Invalid inventory/branch/core/transaction states are rejected, not merely penalized.
 
-**Output:**
-- total utility;
-- confidence/completeness;
-- component breakdown;
-- hard reject reason when invalid.
+## Task 8.2 - Make free-slot buy and full-inventory replacement first-class alternatives
 
-**RED cases:**
-1. highest standalone-WPA item can lose because it makes the full build worse;
-2. slightly lower matchup item can win due to synergy/timing/slots;
-3. hard-core violation is rejected, not merely penalized;
-4. wildcard requires higher utility improvement than normal branch alternative;
-5. deterministic tie breaking.
+Planner search must distinguish:
 
-## Task 8.2 - Integrate build utility into planning search
+```text
+held < 12:
+  BUY / UPGRADE / other legal transactions
 
-**Modify:**
-- `apps/api/src/statlocker-adaptive/strategy-first-build-planner-v1.service.ts`
-- planning helper(s) used for candidate ranking.
+held == 12:
+  slot-compressing UPGRADE if legal
+  OR explicit SELL_AND_BUY candidate
+```
 
-Reuse the existing bounded planning/beam architecture where practical. Do not introduce a second planner pipeline.
+For every serious target item at 12/12, evaluate legal sell sources and score the complete after-state:
 
-**Test:**
-- `apps/api/test/adaptive-build-planner-v1.spec.ts`
-- `apps/api/test/adaptive-build-planner-capacity-v1.spec.ts`
-- add `apps/api/test/strategy-first-whole-build-utility-v1.spec.ts`
+```text
+currentUtility = U(current 12-item build)
 
-**Acceptance:** ranking of a plan can be reconstructed from explicit build-utility components.
+candidateBuild = currentBuild - sellItem + buyItem
+candidateUtility = U(candidateBuild)
+
+netGain =
+  candidateUtility
+  - currentUtility
+  - transactionFriction
+  - churnPenalty
+  - investmentLossPenalty
+```
+
+Accept only if `netGain` clears the threshold for the type of replacement.
+
+Initial thresholds:
+- ordinary sell+buy: `0.20`;
+- replacing soft core: `0.25`;
+- outside-skeleton wildcard + sell: `0.30`.
+
+## Task 8.3 - Rank sell candidates by marginal build value, not price alone
+
+Exclude/protect before ranking:
+- required hard core;
+- ready component needed for pending hard goal;
+- recent purchase within `120 sec` unless a later explicit emergency policy is added;
+- any item whose removal makes the projected transaction/build invalid.
+
+Then compare legal removal candidates by resulting whole-build utility. Temporary/flex/obsolete early items may naturally become good sell sources, but no fixed "always sell cheapest" rule.
+
+Use authoritative sell/refund mechanics when computing economic loss. If sell economics are unknown for the current ruleset, a sell recommendation requiring that unknown value must fail closed rather than invent a refund percentage.
+
+## Task 8.4 - Inventory invariants
+
+**Required tests:**
+1. 11/12 + attractive item -> ordinary buy;
+2. 12/12 + attractive item -> sell+buy or reject, never 13 items;
+3. 12/12 -> hard core not sold;
+4. 12/12 -> protected recent purchase not sold;
+5. 12/12 -> weak flex may be sold for materially stronger matchup item;
+6. `netGain=0.19`, threshold `0.20` -> reject;
+7. `netGain=0.21`, threshold `0.20` -> accept;
+8. every intermediate/final projected inventory obeys capacity mechanics.
 
 ---
 
-# Milestone 9 - Stabilize plans over time
+# Milestone 9 - Plan hysteresis and transaction authority
 
-## Task 9.1 - Add plan identity and switch policy
+## Task 9.1 - Add plan switch policy
 
-**Create:**
-- `apps/api/src/statlocker-adaptive/adaptive-plan-switch-policy-v1.service.ts`
-- `apps/api/test/adaptive-plan-switch-policy-v1.spec.ts`
+Initial thresholds:
+- normal plan switch `0.08`;
+- sell+buy `0.20`;
+- soft-core replace `0.25`;
+- wildcard replacement `0.30`;
+- recent purchase protection `120 sec`;
+- sold-item rebuy penalty `180 sec`.
 
-**Inputs:**
-- current committed plan/session;
-- challenger utility;
-- current utility;
-- purchased hard/soft core count;
-- recent purchases/sells;
-- investment/breakpoint state;
-- whether challenger is wildcard.
-
-**Behavior:**
-- minimum improvement threshold for any switch;
-- larger threshold after meaningful investment;
-- larger threshold for wildcard;
-- preserve recent-purchase/sell-rebuy protections;
-- stable reason code when current plan is retained.
-
-**RED time-series tests:**
-1. small alternating threat changes do not flip plan repeatedly;
-2. major sustained change does switch;
-3. after expensive core purchase, same challenger no longer crosses the higher barrier;
-4. deterministic after process restart if required state is persisted by existing transaction session.
+Threat changes alone do not replace the plan unless the resulting whole-build challenger crosses the appropriate net improvement threshold.
 
 ## Task 9.2 - Keep transaction plan/session authoritative
 
-**Modify:**
-- `apps/api/src/statlocker-adaptive/strategy-first-transaction-plan-v1.service.ts`
-- `apps/api/src/statlocker-adaptive/strategy-first-adaptive-planner-facade-v1.service.ts`
+Reuse existing `REPLACE_ITEM`/`SELL_AND_BUY` semantics instead of adding a competing transaction model.
 
-Only as required to attach the newly selected coherent build to the existing executable transaction-plan semantics.
-
-**Test:**
-- existing transaction plan/shared tests;
-- add regression proving displayed current build and executable next action describe the same plan.
+Displayed current build and executable next action must refer to the same selected plan.
 
 ---
 
-# Milestone 10 - Add canonical decision trace for debugging
+# Milestone 10 - Canonical decision trace and policy snapshot
 
-## Task 10.1 - Shared trace contract
+## Task 10.1 - Shared structured trace
 
-**Modify:**
-- `packages/shared/src/adaptive-recommendation-v1.ts`
-- shared barrel exports if needed.
+Trace stages:
+- skeleton baseline;
+- branch choices;
+- matchup discovery;
+- whole-build validation;
+- sell-source evaluation when relevant;
+- final selection.
 
-**Test:**
-- `packages/shared/test/adaptive-recommendation-v1.test.js`
+For each serious item/plan candidate expose:
+- source: skeleton/branch/explicit situational/discovered/wildcard;
+- selected/rejected;
+- primary rejection reasons;
+- matchup contribution details;
+- build utility before/after;
+- utility component deltas;
+- threshold applied.
 
-**Add types conceptually:**
-```ts
-type AdaptiveBuildDecisionStageKindV1 =
-  | 'SKELETON'
-  | 'BRANCH_CHOICE'
-  | 'MATCHUP_DISCOVERY'
-  | 'WHOLE_BUILD_VALIDATION'
-  | 'FINAL_SELECTION';
+Do not send entire RAW Statlocker snapshots in recommendation responses.
 
-interface AdaptiveBuildCandidateTraceV1 {
-  itemId: number;
-  source: 'SKELETON' | 'BRANCH' | 'SITUATIONAL_EXPLICIT' | 'MATCHUP_DISCOVERY' | 'WILDCARD';
-  selected: boolean;
-  rejectedReasonCodes: readonly string[];
-  matchup?: ThreatWeightedMatchupTraceV1;
-  utilityDelta?: number;
-}
+## Task 10.2 - Include effective policy snapshot
+
+Debug trace must expose the exact values used for the decision:
+- policy version;
+- 12-slot capacity;
+- threat component weights;
+- threat clamp;
+- shrink K;
+- plan/sell/soft-core/wildcard thresholds;
+- matchup confidence threshold;
+- protection/rebuy windows.
+
+This is required so a developer can distinguish "bad data" from "bad coefficient" without reading source code.
+
+## Task 10.3 - Replacement trace details
+
+For a 12/12 decision expose at least:
+```text
+inventory: 12/12
+sellItem
+buyItem
+utilityBefore
+utilityAfter
+rawImprovement
+matchupGain
+skeletonDelta
+synergyDelta
+timingDelta
+economicLoss
+transactionPenalty
+churnPenalty
+netImprovement
+requiredThreshold
+ACCEPT / REJECT
+reasonCodes
 ```
 
-Keep it structured and bounded. Do not ship entire raw Statlocker snapshots in recommendation payloads.
-
-**Run:**
-```bash
-yarn workspace @deadlock-live-probe/shared test
-```
-
-## Task 10.2 - Produce trace from planner stages
-
-**Create:**
-- `apps/api/src/statlocker-adaptive/adaptive-build-decision-trace-v1.service.ts`
-- `apps/api/test/adaptive-build-decision-trace-v1.spec.ts`
-
-**Modify:**
-- strategy-first planner/facade result types;
-- API serialization response that exposes adaptive recommendation.
-
-**Trace must answer:**
-- baseline item/goal;
-- all serious alternatives considered;
-- matchup targets and contributions;
-- selection/rejection reason codes;
-- wildcard threshold outcome;
-- final build and next action.
-
-**Failure rule:** trace construction failure cannot silently alter recommendation selection. Recommendation behavior must be testable independently from presentation trace.
-
-## Task 10.3 - Add debug payload size guard
-
-If trace can become large, add a debug/detail mode or bounded top-N rejected candidates while keeping selected candidate and all reason-critical competitors.
-
-**Test:** response size/candidate count remains bounded for a full catalog discovery pass.
+Bound rejected candidate count for payload size, but always retain the selected candidate and closest/decision-critical alternatives.
 
 ---
 
-# Milestone 11 - Build the simple item-centric desktop/debug UI
+# Milestone 11 - Simple item-centric debug UI
 
-## Task 11.1 - Rework diagnostic presentation around item decisions
+The debug screen focuses on items and decision history, not generic system stages.
 
-**Modify:**
-- `apps/overwolf-client/src/live-build-desktop-full-build-ui.ts`
-- relevant HTML/CSS entry files used by that screen.
+**Required primary sections:**
+1. `Было` - baseline skeleton/current build.
+2. `Рассматривали` - serious alternatives.
+3. `Выбрали` - final item/build change.
+4. `Откинули` - meaningful rejected alternatives and one primary reason each.
 
-**Add/modify tests:**
-- create `apps/overwolf-client/src/live-build-desktop-decision-trace.spec.ts`
-
-**Required visible sections:**
-
-1. `Было` / baseline skeleton item or branch.
-2. `Рассматривали` / serious alternatives with compact score/target labels.
-3. `Выбрали` / winner with main reason.
-4. `Откинули` / rejected alternatives with one primary structured reason each.
-
-**Default UI deliberately hides:**
-- every raw component weight;
-- every raw Statlocker row;
-- every candidate that failed trivial legality before becoming a serious candidate.
-
-**Expandable details:**
-- enemy hero contributions;
-- WPA delta;
-- sample/confidence;
+**Expandable numeric details:**
+- per-enemy WPA delta/count/confidence;
 - live threat weight;
-- whole-build utility delta;
-- slot/economy/timing failure.
+- threat-weighted contribution;
+- full-build utility before/after;
+- skeleton/synergy/timing/economy/slot/transaction/churn components;
+- replacement sell source comparisons;
+- applied threshold;
+- policy snapshot with every configured number listed above.
 
-**Acceptance:** when a recommendation looks wrong, a developer can identify whether the failure came from skeleton, matchup data, live threat, discovery, utility, or validation without reading backend logs.
-
-**Run:**
-```bash
-yarn workspace @deadlock-live-probe/overwolf-client test --runTestsByPath src/live-build-desktop-decision-trace.spec.ts
-yarn workspace @deadlock-live-probe/overwolf-client build:bundle
-```
+**Acceptance:** when the recommendation looks wrong, the UI makes it possible to identify whether the problem is data ingest, matchup math, live threat, candidate discovery, slot/sell choice, whole-build utility, or threshold policy.
 
 ---
 
-# Milestone 12 - Show `vs Billy, Dynamo` in the in-game HUD
+# Milestone 12 - In-game Overwolf item reason and explicit sell+buy action
 
-## Task 12.1 - Reuse existing `againstLabel` instead of creating a duplicate field
+Reuse existing matchup target/`againstLabel` plumbing where possible.
 
-**Modify as needed:**
-- `apps/overwolf-client/src/adaptive-recommendation-presentation.ts`
-- active compact HUD renderer(s).
-
-**Backend requirement:** selected matchup-driven action/item must carry canonical `AdaptiveSituationalContextV1.targetEnemies` or the evolved equivalent.
-
-**Ordering:**
-- primary/high-threat materially contributing target first;
-- then secondary material targets;
-- do not list enemies with negligible/negative contribution;
-- cap display count to keep HUD compact.
-
-**Example:**
+For a matchup-driven item:
 ```text
 Counterspell
 vs Billy, Dynamo
 ```
 
-**If not matchup-driven:** no `vs` line.
+Material/high-threat causal targets appear first; negligible/negative targets are omitted.
 
-## Task 12.2 - Presentation tests
-
-**Modify/add:**
-- existing adaptive presentation spec or create `apps/overwolf-client/src/adaptive-recommendation-presentation.spec.ts`.
-
-**RED cases:**
-1. two material targets -> `Against: Billy, Dynamo` or final agreed wording;
-2. primary target appears first;
-3. low-impact enemies are omitted;
-4. no context -> no label;
-5. duplicate target IDs/names are deduped.
-
-**Run:**
-```bash
-yarn workspace @deadlock-live-probe/overwolf-client test --runTestsByPath src/adaptive-recommendation-presentation.spec.ts
+For a replacement at full inventory, the user-facing instruction is explicit:
+```text
+Sell Extra - Buy Opening Rounds
+vs Billy, Dynamo
 ```
+
+Do not make the user infer a two-step transaction from an abstract `Replace` label.
+
+**Presentation tests:**
+1. normal buy renders `Buy X`;
+2. replace renders both sell and buy item names;
+3. two material matchup targets render in stable order;
+4. no matchup cause -> no `vs` label;
+5. duplicate targets are deduped;
+6. unknown item names fail gracefully without hiding transaction type.
 
 ---
 
-# Milestone 13 - End-to-end strategy-first scenarios
+# Milestone 13 - End-to-end scenarios
 
-## Task 13.1 - Add fixture-driven scenario suite
+Create a fixture-driven strategy-first suite covering at least:
 
-**Create:**
-- `apps/api/test/strategy-first-threat-weighted-build-v1.spec.ts`
+### A - Normal skeleton wins
+Neutral matchup/live context leaves coherent skeleton plan unchanged.
 
-**Minimum scenarios:**
+### B - OR branch changes by draft
+One declared alternative has materially stronger supported full-draft matchup value.
 
-### Scenario A - normal skeleton wins
-- weak/neutral matchup deltas;
-- no extreme live threat;
-- expected: skeleton branch remains, no wildcard.
+### C - Fed primary enemy changes item priority
+Historical matchup values are the same, but live threat makes one enemy materially more important.
 
-### Scenario B - OR branch changes by draft
-- same skeleton;
-- two declared alternatives;
-- one has materially stronger supported matchup against current draft;
-- expected: choose exactly that branch.
+### D - Tiny-sample spike rejected
+Huge raw delta, tiny count, insufficient shrunk confidence.
 
-### Scenario C - fed primary enemy changes the choice
-- historical deltas identical to prior fixture;
-- live stats make one enemy the clear threat;
-- expected: item strong against that enemy gains enough utility to win.
+### E - Strong wildcard accepted
+Outside-skeleton legal item materially improves complete build.
 
-### Scenario D - tiny sample spike rejected
-- wildcard has huge `deltaWpa` but tiny `count`;
-- expected: confidence shrink prevents escape.
+### F - Hard core protected
+No amount of ordinary WPA can silently remove required hard core.
 
-### Scenario E - strong wildcard accepted
-- outside-skeleton legal item has high supported threat-weighted uplift;
-- full-build utility remains coherent;
-- expected: wildcard enters current build with trace reason.
+### G - 11/12 ordinary buy
+One slot free, candidate wins, no sell instruction.
 
-### Scenario F - hard core protected
-- wildcard would score better if core were removed;
-- expected: invalid plan rejected.
+### H - 12/12 replacement accepted
+Full inventory, legal low-marginal-value item sold, stronger item bought, final count remains 12.
 
-### Scenario G - economy/slot blocks attractive item
-- matchup strong, transaction impossible/too disruptive;
-- expected: rejected with explicit reason.
+### I - 12/12 replacement below threshold rejected
+Attractive item exists but net gain is below `0.20`/applicable threshold.
 
-### Scenario H - stale `VS_HERO_WPA`
-- expected: skeleton fallback, no invented matchup targets.
+### J - Recent purchase protected
+Potential sell source was bought inside 120 sec and is not selected.
 
-### Scenario I - missing live stats
-- expected: neutral threat weights, matchup still works historically.
+### K - Unknown sell economics
+Planner refuses to invent refund economics and fails closed for sell-driven recommendation.
 
-### Scenario J - no churn
-- series of close snapshots;
-- expected: same plan retained until configured improvement barrier is crossed.
+### L - Stale/missing WPA
+Fall back toward skeleton rather than invent matchup certainty.
 
-## Task 13.2 - Response contract scenario
+### M - Missing live stats
+Use neutral threat weights while preserving historical matchup scoring.
 
-Verify one API recommendation contains:
-- one current coherent build;
-- one next action;
-- selected branch only;
-- matchup target metadata where applicable;
-- bounded decision trace;
-- no impossible transaction.
+### N - No churn
+Close time-series snapshots do not repeatedly flip plans.
+
+### O - RAW ingest failure
+New RAW snapshot is saved/marked failed, previous relational dataset remains active and recommendations continue.
+
+### P - Daily refresh
+Normal scheduler does not fetch the large WPA endpoint multiple times inside the 24h TTL.
+
+### Q - API response consistency
+One coherent build + one executable next action + bounded trace + no >12 inventory projection.
 
 ---
 
 # Milestone 14 - Shadow mode, calibration, and rollout
 
-## Task 14.1 - Add policy/version flag
-
-**Modify:**
-- `apps/api/src/statlocker-adaptive/statlocker-adaptive.config.ts`
-- strategy-first facade routing/config.
+## Task 14.1 - Policy/version flag
 
 Suggested states:
-- `CURRENT` - current production policy;
-- `THREAT_WEIGHTED_SHADOW` - run new policy, do not expose it as recommendation;
-- `THREAT_WEIGHTED_ACTIVE` - new policy is user-visible.
+- `CURRENT`;
+- `THREAT_WEIGHTED_SHADOW`;
+- `THREAT_WEIGHTED_ACTIVE`.
 
-Do not couple this rollout flag to experimental UI rendering.
+## Task 14.2 - Shadow telemetry
 
-## Task 14.2 - Capture comparison telemetry
-
-For each shadow decision capture bounded metrics:
-- current plan fingerprint;
-- challenger plan fingerprint;
-- current vs new next item;
+Capture bounded metrics:
+- current/challenger plan fingerprints;
+- next-item difference;
 - branch difference;
-- wildcard activated yes/no;
-- aggregate matchup confidence/coverage;
-- top target threats;
-- utility improvement;
+- wildcard activation;
+- replacement activation;
+- sell source chosen;
+- matchup confidence/coverage;
+- primary enemy threats;
+- utility/net improvement;
+- threshold applied;
 - whether switch would occur;
 - reason codes.
 
-Do not log full raw snapshots if not necessary.
+Do not log full RAW WPA payloads in normal decision telemetry.
 
-## Task 14.3 - Calibration dashboard/report
+## Task 14.3 - Calibration review
 
-Before active rollout inspect:
+Inspect:
 - branch switch rate;
-- wildcard discovery rate;
-- wildcard acceptance rate;
+- wildcard discovery/acceptance;
+- 12/12 replacement rate;
+- rejected replacement distribution around thresholds;
 - plan churn per match/minute;
-- hard-core violation attempts and accepted violations (accepted must be zero);
-- low-confidence recommendation rate;
-- average enemy evidence coverage;
+- hard-core violation attempts/accepted violations (accepted must be zero);
+- low-confidence rate;
+- evidence coverage;
 - stale evidence fallback rate;
-- disagreement rate with current production plan.
+- WPA DB query latency;
+- daily import duration/row counts/failures;
+- disagreement with current production plan.
 
-Thresholds to tune from evidence:
-- threat component weights;
-- threat clamp;
+Tune from evidence:
+- threat weights/clamp;
 - smoothing;
 - wildcard uplift;
-- soft-core replacement threshold;
-- branch switch threshold;
-- invested-plan switch threshold;
-- HUD material-target threshold.
+- sell/soft-core thresholds;
+- branch/invested-plan switch thresholds;
+- material HUD target threshold.
 
 ## Task 14.4 - Active rollout gate
 
-Before changing production default, require:
-- focused suites green;
-- full API/shared/Overwolf tests green;
+Require:
+- focused + full tests green;
 - builds green;
-- zero hard-core invariant violations in shadow evaluation;
+- zero accepted hard-core invariant violations;
+- zero >12 projected inventory violations;
 - acceptable churn;
-- manual review of representative decision traces including wrong-looking cases.
+- stable daily WPA ingest/query latency;
+- manual review of representative debug traces, including wrong-looking cases.
 
 ---
 
-# Final verification commands before merge
+# Recommended implementation order and merge boundaries
+
+1. Verified RAW fixture + Statlocker field semantics + threshold cleanup.
+2. Canonical exact-12 fully-flex inventory mechanics and invariants.
+3. RAW daily snapshot storage + relational WPA schema/repository + atomic publication.
+4. Switch `VS_HERO_WPA` scoring/query paths away from large in-memory payloads.
+5. Enemy live-state contract + pure threat scorer.
+6. Threat smoothing.
+7. Threat-weighted all-enemy matchup aggregate.
+8. Explicit hard/soft/flex rigidity.
+9. OR/CHOICE contextual selection.
+10. Full-universe situational discovery + wildcard gate.
+11. Whole-build utility + 12/12 sell-source optimization.
+12. Plan-switch hysteresis + transaction integration.
+13. Shared decision trace + policy snapshot.
+14. Debug item-decision UI.
+15. Overwolf `vs Billy, Dynamo` + `Sell X - Buy Y` presentation.
+16. End-to-end scenarios.
+17. Shadow telemetry, calibration, active rollout.
+
+Each boundary must keep the current production fallback viable. Do not land a half-connected scorer that changes user-visible recommendations before transaction/inventory invariants and decision traces can explain it.
+
+# Verification commands before merge
 
 Run from repository root:
 
@@ -886,37 +831,10 @@ yarn workspace @deadlock-live-probe/overwolf-client build:bundle
 ```
 
 Then, if runtime/CI cost is acceptable:
-
 ```bash
 yarn test
 yarn build
 ```
-
-Do not use the Overwolf full `build` command for routine local verification if its release script would sync/configure machine-specific output; `build:bundle` is the safer code/bundle verification path.
-
----
-
-# Recommended implementation order and merge boundaries
-
-Keep changes reviewable. Suggested PR/commit boundaries when implementation starts:
-
-1. Fixture + verified Statlocker semantics + threshold cleanup.
-2. Rich normalized matchup evidence, backward compatible.
-3. Enemy live-state contract + pure threat scorer.
-4. Threat smoothing.
-5. Threat-weighted all-enemy matchup aggregate.
-6. Explicit core rigidity.
-7. Branch/OR contextual selection.
-8. Full-universe situational discovery + wildcard gate.
-9. Whole-build utility integration.
-10. Plan-switch hysteresis.
-11. Shared decision trace + backend producer.
-12. Desktop/debug trace UI.
-13. In-game `vs Billy, Dynamo` integration using existing `againstLabel`.
-14. End-to-end scenarios + shadow telemetry.
-15. Threshold calibration and active rollout.
-
-Each boundary must keep current production fallback viable. Do not land a half-connected scorer that changes recommendations before discovery, trace, and invariants can explain it.
 
 # Definition of done
 
@@ -926,15 +844,22 @@ The feature is done only when all of the following are true:
 - Hard core is structurally protected.
 - OR/CHOICE produces one selected branch using current-draft evidence.
 - Situational discovery can find strong legal items outside the skeleton's explicit candidate list.
-- Wildcards require a clearly stronger and well-supported result.
+- Wildcards require a clearly stronger and well-supported whole-build result.
 - Matchup utility considers all observed enemies and weights them by bounded live threat.
 - Live threat uses multiple observed metrics, not raw KDA alone.
 - Low sample sizes reduce confidence strongly.
-- The full build, not only the next item, is scored for coherence/economy/slots/timing/investment.
+- `VS_HERO_WPA` is fetched daily, RAW response is retained immutably, and queryable relational rows are atomically published.
+- Recommendation scoring does not depend on loading the entire WPA dataset into process memory.
+- Raw rank rows remain available for future rank policy while V1 can reproduce all-rank aggregation.
+- Inventory capacity is exactly 12 fully flexible slots and no projection exceeds 12 held items.
+- At 12/12, any non-compressing new item is evaluated through a concrete sell+buy path or rejected.
+- Sell source is chosen from whole-build marginal value under hard-core/protection/economic constraints, not by cheapest-price heuristic.
+- Full build, not only next item, is scored for coherence/economy/slots/timing/investment.
 - Plan changes have explicit hysteresis and do not oscillate.
 - One coherent current build and one executable next action are returned.
-- Overwolf shows a compact matchup reason such as `vs Billy, Dynamo` when it is genuinely causal.
-- Debug UI shows what the skeleton proposed, what was considered, what was rejected, what won, and why.
+- Overwolf shows compact matchup context such as `vs Billy, Dynamo` when causal.
+- Overwolf shows explicit replacement instruction such as `Sell Extra - Buy Opening Rounds`.
+- Debug UI shows baseline, considered, rejected, selected, replacement math, and the exact policy numbers used.
 - Every significant choice can be reconstructed from structured trace components/reason codes.
 - Missing/stale evidence safely falls back instead of hallucinating certainty.
 - New policy passes shadow evaluation before becoming the production default.
