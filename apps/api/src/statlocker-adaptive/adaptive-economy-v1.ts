@@ -93,6 +93,14 @@ export const UNKNOWN_ADAPTIVE_SLOT_RULES_V1: AdaptiveSlotRulesV1 = {
   evidence: 'UNKNOWN',
 };
 
+export const CANONICAL_ADAPTIVE_SLOT_RULES_V1: AdaptiveSlotRulesV1 = {
+  baseSlots: 0,
+  baseSlotsByType: { weapon: 0, vitality: 0, spirit: 0 },
+  maxFlexSlots: 12,
+  maxActiveItems: 4,
+  evidence: 'RECONSTRUCTED',
+};
+
 export function isCanonicalAdaptiveInvestmentStateV1(value: unknown): value is AdaptiveInvestmentStateV1 {
   if (!isRecord(value) || !isFactEvidence(value.evidence)) return false;
   const tracks = value.tracks;
@@ -177,12 +185,10 @@ export function loadRecommendationEconomyRulesRegistryV1(
 export function slotRulesFromEconomyRulesV1(
   rules: RecommendationEconomyRulesV1 | undefined,
 ): AdaptiveSlotRulesV1 {
-  if (!rules) return UNKNOWN_ADAPTIVE_SLOT_RULES_V1;
   return {
-    baseSlotsByType: rules.baseSlotsByType,
-    maxFlexSlots: rules.maxFlexSlots,
-    maxActiveItems: rules.maxActiveItems,
-    evidence: 'RECONSTRUCTED',
+    ...CANONICAL_ADAPTIVE_SLOT_RULES_V1,
+    baseSlotsByType: { ...CANONICAL_ADAPTIVE_SLOT_RULES_V1.baseSlotsByType },
+    maxActiveItems: rules?.maxActiveItems ?? CANONICAL_ADAPTIVE_SLOT_RULES_V1.maxActiveItems,
   };
 }
 
