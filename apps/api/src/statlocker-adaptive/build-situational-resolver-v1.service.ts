@@ -26,7 +26,7 @@ export interface ResolveBuildSituationalV1Input {
   contract: BuildContractV1;
   candidates: readonly BuildSituationalCandidateEvidenceV1[];
   continueCoreScore: number;
-  minOverrideImprovement?: number;
+  minOverrideImprovement: number;
 }
 
 @Injectable()
@@ -35,7 +35,7 @@ export class BuildSituationalResolverV1Service {
     const openWindows = input.strategy.situationalWindows
       .filter((window) => input.contract.reservedSituationalWindowIds.includes(window.windowId));
     if (openWindows.length === 0) return undefined;
-    const threshold = Math.max(0, input.minOverrideImprovement ?? 0.12);
+    const threshold = Math.max(0, input.minOverrideImprovement);
 
     const eligible = input.candidates.flatMap((candidate) => {
       const windows = openWindows.filter((window) =>
