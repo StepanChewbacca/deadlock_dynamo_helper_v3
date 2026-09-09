@@ -10,6 +10,7 @@ import {
 } from '@deadlock-live-probe/shared';
 import { AdaptiveDecisionStateV1 } from './adaptive-decision-state-v1.service';
 import { candidateGeneratorRulesFromSlotStateV1 } from './adaptive-economy-v1';
+import { ADAPTIVE_POLICY_V1_CONFIG } from './statlocker-adaptive.config';
 import {
   AdaptiveEvidenceScorerV1Service,
   AdaptiveItemScoreV1,
@@ -93,6 +94,7 @@ export class StrategyFirstSituationalOverlayV1Service {
       contract: input.result.contract,
       continueCoreScore: coreScore,
       candidates: evidence,
+      minOverrideImprovement: ADAPTIVE_POLICY_V1_CONFIG.situational.minImprovementOverCore,
     });
     if (!selected) return input.result;
 
