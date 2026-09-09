@@ -52,11 +52,13 @@ jobs:
           set -euo pipefail
           yarn workspace @deadlock-live-probe/shared build
 
-      - name: Run build-domain slot capability test
+      - name: Run build-domain slot capability tests
         shell: bash
         run: |
           set -euo pipefail
-          yarn workspace @deadlock-live-probe/build-domain test --runTestsByPath test/recommendation-category-slot-rules.spec.ts
+          yarn workspace @deadlock-live-probe/build-domain test --runTestsByPath \
+            test/recommendation-category-slot-rules.spec.ts \
+            test/inventory-reducer.spec.ts
 
       - name: Run API slot regression tests
         shell: bash
