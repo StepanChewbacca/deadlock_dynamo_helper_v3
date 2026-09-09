@@ -57,7 +57,7 @@ export class ConsensusStrategyFallbackV1Service {
       ]));
       const isTemporary = Object.values(lifecycleByItemId).some((lifecycle) => lifecycle === 'TEMPORARY_EARLY');
       const hasCoreCandidate = group.candidates.some((c) => c.frequencyTier === 'CORE');
-      const hard = group.type === 'REQUIRED' && (hasCoreCandidate || !hasCoreGroups) && !isTemporary;
+      const hard = (hasCoreCandidate || !hasCoreGroups) && !isTemporary;
       goals.push({
         goalId,
         type: 'CORE',

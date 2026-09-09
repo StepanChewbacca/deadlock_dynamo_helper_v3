@@ -549,7 +549,7 @@ export class TransactionPlanCompilerV1Service {
     state: RecommendationDecisionState,
   ): RecommendationCandidate | undefined {
     const selected = input.selectedCandidates.find((candidate) =>
-      candidateAdvancesTarget(candidate, targetItemId, input.decision.itemGraph) &&
+      candidateAdvancesTarget(candidate, targetItemId, input.decision.itemGraph, state) &&
       candidateMatchesTransition(candidate, transition),
     );
     if (selected && candidateAllowed(selected, input, goal.goalId, contract, state)) {
@@ -560,7 +560,7 @@ export class TransactionPlanCompilerV1Service {
     }
 
     return candidates
-      .filter((candidate) => candidateAdvancesTarget(candidate, targetItemId, input.decision.itemGraph))
+      .filter((candidate) => candidateAdvancesTarget(candidate, targetItemId, input.decision.itemGraph, state))
       .filter((candidate) => candidateMatchesTransition(candidate, transition))
       .filter((candidate) => candidateAllowed(candidate, input, goal.goalId, contract, state))
       .sort((a, b) =>
@@ -584,7 +584,7 @@ export class TransactionPlanCompilerV1Service {
     const allowed = candidates.filter((candidate) => candidateAllowed(candidate, input, goalId, contract, state));
     const pool = allowed.length > 0 ? allowed : candidates;
     return pool
-      .filter((candidate) => candidateAdvancesTarget(candidate, targetItemId, input.decision.itemGraph))
+      .filter((candidate) => candidateAdvancesTarget(candidate, targetItemId, input.decision.itemGraph, state))
       .filter((candidate) => candidateMatchesTransition(candidate, transition))
       .sort((a, b) =>
         candidateSourceMatchPreference(a, b, transition) ||
@@ -641,6 +641,8 @@ const NON_DEFERABLE_REASONS = new Set<RecommendationFeasibilityReason>([
   'SELL_RETURN_ITEM_UNKNOWN',
   'DIRECT_PURCHASE_NOT_SUPPORTED',
   'ITEM_NOT_OWNED',
+  'ITEM_ALREADY_OWNED',
+  'MAX_COPIES_REACHED',
 ]);
 
 function nextGoal(
@@ -727,10 +729,14 @@ function candidateAdvancesTarget(
   candidate: RecommendationCandidate,
   targetItemId: number,
   graph: AdaptiveDecisionStateV1['itemGraph'],
+  state?: RecommendationDecisionState,
 ): boolean {
   const candidateTarget = candidateTargetItemId(candidate);
-  return candidateTarget !== undefined &&
-    (candidateTarget === targetItemId || graph.isComponentAncestor(candidateTarget, targetItemId));
+  if (candidateTarget === undefined) return false;
+  if (candidateTarget === targetItemId) return true;
+  if (!graph.isComponentAncestor(candidateTarget, targetItemId)) return false;
+  if (state && graph.isTargetSatisfied(candidateTarget, heldIds(state))) return false;
+  return true;
 }
 
 function candidateExactTargetPreference(candidate: RecommendationCandidate, targetItemId: number): number {

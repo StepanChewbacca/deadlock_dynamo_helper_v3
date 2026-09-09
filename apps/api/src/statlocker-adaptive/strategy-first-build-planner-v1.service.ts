@@ -602,6 +602,11 @@ export class StrategyFirstBuildPlannerV1Service {
     for (const goal of orderedGoals) {
       const state = contract.goalStates[goal.goalId];
       if (state === 'SKIPPED' || state === 'WAIVED' || state === 'SATISFIED') continue;
+      // Purely optional consensus fallback goals (<20% pick rate) are omitted from the
+      // recommended build path so the build reflects the actual hero progression.
+      if (goal.rationaleCodes.includes('CONSENSUS_FALLBACK_OPTIONAL') && contract.currentGoalId !== goal.goalId) {
+        continue;
+      }
       // Soft goals stay non-mandatory: they never gate completion and never become the
       // executable target, but the semantic build path still shows the progression.
       const optionalProgression = !goal.hard && contract.currentGoalId !== goal.goalId;
