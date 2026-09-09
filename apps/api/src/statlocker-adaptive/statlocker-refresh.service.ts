@@ -16,6 +16,7 @@ import {
   StatlockerNormalizedPayloadV1,
 } from './statlocker-adaptive.types';
 import { StatlockerSnapshotStoreService } from './statlocker-snapshot-store.service';
+import { StatlockerVsHeroWpaRawStoreV1Service } from './statlocker-vs-hero-wpa-raw-store-v1.service';
 
 export interface StatlockerGameIdentityV1 {
   rulesetVersion: string;
@@ -66,6 +67,7 @@ export class StatlockerRefreshService {
     @Optional()
     @InjectRepository(RecommendationItemCatalogVersionV1)
     private readonly catalogVersionRepo?: Repository<RecommendationItemCatalogVersionV1>,
+    @Optional() private readonly rawVsHeroWpaStore?: StatlockerVsHeroWpaRawStoreV1Service,
   ) {}
 
   observeGameIdentity(identity: StatlockerGameIdentityV1, _nowMs = Date.now()): void {
@@ -109,6 +111,18 @@ export class StatlockerRefreshService {
           { dataset: 'T4_CHAINS', scopeKey: 'global' },
         ]);
         for (const dataset of result.datasets) {
+          if (dataset.dataset === 'VS_HERO_WPA') {
+            await this.rawVsHeroWpaStore?.persistCollected({
+              fetchedAt: new Date(dataset.fetchedAt),
+              sourcePath: dataset.path,
+              sourceStatus: dataset.status,
+              statlockerPatchId: result.statlockerPatchId,
+              rulesetVersion: identity.rulesetVersion,
+              catalogSha256: identity.catalogSha256,
+              collectorVersion: COLLECTOR_VERSION,
+              rawPayload: dataset.data,
+            });
+          }
           const normalized = this.normalizeCollected(dataset, result.statlockerPatchId);
           await this.publishObservation(normalized, identity, dataset);
         }
