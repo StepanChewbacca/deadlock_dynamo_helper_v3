@@ -15,6 +15,10 @@ export class ConsensusStrategyFallbackV1Service {
     const branchGroups: BuildStrategySpecV1['branchGroups'][number][] = [];
     let prerequisiteGoalIds: string[] = [];
 
+    const hasCoreGroups = skeleton.groups.some((g) =>
+      g.type === 'REQUIRED' && g.candidates.some((c) => c.frequencyTier === 'CORE'),
+    );
+
     for (const group of skeleton.groups) {
       if (group.type === 'CHOICE') {
         const optionGoalIds: string[] = [];
@@ -52,7 +56,8 @@ export class ConsensusStrategyFallbackV1Service {
         lifecycleFor(candidate.itemId, skeleton, graph),
       ]));
       const isTemporary = Object.values(lifecycleByItemId).some((lifecycle) => lifecycle === 'TEMPORARY_EARLY');
-      const hard = group.type === 'REQUIRED' && !isTemporary;
+      const hasCoreCandidate = group.candidates.some((c) => c.frequencyTier === 'CORE');
+      const hard = group.type === 'REQUIRED' && (hasCoreCandidate || !hasCoreGroups) && !isTemporary;
       goals.push({
         goalId,
         type: 'CORE',

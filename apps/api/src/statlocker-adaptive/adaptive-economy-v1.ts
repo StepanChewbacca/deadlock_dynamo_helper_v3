@@ -150,6 +150,12 @@ export function createCanonicalEconomyRulesV1(
       vitality: [1600],
       spirit: [1600],
     },
+    upgradePricingPolicy: {
+      mode: 'TARGET_COST_MINUS_VERIFIED_COMPONENT_CREDIT',
+      componentCreditRatio: 1.0,
+      evidence: 'RECONSTRUCTED',
+      source: 'canonical-deadlock-economy-v1',
+    },
   };
 }
 export function resolveRecommendationEconomyRulesV1(
