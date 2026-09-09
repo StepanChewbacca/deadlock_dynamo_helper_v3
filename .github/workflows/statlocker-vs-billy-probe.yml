@@ -1,0 +1,195 @@
+name: Statlocker VS Billy Probe
+
+on:
+  push:
+    branches:
+      - ops/statlocker-vs-billy-probe-20260909
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: Fetch Statlocker VS_HERO_WPA from production server
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /home/ubuntu/apps/deadlock_dynamo_helper
+
+          sudo docker compose exec -T api node - <<'NODE'
+          const puppeteer = require('puppeteer-core');
+
+          const cleanPatchId = (value) => {
+            if (typeof value !== 'string' || value.trim().length === 0) return undefined;
+            return value.trim().replace(/^patch_/i, '');
+          };
+
+          const resolveMinorPatchId = (value) => {
+            if (Array.isArray(value)) {
+              const current = value[0];
+              if (current && typeof current === 'object' && !Array.isArray(current)) {
+                const patchId = cleanPatchId(current.minorPatchId);
+                if (patchId) return patchId;
+              }
+              throw new Error('Statlocker current minor patch ID is unavailable');
+            }
+
+            if (!value || typeof value !== 'object' || Array.isArray(value)) {
+              throw new Error('Statlocker patch control response is structurally invalid');
+            }
+
+            const direct = cleanPatchId(value.current_minor_patch_id);
+            if (direct) return direct;
+
+            if (Array.isArray(value.patches)) {
+              for (const entry of value.patches) {
+                if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+                const patchId = cleanPatchId(entry.minor_patch_id);
+                if (patchId) return patchId;
+              }
+            }
+
+            throw new Error('Statlocker current minor patch ID is unavailable');
+          };
+
+          (async () => {
+            const browser = await puppeteer.launch({
+              executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium-browser',
+              headless: true,
+              args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+              ],
+            });
+
+            try {
+              const page = await browser.newPage();
+              await page.goto('https://statlocker.gg/items/meta-model/wpa-analysis/', {
+                waitUntil: 'domcontentloaded',
+                timeout: 45_000,
+              });
+
+              const patchControl = await page.evaluate(async () => {
+                const response = await fetch('/api/info/wpa-patches', {
+                  method: 'GET',
+                  credentials: 'same-origin',
+                });
+                return {
+                  status: response.status,
+                  data: await response.json(),
+                };
+              });
+
+              if (patchControl.status < 200 || patchControl.status >= 300) {
+                throw new Error(`wpa-patches HTTP ${patchControl.status}`);
+              }
+
+              const statlockerPatchId = resolveMinorPatchId(patchControl.data);
+
+              const result = await page.evaluate(async (patchId) => {
+                const controller = new AbortController();
+                const timer = setTimeout(() => controller.abort(), 60_000);
+
+                try {
+                  const response = await fetch('/api/info/vs-hero-wpa-data', {
+                    method: 'GET',
+                    credentials: 'same-origin',
+                    signal: controller.signal,
+                  });
+
+                  const body = await response.text();
+                  let root;
+                  try {
+                    root = body.length > 0 ? JSON.parse(body) : null;
+                  } catch {
+                    return {
+                      status: response.status,
+                      patchId,
+                      parseError: true,
+                      bodyPreview: body.slice(0, 1000),
+                    };
+                  }
+
+                  const patchKey = `patch_${patchId}`;
+                  const patch = root?.by_patch?.[patchKey] ?? root?.by_patch?.[patchId];
+                  const byRank = patch?.by_rank ?? {};
+                  const normalize = (value) => String(value).trim().toLowerCase();
+
+                  const againstBilly = [];
+                  const billyAsHero = [];
+                  let againstBillyCount = 0;
+                  let billyAsHeroCount = 0;
+                  let rawAgainstBillyExample = null;
+
+                  for (const [rankKey, rawRank] of Object.entries(byRank)) {
+                    const byHero = rawRank?.by_hero ?? {};
+
+                    for (const [heroName, rawItems] of Object.entries(byHero)) {
+                      if (!rawItems || typeof rawItems !== 'object' || Array.isArray(rawItems)) continue;
+
+                      for (const [itemName, rawMatchups] of Object.entries(rawItems)) {
+                        if (!rawMatchups || typeof rawMatchups !== 'object' || Array.isArray(rawMatchups)) continue;
+
+                        for (const [enemyName, rawMatchup] of Object.entries(rawMatchups)) {
+                          if (enemyName === '_baseline') continue;
+
+                          if (normalize(enemyName) === 'billy') {
+                            againstBillyCount += 1;
+                            const row = {
+                              rank: rankKey,
+                              hero: heroName,
+                              item: itemName,
+                              enemy: enemyName,
+                              raw: rawMatchup,
+                            };
+                            if (!rawAgainstBillyExample) rawAgainstBillyExample = row;
+                            if (againstBilly.length < 20) againstBilly.push(row);
+                          }
+
+                          if (normalize(heroName) === 'billy') {
+                            billyAsHeroCount += 1;
+                            if (billyAsHero.length < 20) {
+                              billyAsHero.push({
+                                rank: rankKey,
+                                hero: heroName,
+                                item: itemName,
+                                enemy: enemyName,
+                                raw: rawMatchup,
+                              });
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+
+                  return {
+                    status: response.status,
+                    patchId,
+                    patchKey,
+                    againstBillyCount,
+                    rawAgainstBillyExample,
+                    againstBillySample: againstBilly,
+                    billyAsHeroCount,
+                    billyAsHeroSample: billyAsHero,
+                  };
+                } finally {
+                  clearTimeout(timer);
+                }
+              }, statlockerPatchId);
+
+              console.log('=== STATLOCKER_VS_BILLY_PROBE ===');
+              console.log(JSON.stringify(result, null, 2));
+            } finally {
+              await browser.close();
+            }
+          })().catch((error) => {
+            console.error(error?.stack || error);
+            process.exit(1);
+          });
+          NODE
