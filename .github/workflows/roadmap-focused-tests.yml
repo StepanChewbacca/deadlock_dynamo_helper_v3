@@ -73,7 +73,8 @@ jobs:
             test/build-slot-planner-v1.spec.ts \
             test/transaction-plan-invariants-v1.spec.ts \
             test/statlocker-vs-hero-wpa-raw-snapshot-v1.spec.ts \
-            test/statlocker-vs-hero-wpa-raw-ingest-v1.spec.ts
+            test/statlocker-vs-hero-wpa-raw-ingest-v1.spec.ts \
+            test/statlocker-vs-hero-wpa-roadmap-fixture-v1.spec.ts
 
       - name: Build API
         shell: bash
