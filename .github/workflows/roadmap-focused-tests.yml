@@ -20,10 +20,10 @@ jobs:
     runs-on: self-hosted
     timeout-minutes: 20
     steps:
-      - name: Checkout implementation branch
+      - name: Checkout implementation commit
         uses: actions/checkout@v4
         with:
-          ref: feat/threat-weighted-wpa-build
+          ref: ${{ github.sha }}
           clean: true
 
       - name: Set up Node.js
