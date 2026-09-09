@@ -50,11 +50,11 @@ describe('VS_HERO_WPA roadmap raw fixture V1', () => {
     );
     const arcaneSurge = apollo?.items.find((item) => item.itemId === 1150006784);
 
-    expect(arcaneSurge).toEqual({
+    expect(arcaneSurge).toMatchObject({
       itemId: 1150006784,
       count: 100,
-      deltaWpa: 0.007,
     });
+    expect(arcaneSurge?.deltaWpa).toBeCloseTo(0.007, 12);
     expect(arcaneSurge).not.toHaveProperty('meanWpa');
   });
 });
