@@ -11,6 +11,7 @@ import { RecommendationItemCatalogItemV1 } from '../deadlock-live/entities/recom
 import { RecommendationItemCatalogRecipeV1 } from '../deadlock-live/entities/recommendation-item-catalog-recipe-v1.entity';
 import { RecommendationItemCatalogVersionV1 } from '../deadlock-live/entities/recommendation-item-catalog-version-v1.entity';
 import { StatlockerEvidenceSnapshotV1Entity } from '../deadlock-live/entities/statlocker-evidence-snapshot-v1.entity';
+import { StatlockerVsHeroWpaRawSnapshotV1Entity } from '../deadlock-live/entities/statlocker-vs-hero-wpa-raw-snapshot-v1.entity';
 import { AdaptiveBuildPlannerV1Service } from './adaptive-build-planner-v1.service';
 import { AdaptiveChoiceResolverV1Service } from './adaptive-choice-resolver-v1.service';
 import { AdaptiveDecisionStateV1Service } from './adaptive-decision-state-v1.service';
@@ -48,6 +49,7 @@ import { StatlockerEvidenceService } from './statlocker-evidence.service';
 import { StatlockerNormalizerService } from './statlocker-normalizer.service';
 import { StatlockerRefreshService } from './statlocker-refresh.service';
 import { StatlockerSnapshotStoreService } from './statlocker-snapshot-store.service';
+import { StatlockerVsHeroWpaRawStoreV1Service } from './statlocker-vs-hero-wpa-raw-store-v1.service';
 import { StrategyFirstAdaptivePlannerFacadeV1Service } from './strategy-first-adaptive-planner-facade-v1.service';
 import { StrategyFirstBuildPlannerV1Service } from './strategy-first-build-planner-v1.service';
 import { StrategyFirstLegacyPlannerAdapterV1Service } from './strategy-first-legacy-planner-adapter-v1.service';
@@ -69,6 +71,7 @@ import { TransactionPlanValidatorV1Service } from './transaction-plan-validator-
       RecommendationItemCatalogRecipeV1,
       RecommendationEconomyRulesSnapshotV1Entity,
       StatlockerEvidenceSnapshotV1Entity,
+      StatlockerVsHeroWpaRawSnapshotV1Entity,
       AdaptiveRecommendationDecisionV1Entity,
       BuildStrategySnapshotV1Entity,
       MatchPlayer,
@@ -83,6 +86,7 @@ import { TransactionPlanValidatorV1Service } from './transaction-plan-validator-
     StatlockerBrowserCollectorService,
     StatlockerNormalizerService,
     StatlockerSnapshotStoreService,
+    StatlockerVsHeroWpaRawStoreV1Service,
     StatlockerRefreshService,
     StatlockerEvidenceService,
     BuildSkeletonService,
