@@ -68,7 +68,7 @@ describe('applyInventoryAction', () => {
       state = result.state;
     }
 
-    expect(state.heldByItemId).toHaveLength(12);
+    expect(state.heldByItemId.size).toBe(12);
 
     const overflow = applyInventoryAction(
       state,
