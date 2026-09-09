@@ -132,9 +132,9 @@ export function createCanonicalEconomyRulesV1(
   return {
     rulesetId,
     catalogSha256: catalogSha256.toLowerCase(),
-    baseSlots: 12,
-    baseSlotsByType: { weapon: 4, vitality: 4, spirit: 4 },
-    maxFlexSlots: 4,
+    baseSlots: 0,
+    baseSlotsByType: { weapon: 0, vitality: 0, spirit: 0 },
+    maxFlexSlots: 12,
     maxActiveItems: 4,
     investmentBreakpoints: {
       weapon: [1600],
@@ -223,24 +223,29 @@ export function deriveAdaptiveSlotStateV1(
   const baseSlots = Object.values(baseSlotsByType).reduce((sum, value) => sum + value, 0);
   const maxFlexSlots = Math.max(0, Math.floor(slotRules.maxFlexSlots));
   const maxActiveItems = Math.max(0, Math.floor(slotRules.maxActiveItems));
+  const mechanicsEvidence = slotRules.evidence ?? 'RECONSTRUCTED';
+  const fixedFlexCapacity = mechanicsEvidence !== 'UNKNOWN' && baseSlots === 0;
+  const effectiveUnlockedFlexSlots = fixedFlexCapacity ? maxFlexSlots : capacity.unlockedFlexSlots;
+  const effectiveFlexEvidence = fixedFlexCapacity ? mechanicsEvidence : capacity.evidence;
   const usage = recommendationSlotUsageFor(itemIds, graph, {
     baseSlots,
     baseSlotsByType,
     maxFlexSlots,
-    unlockedFlexSlots: capacity.unlockedFlexSlots,
-    flexCapacityEvidence: capacity.evidence,
+    unlockedFlexSlots: effectiveUnlockedFlexSlots,
+    flexCapacityEvidence: effectiveFlexEvidence,
     maxActiveItems,
     allowSellOnlyActions: true,
     generateTargetedWaitActions: true,
   });
-  const mechanicsEvidence = slotRules.evidence ?? 'RECONSTRUCTED';
   const provedLowerBound = mechanicsEvidence === 'UNKNOWN'
     ? 0
     : Math.min(maxFlexSlots, usage.flexUsed);
-  const unlocked = capacity.evidence === 'UNKNOWN' || capacity.unlockedFlexSlots === undefined
-    ? undefined
-    : Math.min(maxFlexSlots, Math.max(provedLowerBound, Math.floor(capacity.unlockedFlexSlots)));
-  const evidence = capacity.evidence;
+  const unlocked = fixedFlexCapacity
+    ? maxFlexSlots
+    : capacity.evidence === 'UNKNOWN' || capacity.unlockedFlexSlots === undefined
+      ? undefined
+      : Math.min(maxFlexSlots, Math.max(provedLowerBound, Math.floor(capacity.unlockedFlexSlots)));
+  const evidence = fixedFlexCapacity ? mechanicsEvidence : capacity.evidence;
   const freeBaseSlotsByType: Record<InventorySlotType, number> = {
     weapon: Math.max(0, baseSlotsByType.weapon - usage.usedByType.weapon),
     vitality: Math.max(0, baseSlotsByType.vitality - usage.usedByType.vitality),
@@ -268,7 +273,7 @@ export function deriveAdaptiveSlotStateV1(
     usedActiveItems: usage.activeItemsUsed,
     freeActiveItemSlots: Math.max(0, maxActiveItems - usage.activeItemsUsed),
     mechanicsEvidence,
-    flexEvidence: capacity.evidence,
+    flexEvidence: effectiveFlexEvidence,
     evidence,
   };
 }
