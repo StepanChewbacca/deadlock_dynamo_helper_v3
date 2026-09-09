@@ -51,6 +51,7 @@ export class StatlockerVsHeroWpaRawStoreV1Service {
     await this.repository.insert({
       ...row,
       rawPayload: row.rawPayload as object,
+      ingestMetadata: row.ingestMetadata as object,
     });
     return row;
   }
