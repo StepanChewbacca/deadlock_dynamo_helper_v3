@@ -4,6 +4,9 @@ export interface StatlockerHeroPoolEntryV1 {
 }
 
 export const STATLOCKER_HERO_POOL_V1: readonly StatlockerHeroPoolEntryV1[] = [
+  // Billy was missing from the pool entirely, so the collector never fetched any
+  // statlocker evidence for him; pinned first so the next refresh tick collects him.
+  { heroId: 29, name: 'Billy' },
   { heroId: 1, name: 'Infernus' },
   { heroId: 2, name: 'Seven' },
   { heroId: 3, name: 'Vindicta' },
