@@ -60,7 +60,7 @@ jobs:
             test/recommendation-category-slot-rules.spec.ts \
             test/inventory-reducer.spec.ts
 
-      - name: Run API slot regression tests
+      - name: Run API roadmap regression tests
         shell: bash
         run: |
           set -euo pipefail
@@ -71,7 +71,8 @@ jobs:
             test/adaptive-decision-state-v1.spec.ts \
             test/build-slot-planner-held-count-v1.spec.ts \
             test/build-slot-planner-v1.spec.ts \
-            test/transaction-plan-invariants-v1.spec.ts
+            test/transaction-plan-invariants-v1.spec.ts \
+            test/statlocker-vs-hero-wpa-raw-snapshot-v1.spec.ts
 
       - name: Build API
         shell: bash
