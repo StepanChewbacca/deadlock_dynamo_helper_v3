@@ -163,6 +163,31 @@ describe('transaction plan invariants v1', () => {
     expect(check.violations.some((violation) => violation.code === 'PROJECTED_SLOT_VIOLATION')).toBe(true);
   });
 
+  it('rejects a projected inventory above the 12-item held cap even when flex usage reports within capacity', () => {
+    const base = validSession();
+    const broken: AdaptivePlanSessionV1 = {
+      ...base,
+      steps: base.steps.map((step) => ({
+        ...step,
+        projectedAfter: step.projectedAfter
+          ? {
+              ...step.projectedAfter,
+              inventoryItemIds: Array.from({ length: 13 }, (_, index) => index + 1),
+              flexUsed: 12,
+              unlockedFlexSlots: 12,
+            }
+          : undefined,
+      })),
+    };
+    const check = evaluateTransactionPlanInvariantsV1({
+      decision: decision([1]),
+      planSession: broken,
+      nextAction: { actionKey: 'REPLACE_ITEM:1->2', type: 'REPLACE', sellItemId: 1, buyItemId: 2, targetItemId: 2, reasonCodes: [] },
+      recommendedBuild: validBuild(),
+    });
+    expect(check.violations.some((violation) => violation.code === 'PROJECTED_SLOT_VIOLATION')).toBe(true);
+  });
+
   it('summarizes zero-tolerance rates by decision', () => {
     const valid = evaluateTransactionPlanInvariantsV1({
       decision: decision([1]), planSession: validSession(),
