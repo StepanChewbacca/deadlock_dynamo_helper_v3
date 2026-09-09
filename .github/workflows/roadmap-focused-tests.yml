@@ -46,6 +46,12 @@ jobs:
           set -euo pipefail
           yarn install --frozen-lockfile
 
+      - name: Build shared
+        shell: bash
+        run: |
+          set -euo pipefail
+          yarn workspace @deadlock-live-probe/shared build
+
       - name: Run build-domain slot capability test
         shell: bash
         run: |
