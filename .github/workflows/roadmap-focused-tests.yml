@@ -46,8 +46,14 @@ jobs:
           set -euo pipefail
           yarn install --frozen-lockfile
 
-      - name: Run current focused roadmap test
+      - name: Run build-domain slot capability test
         shell: bash
         run: |
           set -euo pipefail
           yarn workspace @deadlock-live-probe/build-domain test --runTestsByPath test/recommendation-category-slot-rules.spec.ts
+
+      - name: Run API canonical twelve-flex-slot test
+        shell: bash
+        run: |
+          set -euo pipefail
+          yarn workspace @deadlock-live-probe/api test --runTestsByPath test/adaptive-economy-12-flex-slots-v1.spec.ts
