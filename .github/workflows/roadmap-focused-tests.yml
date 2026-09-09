@@ -1,0 +1,39 @@
+name: Roadmap Focused Tests
+
+on:
+  push:
+    branches:
+      - feat/threat-weighted-wpa-build
+    paths:
+      - '.github/workflows/roadmap-focused-tests.yml'
+      - 'packages/deadlock-build-domain/**'
+      - 'packages/shared/**'
+      - 'apps/api/**'
+      - 'apps/overwolf-client/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  focused-tests:
+    runs-on: self-hosted
+    timeout-minutes: 20
+    steps:
+      - name: Checkout implementation branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/threat-weighted-wpa-build
+          clean: true
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          yarn install --frozen-lockfile
+
+      - name: Run current focused roadmap test
+        shell: bash
+        run: |
+          set -euo pipefail
+          yarn workspace @deadlock-live-probe/build-domain test --runTestsByPath test/recommendation-category-slot-rules.spec.ts
