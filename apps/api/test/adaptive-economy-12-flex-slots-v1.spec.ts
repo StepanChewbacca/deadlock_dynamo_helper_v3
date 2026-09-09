@@ -35,4 +35,36 @@ describe('adaptive economy exact twelve flex slots', () => {
     expect(slots.totalCapacity).toBe(12);
     expect(slots.freeFlexSlots).toBe(12);
   });
+
+  it('normalizes a legacy persisted economy slot shape to twelve flex slots', () => {
+    const legacyRules = {
+      rulesetId: 'ruleset-a',
+      catalogSha256,
+      baseSlots: 12,
+      baseSlotsByType: { weapon: 4, vitality: 4, spirit: 4 },
+      maxFlexSlots: 4,
+      maxActiveItems: 4,
+      investmentBreakpoints: {
+        weapon: [1600],
+        vitality: [1600],
+        spirit: [1600],
+      },
+    } as const;
+
+    const slots = deriveAdaptiveSlotStateV1([], graph, slotRulesFromEconomyRulesV1(legacyRules));
+
+    expect(slots.baseSlotsByType).toEqual({ weapon: 0, vitality: 0, spirit: 0 });
+    expect(slots.maxFlexSlots).toBe(12);
+    expect(slots.unlockedFlexSlots).toBe(12);
+    expect(slots.totalCapacity).toBe(12);
+  });
+
+  it('keeps the twelve-slot game invariant when economy rules are unavailable', () => {
+    const slots = deriveAdaptiveSlotStateV1([], graph, slotRulesFromEconomyRulesV1(undefined));
+
+    expect(slots.baseSlotsByType).toEqual({ weapon: 0, vitality: 0, spirit: 0 });
+    expect(slots.maxFlexSlots).toBe(12);
+    expect(slots.unlockedFlexSlots).toBe(12);
+    expect(slots.totalCapacity).toBe(12);
+  });
 });
