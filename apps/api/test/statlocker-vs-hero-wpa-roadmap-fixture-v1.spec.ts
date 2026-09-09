@@ -62,7 +62,7 @@ describe('VS_HERO_WPA roadmap raw fixture V1', () => {
 type RawLeaf = {
   mean_wpa: number;
   count: number;
-  delta_wpa?: number;
+  delta_wpa: number;
 };
 
 type RawFixture = {
