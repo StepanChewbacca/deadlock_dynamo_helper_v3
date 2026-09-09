@@ -85,6 +85,7 @@ describe('Statlocker VS_HERO_WPA RAW snapshot V1 persistence contract', () => {
       rawPayload: { stable: true },
       ingestStatus: 'PUBLISHED',
       ingestMetadata: { publicationId: 'dataset-1' },
+      createdAt: new Date('2026-09-09T10:00:00.000Z'),
     } as StatlockerVsHeroWpaRawSnapshotV1Entity;
     const repository = {
       create: jest.fn((row) => row),
