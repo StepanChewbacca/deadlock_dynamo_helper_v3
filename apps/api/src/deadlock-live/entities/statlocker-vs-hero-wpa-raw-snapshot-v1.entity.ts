@@ -31,7 +31,7 @@ export class StatlockerVsHeroWpaRawSnapshotV1Entity {
   collectorVersion!: string;
 
   @Column({ type: 'jsonb' })
-  rawPayload!: Record<string, unknown>;
+  rawPayload!: unknown;
 
   @Column({ type: 'varchar', length: 32 })
   ingestStatus!: string;
