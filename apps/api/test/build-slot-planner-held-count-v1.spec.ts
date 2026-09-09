@@ -35,7 +35,7 @@ const canonicalSlotRules = {
   evidence: 'RECONSTRUCTED' as const,
 };
 
-function strategy(): BuildStrategySpecV1 {
+function strategy(targetItemId = 14): BuildStrategySpecV1 {
   return {
     schemaVersion: 1,
     strategyId: 'held-count',
@@ -49,12 +49,12 @@ function strategy(): BuildStrategySpecV1 {
       goalId: 'target',
       type: 'CORE',
       phase: 'MID',
-      targetItemIds: [14],
+      targetItemIds: [targetItemId],
       minSelect: 1,
       maxSelect: 1,
       prerequisiteGoalIds: [],
       hard: true,
-      lifecycleByItemId: { 14: 'PERMANENT_CORE' },
+      lifecycleByItemId: { [targetItemId]: 'PERMANENT_CORE' },
       rationaleCodes: ['CORE'],
     }],
     branchGroups: [],
@@ -81,22 +81,62 @@ function contract(): BuildContractV1 {
   };
 }
 
+function slotsFor(ownedItemIds: readonly number[]) {
+  return deriveAdaptiveSlotStateV1(
+    ownedItemIds,
+    graph,
+    canonicalSlotRules,
+    { unlockedFlexSlots: 12, evidence: 'OBSERVED' },
+  );
+}
+
 describe('build slot planner held item count v1', () => {
+  const service = new BuildSlotPlannerV1Service();
+
+  it('allows an eleventh held inventory to add a plain item as the twelfth', () => {
+    const ownedItemIds = regularItems.slice(0, 11).map((item) => item.itemId);
+    const plan = service.plan({
+      strategy: strategy(13),
+      contract: contract(),
+      itemGraph: graph,
+      ownedItemIds,
+      slots: slotsFor(ownedItemIds),
+    });
+
+    expect(plan.futureTransitions[0]).toMatchObject({
+      targetItemId: 13,
+      requirement: 'NONE',
+    });
+    expect(plan.feasible).toBe(true);
+  });
+
+  it('requires a concrete replacement path for a plain item at twelve held items', () => {
+    const ownedItemIds = regularItems.slice(0, 12).map((item) => item.itemId);
+    const plan = service.plan({
+      strategy: strategy(13),
+      contract: contract(),
+      itemGraph: graph,
+      ownedItemIds,
+      slots: slotsFor(ownedItemIds),
+    });
+
+    expect(plan.futureTransitions[0]).toMatchObject({
+      targetItemId: 13,
+      requirement: 'REPLACE',
+      sourceItemId: expect.any(Number),
+    });
+    expect(ownedItemIds).toContain(plan.futureTransitions[0]?.sourceItemId);
+    expect(plan.feasible).toBe(true);
+  });
+
   it('accepts an upgrade at twelve held items when consuming its component keeps the projection at twelve', () => {
     const ownedItemIds = regularItems.slice(0, 12).map((item) => item.itemId);
-    const slots = deriveAdaptiveSlotStateV1(
-      ownedItemIds,
-      graph,
-      canonicalSlotRules,
-      { unlockedFlexSlots: 12, evidence: 'OBSERVED' },
-    );
-
-    const plan = new BuildSlotPlannerV1Service().plan({
+    const plan = service.plan({
       strategy: strategy(),
       contract: contract(),
       itemGraph: graph,
       ownedItemIds,
-      slots,
+      slots: slotsFor(ownedItemIds),
     });
 
     expect(plan.futureTransitions[0]).toMatchObject({
@@ -109,19 +149,12 @@ describe('build slot planner held item count v1', () => {
 
   it('rejects an upgrade when consuming its component still leaves more than twelve held items', () => {
     const ownedItemIds = regularItems.map((item) => item.itemId);
-    const slots = deriveAdaptiveSlotStateV1(
-      ownedItemIds,
-      graph,
-      canonicalSlotRules,
-      { unlockedFlexSlots: 12, evidence: 'OBSERVED' },
-    );
-
-    const plan = new BuildSlotPlannerV1Service().plan({
+    const plan = service.plan({
       strategy: strategy(),
       contract: contract(),
       itemGraph: graph,
       ownedItemIds,
-      slots,
+      slots: slotsFor(ownedItemIds),
     });
 
     expect(plan.futureTransitions[0]).toMatchObject({
