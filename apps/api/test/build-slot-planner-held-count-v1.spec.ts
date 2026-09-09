@@ -82,6 +82,31 @@ function contract(): BuildContractV1 {
 }
 
 describe('build slot planner held item count v1', () => {
+  it('accepts an upgrade at twelve held items when consuming its component keeps the projection at twelve', () => {
+    const ownedItemIds = regularItems.slice(0, 12).map((item) => item.itemId);
+    const slots = deriveAdaptiveSlotStateV1(
+      ownedItemIds,
+      graph,
+      canonicalSlotRules,
+      { unlockedFlexSlots: 12, evidence: 'OBSERVED' },
+    );
+
+    const plan = new BuildSlotPlannerV1Service().plan({
+      strategy: strategy(),
+      contract: contract(),
+      itemGraph: graph,
+      ownedItemIds,
+      slots,
+    });
+
+    expect(plan.futureTransitions[0]).toMatchObject({
+      targetItemId: 14,
+      requirement: 'UPGRADE',
+      sourceItemId: 1,
+    });
+    expect(plan.feasible).toBe(true);
+  });
+
   it('rejects an upgrade when consuming its component still leaves more than twelve held items', () => {
     const ownedItemIds = regularItems.map((item) => item.itemId);
     const slots = deriveAdaptiveSlotStateV1(
