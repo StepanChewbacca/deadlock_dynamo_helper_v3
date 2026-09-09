@@ -156,13 +156,18 @@ export class BuildSlotPlannerV1Service {
   public canFit(itemIds: readonly number[], input: BuildSlotPlannerV1Input): boolean {
     const rules = candidateGeneratorRulesFromSlotStateV1(input.slots);
     const usage = recommendationSlotUsageFor(itemIds, input.itemGraph, rules);
-    const requiredFlex = minimumRequiredFlex(usage.flexUsed, usage.itemCount, input.strategy.slotPolicy.reservedSituationalSlots, input.slots.baseSlots);
-    if (requiredFlex > input.slots.maxFlexSlots) return false;
-    const currentUnlocked = input.slots.unlockedFlexSlots ?? input.slots.provedFlexLowerBound;
-    if (currentUnlocked === undefined) {
-      if (requiredFlex > 0) return false;
-    } else if (requiredFlex > currentUnlocked) {
-      return false;
+    if (rules.universalSlots === true) {
+      const totalCap = Math.max(0, Math.floor(rules.baseSlots ?? 16));
+      if (usage.itemCount > totalCap) return false;
+    } else {
+      const requiredFlex = minimumRequiredFlex(usage.flexUsed, usage.itemCount, input.strategy.slotPolicy.reservedSituationalSlots, input.slots.baseSlots);
+      if (requiredFlex > input.slots.maxFlexSlots) return false;
+      const currentUnlocked = input.slots.unlockedFlexSlots ?? input.slots.provedFlexLowerBound;
+      if (currentUnlocked === undefined) {
+        if (requiredFlex > 0) return false;
+      } else if (requiredFlex > currentUnlocked) {
+        return false;
+      }
     }
     const currentActiveItems = recommendationSlotUsageFor(input.ownedItemIds, input.itemGraph, rules).activeItemsUsed;
     if (usage.activeItemsUsed <= currentActiveItems) return true;
@@ -247,6 +252,7 @@ function requiredFlexAfterAdd(
   input: BuildSlotPlannerV1Input,
 ): number {
   const rules = candidateGeneratorRulesFromSlotStateV1(input.slots);
+  if (rules.universalSlots === true) return 0;
   const usage = recommendationSlotUsageFor([...ownedItemIds, targetItemId], input.itemGraph, rules);
   return minimumRequiredFlex(
     usage.flexUsed,

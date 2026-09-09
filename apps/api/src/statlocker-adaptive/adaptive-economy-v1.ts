@@ -20,6 +20,8 @@ export interface AdaptiveSlotStateV1 {
   /** Compatibility aggregate. New code should use baseSlotsByType. */
   baseSlots: number;
   baseSlotsByType: Readonly<Record<InventorySlotType, number>>;
+  /** Universal slot model: every slot accepts any category; only baseSlots gates the total. */
+  universalSlots?: boolean;
   maxFlexSlots: number;
   maxActiveItems: number;
   unlockedFlexSlots?: number;
@@ -65,6 +67,8 @@ export interface RecommendationEconomyRulesV1 {
   /** Compatibility aggregate; exact callers use baseSlotsByType. */
   baseSlots?: number;
   baseSlotsByType: Readonly<Record<InventorySlotType, number>>;
+  /** Universal slot model: every slot accepts any category; only the total count gates. */
+  universalSlots?: boolean;
   maxFlexSlots: number;
   maxActiveItems: number;
   investmentBreakpoints: Readonly<Record<AdaptiveInvestmentTypeV1, readonly number[]>>;
@@ -81,6 +85,8 @@ export interface AdaptiveSlotRulesV1 {
   /** Compatibility aggregate for callers that also retain the exact per-category record. */
   baseSlots?: number;
   baseSlotsByType: Readonly<Record<InventorySlotType, number>>;
+  /** Universal slot model: every slot accepts any category; only the total count gates. */
+  universalSlots?: boolean;
   maxFlexSlots: number;
   maxActiveItems: number;
   evidence?: FactEvidence;
@@ -119,8 +125,10 @@ export function isCanonicalAdaptiveInvestmentTrackV1(
  * rulesetId + catalogSha256 and must never select this record as a fallback.
  */
 export const ADAPTIVE_UNIVERSAL_SLOT_RULES_V1: AdaptiveSlotRulesV1 = {
-  baseSlotsByType: { weapon: 4, vitality: 4, spirit: 4 },
-  maxFlexSlots: 4,
+  baseSlots: 16,
+  baseSlotsByType: { weapon: 16, vitality: 16, spirit: 16 },
+  universalSlots: true,
+  maxFlexSlots: 0,
   maxActiveItems: 4,
   evidence: 'UNKNOWN',
 };
@@ -132,9 +140,10 @@ export function createCanonicalEconomyRulesV1(
   return {
     rulesetId,
     catalogSha256: catalogSha256.toLowerCase(),
-    baseSlots: 12,
-    baseSlotsByType: { weapon: 4, vitality: 4, spirit: 4 },
-    maxFlexSlots: 4,
+    baseSlots: 16,
+    baseSlotsByType: { weapon: 16, vitality: 16, spirit: 16 },
+    universalSlots: true,
+    maxFlexSlots: 0,
     maxActiveItems: 4,
     investmentBreakpoints: {
       weapon: [1600],
@@ -179,7 +188,9 @@ export function slotRulesFromEconomyRulesV1(
 ): AdaptiveSlotRulesV1 {
   if (!rules) return UNKNOWN_ADAPTIVE_SLOT_RULES_V1;
   return {
+    baseSlots: rules.baseSlots,
     baseSlotsByType: rules.baseSlotsByType,
+    universalSlots: rules.universalSlots === true,
     maxFlexSlots: rules.maxFlexSlots,
     maxActiveItems: rules.maxActiveItems,
     evidence: 'RECONSTRUCTED',
@@ -193,10 +204,13 @@ export function candidateGeneratorRulesFromSlotStateV1(
     'allowSellOnlyActions' | 'generateTargetedWaitActions'
   >> = {},
 ): RecommendationCandidateGeneratorRules {
-  const effectiveUnlocked = slots.unlockedFlexSlots ?? (slots.provedFlexLowerBound > 0 ? slots.provedFlexLowerBound : undefined);
+  const effectiveUnlocked = slots.universalSlots === true
+    ? undefined
+    : slots.unlockedFlexSlots ?? (slots.provedFlexLowerBound > 0 ? slots.provedFlexLowerBound : undefined);
   return {
     baseSlots: slots.baseSlots,
     baseSlotsByType: slots.baseSlotsByType,
+    universalSlots: slots.universalSlots === true,
     maxFlexSlots: slots.maxFlexSlots,
     unlockedFlexSlots: effectiveUnlocked,
     flexCapacityEvidence: effectiveUnlocked !== undefined && (slots.evidence ?? slots.flexEvidence) === 'UNKNOWN'
@@ -215,17 +229,21 @@ export function deriveAdaptiveSlotStateV1(
   slotRules: AdaptiveSlotRulesV1,
   capacity: AdaptiveFlexCapacityInputV1 = { evidence: 'UNKNOWN' },
 ): AdaptiveSlotStateV1 {
+  const universalSlots = slotRules.universalSlots === true;
   const baseSlotsByType: Record<InventorySlotType, number> = {
     weapon: Math.max(0, Math.floor(slotRules.baseSlotsByType.weapon)),
     vitality: Math.max(0, Math.floor(slotRules.baseSlotsByType.vitality)),
     spirit: Math.max(0, Math.floor(slotRules.baseSlotsByType.spirit)),
   };
-  const baseSlots = Object.values(baseSlotsByType).reduce((sum, value) => sum + value, 0);
+  const baseSlots = universalSlots
+    ? Math.max(0, Math.floor(slotRules.baseSlots ?? 0)) || Math.max(0, ...Object.values(baseSlotsByType))
+    : Object.values(baseSlotsByType).reduce((sum, value) => sum + value, 0);
   const maxFlexSlots = Math.max(0, Math.floor(slotRules.maxFlexSlots));
   const maxActiveItems = Math.max(0, Math.floor(slotRules.maxActiveItems));
   const usage = recommendationSlotUsageFor(itemIds, graph, {
     baseSlots,
     baseSlotsByType,
+    universalSlots,
     maxFlexSlots,
     unlockedFlexSlots: capacity.unlockedFlexSlots,
     flexCapacityEvidence: capacity.evidence,
@@ -250,6 +268,7 @@ export function deriveAdaptiveSlotStateV1(
   return {
     baseSlots,
     baseSlotsByType,
+    universalSlots,
     maxFlexSlots,
     maxActiveItems,
     unlockedFlexSlots: unlocked,

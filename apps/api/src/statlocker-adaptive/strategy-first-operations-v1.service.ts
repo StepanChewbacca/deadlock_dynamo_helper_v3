@@ -130,9 +130,9 @@ export class StrategyFirstOperationsV1Service implements OnModuleInit {
             version.rulesetKey,
             version.payloadSha256,
           );
-          if (!existing) {
+          if (!existing || existing.universalSlots !== true) {
             await this.publishEconomyRules({
-              snapshotId: `canonical:${version.rulesetKey}:${version.payloadSha256.slice(0, 16)}`,
+              snapshotId: `canonical-universal:${version.rulesetKey}:${version.payloadSha256.slice(0, 16)}`,
               source: 'canonical-deadlock-universal-v1',
               verifiedAt: new Date(),
               rules: createCanonicalEconomyRulesV1(version.rulesetKey, version.payloadSha256),

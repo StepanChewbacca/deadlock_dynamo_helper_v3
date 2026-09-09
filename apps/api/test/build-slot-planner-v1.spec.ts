@@ -179,4 +179,20 @@ describe('build slot planner v1', () => {
     expect(plan.feasible).toBe(false);
     expect(plan.reasonCodes).toContain('NO_SLOT_FEASIBLE_PATH');
   });
+
+  it('allows purchasing beyond category 4 limit without flex when universalSlots is true', () => {
+    const owned = [1, 2, 3, 4];
+    const universalRules = {
+      baseSlots: 16,
+      baseSlotsByType: { weapon: 16, vitality: 16, spirit: 16 } as const,
+      universalSlots: true,
+      maxFlexSlots: 0,
+      maxActiveItems: 4,
+    };
+    const slots = deriveAdaptiveSlotStateV1(owned, graph, universalRules, { evidence: 'UNKNOWN' });
+    const plan = service.plan({ strategy: strategy(5), contract: contract(owned), itemGraph: graph, ownedItemIds: owned, slots });
+
+    expect(plan.feasible).toBe(true);
+    expect(plan.futureTransitions[0]).toMatchObject({ targetItemId: 5, requirement: 'NONE' });
+  });
 });

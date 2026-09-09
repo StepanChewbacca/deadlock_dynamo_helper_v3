@@ -90,7 +90,15 @@ function validateRules(rules: RecommendationEconomyRulesV1): void {
     if (!isNonNegativeInteger(value)) throw new Error(`Recommendation economy rules base slot count is invalid: ${type}`);
     return sum + value;
   }, 0);
-  if (baseTotal !== rules.baseSlots) throw new Error('Recommendation economy rules base slot total does not match baseSlots');
+  if (rules.universalSlots === true) {
+    for (const type of SLOT_TYPES) {
+      if (rules.baseSlotsByType[type] < (rules.baseSlots ?? 0)) {
+        throw new Error(`Recommendation economy rules universal cap is below baseSlots: ${type}`);
+      }
+    }
+  } else if (baseTotal !== rules.baseSlots) {
+    throw new Error('Recommendation economy rules base slot total does not match baseSlots');
+  }
   for (const type of SLOT_TYPES) {
     const values = rules.investmentBreakpoints?.[type];
     if (!Array.isArray(values) || values.some((value) => !Number.isFinite(value) || value <= 0)) {
@@ -109,6 +117,7 @@ function normalizeRules(rules: RecommendationEconomyRulesV1): RecommendationEcon
       vitality: rules.baseSlotsByType.vitality,
       spirit: rules.baseSlotsByType.spirit,
     },
+    universalSlots: rules.universalSlots === true ? true : undefined,
     maxFlexSlots: rules.maxFlexSlots,
     maxActiveItems: rules.maxActiveItems,
     investmentBreakpoints: {

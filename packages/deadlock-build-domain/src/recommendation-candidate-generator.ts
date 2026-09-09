@@ -18,6 +18,11 @@ export interface RecommendationCandidateGeneratorRules {
   /** @deprecated Use baseSlotsByType. Kept only for Dataset V1/backward-compatible callers. */
   baseSlots?: number;
   baseSlotsByType: Readonly<Record<InventorySlotType, number>>;
+  /**
+   * Universal slot model: every slot accepts any item category, so per-category capacity
+   * is disabled and only the total baseSlots count plus active-item capacity gate purchases.
+   */
+  universalSlots?: boolean;
   maxFlexSlots: number;
   unlockedFlexSlots?: number;
   flexCapacityEvidence: FactEvidence;
@@ -379,6 +384,16 @@ function slotFailureReason(
   graph: RecommendationItemGraph,
   rules: RecommendationCandidateGeneratorRules,
 ): 'SLOT_LIMIT_EXCEEDED' | 'FLEX_SLOT_CAPACITY_UNKNOWN' | undefined {
+  if (rules.universalSlots === true) {
+    // Universal slots: any item fits any slot; only the total count is capped.
+    const totalBase = Math.max(
+      0,
+      Math.floor(rules.baseSlots ?? rules.baseSlotsByType.weapon + rules.baseSlotsByType.vitality + rules.baseSlotsByType.spirit),
+    );
+    return recommendationSlotUsageFor(resultingItemIds, graph, rules).itemCount > totalBase
+      ? 'SLOT_LIMIT_EXCEEDED'
+      : undefined;
+  }
   const currentUsed = flexUsedFor(currentItemIds, graph, rules);
   const resultingUsed = flexUsedFor(resultingItemIds, graph, rules);
   if (resultingUsed <= currentUsed) return undefined;
@@ -406,10 +421,16 @@ export function recommendationSlotUsageFor(
     if (item.active) activeItemsUsed += 1;
   }
 
+  const universalSlots = rules.universalSlots === true;
+  const totalBase = Math.max(
+    0,
+    Math.floor(rules.baseSlots ?? rules.baseSlotsByType.weapon + rules.baseSlotsByType.vitality + rules.baseSlotsByType.spirit),
+  );
+  const perTypeCap = universalSlots ? Math.max(totalBase, 0) : undefined;
   const baseCapacityByType: Record<InventorySlotType, number> = {
-    weapon: Math.max(0, Math.floor(rules.baseSlotsByType.weapon)),
-    vitality: Math.max(0, Math.floor(rules.baseSlotsByType.vitality)),
-    spirit: Math.max(0, Math.floor(rules.baseSlotsByType.spirit)),
+    weapon: perTypeCap ?? Math.max(0, Math.floor(rules.baseSlotsByType.weapon)),
+    vitality: perTypeCap ?? Math.max(0, Math.floor(rules.baseSlotsByType.vitality)),
+    spirit: perTypeCap ?? Math.max(0, Math.floor(rules.baseSlotsByType.spirit)),
   };
   const overflowByType: Record<InventorySlotType, number> = {
     weapon: Math.max(0, usedByType.weapon - baseCapacityByType.weapon),
