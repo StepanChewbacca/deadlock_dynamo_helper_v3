@@ -48,7 +48,10 @@ export class StatlockerVsHeroWpaRawStoreV1Service {
       ingestStatus: 'PENDING',
       ingestMetadata: {},
     });
-    await this.repository.insert(row);
+    await this.repository.insert({
+      ...row,
+      rawPayload: row.rawPayload as object,
+    });
     return row;
   }
 
