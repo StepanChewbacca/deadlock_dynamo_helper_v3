@@ -125,8 +125,8 @@ export function isCanonicalAdaptiveInvestmentTrackV1(
  * rulesetId + catalogSha256 and must never select this record as a fallback.
  */
 export const ADAPTIVE_UNIVERSAL_SLOT_RULES_V1: AdaptiveSlotRulesV1 = {
-  baseSlots: 16,
-  baseSlotsByType: { weapon: 16, vitality: 16, spirit: 16 },
+  baseSlots: 12,
+  baseSlotsByType: { weapon: 12, vitality: 12, spirit: 12 },
   universalSlots: true,
   maxFlexSlots: 0,
   maxActiveItems: 4,
@@ -140,8 +140,8 @@ export function createCanonicalEconomyRulesV1(
   return {
     rulesetId,
     catalogSha256: catalogSha256.toLowerCase(),
-    baseSlots: 16,
-    baseSlotsByType: { weapon: 16, vitality: 16, spirit: 16 },
+    baseSlots: 12,
+    baseSlotsByType: { weapon: 12, vitality: 12, spirit: 12 },
     universalSlots: true,
     maxFlexSlots: 0,
     maxActiveItems: 4,

@@ -99,7 +99,7 @@ export class BuildStrategyCompilerV1Service {
     const terminalRequiredGoalIds = goals
       .filter((goal) => goal.hard && !branchGroups.some((branch) => branch.optionGoalIds.includes(goal.goalId)))
       .map((goal) => goal.goalId)
-      .slice(-16);
+      .slice(-12);
     const representative = members.find((trace) => trace.traceId === input.archetype.representativeTraceId) ?? members[0];
     const investment = representative.archetypeFeaturePayload.finalInvestment;
     const preferredWeights = normalizedInvestmentWeights(investment);

@@ -100,7 +100,7 @@ export class ConsensusStrategyFallbackV1Service {
           .filter((goal) => goal.hard && !branchGroups.some((branch) => branch.optionGoalIds.includes(goal.goalId)))
           .filter((goal) => Object.values(goal.lifecycleByItemId).every((lifecycle) => lifecycle !== 'TEMPORARY_EARLY'))
           .map((goal) => goal.goalId)
-          .slice(-16),
+          .slice(-12),
         allowWaiveSoftGoals: true,
       },
     };

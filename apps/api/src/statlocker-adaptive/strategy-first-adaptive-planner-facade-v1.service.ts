@@ -130,19 +130,25 @@ export class StrategyFirstAdaptivePlannerFacadeV1Service {
       input.decision.catalogSha256,
       input.evidence.statlockerPatchId,
     );
-    if (strategies.length === 0) {
-      // No mined strategy published for this exact scope yet: serve the fresh statlocker
-      // consensus skeleton compiled into a strategy instead of failing out of distribution.
-      const skeleton = consensusSkeletonFromEvidence(input.evidence, input.decision.state.heroId);
+    const skeleton = consensusSkeletonFromEvidence(input.evidence, input.decision.state.heroId);
+    const strategyIsTruncated = strategies.length > 0 &&
+      !strategies.some((s) => s.goals.some((g) => g.phase === 'LATE')) &&
+      skeleton !== undefined &&
+      skeleton.groups.some((g) => g.phase === 'LATE');
+
+    if (strategies.length === 0 || strategyIsTruncated) {
       if (!skeleton) {
-        throw new Error('STRATEGY_OUT_OF_DISTRIBUTION: no exact strategy snapshot or fresh consensus skeleton for decision scope');
+        if (strategies.length === 0) {
+          throw new Error('STRATEGY_OUT_OF_DISTRIBUTION: no exact strategy snapshot or fresh consensus skeleton for decision scope');
+        }
+      } else {
+        strategies = [this.consensusFallback.compile(
+          skeleton,
+          input.decision.itemGraph,
+          input.decision.rulesetId,
+          input.evidence.statlockerPatchId,
+        )];
       }
-      strategies = [this.consensusFallback.compile(
-        skeleton,
-        input.decision.itemGraph,
-        input.decision.rulesetId,
-        input.evidence.statlockerPatchId,
-      )];
     }
 
     const previousSession = previousStrategySession(input.previousResult);

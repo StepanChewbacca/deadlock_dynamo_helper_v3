@@ -157,7 +157,7 @@ export class BuildSlotPlannerV1Service {
     const rules = candidateGeneratorRulesFromSlotStateV1(input.slots);
     const usage = recommendationSlotUsageFor(itemIds, input.itemGraph, rules);
     if (rules.universalSlots === true) {
-      const totalCap = Math.max(0, Math.floor(rules.baseSlots ?? 16));
+      const totalCap = Math.max(0, Math.floor(rules.baseSlots ?? 12));
       if (usage.itemCount > totalCap) return false;
     } else {
       const requiredFlex = minimumRequiredFlex(usage.flexUsed, usage.itemCount, input.strategy.slotPolicy.reservedSituationalSlots, input.slots.baseSlots);
